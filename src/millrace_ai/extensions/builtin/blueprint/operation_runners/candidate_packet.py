@@ -10,18 +10,26 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue, ValidationError
 
 from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
-from millrace_ai.contracts.blueprint import BlueprintDraftDocument, BlueprintPacketDocument
 from millrace_ai.errors import QueueStateError
-from millrace_ai.workspace.blueprint_state import (
+from millrace_ai.extensions.builtin.blueprint.contracts import (
+    BlueprintDraftDocument,
+    BlueprintPacketDocument,
+)
+from millrace_ai.extensions.builtin.blueprint.state import (
     blueprint_packet_path,
     persist_blueprint_packet,
     read_active_blueprint_draft,
     read_blueprint_packet,
     update_active_blueprint_draft,
 )
+from millrace_ai.runtime.effects.models import (
+    RuntimeEffectDecision,
+    RuntimeEffectMutationPhase,
+    RuntimeEffectResult,
+)
+from millrace_ai.runtime.effects.operation_runners.results import block_source_failure_result
 from millrace_ai.workspace.paths import WorkspacePaths
 
-from ..models import RuntimeEffectDecision, RuntimeEffectMutationPhase, RuntimeEffectResult
 from .artifact_workflow_common import (
     _copy_unique_file,
     _effect_path,
@@ -31,7 +39,6 @@ from .artifact_workflow_common import (
     _runtime_mutation_journal,
     _stage_result_work_item_kind,
 )
-from .results import block_source_failure_result
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan

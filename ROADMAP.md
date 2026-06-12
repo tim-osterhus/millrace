@@ -41,6 +41,10 @@ contracts:
 - workflow primitive authority that moves queue families, claim policy,
   terminal lifecycle actions, runtime effects, and schema epoch compatibility
   into compiler-validated assets
+- pure graph-authority cleanup: runtime decisions now require compiled graph,
+  extension, policy, lifecycle, runtime-effect, queue-family, and
+  artifact-contract metadata; missing compiled policy is an error and old
+  compatibility fallbacks are being removed rather than preserved
 - opt-in Blueprint Planning that decomposes a spec into strict draft packets,
   critiques Blueprint plans before task promotion, and keeps implementation
   inside the Execution plane
@@ -59,6 +63,12 @@ The compiler now owns activation, request binding, recovery policy, completion
 behavior, and post-stage routing through one compiled graph plan plus compiled
 workflow primitive authority. Active-kernel dispatch resolves through the
 generic compiled-plan router.
+
+The current cleanup is intentionally breaking where old compatibility behavior
+would preserve non-graph authority. Stale compiled plans or managed workspace
+assets that omit required policies, extension declarations, artifact contracts,
+or workflow registries must be refreshed or rejected with authority errors
+instead of normalized by runtime defaults.
 
 Shipped compiler/runtime authority now includes:
 

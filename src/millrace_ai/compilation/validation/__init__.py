@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from millrace_ai.architecture import FrozenGraphPlanePlan, RegisteredStageKindDefinition
+from millrace_ai.architecture import (
+    FrozenGraphPlanePlan,
+    RegisteredStageKindDefinition,
+    WorkflowPlaneSchedulerPolicyDefinition,
+)
 from millrace_ai.assets import WorkflowPrimitiveBundle
 from millrace_ai.contracts import ModeDefinition, Plane
 
@@ -47,6 +51,7 @@ def validate_workflow_primitives(
     graphs_by_plane: dict[Plane, FrozenGraphPlanePlan],
     stage_kinds: dict[str, RegisteredStageKindDefinition],
     workflow_primitives: WorkflowPrimitiveBundle,
+    scheduler_policy: WorkflowPlaneSchedulerPolicyDefinition | None = None,
 ) -> None:
     families_by_id = {family.family_id: family for family in workflow_primitives.work_item_families}
     artifact_contracts_by_id = {
@@ -105,7 +110,11 @@ def validate_workflow_primitives(
         render_plan.render_plan_id: render_plan
         for render_plan in workflow_primitives.request_context_render_plans
     }
-    claim_policies_by_plane = queue_policies_by_plane(workflow_primitives)
+    claim_policies_by_plane = (
+        dict(scheduler_policy.claim_policies_by_plane)
+        if scheduler_policy is not None
+        else queue_policies_by_plane(workflow_primitives)
+    )
     runtime_operations_by_id = {
         op.operation_id: op
         for op in workflow_primitives.runtime_operations

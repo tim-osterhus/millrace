@@ -14,7 +14,10 @@ from millrace_ai.architecture.workflow_primitives import (
 from millrace_ai.contracts import (
     BlueprintDraftDocument,
     IncidentDocument,
+    Plane,
     PlanningStageName,
+    RecoveryCounterEntry,
+    RecoveryCounters,
     ResultClass,
     SpecDocument,
     StageResultEnvelope,
@@ -49,6 +52,7 @@ from millrace_ai.runtime.effects.journal import (
     write_started_record,
 )
 from millrace_ai.runtime.engine import RuntimeEngine
+from millrace_ai.state_store import load_recovery_counters, save_recovery_counters
 
 NOW = datetime(2026, 5, 19, tzinfo=timezone.utc)
 
@@ -1014,7 +1018,33 @@ def test_default_runtime_effect_repair_blocks_after_threshold(
     assert queue.claim_next_planning_item() is not None
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner, mode_id="blueprint_" "codex")
     engine.startup()
-    engine.snapshot = engine.snapshot.model_copy(update={"mechanic_attempt_count": 2})
+    save_recovery_counters(
+        paths,
+        RecoveryCounters(
+            entries=(
+                RecoveryCounterEntry(
+                    failure_class="unclassified_manifest_handoff",
+                    work_item_family_id="spec",
+                    work_item_kind=WorkItemKind.SPEC,
+                    work_item_id="spec-blueprint-001",
+                    counters={"mechanic_attempt_count": 2},
+                    last_updated_at=NOW,
+                ),
+            )
+        ),
+    )
+    engine.counters = load_recovery_counters(paths)
+    assert engine.snapshot is not None
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_plane": Plane.PLANNING,
+            "active_stage": PlanningStageName.MANAGER,
+            "active_work_item_family_id": "spec",
+            "active_work_item_kind": WorkItemKind.SPEC,
+            "active_work_item_id": "spec-blueprint-001",
+            "current_failure_class": "unclassified_manifest_handoff",
+        }
+    )
     run_dir = tmp_path / "run"
 
     def _handler(paths, stage_result, run_dir, compiled_plan):

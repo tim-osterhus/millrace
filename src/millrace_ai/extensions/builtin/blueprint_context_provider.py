@@ -1,14 +1,4 @@
-"""Built-in Blueprint context provider adapter.
-
-Thin adapter that delegates to the existing runtime/context/blueprint.py
-module.  This preserves the existing Blueprint context behaviour behind
-the extension-owned BlueprintContextProvider interface.
-
-Maintenance guardrail: the underlying blueprint.py module directly imports
-Blueprint contract models, workspace blueprint_state helpers, and path
-resolution.  When Blueprint context providers are fully migrated to
-extension-manifest-registered providers, this adapter should be replaced.
-"""
+"""Built-in Blueprint context provider adapter."""
 
 from __future__ import annotations
 
@@ -23,8 +13,7 @@ if TYPE_CHECKING:
 
 
 class BuiltInBlueprintContextProvider:
-    """Built-in Blueprint context provider that delegates to
-    runtime/context/blueprint.py provider registrations."""
+    """Built-in Blueprint context provider backed by the Blueprint extension."""
 
     interface_id: str = BUILTIN_INTERFACE_IDS["blueprint_context_provider"]
     domain: str = "blueprint"
@@ -36,7 +25,7 @@ class BuiltInBlueprintContextProvider:
         authority: object,
         compiled_plan: "CompiledRunPlan | None",
     ) -> object:
-        from millrace_ai.runtime.context.blueprint import (
+        from millrace_ai.extensions.builtin.blueprint.context import (
             built_in_blueprint_provider_registrations,
         )
         from millrace_ai.runtime.context.providers import (

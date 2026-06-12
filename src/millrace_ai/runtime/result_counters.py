@@ -18,14 +18,6 @@ from millrace_ai.state_store import save_recovery_counters
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
-_LEGACY_COUNTER_IDS = frozenset({
-    "troubleshoot_attempt_count",
-    "mechanic_attempt_count",
-    "fix_cycle_count",
-    "consultant_invocations",
-})
-
-
 def increment_route_counters(
     engine: RuntimeEngine,
     snapshot: RuntimeSnapshot,
@@ -67,9 +59,7 @@ def increment_counter_field(
     """Increment a generic counter identified by *counter_id*.
 
     The counter value is stored in the generic ``counters`` dict of the
-    matching :class:`RecoveryCounterEntry`.  Legacy snapshot fields and
-    per-entry legacy projections are updated to stay consistent with the
-    generic store.
+    matching :class:`RecoveryCounterEntry`.
     """
     family_id, work_item_kind = coerce_family_and_kind(
         family_id=work_item_family_id,
@@ -106,11 +96,7 @@ def increment_counter_field(
     engine.counters = updated_counters
     save_recovery_counters(engine.paths, updated_counters)
 
-    # Update the snapshot's legacy compatibility fields when the counter_id
-    # matches a known legacy name.
     snapshot_update: dict[str, object] = {"updated_at": engine._now()}
-    if counter_id in _LEGACY_COUNTER_IDS:
-        snapshot_update[counter_id] = getattr(snapshot, counter_id) + 1
     updated_snapshot = snapshot.model_copy(update=snapshot_update)
     engine.snapshot = updated_snapshot
     return updated_snapshot

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .blueprint import blueprint_draft_queue_family_adapter
 from .builtin import builtin_queue_family_adapters
 
 if TYPE_CHECKING:
@@ -12,10 +11,7 @@ if TYPE_CHECKING:
 
 
 def builtin_work_family_queue_adapters() -> tuple["WorkFamilyQueueAdapter", ...]:
-    return (
-        *builtin_queue_family_adapters(),
-        blueprint_draft_queue_family_adapter(),
-    )
+    return builtin_queue_family_adapters()
 
 
 __all__ = ["builtin_work_family_queue_adapters"]

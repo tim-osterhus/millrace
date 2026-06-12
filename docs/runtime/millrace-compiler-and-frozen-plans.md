@@ -91,6 +91,19 @@ assets.
 The runtime then consumes that compiled authority during startup, routing,
 reconciliation, and run inspection.
 
+This is the pure graph-authority contract. If runtime code needs scheduler
+policy, recovery policy, lifecycle mutation plans, runtime-effect metadata,
+request-context bindings, queue-family adapters, artifact contracts, or
+extension ownership data, that data must be present in the compiled plan.
+Missing compiled metadata is an error. It is not a compatibility opening for
+the runtime to synthesize shipped defaults, branch on built-in stage names, or
+select domain behavior from strings such as `blueprint`.
+
+Blueprint behavior remains supported through Blueprint modes, but it is
+compiled extension-backed graph configuration. Custom graph behavior is
+selected by mode, graph, stage-kind, extension, and registry metadata that the
+compiler freezes into the plan.
+
 Compile validation rejects learning trigger rules that target Curator directly
 without `target_skill_id` or `preferred_output_paths`. Generic or vague learning
 evidence should target Analyst so the learning plane can research, no-op, or
@@ -175,6 +188,11 @@ compile commands with `compile_if_needed=True`. If the persisted compiled plan
 still matches current compile inputs and still carries required workflow
 authority, startup reuses it. If inputs changed or required workflow authority
 is missing, startup recompiles before execution continues.
+
+If recompilation cannot produce the required authority metadata, startup fails.
+Operators should refresh managed assets with `millrace upgrade --apply` or
+reinitialize stale disposable workspaces rather than expecting the daemon to
+run with partial compiled policy.
 
 ## Workflow Primitive Authority
 

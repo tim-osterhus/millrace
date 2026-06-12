@@ -791,6 +791,11 @@ def test_doctor_warns_stopped_daemon_with_open_closure_and_graph_backlog(
 
 def test_doctor_flags_snapshot_reconciliation_problems(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
+    compile_and_persist_workspace_plan(
+        paths.root,
+        config=RuntimeConfig(),
+        requested_mode_id="standard_plain",
+    )
 
     snapshot_payload = json.loads(paths.runtime_snapshot_file.read_text(encoding="utf-8"))
     snapshot_payload.update(

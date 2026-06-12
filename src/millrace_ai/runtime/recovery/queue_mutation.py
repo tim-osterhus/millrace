@@ -15,7 +15,6 @@ from millrace_ai.assets import load_builtin_workflow_primitives
 from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
-    BlueprintDraftDocument,
     IncidentDocument,
     LearningRequestDocument,
     Plane,
@@ -26,6 +25,7 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.contracts.base import ContractModel
+from millrace_ai.contracts.model_resolution import resolve_contract_model
 from millrace_ai.contracts.work_refs import coerce_family_and_kind, normalize_work_item_family_id
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
@@ -65,8 +65,8 @@ QueueDocumentModel: TypeAlias = (
     | type[ProbeDocument]
     | type[IncidentDocument]
     | type[LearningRequestDocument]
-    | type[BlueprintDraftDocument]
 )
+QueueDocumentModelRef: TypeAlias = type[ContractModel]
 
 
 class BlockedTaskRequeueResult(ContractModel):
@@ -120,16 +120,6 @@ class _BlockedRetryFamily:
     queue_adapter: WorkFamilyQueueAdapter | None = None
     family_definition: WorkItemFamilyDefinition | None = None
     document_adapter: WorkItemDocumentAdapterDefinition | None = None
-
-
-_DOCUMENT_MODEL_BY_SCHEMA_ID: dict[str, QueueDocumentModel] = {
-    "task_document_v1": TaskDocument,
-    "spec_document_v1": SpecDocument,
-    "probe_document_v1": ProbeDocument,
-    "incident_document_v1": IncidentDocument,
-    "learning_request_document_v1": LearningRequestDocument,
-    "_".join(("blueprint", "draft", "document", "v1")): BlueprintDraftDocument,
-}
 
 
 def retry_blocked_work_item(
@@ -540,7 +530,7 @@ def _parse_blocked_retry_document(family: _BlockedRetryFamily, work_item_id: str
 
 def _parse_family_defined_document(family: _BlockedRetryFamily, raw: str, *, path: Path) -> Any:
     assert family.family_definition is not None
-    model = _DOCUMENT_MODEL_BY_SCHEMA_ID.get(family.family_definition.schema_id)
+    model = resolve_contract_model(family.family_definition.schema_id)
     if model is not None:
         return _parse_known_queue_document(raw, model=model, path=path)
     if path.suffix == ".json":
@@ -571,7 +561,7 @@ def _generic_markdown_fields(raw: str) -> dict[str, object]:
 def _parse_known_queue_document(
     raw: str,
     *,
-    model: QueueDocumentModel,
+    model: QueueDocumentModelRef,
     path: Path,
 ) -> Any:
     if model is TaskDocument:
@@ -584,8 +574,7 @@ def _parse_known_queue_document(
         return parse_work_document_as(raw, model=ProbeDocument, path=path)
     if model is LearningRequestDocument:
         return parse_work_document_as(raw, model=LearningRequestDocument, path=path)
-    if model is BlueprintDraftDocument:
-        return BlueprintDraftDocument.model_validate_json(raw)
+    return model.model_validate_json(raw)
     raise QueueStateError(f"unsupported queue document model: {model}")
 
 

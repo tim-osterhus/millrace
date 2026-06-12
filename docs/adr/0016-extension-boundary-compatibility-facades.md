@@ -33,32 +33,23 @@ modules listed below.
 
 ## Remaining Direct Kernel-to-Domain Imports
 
-### Lazy Context Provider Registration (`runtime/context/providers.py`)
+### Resolved Context Provider Gap (`runtime/context/providers.py`)
 
 - **File**: `src/millrace_ai/runtime/context/providers.py`
-- **Symbol**: `default_request_context_provider_registry()` (internal thunk)
-- **Import**: `from .blueprint import built_in_blueprint_provider_registrations`
-- **Domain**: Blueprint
-- **Allowed Callers**: Request-context provider registry construction (not module-import-time)
-- **Mode Scope**: Blueprint-declaring modes only (`blueprint_codex`, `blueprint_learning_codex`);
-  generic-only and non-Blueprint modes do not trigger the lazy thunk
-- **Retention Reason**: Blueprint context provider registration must remain
-  available for request-context profiles that select Blueprint provider
-  implementations; generic modes never construct the Blueprint-aware
-  registry
-- **Status**: Lazy compatibility facade
-- **Guardrail**: The `default_request_context_provider_registry()` function
-  imports Blueprint context providers inside the registry-construction thunk,
-  not at module import time. Subprocess guardrails in
+- **Symbol**: `default_request_context_provider_registry()` (generic registry thunk)
+- **Import**: `built_in_generic_provider_registrations` from `runtime/context/generic.py`
+- **Domain**: Blueprint compatibility boundary
+- **Allowed Callers**: Request-context provider registry construction; Blueprint loading only after compiled provider/render-plan authority resolves a Blueprint-owned manifest
+- **Mode Scope**: Generic-only by default; Blueprint-declaring modes load extension-owned providers only when compiled authority and manifest ownership are present
+- **Retention Reason**: Keeps registry construction generic-only while preserving Blueprint compatibility through lazy extension-owned provider selection
+- **Status**: Resolved former gap; lazy compatibility boundary
+- **Guardrail**: `default_request_context_provider_registry()` constructs the generic registry without importing Blueprint provider registrations. When compiled provider/render-plan authority and Blueprint extension-manifest ownership identify a Blueprint-owned request-context profile, the provider implementation is loaded from `extensions/builtin/blueprint/context.py` through the manifest-owned extension path. Subprocess guardrails in
   `tests/maintenance/test_generic_engine_boundary_guardrails.py`
   (`test_subprocess_import_millrace_ai_runtime_does_not_load_forbidden_prefixes`,
   `test_subprocess_import_runtime_engine_does_not_load_forbidden_prefixes`, and
   `test_subprocess_generic_only_runtime_startup_does_not_load_forbidden_prefixes`)
-  prove zero forbidden prefixes loaded.
-  **Migration path**: Replace registry-wide Blueprint provider registration
-  with selection through the `BlueprintContextProvider` extension interface so
-  generic request-context registry construction does not need to load
-  Blueprint provider implementation modules.
+  prove generic startup does not eagerly load Blueprint modules.
+  **Migration path**: Keep `runtime/context/blueprint.py` as the lazy compatibility facade for existing Blueprint request-context callers until the remaining public shims can be retired.
 
 ### Blueprint Context Provider Rendering (`runtime/context/blueprint.py`)
 
@@ -80,11 +71,60 @@ modules listed below.
   startup probes in
   `tests/maintenance/test_generic_engine_boundary_guardrails.py`
   confirm this module is not eagerly loaded.
-  **Migration path**: Extract the per-stage context plan functions into a
-  Blueprint extension package registered under the
-  `blueprint_context_provider` interface ID.  The built-in adapter at
-  `extensions/builtin/blueprint_context_provider.py` already provides the
-  interface boundary; move the implementation there.
+  **Migration path**: The implementation now lives under
+  `extensions/builtin/blueprint/context.py` and
+  `extensions/builtin/blueprint/contracts.py`. Keep
+  `runtime/context/blueprint.py` as a lazy compatibility facade for existing
+  callers until the remaining public shims can be retired.
+
+### Blueprint Status Compatibility Facade (`cli/status/blueprint.py`)
+
+- **File**: `src/millrace_ai/cli/status/blueprint.py`
+- **Import**: Lazy function lookup into
+  `extensions/builtin/blueprint/status.py`
+- **Domain**: Blueprint
+- **Allowed Callers**: Existing public callers that still import the historical
+  CLI Blueprint status module; generic status collection and rendering must use
+  manifest-discovered `status_projection` items through
+  `cli/status/projections.py`
+- **Mode Scope**: Blueprint-declaring modes and explicit compatibility callers
+- **Retention Reason**: Preserves the historical Blueprint status import path
+  while the authoritative status projection, default payload, default lines,
+  collection, and rendering live under the Blueprint extension package
+- **Status**: Lazy non-authoritative compatibility facade
+- **Guardrail**: `tests/maintenance/test_pure_graph_authority_guardrails.py`
+  fails if generic status code calls Blueprint status APIs directly, if generic
+  projection code reintroduces `blueprints` default branches, or if the
+  Blueprint manifest `status_projection` item points back into generic CLI,
+  Doctor, or workspace modules.
+  **Migration path**: Move remaining compatibility callers to the
+  manifest-declared status projection path, then retire this facade with a
+  release-note-backed compatibility plan.
+
+### Blueprint Workspace State / Doctor Diagnostic Compatibility Facade (`workspace/blueprint_state.py`)
+
+- **File**: `src/millrace_ai/workspace/blueprint_state.py`
+- **Import**: Lazy `__getattr__` exports from
+  `extensions/builtin/blueprint/state.py`
+- **Domain**: Blueprint
+- **Allowed Callers**: Existing Blueprint state imports and Blueprint Doctor
+  diagnostic compatibility callers; generic Doctor checks must discover
+  `doctor_diagnostic` manifest items and dispatch `run_doctor_diagnostics`
+  from the extension-owned implementation
+- **Mode Scope**: Blueprint-declaring modes and explicit compatibility callers
+- **Retention Reason**: Preserves historical Blueprint workspace-state imports,
+  including read-only manifest diagnostic helpers, while authoritative state
+  and Doctor diagnostic implementation live under the Blueprint extension
+  package
+- **Status**: Lazy non-authoritative compatibility facade
+- **Guardrail**: `tests/maintenance/test_pure_graph_authority_guardrails.py`
+  fails if default Doctor registration routes directly to Blueprint diagnostic
+  helpers, if domain-owned `doctor_diagnostic` manifest items point into
+  generic CLI/Doctor/workspace modules, or if generic import surfaces eagerly
+  load Blueprint implementation modules.
+  **Migration path**: Move remaining callers to extension-owned Blueprint state
+  and Doctor diagnostic APIs, then retire this facade with a release-note-backed
+  compatibility plan.
 
 ### Planner Disposition Effects (`runtime/planner_effects.py`)
 
@@ -110,32 +150,18 @@ modules listed below.
   with interpreted operation steps, the disposition logic should move to
   primitives registered under the shared extension domain.
 
-### Blueprint Effect Operation Runners (`runtime/effects/operation_runners/`)
+### Blueprint Effect Operation Runner Compatibility Export (`runtime/effects/operation_runners/__init__.py`)
 
-- **Files**: `src/millrace_ai/runtime/effects/operation_runners/artifacts.py`,
-  `candidate_evaluation.py`, `candidate_packet.py`,
-  `decomposition_manifest.py`, `repair_application.py`, `stores.py`,
-  `work_items.py`
-- **Import**: Direct imports of Blueprint contract models, artifact workflow
-  helpers, and workspace state readers/writers.
+- **File**: `src/millrace_ai/runtime/effects/operation_runners/__init__.py`
+- **Export**: `artifact_runtime_effect_handler_registrations`
+- **Current implementation owner**: `src/millrace_ai/extensions/builtin/blueprint/operation_runners/`
 - **Domain**: Blueprint
-- **Allowed Callers**: Compiled runtime-effect dispatch via legacy handler registry
+- **Allowed Callers**: Legacy runner registration callers and compatibility importers
 - **Mode Scope**: Blueprint-declaring modes only
-- **Retention Reason**: Contain Blueprint-specific artifact mutation logic
-  dispatched by compiled `effect_operation_id`; kept until interpreted
-  operation-step migration
-- **Status**: Compatibility facade
-- **Guardrail**: These operation runners are dispatched by compiled
-  `effect_operation_id` through the legacy handler registry.  They contain
-  Blueprint-specific artifact mutation logic that should live in a Blueprint
-  extension package. Guardrails in
-  `tests/maintenance/test_kernel_import_guardrails.py` ensure these are not
-  imported by generic kernel paths.
-  **Migration path**: When the legacy handler-backed runner is replaced with
-  interpreted operation steps (ADR-0014), each operation should register as
-  a Blueprint-domain primitive.  The built-in validator at
-  `extensions/builtin/blueprint_validator.py` provides the validation
-  boundary interface.
+- **Retention Reason**: Preserves import compatibility for legacy handler-backed Blueprint operation-runner registration while the implementation lives in the Blueprint extension package
+- **Status**: Lazy compatibility export
+- **Guardrail**: The compatibility package resolves `artifact_runtime_effect_handler_registrations` lazily from `extensions/builtin/blueprint/operation_runners/`; generic kernel paths do not import the Blueprint extension package unless a legacy caller requests the export. Guardrails in `tests/maintenance/test_kernel_import_guardrails.py` ensure the export stays lazy for generic startup paths.
+  **Migration path**: Keep `runtime/effects/operation_runners/__init__.py` as the export shim until all callers move to the extension-owned implementation directly.
 
 ### Closure Target Boundary (`runtime/closure_boundary.py` -> `runtime/completion_behavior.py`)
 
@@ -238,8 +264,8 @@ runtime implementation and is registered with the
 | `builtin/closure_transition_handler.py` | `ClosureTransitionHandler` | `runtime/closure_transitions.py` | `BuiltInExtensionBoundaryRegistry` | Modes declaring `millrace.closure` |
 | `builtin/learning_trigger_handler.py` | `LearningTriggerHandler` | `runtime/learning_triggers.py` | `BuiltInExtensionBoundaryRegistry` | Learning-enabled modes only |
 | `builtin/learning_promotion_handler.py` | `LearningPromotionHandler` | `runtime/learning_promotions.py` | `BuiltInExtensionBoundaryRegistry` | Learning-enabled modes only |
-| `builtin/blueprint_validator.py` | `BlueprintValidator` | `contracts/blueprint.py` (Pydantic validation) | `BuiltInExtensionBoundaryRegistry` | Blueprint-declaring modes only |
-| `builtin/blueprint_context_provider.py` | `BlueprintContextProvider` | `runtime/context/blueprint.py` | `BuiltInExtensionBoundaryRegistry` | Blueprint-declaring modes only |
+| `builtin/blueprint_validator.py` | `BlueprintValidator` | `extensions/builtin/blueprint/contracts.py` (via `contracts/blueprint.py` lazy facade) | `BuiltInExtensionBoundaryRegistry` | Blueprint-declaring modes only |
+| `builtin/blueprint_context_provider.py` | `BlueprintContextProvider` | `extensions/builtin/blueprint/context.py` (via `runtime/context/blueprint.py` lazy facade) | `BuiltInExtensionBoundaryRegistry` | Blueprint-declaring modes only |
 | `builtin/generic_context_provider.py` | `ContextProvider` | `runtime/context/generic.py` | `BuiltInExtensionBoundaryRegistry` | All modes |
 | `builtin/generic_artifact_adapter.py` | `ArtifactAdapter` | workspace document loaders | `BuiltInExtensionBoundaryRegistry` | All modes |
 
@@ -252,13 +278,13 @@ Minimal fixture configs and generic modes that never request a domain-specific
 interface will not trigger imports of those domain modules.
 
 The `default_request_context_provider_registry()` function in
-`runtime/context/providers.py` now defers the Blueprint provider registration
-import until the registry-construction thunk runs. This closes the former
+`runtime/context/providers.py` now constructs the generic registry without
+loading Blueprint providers at module-import time. This closes the former
 package-import eager-loading gap for `millrace_ai.runtime` and `RuntimeEngine`.
-The remaining compatibility gap is that registry construction still imports
-the built-in Blueprint provider registrations; a full migration should route
-Blueprint context provider selection through the extension interface when the
-compiled plan selects a Blueprint provider.
+Blueprint context provider selection now resolves lazily through compiled
+provider/render-plan authority and Blueprint extension-manifest ownership,
+while `runtime/context/blueprint.py` remains the compatibility facade for
+existing Blueprint request-context callers.
 
 The `runtime/closure_boundary.py` module also uses function-body imports for
 its completion-behavior delegation. Kernel modules import the boundary, not the

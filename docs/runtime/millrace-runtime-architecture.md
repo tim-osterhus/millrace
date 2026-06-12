@@ -12,6 +12,12 @@ for the shipped mode and loop topology the compiler resolves. Use
 of intake, queue selection, runner requests, artifacts, result normalization,
 and durable runtime mutation.
 
+The current runtime contract is a breaking pure graph-authority cleanup:
+runtime decisions require compiled plan data and compiled registry/policy
+metadata. Missing scheduler, recovery, lifecycle, runtime-effect, artifact, or
+queue-family policy is an authority error. The runtime does not repair stale
+plans by guessing shipped defaults.
+
 ## Source Tree
 
 - importable package code lives under `src/millrace_ai/`
@@ -31,6 +37,11 @@ and durable runtime mutation.
 - Different workspaces can run independent daemons concurrently.
 - `millrace status watch --workspace <PATH> [--workspace <PATH> ...]` is read-only monitoring and does not acquire ownership locks.
 - `state/execution_status.md`, `state/planning_status.md`, and `state/learning_status.md` reflect the active running stage on their plane while work is executing, then the latest terminal marker or `### IDLE` when no stage is active.
+
+Managed workspaces initialized with older packaged assets may need
+`millrace upgrade --apply`, a fresh compile, or reinitialization before daemon
+startup. Stale compiled plans that omit required graph-authority metadata are
+expected to fail validation instead of being normalized by runtime fallbacks.
 
 ## Canonical Artifact Model
 
@@ -315,7 +326,8 @@ the generic interpreter or its declared adapter.
 - `src/millrace_ai/cli/status_view.py`: compatibility facade for status
   output.
 - `src/millrace_ai/cli/status/`: status data collection, view-model assembly,
-  text rendering, and JSON payload rendering.
+  registered extension status projections, text rendering, and JSON payload
+  rendering.
 - `src/millrace_ai/cli/runs_view.py`: persisted run-list loading and line rendering.
 - `src/millrace_ai/cli/config_view.py`: config-show state loading and line rendering.
 - `src/millrace_ai/cli/compile_view.py`: compile diagnostics and compile-show line rendering.

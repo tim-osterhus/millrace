@@ -11,16 +11,16 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue, ValidationError
 
 from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
-from millrace_ai.contracts.blueprint import (
+from millrace_ai.contracts.work_documents import TaskDocument
+from millrace_ai.errors import QueueStateError
+from millrace_ai.extensions.builtin.blueprint.contracts import (
     BlueprintCritiqueDocument,
     BlueprintDraftDocument,
     BlueprintEvaluationDocument,
     BlueprintPacketDocument,
     BlueprintPromotionRecord,
 )
-from millrace_ai.contracts.work_documents import TaskDocument
-from millrace_ai.errors import QueueStateError
-from millrace_ai.workspace.blueprint_state import (
+from millrace_ai.extensions.builtin.blueprint.state import (
     blueprint_packet_path,
     move_candidate_blueprint_packet,
     persist_blueprint_critique,
@@ -30,15 +30,26 @@ from millrace_ai.workspace.blueprint_state import (
     read_blueprint_packet,
     update_active_blueprint_draft,
 )
-from millrace_ai.workspace.paths import WorkspacePaths
-from millrace_ai.workspace.work_documents import read_work_document_as
-
-from ...artifact_contracts import RuntimeArtifactError
-from ..models import (
+from millrace_ai.runtime.artifact_contracts import RuntimeArtifactError
+from millrace_ai.runtime.effects.models import (
     RuntimeEffectDecision,
     RuntimeEffectMutationPhase,
     RuntimeEffectResult,
 )
+from millrace_ai.runtime.effects.operation_runners.artifacts import parse_required_run_artifact_as
+from millrace_ai.runtime.effects.operation_runners.idempotency import (
+    ensure_contains_all,
+    normalized_markdown_sha256,
+    read_markdown_checksum,
+    unique_tuple,
+)
+from millrace_ai.runtime.effects.operation_runners.results import block_source_failure_result
+from millrace_ai.runtime.effects.operation_runners.work_items import (
+    enqueue_task_document as enqueue_task,
+)
+from millrace_ai.workspace.paths import WorkspacePaths
+from millrace_ai.workspace.work_documents import read_work_document_as
+
 from .artifact_workflow_common import (
     _effect_path,
     _normalized_blueprint_model_payload,
@@ -47,14 +58,10 @@ from .artifact_workflow_common import (
     _runtime_mutation_journal,
     _stage_result_work_item_kind,
 )
-from .artifacts import parse_required_run_artifact_as
 from .candidate_packet import (
     _candidate_markdown_path,
     _contractor_active_draft_for_stage_result,
 )
-from .idempotency import ensure_contains_all, normalized_markdown_sha256, read_markdown_checksum, unique_tuple
-from .results import block_source_failure_result
-from .work_items import enqueue_task_document as enqueue_task
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan

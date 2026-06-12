@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import StageResultEnvelope
+from millrace_ai.contracts.enums import WorkItemKind
 from millrace_ai.contracts.run_trace import (
     RunTraceArtifactRef,
     RunTraceEdge,
@@ -23,6 +24,12 @@ from millrace_ai.contracts.run_trace import (
 from millrace_ai.events import write_runtime_event
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.router import RouterAction, RouterDecision
+
+_LEGACY_WORK_KIND_PATH_MARKERS: tuple[tuple[str, RunTraceSpawnedWorkKind], ...] = (
+    (WorkItemKind.LEARNING_REQUEST.value.removesuffix("_request"), WorkItemKind.LEARNING_REQUEST.value),
+    (f"{WorkItemKind.INCIDENT.value}s", WorkItemKind.INCIDENT.value),
+    (f"{WorkItemKind.SPEC.value}s", WorkItemKind.SPEC.value),
+)
 
 
 def trace_path_for_run_dir(run_dir: Path) -> Path:
@@ -525,15 +532,10 @@ def _spawned_kind_from_path(
         if matches:
             return sorted(matches, reverse=True)[0][1]
     parts = set(path.parts)
-    if "blueprints" in parts and "drafts" in parts:
-        return "blueprint_draft"
-    if "learning" in parts:
-        return "learning_request"
-    if "incidents" in parts:
-        return "incident"
-    if "specs" in parts:
-        return "spec"
-    return "task"
+    for marker, work_kind in _LEGACY_WORK_KIND_PATH_MARKERS:
+        if marker in parts:
+            return work_kind
+    return WorkItemKind.TASK.value
 
 
 def _spawned_kind_from_effect_rule(

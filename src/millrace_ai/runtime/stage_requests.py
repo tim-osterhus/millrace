@@ -10,12 +10,8 @@ from uuid import uuid4
 from millrace_ai.architecture import MaterializedGraphNodePlan, WorkItemFamilyDefinition
 from millrace_ai.contracts import (
     ClosureTargetState,
-    ExecutionStageName,
-    ExecutionTerminalResult,
     Plane,
-    ResultClass,
     StageName,
-    StageResultEnvelope,
     WorkItemKind,
 )
 from millrace_ai.contracts.stage_metadata import stage_name_for_plane
@@ -38,6 +34,7 @@ if TYPE_CHECKING:
     from millrace_ai.workspace.family_adapters import WorkFamilyQueueAdapter
 
 from .active_runs import active_run_for_plane
+from .compiled_plans import CompiledPlanAuthorityError
 from .context import validate_stage_request_context_provider_implementation
 from .error_recovery import build_runtime_error_request_fields
 from .request_context import attach_default_request_context
@@ -337,32 +334,11 @@ def stage_plan_for(
     raise KeyError(f"No compiled graph node plan for {plane.value}:{stage.value}")
 
 
-def idle_stage_for_no_work() -> StageName:
-    return ExecutionStageName.UPDATER
-
-
 def idle_tick_outcome(engine: RuntimeEngine, *, reason: str) -> RuntimeTickOutcome:
     assert engine.snapshot is not None
-    idle_stage = idle_stage_for_no_work()
-    stage_result = StageResultEnvelope(
-        run_id="idle",
-        plane=Plane.EXECUTION,
-        stage=idle_stage,
-        work_item_kind=WorkItemKind.TASK,
-        work_item_id="idle",
-        terminal_result=ExecutionTerminalResult.UPDATE_COMPLETE,
-        result_class=ResultClass.SUCCESS,
-        summary_status_marker=f"### {ExecutionTerminalResult.UPDATE_COMPLETE.value}",
-        success=True,
-        retryable=False,
-        exit_code=0,
-        duration_seconds=0,
-        started_at=now(),
-        completed_at=now(),
-    )
     return RuntimeTickOutcome(
-        stage=idle_stage,
-        stage_result=stage_result,
+        stage=None,
+        stage_result=None,
         stage_result_path=engine.paths.logs_dir / "idle-stage-result.json",
         router_decision=RouterDecision(
             action=RouterAction.IDLE,
@@ -394,12 +370,10 @@ def active_work_item_path(
         else None
     )
     if family is None:
-        from millrace_ai.assets import load_builtin_workflow_primitives
-
-        builtin_families = {
-            f.family_id: f for f in load_builtin_workflow_primitives().work_item_families
-        }
-        family = builtin_families.get(family_id)
+        raise CompiledPlanAuthorityError(
+            f"compiled plan is required to resolve active work item family `{family_id}`",
+            stale=False,
+        )
     adapter = _queue_adapter_for_family(family_id=family_id, family=family)
     if adapter is not None:
         return adapter.active_path(engine.paths, work_item_id=work_item_id)
@@ -549,9 +523,10 @@ def _request_kind_for_active_family(
         family = compiled_plan.work_item_families_by_id.get(work_item_family_id)
         if family is not None:
             return "learning_request" if family.plane is Plane.LEARNING else "active_work_item"
-    if work_item_family_id == WorkItemKind.LEARNING_REQUEST.value:
-        return "learning_request"
-    return "active_work_item"
+    raise CompiledPlanAuthorityError(
+        f"compiled plan is required to derive request kind for work item family `{work_item_family_id}`",
+        stale=False,
+    )
 
 
 __all__ = [
@@ -560,7 +535,6 @@ __all__ = [
     "build_stage_run_request",
     "execution_queue_depth",
     "handle_stage_work_item_ownership_error",
-    "idle_stage_for_no_work",
     "idle_tick_outcome",
     "learning_queue_depth",
     "new_request_id",

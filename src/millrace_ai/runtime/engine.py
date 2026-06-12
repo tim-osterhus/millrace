@@ -375,9 +375,6 @@ class RuntimeEngine:
         assert self.compiled_plan is not None
         return activation.entry_stage_for_kind(work_item_kind, compiled_plan=self.compiled_plan)
 
-    def _idle_stage_for_no_work(self) -> StageName:
-        return stage_requests.idle_stage_for_no_work()
-
     def _idle_tick_outcome(self, *, reason: str) -> RuntimeTickOutcome:
         return stage_requests.idle_tick_outcome(self, reason=reason)
 

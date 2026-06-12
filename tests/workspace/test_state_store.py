@@ -42,6 +42,13 @@ def _bootstrap(tmp_path: Path):
     return paths
 
 
+def _compiled_plan(paths):
+    engine = RuntimeEngine(paths, stage_runner=lambda request: None)
+    engine.startup()
+    assert engine.compiled_plan is not None
+    return engine.compiled_plan
+
+
 def test_state_store_facade_is_split_over_workspace_modules() -> None:
     state_facade = importlib.import_module("millrace_ai.state_store")
     state_store_module = importlib.import_module("millrace_ai.workspace.state_store")
@@ -219,6 +226,7 @@ def test_collect_reconciliation_signals_detects_stale_execution_ownership(
         counters=RecoveryCounters(),
         execution_status_marker="### CHECKER_RUNNING",
         planning_status_marker="### IDLE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     assert signals
@@ -262,10 +270,11 @@ def test_collect_reconciliation_signals_escalates_repeated_execution_stale_state
         counters=counters,
         execution_status_marker="### CHECKER_RUNNING",
         planning_status_marker="### IDLE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     stale = next(signal for signal in signals if signal.code == "stale_active_ownership")
-    assert stale.recommended_stage == "consultant"
+    assert stale.recommended_stage == "troubleshooter"
 
 
 def test_collect_reconciliation_signals_flags_impossible_planning_marker(
@@ -291,6 +300,7 @@ def test_collect_reconciliation_signals_flags_impossible_planning_marker(
         counters=RecoveryCounters(),
         execution_status_marker="### IDLE",
         planning_status_marker="### CHECKER_PASS",
+        compiled_plan=_compiled_plan(paths),
     )
 
     impossible = next(
@@ -329,6 +339,7 @@ def test_collect_reconciliation_signals_flags_impossible_execution_marker(
         # stage-specific marker check.
         execution_status_marker="### UNKNOWN_TERMINAL",
         planning_status_marker="### IDLE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     impossible = next(
@@ -363,6 +374,7 @@ def test_collect_reconciliation_signals_handles_malformed_marker_without_raising
         counters=RecoveryCounters(),
         execution_status_marker="### BUILDER_COMPLETE\n### EXTRA",
         planning_status_marker="### IDLE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     impossible = next(
@@ -394,6 +406,7 @@ def test_collect_reconciliation_signals_allows_expected_execution_transition_mar
         counters=RecoveryCounters(),
         execution_status_marker="### BUILDER_COMPLETE",
         planning_status_marker="### IDLE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     assert all(signal.code != "impossible_execution_status_marker" for signal in signals)
@@ -422,6 +435,7 @@ def test_collect_reconciliation_signals_allows_ready_stage_after_bounded_shutdow
         counters=RecoveryCounters(),
         execution_status_marker="### BUILDER_COMPLETE",
         planning_status_marker="### IDLE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     assert all(signal.code != "stale_active_ownership" for signal in signals)
@@ -451,6 +465,7 @@ def test_collect_reconciliation_signals_allows_current_execution_running_marker(
         counters=RecoveryCounters(),
         execution_status_marker="### CHECKER_RUNNING",
         planning_status_marker="### IDLE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     assert all(signal.code != "impossible_execution_status_marker" for signal in signals)
@@ -517,6 +532,7 @@ def test_collect_reconciliation_signals_flags_orphaned_recovery_counters(
         counters=counters,
         execution_status_marker="### IDLE",
         planning_status_marker="### IDLE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     orphaned = next(
@@ -549,6 +565,7 @@ def test_collect_reconciliation_signals_allows_expected_planning_transition_mark
         counters=RecoveryCounters(),
         execution_status_marker="### IDLE",
         planning_status_marker="### PLANNER_COMPLETE",
+        compiled_plan=_compiled_plan(paths),
     )
 
     assert all(signal.code != "impossible_planning_status_marker" for signal in signals)
@@ -575,6 +592,7 @@ def test_collect_reconciliation_signals_allows_current_planning_running_marker(
         counters=RecoveryCounters(),
         execution_status_marker="### IDLE",
         planning_status_marker="### ARBITER_RUNNING",
+        compiled_plan=_compiled_plan(paths),
     )
 
     assert all(signal.code != "impossible_planning_status_marker" for signal in signals)

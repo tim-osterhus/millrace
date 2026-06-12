@@ -1781,7 +1781,9 @@ Semantic-Invariants:
     assert snapshot.active_node_id == expected_node_id
     assert snapshot.active_stage_kind_id == expected_stage_kind_id
     assert snapshot.active_work_item_kind is WorkItemKind.PROBE
-    assert snapshot.mechanic_attempt_count == 1
+    counters = load_recovery_counters(paths)
+    assert len(counters.entries) == 1
+    assert counters.entries[0].counters["mechanic_attempt_count"] == 1
     assert snapshot.current_failure_class == "recon_handoff_invalid"
     assert load_planning_status(paths) == "### BLOCKED"
     assert not (paths.probes_blocked_dir / "probe-001.md").exists()
@@ -1814,7 +1816,23 @@ def test_runtime_blocks_repeated_malformed_recon_handoff_after_repair_threshold(
 
     engine = RuntimeEngine(paths, stage_runner=stage_runner)
     engine.startup()
-    engine.snapshot = load_snapshot(paths).model_copy(update={"mechanic_attempt_count": 2})
+    save_recovery_counters(
+        paths,
+        RecoveryCounters(
+            entries=(
+                RecoveryCounterEntry(
+                    failure_class="recon_handoff_invalid",
+                    work_item_family_id="probe",
+                    work_item_kind=WorkItemKind.PROBE,
+                    work_item_id="probe-001",
+                    counters={"mechanic_attempt_count": 2},
+                    last_updated_at=NOW,
+                ),
+            )
+        ),
+    )
+    engine.counters = load_recovery_counters(paths)
+    engine.snapshot = load_snapshot(paths)
     save_snapshot(paths, engine.snapshot)
 
     outcome = engine.tick()
@@ -2526,7 +2544,7 @@ def test_runtime_tick_routes_malformed_execution_marker_into_troubleshooter(tmp_
     assert seen_stages == [ExecutionStageName.TROUBLESHOOTER]
 
 
-def test_runtime_tick_stale_execution_anomaly_escalates_to_consultant(
+def test_runtime_tick_stale_execution_anomaly_routes_to_default_repair_stage(
     tmp_path: Path,
 ) -> None:
     paths = _workspace(tmp_path)
@@ -2553,7 +2571,7 @@ def test_runtime_tick_stale_execution_anomaly_escalates_to_consultant(
                     failure_class="stale_active_ownership",
                     work_item_kind=WorkItemKind.TASK,
                     work_item_id="task-001",
-                    troubleshoot_attempt_count=2,
+                    counters={"troubleshoot_attempt_count": 2},
                     last_updated_at=NOW,
                 ),
             )
@@ -2579,8 +2597,8 @@ def test_runtime_tick_stale_execution_anomaly_escalates_to_consultant(
 
     outcome = engine.tick()
 
-    assert outcome.stage is ExecutionStageName.CONSULTANT
-    assert outcome.router_decision.action is RouterAction.BLOCKED
+    assert outcome.stage is ExecutionStageName.TROUBLESHOOTER
+    assert outcome.router_decision.action is RouterAction.RUN_STAGE
 
 
 def test_runtime_tick_enforces_pause_and_stop_commands(tmp_path: Path) -> None:
@@ -2604,19 +2622,15 @@ def test_runtime_tick_enforces_pause_and_stop_commands(tmp_path: Path) -> None:
     write_mailbox_command(paths, _mailbox_command("cmd-001", "pause"))
     paused = engine.tick()
     assert paused.router_decision.reason == "paused"
-    assert paused.stage_result.result_class is ResultClass.SUCCESS
-    assert terminal_outcome_value(paused.stage_result.terminal_result) == (
-        ExecutionTerminalResult.UPDATE_COMPLETE.value
-    )
+    assert paused.stage is None
+    assert paused.stage_result is None
     assert calls["count"] == 0
 
     write_mailbox_command(paths, _mailbox_command("cmd-002", "stop"))
     stopped = engine.tick()
     assert stopped.router_decision.reason == "stop_requested"
-    assert stopped.stage_result.result_class is ResultClass.SUCCESS
-    assert terminal_outcome_value(stopped.stage_result.terminal_result) == (
-        ExecutionTerminalResult.UPDATE_COMPLETE.value
-    )
+    assert stopped.stage is None
+    assert stopped.stage_result is None
     assert calls["count"] == 0
     snapshot = load_snapshot(paths)
     assert snapshot.process_running is False
@@ -3050,10 +3064,8 @@ def test_runtime_tick_with_no_work_reports_non_blocked_idle_result(tmp_path: Pat
     outcome = engine.tick()
 
     assert outcome.router_decision.reason == "no_work"
-    assert outcome.stage_result.result_class is ResultClass.SUCCESS
-    assert terminal_outcome_value(outcome.stage_result.terminal_result) == (
-        ExecutionTerminalResult.UPDATE_COMPLETE.value
-    )
+    assert outcome.stage is None
+    assert outcome.stage_result is None
 
 
 def test_runtime_tick_with_no_work_suppresses_completion_when_lineage_work_remains(
@@ -4130,21 +4142,17 @@ class TestForegroundClaimOrder:
     proving that both bounded tick and daemon supervisor interpret the same
     compiled policy for foreground order and closure inversion."""
 
-    def test_foreground_is_planning_before_execution(self) -> None:
+    def test_foreground_requires_compiled_scheduler_policy(self) -> None:
         from millrace_ai.runtime.scheduler_policy import foreground_claim_order
 
-        order = foreground_claim_order(None, has_open_closure_target=False)
-        planning_idx = order.index(Plane.PLANNING)
-        execution_idx = order.index(Plane.EXECUTION)
-        assert planning_idx < execution_idx
+        with pytest.raises(ValueError, match="compiled scheduler policy"):
+            foreground_claim_order(None, has_open_closure_target=False)
 
-    def test_closure_inverts_to_execution_before_planning(self) -> None:
+    def test_closure_order_requires_compiled_scheduler_policy(self) -> None:
         from millrace_ai.runtime.scheduler_policy import foreground_claim_order
 
-        order = foreground_claim_order(None, has_open_closure_target=True)
-        execution_idx = order.index(Plane.EXECUTION)
-        planning_idx = order.index(Plane.PLANNING)
-        assert execution_idx < planning_idx
+        with pytest.raises(ValueError, match="compiled scheduler policy"):
+            foreground_claim_order(None, has_open_closure_target=True)
 
     def test_learning_not_in_two_plane_default(self) -> None:
         # The default with no policy includes learning if the mode has it.
@@ -4305,10 +4313,11 @@ class TestLearningClaimAllowed:
     """Unit tests for learning_claim_allowed used by both bounded tick
     and daemon supervisor."""
 
-    def test_learning_allowed_by_default(self) -> None:
+    def test_learning_allowed_requires_compiled_scheduler_policy(self) -> None:
         from millrace_ai.runtime.scheduler_policy import learning_claim_allowed
 
-        assert learning_claim_allowed(None) is True
+        with pytest.raises(ValueError, match="compiled scheduler policy"):
+            learning_claim_allowed(None)
 
     def test_learning_deferred_disallows(self) -> None:
         from millrace_ai.architecture import (
@@ -4506,10 +4515,11 @@ def test_runtime_asset_driven_scheduler_policy_changes_claim_order(tmp_path: Pat
 class TestFallbackEntrySelection:
     """Unit tests for fallback_entry_selection helper from scheduler_policy."""
 
-    def test_default_is_recon_on_idle_when_no_policy(self) -> None:
+    def test_fallback_entry_requires_compiled_scheduler_policy(self) -> None:
         from millrace_ai.runtime.scheduler_policy import fallback_entry_selection
 
-        assert fallback_entry_selection(None) == "recon_on_idle"
+        with pytest.raises(ValueError, match="compiled scheduler policy"):
+            fallback_entry_selection(None)
 
     def test_returns_skip_when_policy_set(self) -> None:
         from millrace_ai.architecture import (
@@ -4603,10 +4613,11 @@ class TestFallbackEntrySelection:
 class TestLearningTargetStageRouting:
     """Unit tests for learning_target_stage_routing helper from scheduler_policy."""
 
-    def test_default_is_none_when_no_policy(self) -> None:
+    def test_learning_target_requires_compiled_scheduler_policy(self) -> None:
         from millrace_ai.runtime.scheduler_policy import learning_target_stage_routing
 
-        assert learning_target_stage_routing(None) is None
+        with pytest.raises(ValueError, match="compiled scheduler policy"):
+            learning_target_stage_routing(None)
 
     def test_returns_stage_kind_id_when_set(self) -> None:
         from millrace_ai.architecture import (
@@ -4661,10 +4672,11 @@ class TestLearningTargetStageRouting:
 class TestRecoveryFallbackSelection:
     """Unit tests for recovery_fallback_selection helper from scheduler_policy."""
 
-    def test_default_is_none_when_no_policy(self) -> None:
+    def test_recovery_fallback_requires_compiled_scheduler_policy(self) -> None:
         from millrace_ai.runtime.scheduler_policy import recovery_fallback_selection
 
-        assert recovery_fallback_selection(None) is None
+        with pytest.raises(ValueError, match="compiled scheduler policy"):
+            recovery_fallback_selection(None)
 
     def test_returns_node_id_when_set(self) -> None:
         from millrace_ai.architecture import (
@@ -4714,17 +4726,17 @@ class TestRecoveryFallbackSelection:
 class TestBackpressureOutcome:
     """Unit tests for backpressure_outcome helper from scheduler_policy."""
 
-    def test_allow_when_no_open_closure_target(self) -> None:
+    def test_backpressure_requires_compiled_scheduler_policy_without_open_target(self) -> None:
         from millrace_ai.runtime.scheduler_policy import backpressure_outcome
 
-        outcome = backpressure_outcome(None, has_open_closure_target=False)
-        assert outcome == "allow"
+        with pytest.raises(ValueError, match="compiled scheduler policy"):
+            backpressure_outcome(None, has_open_closure_target=False)
 
-    def test_block_when_no_policy_and_open_closure_target(self) -> None:
+    def test_backpressure_requires_compiled_scheduler_policy_with_open_target(self) -> None:
         from millrace_ai.runtime.scheduler_policy import backpressure_outcome
 
-        outcome = backpressure_outcome(None, has_open_closure_target=True)
-        assert outcome == "block"
+        with pytest.raises(ValueError, match="compiled scheduler policy"):
+            backpressure_outcome(None, has_open_closure_target=True)
 
     def test_allow_when_policy_is_allow(self) -> None:
         from millrace_ai.architecture import (

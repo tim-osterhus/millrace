@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import ExecutionStageName, Plane, PlanningStageName, RecoveryCounters, RuntimeSnapshot, StageName
+from millrace_ai.contracts import Plane, RecoveryCounters, RuntimeSnapshot, StageName
 from millrace_ai.state_store import ReconciliationSignal, collect_reconciliation_signals, load_recovery_counters, save_snapshot
 from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
 
@@ -136,7 +136,14 @@ def apply_reconciliation_signals(
         now=now,
         current_failure_class=signal.failure_class,
     )
-    return set_recovery_counters(engine, updated, counters, signal.failure_class, stage)
+    return set_recovery_counters(
+        engine,
+        updated,
+        counters,
+        signal.failure_class,
+        stage,
+        plane=plane,
+    )
 
 
 def set_recovery_counters(
@@ -145,10 +152,13 @@ def set_recovery_counters(
     counters: RecoveryCounters,
     failure_class: str,
     stage: StageName,
+    *,
+    plane: Plane | None = None,
 ) -> RuntimeSnapshot:
     if snapshot.active_work_item_family_id is None or snapshot.active_work_item_id is None:
         return snapshot
-    if isinstance(stage, ExecutionStageName) and stage is ExecutionStageName.TROUBLESHOOTER:
+    counter_id = _runtime_failure_counter_id(engine, plane=plane or snapshot.active_plane, stage=stage)
+    if counter_id is not None:
         return engine._increment_counter_field(
             snapshot,
             counters,
@@ -156,17 +166,7 @@ def set_recovery_counters(
             work_item_family_id=snapshot.active_work_item_family_id,
             work_item_kind=snapshot.active_work_item_kind,
             work_item_id=snapshot.active_work_item_id,
-            counter_id="troubleshoot_attempt_count",
-        )
-    if isinstance(stage, PlanningStageName) and stage is PlanningStageName.MECHANIC:
-        return engine._increment_counter_field(
-            snapshot,
-            counters,
-            failure_class=failure_class,
-            work_item_family_id=snapshot.active_work_item_family_id,
-            work_item_kind=snapshot.active_work_item_kind,
-            work_item_id=snapshot.active_work_item_id,
-            counter_id="mechanic_attempt_count",
+            counter_id=counter_id,
         )
     return snapshot
 
@@ -180,8 +180,29 @@ def _compiled_identity_for_stage(
     try:
         stage_plan = engine._stage_plan_for(plane, stage)
     except KeyError:
-        return stage.value, stage.value
+        raise ValueError(f"compiled graph is missing stage identity for {plane.value}:{stage.value}") from None
     return stage_plan.node_id, stage_plan.stage_kind_id
+
+
+def _runtime_failure_counter_id(
+    engine: RuntimeEngine,
+    *,
+    plane: Plane | None,
+    stage: StageName,
+) -> str | None:
+    if engine.compiled_plan is None or plane is None:
+        raise ValueError("compiled plan is required to resolve reconciliation recovery counter")
+    graph = engine.compiled_plan.graphs_by_plane.get(plane)
+    if graph is None or graph.runtime_failure_recovery is None:
+        return None
+    repair_node_id = graph.runtime_failure_recovery.default_repair_node_id
+    try:
+        stage_plan = engine._stage_plan_for(plane, stage)
+    except KeyError:
+        return None
+    if stage_plan.node_id != repair_node_id:
+        return None
+    return graph.runtime_failure_recovery.counter_name.value
 
 
 __all__ = [

@@ -7,10 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.architecture import WorkItemFamilyDefinition
-from millrace_ai.architecture.workflow_primitives import (
-    builtin_queue_lifecycle_adapter_id_for_family,
-)
-from millrace_ai.contracts import Plane, WorkItemKind
+from millrace_ai.assets import load_builtin_workflow_primitives
+from millrace_ai.contracts import Plane
 from millrace_ai.errors import QueueStateError
 
 from ..paths import WorkspacePaths
@@ -47,7 +45,10 @@ class BuiltinWorkFamilyQueueAdapter:
         return interpreter.claim_next(
             self.family_id,
             root_spec_id=root_spec_id,
-            document_validator=_make_pydantic_document_validator(self.family_id),
+            document_validator=_make_pydantic_document_validator(
+                self.family_id,
+                families=work_item_families,
+            ),
         )
 
     def active_path(
@@ -108,50 +109,23 @@ class BuiltinWorkFamilyQueueAdapter:
         return list_deferred_root_spec_ids(paths, open_root_spec_id=open_root_spec_id)
 
 
-def _builtin_adapter_id_for_family(family_id: str) -> str:
-    adapter_id = builtin_queue_lifecycle_adapter_id_for_family(family_id)
+def _adapter_for_family(family: WorkItemFamilyDefinition) -> BuiltinWorkFamilyQueueAdapter:
+    adapter_id = family.queue_lifecycle_adapter_id
     if adapter_id is None:
-        raise RuntimeError(f"missing built-in queue lifecycle adapter id for family {family_id}")
-    return adapter_id
+        raise RuntimeError(f"missing queue lifecycle adapter id for family {family.family_id}")
+    return BuiltinWorkFamilyQueueAdapter(
+        adapter_id=adapter_id,
+        family_id=family.family_id,
+        plane=family.plane,
+        active_relative_dir=family.queue_dirs.active,
+        file_extension=family.file_extension,
+    )
 
 
 def builtin_queue_family_adapters() -> tuple[BuiltinWorkFamilyQueueAdapter, ...]:
-    return (
-        BuiltinWorkFamilyQueueAdapter(
-            adapter_id=_builtin_adapter_id_for_family(WorkItemKind.TASK.value),
-            family_id=WorkItemKind.TASK.value,
-            plane=Plane.EXECUTION,
-            active_relative_dir="tasks/active",
-            file_extension=".md",
-        ),
-        BuiltinWorkFamilyQueueAdapter(
-            adapter_id=_builtin_adapter_id_for_family(WorkItemKind.SPEC.value),
-            family_id=WorkItemKind.SPEC.value,
-            plane=Plane.PLANNING,
-            active_relative_dir="specs/active",
-            file_extension=".md",
-        ),
-        BuiltinWorkFamilyQueueAdapter(
-            adapter_id=_builtin_adapter_id_for_family(WorkItemKind.PROBE.value),
-            family_id=WorkItemKind.PROBE.value,
-            plane=Plane.PLANNING,
-            active_relative_dir="probes/active",
-            file_extension=".md",
-        ),
-        BuiltinWorkFamilyQueueAdapter(
-            adapter_id=_builtin_adapter_id_for_family(WorkItemKind.INCIDENT.value),
-            family_id=WorkItemKind.INCIDENT.value,
-            plane=Plane.PLANNING,
-            active_relative_dir="incidents/active",
-            file_extension=".md",
-        ),
-        BuiltinWorkFamilyQueueAdapter(
-            adapter_id=_builtin_adapter_id_for_family(WorkItemKind.LEARNING_REQUEST.value),
-            family_id=WorkItemKind.LEARNING_REQUEST.value,
-            plane=Plane.LEARNING,
-            active_relative_dir="learning/requests/active",
-            file_extension=".md",
-        ),
+    return tuple(
+        _adapter_for_family(family)
+        for family in load_builtin_workflow_primitives().work_item_families
     )
 
 

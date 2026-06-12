@@ -545,6 +545,10 @@ EXTENSION_KERNEL_ALLOWLIST: dict[str, frozenset[str]] = {
         "millrace_ai.runtime.context.blueprint",
         "millrace_ai.runtime.context.providers",
     }),
+    # Blueprint operation runner bridge parses existing generated task markdown.
+    "extensions/builtin/blueprint/operation_runners/candidate_evaluation.py": frozenset({
+        "millrace_ai.workspace.work_documents",
+    }),
 }
 
 

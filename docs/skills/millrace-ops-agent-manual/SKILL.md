@@ -111,6 +111,14 @@ millrace status --workspace <workspace>
 millrace queue ls --workspace <workspace>
 ```
 
+Current `0.20.x` workspaces use a breaking pure graph-authority contract:
+daemon decisions require compiled graph, extension, scheduler, recovery,
+lifecycle, runtime-effect, queue-family, request-context, and artifact-contract
+metadata. Missing compiled policy is an error. If validation reports stale or
+missing authority metadata, refresh managed assets with
+`millrace upgrade --apply --workspace <workspace>` or reinitialize disposable
+workspaces before running the daemon.
+
 Know which shipped harness posture you are validating:
 
 - `default_codex` is the canonical bootstrap baseline

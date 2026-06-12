@@ -1,29 +1,24 @@
-"""Blueprint draft family adapter."""
+"""Deprecated compatibility facade for the Blueprint work-family adapter."""
 
 from __future__ import annotations
 
-from millrace_ai.architecture.workflow_primitives import (
-    builtin_queue_lifecycle_adapter_id_for_family,
-)
-from millrace_ai.contracts import Plane, WorkItemKind
+from typing import Any
 
-from .builtin import BuiltinWorkFamilyQueueAdapter
+_EXPORTED_NAMES = {"blueprint_draft_queue_family_adapter"}
 
 
-def blueprint_draft_queue_family_adapter() -> BuiltinWorkFamilyQueueAdapter:
-    adapter_id = builtin_queue_lifecycle_adapter_id_for_family(
-        WorkItemKind.BLUEPRINT_DRAFT.value
-    )
-    if adapter_id is None:
-        raise RuntimeError("missing built-in queue lifecycle adapter id for blueprint_draft")
-    return BuiltinWorkFamilyQueueAdapter(
-        adapter_id=adapter_id,
-        family_id=WorkItemKind.BLUEPRINT_DRAFT.value,
-        plane=Plane.PLANNING,
-        active_relative_dir="blueprints/drafts/active",
-        file_extension=".json",
-        planning_claim_policy_id="planning.blueprint_draft.adapter",
-    )
+def __getattr__(name: str) -> Any:
+    if name not in _EXPORTED_NAMES:
+        raise AttributeError(name)
+    from millrace_ai.extensions.builtin.blueprint import family as impl
+
+    value = getattr(impl, name)
+    globals()[name] = value
+    return value
 
 
-__all__ = ["blueprint_draft_queue_family_adapter"]
+def __dir__() -> list[str]:
+    return sorted((*globals(), *_EXPORTED_NAMES))
+
+
+__all__ = sorted(_EXPORTED_NAMES)

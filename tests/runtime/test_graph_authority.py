@@ -451,7 +451,7 @@ def test_completion_activation_fails_when_completion_entry_is_missing(tmp_path: 
             ),
             RecoveryCounters(),
             "run_stage",
-            ExecutionStageName.TROUBLESHOOTER,
+            ExecutionStageName.FIXER,
         ),
         (
             _snapshot(

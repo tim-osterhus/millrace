@@ -538,12 +538,27 @@ def test_compile_rejects_queue_claim_policy_with_unknown_family(tmp_path: Path) 
 
 def test_compile_rejects_entry_family_missing_from_plane_claim_policy(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    policy_path = assets_root / "registry" / "queue_claim_policies" / "default_queue_claim_policies.json"
+    policy_path = assets_root / "registry" / "scheduler_policies" / "default_two_plane.json"
     payload = _load_json(policy_path)
-    planning_policy = payload["definitions"][1]
+    scheduler_policy = next(
+        definition
+        for definition in payload["definitions"]
+        if definition["policy_id"] == "default.two_plane.blueprint"
+    )
+    planning_policy = scheduler_policy["claim_policies_by_plane"]["planning"]
     planning_policy["family_order"] = [
         family_id
         for family_id in planning_policy["family_order"]
+        if family_id != "blueprint_draft"
+    ]
+    planning_lane = next(
+        lane
+        for lane in scheduler_policy["lanes"]
+        if lane["claim_policy_id"] == "planning.blueprint"
+    )
+    planning_lane["allowed_family_ids"] = [
+        family_id
+        for family_id in planning_lane["allowed_family_ids"]
         if family_id != "blueprint_draft"
     ]
     _write_json(policy_path, payload)
@@ -561,7 +576,7 @@ def test_compile_rejects_entry_family_missing_from_plane_claim_policy(tmp_path: 
     assert outcome.active_plan is None
     assert (
         "graph planning.blueprint entry blueprint_draft uses family blueprint_draft "
-        "missing from queue claim policy planning.default"
+        "missing from queue claim policy planning.blueprint"
     ) in _diagnostic_text(outcome)
 
 

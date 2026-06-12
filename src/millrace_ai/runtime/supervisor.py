@@ -154,7 +154,8 @@ class RuntimeDaemonSupervisor:
         foreground_dispatched = await self._dispatch_foreground_lane()
         dispatched += foreground_dispatched
 
-        if learning_claim_allowed(self.engine.compiled_plan.scheduler_policy if self.engine.compiled_plan else None):
+        assert self.engine.compiled_plan is not None
+        if learning_claim_allowed(self.engine.compiled_plan.scheduler_policy):
             learning_dispatched = await self._dispatch_claim_for_plane(Plane.LEARNING)
             dispatched += learning_dispatched
         return dispatched

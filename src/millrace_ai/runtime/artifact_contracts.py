@@ -15,12 +15,6 @@ from millrace_ai.architecture import (
 )
 from millrace_ai.assets import discover_artifact_contract_definitions
 from millrace_ai.contracts import (
-    BlueprintCritiqueDocument,
-    BlueprintDraftDocument,
-    BlueprintEvaluationDocument,
-    BlueprintManifestDocument,
-    BlueprintPacketDocument,
-    BlueprintRepairDecisionDocument,
     IncidentDocument,
     LearningRequestDocument,
     PlannerDispositionDocument,
@@ -30,6 +24,7 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     TaskDocument,
 )
+from millrace_ai.contracts.model_resolution import resolve_contract_model
 from millrace_ai.errors import QueueStateError
 from millrace_ai.workspace.work_documents import parse_work_document_as
 
@@ -252,6 +247,8 @@ def _parse_error(
 def _model_for_schema_id(contract: ArtifactContractDefinition) -> type[BaseModel]:
     model = _MODEL_BY_SCHEMA_ID.get(contract.schema_id)
     if model is None:
+        model = resolve_contract_model(contract.schema_id)
+    if model is None:
         raise RuntimeArtifactError(
             artifact_id=contract.artifact_id,
             selected_filename=contract.canonical_filename,
@@ -265,14 +262,7 @@ def _model_for_schema_id(contract: ArtifactContractDefinition) -> type[BaseModel
 def _format_value(value: object) -> str:
     return str(getattr(value, "value", value))
 
-
 _MODEL_BY_SCHEMA_ID: dict[str, type[BaseModel]] = {
-    "blueprint_critique_document_v1": BlueprintCritiqueDocument,
-    "blueprint_draft_document_v1": BlueprintDraftDocument,
-    "blueprint_evaluation_document_v1": BlueprintEvaluationDocument,
-    "blueprint_manifest_document_v1": BlueprintManifestDocument,
-    "blueprint_packet_document_v1": BlueprintPacketDocument,
-    "blueprint_repair_decision_document_v1": BlueprintRepairDecisionDocument,
     "incident_document_v1": IncidentDocument,
     "learning_request_document_v1": LearningRequestDocument,
     "planner_disposition_document_v1": PlannerDispositionDocument,

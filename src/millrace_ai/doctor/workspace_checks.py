@@ -28,7 +28,6 @@ from millrace_ai.state_store import (
 from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
 from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
 from millrace_ai.workspace.lineage_integrity import scan_closure_lineage_drift
-from millrace_ai.workspace.state_reconciliation import collect_blueprint_manifest_diagnostics
 from millrace_ai.workspace.task_lifecycle_integrity import find_duplicate_task_lifecycle_ids
 from millrace_ai.workspace.work_inventory import build_work_inventory
 
@@ -73,10 +72,6 @@ def check_snapshot_reconciliation(context: DoctorContext) -> None:
 
 def check_runtime_ownership_lock(context: DoctorContext) -> None:
     _validate_runtime_ownership_lock(context.paths, context.errors, context.warnings)
-
-
-def check_blueprint_manifest_diagnostics(context: DoctorContext) -> None:
-    _validate_blueprint_manifest_diagnostics(context.paths, context.errors)
 
 
 def check_task_lifecycle_uniqueness(context: DoctorContext) -> None:
@@ -406,6 +401,8 @@ def _validate_snapshot_reconciliation(
     compiled_plan: CompiledRunPlan | None,
     errors: list[DoctorIssue],
 ) -> None:
+    if compiled_plan is None:
+        return
     signals = collect_reconciliation_signals(
         snapshot=snapshot,
         counters=counters,
@@ -459,20 +456,6 @@ def _validate_runtime_ownership_lock(
             path=status.lock_path,
         )
     )
-
-
-def _validate_blueprint_manifest_diagnostics(
-    paths: WorkspacePaths,
-    errors: list[DoctorIssue],
-) -> None:
-    for diagnostic in collect_blueprint_manifest_diagnostics(paths):
-        errors.append(
-            DoctorIssue(
-                code=diagnostic.code,
-                message=diagnostic.message,
-                path=diagnostic.path,
-            )
-        )
 
 
 def _validate_stopped_daemon_with_open_graph_work(
@@ -544,7 +527,6 @@ def _workspace_relative_path(paths: WorkspacePaths, path: Path) -> str:
 
 __all__ = [
     "check_baseline_manifest",
-    "check_blueprint_manifest_diagnostics",
     "check_closure_lineage_integrity",
     "check_manifest_tracked_managed_files",
     "check_runtime_ownership_lock",

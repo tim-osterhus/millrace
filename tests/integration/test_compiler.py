@@ -317,7 +317,6 @@ def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) 
     assert persisted_plan.queue_claim_policies_by_plane[Plane.EXECUTION].family_order == ("task",)
     assert persisted_plan.queue_claim_policies_by_plane[Plane.PLANNING].family_order == (
         "incident",
-        "blueprint_draft",
         "probe",
         "spec",
     )

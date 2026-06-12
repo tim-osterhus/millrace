@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,23 +28,95 @@ from millrace_ai.runtime.effects.legacy import (
 )
 
 NOW = datetime(2026, 5, 26, tzinfo=timezone.utc)
+BLUEPRINT_IMPL_MODULE_PREFIX = "millrace_ai.extensions.builtin.blueprint"
+
+
+def _reset_runtime_effect_handler_state() -> None:
+    effect_execution._RUNTIME_EFFECT_HANDLER_REGISTRY = None
+    effect_execution._EXTENSION_HANDLER_IDS = set()
+    effect_execution._EXTENSION_OPERATION_IDS = set()
+    effect_execution._HANDLERS_BY_ID = {}
+    effect_execution._HANDLERS_BY_OPERATION_ID = {}
+
+
+def _unload_blueprint_impl_modules() -> None:
+    for name in list(sys.modules):
+        if name.startswith(BLUEPRINT_IMPL_MODULE_PREFIX):
+            del sys.modules[name]
+
+
+def _loaded_blueprint_impl_modules() -> list[str]:
+    return sorted(
+        name for name in sys.modules if name.startswith(BLUEPRINT_IMPL_MODULE_PREFIX)
+    )
 
 
 def test_legacy_runtime_effect_registry_exposes_existing_handler_ids() -> None:
     registry = default_legacy_runtime_effect_handler_registry()
 
-    assert set(registry.handlers_by_id) == {
-        "planner_disposition",
-        "manager_blueprint_manifest_to_blueprint_drafts",
-        "contractor_blueprint_candidate_persist",
-        "evaluator_blueprint_approved_to_task",
-        "evaluator_blueprint_rejected_to_draft_revision",
-        "mechanic_blueprint_repair_apply",
-    }
+    assert set(registry.handlers_by_id) == {"planner_disposition"}
     assert all(
         runner_id == LEGACY_PYTHON_EFFECT_RUNNER_ID
         for runner_id in registry.runner_ids_by_handler_id.values()
     )
+
+
+@pytest.mark.parametrize(
+    ("operation_id", "legacy_handler_id"),
+    [
+        ("arbitrary_blueprint_operation", None),
+        ("arbitrary_operation_blueprint", None),
+        ("arbitrary_operation", "manager_blueprint_manifest_to_blueprint_drafts"),
+    ],
+)
+def test_runtime_effect_handler_lookup_does_not_select_blueprint_by_spelling(
+    operation_id: str,
+    legacy_handler_id: str | None,
+) -> None:
+    _reset_runtime_effect_handler_state()
+    _unload_blueprint_impl_modules()
+
+    handler = effect_execution._handler_for_operation(
+        operation_id,
+        legacy_handler_id=legacy_handler_id,
+    )
+
+    assert handler is None
+    assert _loaded_blueprint_impl_modules() == []
+
+
+def test_runtime_effect_handler_lookup_does_not_reuse_cached_blueprint_handlers_without_compiled_metadata(
+    tmp_path: Path,
+) -> None:
+    _reset_runtime_effect_handler_state()
+    _unload_blueprint_impl_modules()
+
+    operation_id = "manager_blueprint_manifest_to_blueprint_drafts"
+    compiled_plan = SimpleNamespace(runtime_effect_handlers_by_id={operation_id: object()})
+
+    valid_handler = effect_execution._handler_for_operation(
+        operation_id,
+        legacy_handler_id=operation_id,
+        compiled_plan=compiled_plan,
+    )
+
+    assert valid_handler is not None
+    loaded_after_compiled_lookup = set(_loaded_blueprint_impl_modules())
+    assert loaded_after_compiled_lookup
+
+    no_plan_same_op_handler = effect_execution._handler_for_operation(
+        operation_id,
+        legacy_handler_id=None,
+    )
+    assert no_plan_same_op_handler is None
+    assert set(_loaded_blueprint_impl_modules()) == loaded_after_compiled_lookup
+
+    no_plan_legacy_alias_handler = effect_execution._handler_for_operation(
+        "arbitrary_operation",
+        legacy_handler_id=operation_id,
+    )
+    assert no_plan_legacy_alias_handler is None
+    assert set(_loaded_blueprint_impl_modules()) == loaded_after_compiled_lookup
 
 
 def test_runtime_effect_dispatch_uses_registry_lookup(

@@ -9,15 +9,12 @@ LEGACY_PYTHON_EFFECT_RUNNER_ID = "legacy_python_handler"
 
 
 def legacy_runtime_effect_handler_registrations() -> tuple[RuntimeEffectHandlerRegistration, ...]:
-    from .operation_runners import artifact_runtime_effect_handler_registrations
-
     return (
         RuntimeEffectHandlerRegistration(
             handler_id=planner_effects.PLANNER_DISPOSITION_HANDLER_ID,
             runner_id=LEGACY_PYTHON_EFFECT_RUNNER_ID,
             handler=planner_effects.planner_disposition,
         ),
-        *artifact_runtime_effect_handler_registrations(LEGACY_PYTHON_EFFECT_RUNNER_ID),
     )
 
 

@@ -2,21 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from .base import ContractModel as ContractModel
-from .blueprint import (
-    BlueprintCritiqueDocument,
-    BlueprintDraftDocument,
-    BlueprintDraftStatus,
-    BlueprintEvaluationDecision,
-    BlueprintEvaluationDocument,
-    BlueprintManifestDocument,
-    BlueprintPacketDocument,
-    BlueprintPromotionRecord,
-    BlueprintRepairAction,
-    BlueprintRepairDecisionDocument,
-    BlueprintRepairMutationPhase,
-    BlueprintSourceWorkItemKind,
-)
 from .capabilities import (
     BASE_EXECUTION_CAPABILITY_IDS,
     ApprovalPolicyRef,
@@ -142,6 +130,36 @@ from .work_refs import (
     normalize_work_item_family_id,
     plane_for_work_item_family_id,
 )
+
+_BLUEPRINT_EXPORTS = {
+    "BlueprintCritiqueDocument",
+    "BlueprintDraftDocument",
+    "BlueprintDraftStatus",
+    "BlueprintEvaluationDecision",
+    "BlueprintEvaluationDocument",
+    "BlueprintManifestDocument",
+    "BlueprintPacketDocument",
+    "BlueprintPromotionRecord",
+    "BlueprintRepairAction",
+    "BlueprintRepairDecisionDocument",
+    "BlueprintRepairMutationPhase",
+    "BlueprintSourceWorkItemKind",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _BLUEPRINT_EXPORTS:
+        raise AttributeError(name)
+    from millrace_ai.extensions.builtin.blueprint import contracts as blueprint_contracts
+
+    value = getattr(blueprint_contracts, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted((*globals(), *_BLUEPRINT_EXPORTS))
+
 
 __all__ = [
     "ClosureBlockingWorkRef",

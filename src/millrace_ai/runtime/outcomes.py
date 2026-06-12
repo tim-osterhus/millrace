@@ -13,8 +13,8 @@ from millrace_ai.router import RouterDecision
 class RuntimeTickOutcome:
     """Outcome from one runtime tick."""
 
-    stage: StageName
-    stage_result: StageResultEnvelope
+    stage: StageName | None
+    stage_result: StageResultEnvelope | None
     stage_result_path: Path
     router_decision: RouterDecision
     snapshot: RuntimeSnapshot

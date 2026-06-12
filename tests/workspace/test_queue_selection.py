@@ -84,15 +84,19 @@ def test_planning_claim_order_comes_from_policy(tmp_path: Path) -> None:
     assert claim.claim_order == 0
 
 
-def test_default_planning_claim_policy_preserves_blueprint_position() -> None:
+def test_planning_claim_policies_separate_generic_and_blueprint_position() -> None:
     from millrace_ai.assets import load_builtin_workflow_primitives
 
     bundle = load_builtin_workflow_primitives()
     planning_policy = next(
         policy for policy in bundle.queue_claim_policies if policy.policy_id == "planning.default"
     )
+    blueprint_policy = next(
+        policy for policy in bundle.queue_claim_policies if policy.policy_id == "planning.blueprint"
+    )
 
-    assert planning_policy.family_order == ("incident", "blueprint_draft", "probe", "spec")
+    assert planning_policy.family_order == ("incident", "probe", "spec")
+    assert blueprint_policy.family_order == ("incident", "blueprint_draft", "probe", "spec")
 
 
 def test_planning_claim_policy_claims_custom_compiled_family(tmp_path: Path) -> None:

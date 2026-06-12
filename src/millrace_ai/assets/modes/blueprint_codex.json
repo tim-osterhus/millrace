@@ -26,6 +26,7 @@
     "auditor": "codex_cli",
     "arbiter": "codex_cli"
   },
+  "scheduler_policy_id": "default.two_plane.blueprint",
   "required_extensions": [
     {"extension_package_id": "millrace.generic"},
     {"extension_package_id": "millrace.recon"},

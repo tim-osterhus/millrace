@@ -5,8 +5,10 @@ from __future__ import annotations
 from millrace_ai.contracts import ResultClass, StageResultEnvelope, TerminalOutcome
 from millrace_ai.contracts.stage_metadata import blocked_terminal_for_plane
 from millrace_ai.runners.normalization.artifacts import (
+    discovered_stage_artifact_paths,
     merge_artifact_paths,
     resolved_report_artifact,
+    stage_artifact_metadata,
 )
 from millrace_ai.runners.normalization.errors import (
     FailureClassification,
@@ -91,6 +93,8 @@ def normalize_stage_result(
     terminal_result = extraction.terminal_result
     assert isinstance(terminal_result, TerminalOutcome)
     report_artifact = resolved_report_artifact(request)
+    discovered_artifacts = discovered_stage_artifact_paths(request, terminal_result)
+    artifact_metadata = stage_artifact_metadata(request, terminal_result)
 
     return StageResultEnvelope(
         run_id=request.run_id,
@@ -111,6 +115,7 @@ def normalize_stage_result(
         artifact_paths=merge_artifact_paths(
             extraction.artifact_paths,
             report_artifact,
+            *discovered_artifacts,
             raw_result.event_log_path,
         ),
         report_artifact=report_artifact,
@@ -127,6 +132,7 @@ def normalize_stage_result(
         notes=extraction.notes + transport_reconciliation_notes(raw_result),
         metadata={
             **request_metadata(request),
+            **artifact_metadata,
             "normalization_source": (
                 "structured_result_file"
                 if raw_result.terminal_result_path

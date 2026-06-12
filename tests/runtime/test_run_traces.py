@@ -363,6 +363,12 @@ def test_router_decision_trace_does_not_infer_terminal_state_from_raw_outcome(
 
 
 def test_spawned_work_ref_from_path_preserves_blueprint_draft_family(tmp_path: Path) -> None:
+    from millrace_ai.runtime import RuntimeEngine
+
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    engine = RuntimeEngine(paths, stage_runner=lambda request: None, mode_id="blueprint_codex")
+    engine.startup()
+    assert engine.compiled_plan is not None
     stage_result = StageResultEnvelope(
         run_id="run-blueprint",
         plane="execution",
@@ -378,12 +384,13 @@ def test_spawned_work_ref_from_path_preserves_blueprint_draft_family(tmp_path: P
         started_at=NOW,
         completed_at=NOW,
     )
-    path = tmp_path / "millrace-agents" / "blueprints" / "drafts" / "queue" / "draft-001.json"
+    path = paths.runtime_root / "blueprints" / "drafts" / "queue" / "draft-001.json"
 
     ref = spawned_work_ref_from_path(
         path,
         source_stage_result=stage_result,
         reason="manager_blueprint",
+        compiled_plan=engine.compiled_plan,
     )
 
     assert ref.family_id == "blueprint_draft"

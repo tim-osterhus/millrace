@@ -9,6 +9,12 @@ Graph-loop assets live under `src/millrace_ai/assets/graphs/`. Mode assets live
 under `src/millrace_ai/assets/modes/` and compose those plane graphs into full
 runtime configurations.
 
+Graph topology is runtime authority only after it is selected by mode metadata
+and frozen into the compiled plan. The pure graph-authority contract treats
+missing compiled graph, scheduler, recovery, lifecycle, runtime-effect,
+queue-family, extension, or artifact-contract metadata as an error rather than
+falling back to shipped defaults.
+
 ## Plane Graphs
 
 - `execution-standard.md`: default Execution plane for task implementation,

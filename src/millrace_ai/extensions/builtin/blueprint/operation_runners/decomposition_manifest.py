@@ -11,25 +11,39 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue
 
 from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
-from millrace_ai.contracts.blueprint import BlueprintDraftDocument, BlueprintManifestDocument
 from millrace_ai.errors import QueueStateError
-from millrace_ai.workspace.blueprint_state import (
+from millrace_ai.extensions.builtin.blueprint.contracts import (
+    BlueprintDraftDocument,
+    BlueprintManifestDocument,
+)
+from millrace_ai.extensions.builtin.blueprint.state import (
     enqueue_blueprint_draft,
     read_blueprint_draft,
     read_blueprint_manifest,
     write_blueprint_manifest,
 )
+from millrace_ai.runtime.effects.models import (
+    RuntimeEffectDecision,
+    RuntimeEffectMutationPhase,
+    RuntimeEffectResult,
+)
+from millrace_ai.runtime.effects.operation_runners.artifacts import (
+    read_json_model_list_payload,
+    read_json_model_payload,
+)
+from millrace_ai.runtime.effects.operation_runners.results import (
+    block_source_failure_result,
+    complete_source_success_result,
+    runtime_mutation_journal,
+)
+from millrace_ai.runtime.effects.operation_runners.types import ModelT
 from millrace_ai.workspace.paths import WorkspacePaths
 
-from ..models import RuntimeEffectDecision, RuntimeEffectMutationPhase, RuntimeEffectResult
 from .artifact_workflow_common import (
     _effect_path,
     _normalized_blueprint_model_payload,
     _stage_result_work_item_kind,
 )
-from .artifacts import read_json_model_list_payload, read_json_model_payload
-from .results import block_source_failure_result, complete_source_success_result, runtime_mutation_journal
-from .types import ModelT
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan

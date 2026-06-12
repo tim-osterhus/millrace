@@ -556,7 +556,8 @@ def _claim_next_work_item_or_recover(engine: RuntimeEngine) -> RouterDecision | 
             closure_target_root_spec_id=None,
         )
 
-    policy = engine.compiled_plan.scheduler_policy if engine.compiled_plan is not None else None
+    assert engine.compiled_plan is not None
+    policy = engine.compiled_plan.scheduler_policy
     for plane in foreground_claim_order(policy, has_open_closure_target=open_target is not None):
         try:
             claim = claim_next_work_item_for_plane(engine, plane)

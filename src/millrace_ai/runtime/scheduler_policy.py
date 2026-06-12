@@ -26,9 +26,6 @@ def foreground_claim_order(
 ) -> tuple[Plane, ...]:
     """Return ordered claim planes for foreground dispatch from compiled policy.
 
-    When *scheduler_policy* is ``None`` the shipped default order is preserved:
-    ``(PLANNING, EXECUTION, LEARNING)`` (or the two-plane subset).
-
     When compiled rules are present they are evaluated against the current
     context (``has_open_closure_target``) and the highest-priority matching
     rule determines the foreground order.  When no rules match, or no rules
@@ -36,7 +33,8 @@ def foreground_claim_order(
     fields provide the fallback behaviour.
     """
 
-    if scheduler_policy is not None and scheduler_policy.rules:
+    scheduler_policy = _require_scheduler_policy(scheduler_policy)
+    if scheduler_policy.rules:
         return _foreground_order_from_rules(
             scheduler_policy, has_open_closure_target=has_open_closure_target
         )
@@ -58,8 +56,7 @@ def learning_claim_allowed(
     channels.  ``"interleaved"`` is reserved for future dispatch modes.
     """
 
-    if scheduler_policy is None:
-        return True  # preserve existing behaviour
+    scheduler_policy = _require_scheduler_policy(scheduler_policy)
     return scheduler_policy.learning_dispatch != "deferred"
 
 
@@ -192,21 +189,16 @@ def _resolve_rule_foreground_order(
 
 
 def _foreground_order_from_scalar_fields(
-    scheduler_policy: WorkflowPlaneSchedulerPolicyDefinition | None,
+    scheduler_policy: WorkflowPlaneSchedulerPolicyDefinition,
     *,
     has_open_closure_target: bool,
 ) -> tuple[Plane, ...]:
     """Fallback: determine foreground order from scalar fields (backward compat)."""
 
-    if scheduler_policy is not None and scheduler_policy.foreground_order:
+    if scheduler_policy.foreground_order:
         order = scheduler_policy.foreground_order
     else:
-        # Preserve shipped default behaviour when no policy is available.
-        plane_set = (
-            set(scheduler_policy.plane_order)
-            if scheduler_policy is not None
-            else {Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING}
-        )
+        plane_set = set(scheduler_policy.plane_order)
         order = tuple(
             p
             for p in (Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING)
@@ -214,8 +206,7 @@ def _foreground_order_from_scalar_fields(
         )
 
     if has_open_closure_target:
-        priority = scheduler_policy.closure_priority if scheduler_policy is not None else 100
-        if priority > 0:
+        if scheduler_policy.closure_priority > 0:
             order = _swap_execution_before_planning(order)
 
     return order
@@ -269,14 +260,13 @@ def fallback_entry_selection(
 ) -> Literal["recon_on_idle", "skip", "pause"]:
     """Return the fallback entry behaviour when no claim is available for a plane.
 
-    ``"recon_on_idle"`` (the shipped default) preserves existing behaviour where
-    the runtime may trigger workspace reconciliation when the claim loop is idle.
+    ``"recon_on_idle"`` allows the runtime to trigger workspace reconciliation
+    when the claim loop is idle.
     ``"skip"`` means the plane is skipped without triggering reconciliation.
     ``"pause"`` means the entire runtime is paused when no claim is available.
     """
 
-    if scheduler_policy is None:
-        return "recon_on_idle"
+    scheduler_policy = _require_scheduler_policy(scheduler_policy)
     return scheduler_policy.fallback_entry_policy
 
 
@@ -290,8 +280,7 @@ def learning_target_stage_routing(
     compiled graph's entry-key-based activation is used directly.
     """
 
-    if scheduler_policy is None:
-        return None
+    scheduler_policy = _require_scheduler_policy(scheduler_policy)
     kind_id = scheduler_policy.learning_target_stage_kind_id
     if kind_id is None:
         return None
@@ -309,8 +298,7 @@ def recovery_fallback_selection(
     be resolved against the plane graph's nodes by the caller.
     """
 
-    if scheduler_policy is None:
-        return None
+    scheduler_policy = _require_scheduler_policy(scheduler_policy)
     return scheduler_policy.recovery_fallback_node_id
 
 
@@ -321,22 +309,29 @@ def backpressure_outcome(
 ) -> Literal["block", "defer", "allow"]:
     """Return the claim deferral / backpressure outcome for the current context.
 
-    ``"block"`` (the shipped default) preserves existing behaviour where
-    claims that would open a competing closure target are blocked.
+    ``"block"`` means claims that would open a competing closure target are
+    blocked.
     ``"defer"`` means the claim is requeued with a backpressure event emitted.
     ``"allow"`` means the claim proceeds without backpressure gate.
     """
 
+    scheduler_policy = _require_scheduler_policy(scheduler_policy)
     if not has_open_closure_target:
         return "allow"
-    if scheduler_policy is None:
-        return "block"
     policy = scheduler_policy.backpressure_policy
     if policy == "allow":
         return "allow"
     if policy == "defer":
         return "defer"
     return "block"
+
+
+def _require_scheduler_policy(
+    scheduler_policy: WorkflowPlaneSchedulerPolicyDefinition | None,
+) -> WorkflowPlaneSchedulerPolicyDefinition:
+    if scheduler_policy is None:
+        raise ValueError("compiled scheduler policy is required for runtime dispatch")
+    return scheduler_policy
 
 
 __all__ = [

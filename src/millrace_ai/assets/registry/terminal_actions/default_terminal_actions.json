@@ -131,6 +131,14 @@
       "terminal_class": "no_op",
       "router_consequence": "idle",
       "non_mutating": true
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "terminal_action",
+      "terminal_action_id": "example.enhanced.blueprint.approve",
+      "terminal_class": "success",
+      "lifecycle_mutation_plan_id": "complete_work_item",
+      "router_consequence": "idle"
     }
   ]
 }

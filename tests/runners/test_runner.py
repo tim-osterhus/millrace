@@ -904,6 +904,40 @@ def test_normalize_surfaces_preferred_troubleshoot_report_artifact_when_present(
     assert str(report_path) in envelope.artifact_paths
 
 
+def test_normalize_surfaces_consultant_decision_target_stage_metadata(
+    tmp_path: Path,
+) -> None:
+    decision_path = tmp_path / "consultant_decision.json"
+    summary_path = tmp_path / "consultant_summary.md"
+    decision_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "consultant_decision",
+                "terminal_result": "CONSULT_COMPLETE",
+                "decision_type": "local_continuation",
+                "target_stage": "builder",
+                "recommended_next_action": "Resume through Builder.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary_path.write_text("# Consultant Summary\n", encoding="utf-8")
+    stdout_path = tmp_path / "runner_stdout.txt"
+    stdout_path.write_text("### CONSULT_COMPLETE\n", encoding="utf-8")
+    request = _request(tmp_path, stage="consultant")
+
+    envelope = normalize_stage_result(
+        request,
+        _raw(request, stdout_path=stdout_path),
+    )
+
+    assert envelope.metadata["target_stage"] == "builder"
+    assert envelope.metadata["consultant_decision_path"] == str(decision_path)
+    assert str(decision_path) in envelope.artifact_paths
+    assert str(summary_path) in envelope.artifact_paths
+
+
 def test_normalize_preserves_token_usage_and_event_log_artifacts(tmp_path: Path) -> None:
     request = _request(tmp_path, stage="checker")
     stdout_path = tmp_path / "runner_stdout.txt"

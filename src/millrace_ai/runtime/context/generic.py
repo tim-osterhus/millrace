@@ -99,6 +99,10 @@ def built_in_generic_provider_registrations() -> tuple[tuple[str, object], ...]:
     )
 
 
+def request_context_provider_registrations() -> tuple[tuple[str, object], ...]:
+    return built_in_generic_provider_registrations()
+
+
 def _default_context_plan(
     request: StageRunRequest,
     authority: RequestContextAuthority,
@@ -133,5 +137,6 @@ def visible_artifact_refs(request: StageRunRequest) -> tuple[str, ...]:
 
 __all__ = [
     "built_in_generic_provider_registrations",
+    "request_context_provider_registrations",
     "visible_artifact_refs",
 ]

@@ -29,6 +29,12 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Changed
 
+- Made the pure graph-authority cleanup explicit as a breaking `0.20.x`
+  contract: runtime decisions require compiled graph, extension, policy,
+  lifecycle, runtime-effect, queue-family, and artifact-contract metadata.
+  Missing compiled policy now fails as an authority error instead of falling
+  back to shipped defaults; stale workspaces may need managed asset refresh or
+  reinitialization.
 - Cleaned up legacy graph-authority authority paths: per-plane routing wrappers
   are now compatibility-only facades, route-time max-cycle recovery knobs are
   removed, and fallback route reasons/classes derive from compiled `node_id`
@@ -39,7 +45,7 @@ This file starts at `0.13.0`, the current documented public baseline.
   stage-kind registry assets instead of hard-coded enums; fixture stage kinds
   remain discoverable without entering the shipped-stage facade.
 - Route caller-level family-ID branching in active-kernel claim, lifecycle,
-  status, and counter code through compiled policy and the genreic
+  status, and counter code through compiled policy and the generic
   `QueueFamilyInterpreter`.
 - Updated shipped mode `required_extensions` declarations to list only the
   built-in extensions each mode actually uses; compile validation rejects
@@ -67,6 +73,10 @@ This file starts at `0.13.0`, the current documented public baseline.
   `queue_store.py`, `runner.py`, `paths.py`, `state_store.py`,
   `stage_kinds.py`, `loop_graphs.py`) remain importable; active runtime
   authority derives from the compiled plan and compiled workflow primitives.
+- Blueprint remains available through `blueprint_codex` and
+  `blueprint_learning_codex`, but it is extension-backed graph configuration.
+  Retained Blueprint compatibility shims are lazy, file-scoped, and covered by
+  maintenance guardrails; they are not active generic-kernel authority.
 - `standard_plain`, `standard_millrace`, and `learning_enabled_millrace` remain
   compatibility aliases that resolve to `default_codex`, `default_pi`, and
   `learning_pi` respectively.

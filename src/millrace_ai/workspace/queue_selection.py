@@ -17,6 +17,7 @@ from millrace_ai.contracts import (
     SpecDocument,
     TaskDocument,
 )
+from millrace_ai.contracts.model_resolution import resolve_contract_model
 from millrace_ai.errors import QueueStateError
 
 from .lineage_integrity import effective_root_spec_id
@@ -47,7 +48,10 @@ def claim_next_for_family(
     return interpreter.claim_next(
         family_id,
         root_spec_id=root_spec_id,
-        document_validator=_make_pydantic_document_validator(family_id),
+        document_validator=_make_pydantic_document_validator(
+            family_id,
+            families=families,
+        ),
     )
 
 
@@ -334,33 +338,19 @@ def _lineage_scan_specs(
     )
 
 
-def _resolve_model_class(model_name: str):
-    """Resolve a document model class by name from millrace_ai.contracts."""
-    import importlib
-
-    mod = importlib.import_module("millrace_ai.contracts")
-    return getattr(mod, model_name, None)
-
-
 def _make_pydantic_document_validator(
     family_id: str,
+    *,
+    families: tuple[WorkItemFamilyDefinition, ...] | None = None,
 ) -> Callable[[str, Path], tuple[bool, str | None]]:
     """Create a document validator that checks pydantic model compliance."""
     from millrace_ai.work_documents import parse_work_document_as
 
-    _FAMILY_MODEL_MAP: dict[str, str] = {
-        "task": "TaskDocument",
-        "spec": "SpecDocument",
-        "probe": "ProbeDocument",
-        "incident": "IncidentDocument",
-        "learning_request": "LearningRequestDocument",
-        "blueprint_draft": "BlueprintDraftDocument",
-    }
-    model_name = _FAMILY_MODEL_MAP.get(family_id)
-    if model_name is None:
+    family = _family_by_id(family_id, families)
+    if family is None:
         return lambda _fid, _p: (True, None)
 
-    model_cls = _resolve_model_class(model_name)
+    model_cls = resolve_contract_model(family.schema_id)
     if model_cls is None:
         return lambda _fid, _p: (True, None)
 
@@ -372,12 +362,27 @@ def _make_pydantic_document_validator(
         except (OSError, UnicodeDecodeError) as exc:
             return False, str(exc)
         try:
-            parse_work_document_as(raw, model=model_cls, path=path)
+            if path.suffix == ".json":
+                model_cls.model_validate_json(raw)
+            else:
+                parse_work_document_as(raw, model=model_cls, path=path)
         except Exception as exc:
             return False, str(exc)
         return True, None
 
     return _validate
+
+
+def _family_by_id(
+    family_id: str,
+    families: tuple[WorkItemFamilyDefinition, ...] | None,
+) -> WorkItemFamilyDefinition | None:
+    if families is None:
+        families = load_builtin_workflow_primitives().work_item_families
+    for family in families:
+        if family.family_id == family_id:
+            return family
+    return None
 
 
 __all__ = [

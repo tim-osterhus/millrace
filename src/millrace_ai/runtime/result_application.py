@@ -12,9 +12,7 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import (
     ActiveRunState,
-    ExecutionStageName,
     Plane,
-    PlanningStageName,
     StageName,
     StageResultEnvelope,
 )
@@ -130,10 +128,7 @@ def apply_router_decision(
     assert engine.snapshot is not None
     assert engine.counters is not None
 
-    if stage_result.stage_kind_id in {
-        ExecutionStageName.TROUBLESHOOTER.value,
-        PlanningStageName.MECHANIC.value,
-    }:
+    if engine.snapshot.current_failure_class is not None and stage_result.success:
         clear_runtime_error_context(engine.paths)
 
     if _is_closure_target_result(stage_result):
@@ -173,17 +168,6 @@ def apply_router_decision(
 
     if decision.action is RouterAction.IDLE:
         apply_idle_router_decision(engine, stage_result, decision=decision)
-        if stage_result.stage is PlanningStageName.MANAGER:
-            from .closure_boundary import (
-                active_closure_target as _active_closure_target,
-            )
-            from .closure_boundary import (
-                block_on_closure_lineage_drift_if_present as _block_on_closure_lineage_drift_if_present,
-            )
-
-            target = _active_closure_target(engine)
-            if target is not None:
-                _block_on_closure_lineage_drift_if_present(engine, target)
         return ()
 
     if decision.action is RouterAction.HANDOFF:

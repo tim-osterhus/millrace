@@ -344,7 +344,8 @@ def test_compiled_scheduler_policy_has_claim_policies_by_plane(tmp_path: Path) -
     assert "execution" in scheduler.claim_policies_by_plane
     assert "planning" in scheduler.claim_policies_by_plane
     assert scheduler.claim_policies_by_plane["execution"].family_order == ("task",)
-    assert scheduler.claim_policies_by_plane["planning"].family_order[:2] == (
+    assert scheduler.claim_policies_by_plane["planning"].family_order == (
         "incident",
-        "blueprint_draft",
+        "probe",
+        "spec",
     )

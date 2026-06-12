@@ -6,6 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from millrace_ai.contracts import (
@@ -18,14 +19,26 @@ from millrace_ai.contracts.work_refs import coerce_family_and_kind
 from millrace_ai.errors import WorkspaceStateError
 
 from .paths import WorkspacePaths, workspace_paths
-from .state_reconciliation import (
-    ReconciliationSignal,
-    collect_reconciliation_signals,
-    normalize_execution_status_marker,
-    normalize_learning_status_marker,
-    normalize_planning_status_marker,
-    running_status_marker_for_stage,
-)
+
+_RECONCILIATION_EXPORTS = {
+    "ReconciliationSignal",
+    "collect_reconciliation_signals",
+    "running_status_marker_for_stage",
+}
+
+
+def _state_reconciliation_module() -> Any:
+    import importlib
+
+    return importlib.import_module("millrace_ai.workspace.state_reconciliation")
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _RECONCILIATION_EXPORTS:
+        raise AttributeError(name)
+    value = getattr(_state_reconciliation_module(), name)
+    globals()[name] = value
+    return value
 
 
 def _resolve_paths(target: WorkspacePaths | Path | str) -> WorkspacePaths:
@@ -85,38 +98,38 @@ def save_recovery_counters(
 def load_execution_status(target: WorkspacePaths | Path | str) -> str:
     paths = _resolve_paths(target)
     marker = paths.execution_status_file.read_text(encoding="utf-8")
-    return normalize_execution_status_marker(marker)
+    return _state_reconciliation_module().normalize_execution_status_marker(marker)
 
 
 def load_planning_status(target: WorkspacePaths | Path | str) -> str:
     paths = _resolve_paths(target)
     marker = paths.planning_status_file.read_text(encoding="utf-8")
-    return normalize_planning_status_marker(marker)
+    return _state_reconciliation_module().normalize_planning_status_marker(marker)
 
 
 def load_learning_status(target: WorkspacePaths | Path | str) -> str:
     paths = _resolve_paths(target)
     marker = paths.learning_status_file.read_text(encoding="utf-8")
-    return normalize_learning_status_marker(marker)
+    return _state_reconciliation_module().normalize_learning_status_marker(marker)
 
 
 def set_execution_status(target: WorkspacePaths | Path | str, marker: str) -> str:
     paths = _resolve_paths(target)
-    normalized = normalize_execution_status_marker(marker)
+    normalized = _state_reconciliation_module().normalize_execution_status_marker(marker)
     _atomic_write_text(paths.execution_status_file, normalized + "\n")
     return normalized
 
 
 def set_planning_status(target: WorkspacePaths | Path | str, marker: str) -> str:
     paths = _resolve_paths(target)
-    normalized = normalize_planning_status_marker(marker)
+    normalized = _state_reconciliation_module().normalize_planning_status_marker(marker)
     _atomic_write_text(paths.planning_status_file, normalized + "\n")
     return normalized
 
 
 def set_learning_status(target: WorkspacePaths | Path | str, marker: str) -> str:
     paths = _resolve_paths(target)
-    normalized = normalize_learning_status_marker(marker)
+    normalized = _state_reconciliation_module().normalize_learning_status_marker(marker)
     _atomic_write_text(paths.learning_status_file, normalized + "\n")
     return normalized
 
@@ -223,8 +236,6 @@ def reset_forward_progress_counters(
 
 
 __all__ = [
-    "ReconciliationSignal",
-    "collect_reconciliation_signals",
     "increment_troubleshoot_attempt",
     "load_execution_status",
     "load_learning_status",
@@ -234,7 +245,6 @@ __all__ = [
     "reset_forward_progress_counters",
     "save_recovery_counters",
     "save_snapshot",
-    "running_status_marker_for_stage",
     "set_execution_status",
     "set_learning_status",
     "set_planning_status",

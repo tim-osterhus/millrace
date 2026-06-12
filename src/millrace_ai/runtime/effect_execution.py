@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import JsonValue
 
+from millrace_ai.assets import discover_extension_package_manifests
 from millrace_ai.contracts import Plane, RuntimeErrorCode, StageResultEnvelope
 from millrace_ai.events import write_runtime_event
+from millrace_ai.extensions import ExtensionItemKind
 from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import load_recovery_counters, reset_forward_progress_counters, save_snapshot
 from millrace_ai.workspace.paths import WorkspacePaths
@@ -30,7 +32,10 @@ from .effects.interpreter import (
     INTERPRETED_RUNNER_ID,
     interpret_operation,
 )
-from .effects.legacy import default_legacy_runtime_effect_handler_registry
+from .effects.legacy import (
+    LEGACY_PYTHON_EFFECT_RUNNER_ID,
+    default_legacy_runtime_effect_handler_registry,
+)
 from .error_recovery import (
     record_post_stage_exception_context,
     runtime_repair_attempts_exhausted,
@@ -52,6 +57,8 @@ if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
 
 _RUNTIME_EFFECT_HANDLER_REGISTRY: RuntimeEffectHandlerRegistry | None = None
+_EXTENSION_HANDLER_IDS: set[str] = set()
+_EXTENSION_OPERATION_IDS: set[str] = set()
 _HANDLERS_BY_ID: dict[str, RuntimeEffectHandler] = {}
 _HANDLERS_BY_OPERATION_ID: dict[str, RuntimeEffectHandler] = {}
 
@@ -74,9 +81,12 @@ class _RuntimeEffectOperationSelection:
 
 
 def _runtime_effect_handler_registry() -> RuntimeEffectHandlerRegistry:
-    global _RUNTIME_EFFECT_HANDLER_REGISTRY, _HANDLERS_BY_ID, _HANDLERS_BY_OPERATION_ID
+    global _RUNTIME_EFFECT_HANDLER_REGISTRY, _EXTENSION_HANDLER_IDS, _EXTENSION_OPERATION_IDS
+    global _HANDLERS_BY_ID, _HANDLERS_BY_OPERATION_ID
     if _RUNTIME_EFFECT_HANDLER_REGISTRY is None:
         _RUNTIME_EFFECT_HANDLER_REGISTRY = default_legacy_runtime_effect_handler_registry()
+        _EXTENSION_HANDLER_IDS = set()
+        _EXTENSION_OPERATION_IDS = set()
         _HANDLERS_BY_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_id
         _HANDLERS_BY_OPERATION_ID = _RUNTIME_EFFECT_HANDLER_REGISTRY.handlers_by_operation_id
     return _RUNTIME_EFFECT_HANDLER_REGISTRY
@@ -316,7 +326,11 @@ def _operation_selection_for_rule(
             legacy_handler_id=None,
             handler=_interpreted_handler,
         )
-    handler = _handler_for_operation(operation_id, legacy_handler_id=legacy_handler_id)
+    handler = _handler_for_operation(
+        operation_id,
+        legacy_handler_id=legacy_handler_id,
+        compiled_plan=compiled_plan,
+    )
     if handler is None:
         raise RuntimeError(
             "runtime effect operation is not implemented "
@@ -388,19 +402,112 @@ def _handler_for_operation(
     operation_id: str,
     *,
     legacy_handler_id: str | None,
+    compiled_plan: CompiledRunPlan | None = None,
 ) -> RuntimeEffectHandler | None:
-    handler = (
-        _HANDLERS_BY_ID.get(operation_id)
-        or _HANDLERS_BY_OPERATION_ID.get(operation_id)
-        or _runtime_effect_handler_registry().handler_for_operation(operation_id)
-    )
+    registry = _runtime_effect_handler_registry()
+    handler = _HANDLERS_BY_ID.get(operation_id) or _HANDLERS_BY_OPERATION_ID.get(operation_id)
+    if handler is not None and not _is_extension_runtime_effect_id(operation_id):
+        return handler
+    if compiled_plan is None:
+        if legacy_handler_id is None:
+            return None
+        legacy_handler = _HANDLERS_BY_ID.get(legacy_handler_id) or _HANDLERS_BY_OPERATION_ID.get(
+            legacy_handler_id
+        )
+        if legacy_handler is not None and not _is_extension_runtime_effect_id(
+            legacy_handler_id
+        ):
+            return legacy_handler
+        return None
+
+    if handler is not None:
+        return handler
+    handler = registry.handler_for_operation(operation_id)
+    if handler is not None:
+        return handler
+    handler = _ensure_extension_runtime_effect_handlers(
+        compiled_plan,
+        operation_id=operation_id,
+        legacy_handler_id=legacy_handler_id,
+    ).handler_for_operation(operation_id)
     if handler is not None:
         return handler
     if legacy_handler_id is None:
         return None
-    return _runtime_effect_handler_registry().handler_for(legacy_handler_id) or _HANDLERS_BY_ID.get(
+    return _HANDLERS_BY_ID.get(legacy_handler_id) or _HANDLERS_BY_OPERATION_ID.get(
         legacy_handler_id
+    ) or registry.handler_for(legacy_handler_id)
+
+
+def _is_extension_runtime_effect_id(operation_or_handler_id: str) -> bool:
+    return (
+        operation_or_handler_id in _EXTENSION_HANDLER_IDS
+        or operation_or_handler_id in _EXTENSION_OPERATION_IDS
     )
+
+
+def _ensure_extension_runtime_effect_handlers(
+    compiled_plan: CompiledRunPlan | None,
+    *,
+    operation_id: str,
+    legacy_handler_id: str | None,
+) -> RuntimeEffectHandlerRegistry:
+    registry = _runtime_effect_handler_registry()
+    candidate_ids = {operation_id}
+    if legacy_handler_id is not None:
+        candidate_ids.add(legacy_handler_id)
+    for implementation_path in _runtime_effect_handler_implementation_paths(
+        compiled_plan,
+        candidate_ids=candidate_ids,
+    ):
+        _register_extension_runtime_effect_handlers(registry, (implementation_path,))
+    return registry
+
+
+def _register_extension_runtime_effect_handlers(
+    registry: RuntimeEffectHandlerRegistry,
+    implementation_paths: tuple[str, ...],
+) -> None:
+    import importlib
+
+    for implementation_path in implementation_paths:
+        module = importlib.import_module(implementation_path)
+        registrations = getattr(module, "runtime_effect_handler_registrations", None)
+        if not callable(registrations):
+            continue
+        for registration in registrations(LEGACY_PYTHON_EFFECT_RUNNER_ID):
+            if registry.handler_for(registration.handler_id) is None:
+                registry.register(registration)
+                _EXTENSION_HANDLER_IDS.add(registration.handler_id)
+                operation_id = registration.operation_id or registration.handler_id
+                _EXTENSION_OPERATION_IDS.add(operation_id)
+
+
+def _runtime_effect_handler_implementation_paths(
+    compiled_plan: CompiledRunPlan | None,
+    *,
+    candidate_ids: set[str],
+) -> tuple[str, ...]:
+    discovered: list[str] = []
+    seen: set[str] = set()
+    plan_handlers = (
+        compiled_plan.runtime_effect_handlers_by_id
+        if compiled_plan is not None
+        else {}
+    )
+    for manifest in discover_extension_package_manifests():
+        for item in manifest.items:
+            if item.item_kind is not ExtensionItemKind.RUNTIME_EFFECT_HANDLER:
+                continue
+            if item.item_id not in candidate_ids:
+                continue
+            if item.item_id not in plan_handlers:
+                continue
+            if item.implementation_path in seen:
+                continue
+            seen.add(item.implementation_path)
+            discovered.append(item.implementation_path)
+    return tuple(discovered)
 
 
 def _effect_rule_for(

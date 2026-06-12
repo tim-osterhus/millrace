@@ -19,6 +19,15 @@ The second core idea is that the runtime owns the project state, not the agent. 
 
 Status: Millrace is pre-1.0 and maintained. The current `0.20.x` line is still stabilizing, so pin patch versions when behavior matters.
 
+Breaking authority note: current `0.20.x` builds require compiled graph,
+registry, extension, policy, lifecycle, runtime-effect, queue-family, and
+artifact-contract metadata for runtime decisions. Missing compiled-plan policy
+is an error, not a signal to fall back to hard-coded shipped behavior. Custom
+graph behavior is selected by metadata, and Blueprint is extension-backed graph
+configuration rather than kernel behavior. Workspaces initialized before this
+cleanup may need `millrace upgrade --apply`, a fresh `millrace init`, or
+reinitialization before daemon startup will validate.
+
 ```bash
 pip install millrace-ai
 millrace init --workspace /path/to/workspace
@@ -69,6 +78,9 @@ Current shipped modes include standard Codex and Pi modes, learning-enabled mode
 Millrace supports custom graph nodes and custom stage kinds over canonical
 runtime stages. Workspace-local assets for modes, graphs, stage kinds, and
 entrypoints can declare new node types without altering the core package.
+Those custom behaviors are active only after their metadata compiles into the
+selected plan; runtime kernel code does not infer custom behavior from stage
+names, work-family ids, or path substrings.
 
 Extension-backed domains (Recon, closure, Blueprint, and Learning) ship with
 the base runtime but are activated only when the selected mode declares their

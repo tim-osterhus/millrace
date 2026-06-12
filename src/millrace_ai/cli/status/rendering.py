@@ -11,6 +11,7 @@ from millrace_ai.runtime.pause_state import pause_sources_label
 from millrace_ai.workspace.baseline import BaselineManifest
 
 from .models import StatusViewModel
+from .projections import render_status_projection_lines, status_projection_payload
 
 _LATEST_RUNTIME_EFFECT_STATUS_KEYS = (
     "latest_runtime_effect_handler_id",
@@ -77,7 +78,7 @@ def render_status_lines(view_model: StatusViewModel) -> tuple[str, ...]:
     lines.extend(_render_usage_governance_status_lines(view_model))
     lines.extend(_render_closure_target_status_lines(view_model.closure_status))
     lines.extend(_render_work_item_family_status_lines(view_model.work_item_families))
-    lines.extend(_render_blueprint_status_lines(view_model.blueprint_status))
+    lines.extend(render_status_projection_lines(view_model.extension_statuses))
     if snapshot.current_failure_class:
         lines.append(f"current_failure_class: {snapshot.current_failure_class}")
         for label, count in (
@@ -136,7 +137,10 @@ def status_payload(view_model: StatusViewModel) -> dict[str, Any]:
         ),
         "latest_runtime_effect": view_model.latest_runtime_effect or None,
         "work_item_families": view_model.work_item_families,
-        "blueprints": view_model.blueprint_status,
+        "blueprints": status_projection_payload(
+            view_model.extension_statuses,
+            "blueprints",
+        ),
         **view_model.closure_status,
     }
 
@@ -329,75 +333,6 @@ def _render_work_item_family_status_lines(
     return tuple(lines)
 
 
-def _render_blueprint_status_lines(status: dict[str, object]) -> tuple[str, ...]:
-    draft_counts = _dict_value(status, "draft_counts")
-    packet_counts = _dict_value(status, "packet_counts")
-    critique_counts = _dict_value(status, "critique_counts")
-    lines = [
-        f"blueprint_draft_queue_depth: {_count_value(draft_counts, 'queue')}",
-        f"blueprint_draft_active_count: {_count_value(draft_counts, 'active')}",
-        f"blueprint_draft_blocked_count: {_count_value(draft_counts, 'blocked')}",
-        f"blueprint_draft_approved_count: {_count_value(draft_counts, 'approved')}",
-        f"blueprint_packet_candidate_count: {_count_value(packet_counts, 'candidates')}",
-        f"blueprint_packet_approved_count: {_count_value(packet_counts, 'approved')}",
-        f"blueprint_packet_rejected_count: {_count_value(packet_counts, 'rejected')}",
-        f"blueprint_critique_open_count: {_count_value(critique_counts, 'open')}",
-        f"blueprint_evaluation_count: {_status_value(status.get('evaluation_count'))}",
-        f"blueprint_promotion_count: {_status_value(status.get('promotion_count'))}",
-    ]
-    for draft in _dict_items(status, "drafts"):
-        lines.append(
-            "blueprint_draft: "
-            f"state={_status_value(draft.get('state'))} "
-            f"draft={_status_value(draft.get('draft_id'))} "
-            f"root_spec={_status_value(draft.get('root_spec_id'))} "
-            f"revision={_status_value(draft.get('current_revision'))} "
-            f"latest_blueprint={_status_value(draft.get('latest_blueprint_id'))} "
-            f"latest_critique={_status_value(draft.get('latest_critique_id'))} "
-            f"path={_status_value(draft.get('path'))}"
-        )
-    for packet in _dict_items(status, "packets"):
-        lines.append(
-            "blueprint_packet: "
-            f"state={_status_value(packet.get('state'))} "
-            f"blueprint={_status_value(packet.get('blueprint_id'))} "
-            f"draft={_status_value(packet.get('draft_id'))} "
-            f"root_spec={_status_value(packet.get('root_spec_id'))} "
-            f"revision={_status_value(packet.get('revision'))} "
-            f"path={_status_value(packet.get('path'))}"
-        )
-    for critique in _dict_items(status, "critiques"):
-        lines.append(
-            "blueprint_critique: "
-            f"state={_status_value(critique.get('state'))} "
-            f"critique={_status_value(critique.get('critique_id'))} "
-            f"blueprint={_status_value(critique.get('blueprint_id'))} "
-            f"draft={_status_value(critique.get('draft_id'))} "
-            f"path={_status_value(critique.get('path'))}"
-        )
-    for evaluation in _dict_items(status, "evaluations"):
-        lines.append(
-            "blueprint_evaluation: "
-            f"evaluation={_status_value(evaluation.get('evaluation_id'))} "
-            f"decision={_status_value(evaluation.get('decision'))} "
-            f"blueprint={_status_value(evaluation.get('blueprint_id'))} "
-            f"draft={_status_value(evaluation.get('draft_id'))} "
-            f"critique={_status_value(evaluation.get('critique_id'))} "
-            f"path={_status_value(evaluation.get('path'))}"
-        )
-    for promotion in _dict_items(status, "promotions"):
-        lines.append(
-            "blueprint_promotion: "
-            f"promotion={_status_value(promotion.get('promotion_id'))} "
-            f"blueprint={_status_value(promotion.get('blueprint_id'))} "
-            f"evaluation={_status_value(promotion.get('evaluation_id'))} "
-            f"generated_task={_status_value(promotion.get('generated_task_id'))} "
-            f"generated_task_path={_status_value(promotion.get('generated_task_path'))} "
-            f"path={_status_value(promotion.get('path'))}"
-        )
-    return tuple(lines)
-
-
 def _joined_status_values(values: object) -> str:
     if not isinstance(values, (list, tuple)) or not values:
         return "none"
@@ -543,23 +478,6 @@ def _compiled_plan_currentness_value(view_model: StatusViewModel) -> str:
     if view_model.compile_currentness_error is not None:
         return "unknown"
     return "missing"
-
-
-def _dict_value(value: dict[str, object], key: str) -> dict[str, object]:
-    item = value.get(key)
-    return item if isinstance(item, dict) else {}
-
-
-def _count_value(counts: dict[str, object], key: str) -> int:
-    value = counts.get(key)
-    return value if isinstance(value, int) else 0
-
-
-def _dict_items(value: dict[str, object], key: str) -> tuple[dict[str, object], ...]:
-    items = value.get(key)
-    if not isinstance(items, list):
-        return ()
-    return tuple(item for item in items if isinstance(item, dict))
 
 
 def _status_value(value: object) -> str:

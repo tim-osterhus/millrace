@@ -10,20 +10,23 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue, ValidationError
 
 from millrace_ai.contracts import StageResultEnvelope
-from millrace_ai.contracts.blueprint import (
+from millrace_ai.contracts.work_documents import TaskDocument
+from millrace_ai.errors import QueueStateError
+from millrace_ai.extensions.builtin.blueprint.contracts import (
     BlueprintDraftDocument,
     BlueprintEvaluationDocument,
     BlueprintPacketDocument,
     BlueprintRepairDecisionDocument,
 )
-from millrace_ai.contracts.work_documents import TaskDocument
-from millrace_ai.errors import QueueStateError
+from millrace_ai.runtime.artifact_contracts import RuntimeArtifactError
+from millrace_ai.runtime.effects.models import RuntimeEffectResult
+from millrace_ai.runtime.effects.operation_runners.artifacts import (
+    parse_required_run_artifact_as,
+    read_required_run_artifact_text,
+)
 from millrace_ai.workspace.paths import WorkspacePaths
 
-from ...artifact_contracts import RuntimeArtifactError
-from ..models import RuntimeEffectResult
 from .artifact_workflow_common import _read_json_model
-from .artifacts import parse_required_run_artifact_as, read_required_run_artifact_text
 from .candidate_evaluation import (
     _approval_draft_for_stage_result,
     _approval_packet_for_draft,

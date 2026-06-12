@@ -13,6 +13,24 @@
       "version": "1.0.0"
     },
     {
+      "item_id": "generic.closure_target",
+      "item_kind": "request_context_provider",
+      "implementation_path": "millrace_ai.runtime.context.closure_target",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "arbiter.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.closure_target",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "closure_target.default.v1",
+      "item_kind": "request_context_render_plan",
+      "implementation_path": "millrace_ai.runtime.context.rendering",
+      "version": "1.0.0"
+    },
+    {
       "item_id": "closure_pass",
       "item_kind": "terminal_action",
       "implementation_path": "millrace_ai.runtime.terminal_actions.closure_pass",
@@ -28,6 +46,36 @@
       "item_id": "closure_blocked",
       "item_kind": "terminal_action",
       "implementation_path": "millrace_ai.runtime.terminal_actions.closure_blocked",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "rubric",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.closure.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "validated_packet",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.closure.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "verdict",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.closure.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "incident_packet",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.closure.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "incident_report",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.closure.artifact_contracts",
       "version": "1.0.0"
     }
   ],

@@ -29,7 +29,9 @@ workspace operation.
   and operator-facing command groups.
 - `runtime/millrace-compiler-and-frozen-plans.md`: mode resolution, compiled
   plan freezing, workflow primitive authority, scheduler policy, workspace
-  schema epoch checks, compile fingerprints, and stale-plan behavior.
+  schema epoch checks, compile fingerprints, stale-plan behavior, and the
+  breaking pure graph-authority contract that treats missing compiled policy as
+  an error.
 - `runtime/millrace-modes-and-loops.md`: shipped mode ids, loop ids, stage
   topology, integrated quality loops, Learning, Librarian, and concurrency
   policy.
@@ -102,7 +104,8 @@ These docs are public repo guidance. Runtime-shipped stage skills live under
 - `maintenance/refactor-candidate-register.md`: candidate ids, reasons to
   change, risk, tests, and extraction strategy for targeted refactor work.
 - `maintenance/public-api-compatibility-inventory.md`: frozen import and symbol
-  surfaces, plus final compatibility-facade status for the follow-up refactor.
+  surfaces, plus final compatibility-facade status for the follow-up refactor
+  and retained pure graph-authority shims.
 - `maintenance/blueprint-effect-behavior-matrix.md`: current Blueprint
   runtime-effect behavior and parity gaps before declarative migration.
 - `maintenance/compiler-validation-contracts.md`: validator-family contracts

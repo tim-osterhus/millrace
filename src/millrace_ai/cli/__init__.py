@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Sequence
+from typing import Any, Sequence
 
 import typer
 from click.exceptions import ClickException
@@ -17,7 +17,6 @@ from millrace_ai.compiler import (
 )
 from millrace_ai.config import RuntimeConfig, load_runtime_config
 from millrace_ai.control import ControlActionResult, RuntimeControl
-from millrace_ai.doctor import run_workspace_doctor
 from millrace_ai.modes import (
     BUILTIN_MODE_ALIASES,
     BUILTIN_MODE_PATHS,
@@ -53,6 +52,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if isinstance(outcome, int):
         return outcome
     return 0
+
+
+def __getattr__(name: str) -> Any:
+    if name == "run_workspace_doctor":
+        from millrace_ai.doctor import run_workspace_doctor as _run_workspace_doctor
+
+        globals()[name] = _run_workspace_doctor
+        return _run_workspace_doctor
+    raise AttributeError(name)
 
 
 __all__ = [

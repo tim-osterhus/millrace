@@ -40,7 +40,7 @@ remaining debt is now owned by
 
 | Candidate | Follow-up owner | Notes |
 | --- | --- | --- |
-| MR-MAINT-001 | Complete | FU-2 moved Blueprint runtime-effect behavior into `runtime/effects/operation_runners/`; the Blueprint runtime-effect compatibility facades have since been retired. |
+| MR-MAINT-001 | Complete | FU-2 moved Blueprint runtime-effect behavior into `extensions/builtin/blueprint/operation_runners/`; the runtime-facing compatibility export remains at `runtime/effects/operation_runners/__init__.py`. |
 | MR-MAINT-002 | Complete | FU-1 landed operation-id-first effect dispatch and failure-policy matching with legacy handler ids kept as compatibility metadata only. |
 | MR-MAINT-003 | Complete | FU-6 split compiler validation into focused validator-family modules behind the stable package facade. |
 | MR-MAINT-004 | Complete | FU-7 split workflow primitive contracts into package family modules while preserving the public facade exports. |
@@ -75,7 +75,9 @@ Historical repo-shape snapshot from FU-2 Packet 03:
 
 - Largest source modules at that point: `compilation/validation.py` (1494 lines),
   `architecture/workflow_primitives.py` (1408 lines),
-  `runtime/effects/operation_runners/candidate_evaluation.py` (1253 lines),
+  `runtime/effects/operation_runners/candidate_evaluation.py` (1253 lines,
+  historical FU-2 snapshot; current implementation now lives under
+  `extensions/builtin/blueprint/operation_runners/candidate_evaluation.py`),
   `runtime/blocked_recovery.py` (1159 lines), and
   `runtime/request_context.py` (987 lines).
 - Effect-operation debt moved from a monolithic operations module to focused
@@ -515,7 +517,7 @@ event/monitor projection still share one tightly-coupled lifecycle boundary.
   coupled lifecycle boundaries.
 - MR-MAINT-001 through MR-MAINT-010 are complete for this follow-up wave. New
   maintainability work should be filed as fresh candidates against current
-  hotspots (for example `runtime/effects/operation_runners/candidate_evaluation.py`,
+  hotspots (for example `extensions/builtin/blueprint/operation_runners/candidate_evaluation.py`,
   `runtime/completion_behavior.py`, and `runtime/context/blueprint.py`) rather
   than re-opening the finished packet ids.
 - **MR-MAINT-012 (new seam, not yet filed):** the interpreted runtime-effect

@@ -7,23 +7,14 @@ from typing import TYPE_CHECKING
 
 from millrace_ai.compilation.validation.repair_closures import resolve_route_to_node_repair_closures
 from millrace_ai.contracts import ExecutionStageName, LearningStageName, Plane, PlanningStageName, StageResultEnvelope
-from millrace_ai.runtime.graph_authority.counters import (
-    matching_counter_entry,
-)
+from millrace_ai.runtime.compiled_plans import CompiledPlanAuthorityError
+from millrace_ai.runtime.graph_authority.counters import matching_counter_entry
 from millrace_ai.runtime.graph_authority.stage_mapping import node_plan_by_id, stage_for_node
 from millrace_ai.runtime.scheduler_policy import recovery_fallback_selection
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan
     from millrace_ai.runtime.engine import RuntimeEngine
-
-_LEGACY_COUNTER_IDS = frozenset({
-    "troubleshoot_attempt_count",
-    "mechanic_attempt_count",
-    "fix_cycle_count",
-    "consultant_invocations",
-})
-
 
 @dataclass(frozen=True, slots=True)
 class RuntimeRepairRoute:
@@ -43,7 +34,10 @@ def runtime_repair_route_for_plane(
 ) -> RuntimeRepairRoute | None:
     plan = compiled_plan or engine.compiled_plan
     if plan is None:
-        return None
+        raise CompiledPlanAuthorityError(
+            f"compiled plan is required to resolve runtime repair route for {plane.value}",
+            stale=False,
+        )
     graph = plan.graphs_by_plane.get(plane)
     if graph is None:
         return None
@@ -106,9 +100,7 @@ def runtime_repair_attempts_exhausted(
 ) -> bool:
     """Check whether repair attempts are exhausted.
 
-    Counter value is read preferentially from the generic recovery counter
-    store. Falls back to the snapshot's legacy compatibility fields when the
-    engine has no counters or the counter entry is absent.
+    Counter value is read from the generic recovery counter store.
     """
     if engine.snapshot is None or repair_route.counter_name is None or repair_route.threshold is None:
         return False
@@ -120,45 +112,40 @@ def incremented_repair_counter(
     engine: RuntimeEngine,
     repair_route: RuntimeRepairRoute,
 ) -> dict[str, int]:
-    """Return the legacy snapshot field update for an incremented repair counter.
+    """Return the snapshot field update for an incremented repair counter.
 
-    The next-count value is computed from the generic counter store when
-    available, falling back to the snapshot's legacy compatibility fields.
-    The returned dictionary is used to update the snapshot's legacy fields.
+    The next-count value is computed from the generic counter store only.
     """
     if engine.snapshot is None or repair_route.counter_name is None:
         return {}
     counter_name = repair_route.counter_name
-    if counter_name not in _LEGACY_COUNTER_IDS:
-        return {}
     current = _resolve_repair_counter_value(engine, counter_name)
     return {counter_name: current + 1}
 
 
 def _resolve_repair_counter_value(engine: RuntimeEngine, counter_name: str) -> int:
-    """Resolve a counter value from the generic store or legacy snapshot fallback."""
+    """Resolve a counter value from the generic recovery counter store."""
     snapshot = engine.snapshot
     assert snapshot is not None
 
-    # Prefer the generic counter store when available and the snapshot
-    # has enough identity to look up a matching entry.
     if engine.counters is not None and engine.counters.entries:
         family_id = snapshot.active_work_item_family_id
         work_item_id = snapshot.active_work_item_id
         if family_id is not None and work_item_id is not None:
-            failure_class = snapshot.current_failure_class or "recoverable_failure"
-            entry = matching_counter_entry(
-                snapshot,
-                engine.counters,
-                failure_class=failure_class,
+            failure_classes = (
+                (snapshot.current_failure_class,)
+                if snapshot.current_failure_class is not None
+                else tuple(entry.failure_class for entry in engine.counters.entries)
             )
-            if entry is not None and counter_name in entry.counters:
-                # Treat any explicit value (including zero) as authoritative.
-                return entry.counters[counter_name]
-
-    # Fall back to legacy snapshot compatibility field only when the generic
-    # store has no matching entry or the entry lacks the requested counter ID.
-    return int(getattr(snapshot, counter_name, 0))
+            for failure_class in failure_classes:
+                entry = matching_counter_entry(
+                    snapshot,
+                    engine.counters,
+                    failure_class=failure_class,
+                )
+                if entry is not None and counter_name in entry.counters:
+                    return entry.counters[counter_name]
+    return 0
 
 
 def _runtime_effect_policy_repair_route(

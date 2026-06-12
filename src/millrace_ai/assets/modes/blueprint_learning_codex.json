@@ -35,6 +35,7 @@
     "mutually_exclusive_planes": [["execution", "planning"]],
     "may_run_concurrently": [["learning", "execution"], ["learning", "planning"]]
   },
+  "scheduler_policy_id": "default.three_plane.blueprint",
   "learning_trigger_rules": [
     {
       "rule_id": "execution.doublechecker.success-to-analyst",

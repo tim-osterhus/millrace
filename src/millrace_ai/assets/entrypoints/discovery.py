@@ -4,23 +4,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from millrace_ai.assets.architecture import discover_stage_kind_definitions
 from millrace_ai.contracts import Plane
-from millrace_ai.contracts.stage_metadata import known_stage_values, known_stage_values_for_plane
 
-CUSTOM_PLANNING_STAGES = frozenset(
-    {
-        "manager_blueprint",
-        "contractor_blueprint",
-        "evaluator_blueprint",
-        "mechanic_blueprint",
-    }
-)
-KNOWN_EXECUTION_STAGES = known_stage_values_for_plane(Plane.EXECUTION)
-KNOWN_PLANNING_STAGES = known_stage_values_for_plane(Plane.PLANNING) | CUSTOM_PLANNING_STAGES
-KNOWN_LEARNING_STAGES = known_stage_values_for_plane(Plane.LEARNING)
-KNOWN_STAGES = known_stage_values() | CUSTOM_PLANNING_STAGES
+_STAGE_KINDS = discover_stage_kind_definitions()
+KNOWN_EXECUTION_STAGES = {
+    stage_kind.stage_kind_id for stage_kind in _STAGE_KINDS if stage_kind.plane is Plane.EXECUTION
+}
+KNOWN_PLANNING_STAGES = {
+    stage_kind.stage_kind_id for stage_kind in _STAGE_KINDS if stage_kind.plane is Plane.PLANNING
+}
+KNOWN_LEARNING_STAGES = {
+    stage_kind.stage_kind_id for stage_kind in _STAGE_KINDS if stage_kind.plane is Plane.LEARNING
+}
+KNOWN_STAGES = {stage_kind.stage_kind_id for stage_kind in _STAGE_KINDS}
 KNOWN_PLANES = {plane.value for plane in Plane}
 KNOWN_ASSET_TYPES = {"entrypoint", "skill"}
+_ENTRYPOINT_TARGETS_BY_PATH = {
+    Path(stage_kind.default_entrypoint_path).as_posix(): (
+        stage_kind.plane.value,
+        stage_kind.stage_kind_id,
+    )
+    for stage_kind in _STAGE_KINDS
+}
 
 
 def infer_entrypoint_path_target(path: Path) -> tuple[str | None, str | None]:
@@ -40,6 +46,11 @@ def infer_entrypoint_path_target(path: Path) -> tuple[str | None, str | None]:
     if stem in KNOWN_STAGES:
         return plane, stem
 
+    default_entrypoint_key = Path(*parts[entrypoints_index:]).as_posix()
+    entrypoint_target = _ENTRYPOINT_TARGETS_BY_PATH.get(default_entrypoint_key)
+    if entrypoint_target is not None:
+        return entrypoint_target
+
     stage = next(
         (
             candidate
@@ -58,6 +69,5 @@ __all__ = [
     "KNOWN_PLANES",
     "KNOWN_PLANNING_STAGES",
     "KNOWN_STAGES",
-    "CUSTOM_PLANNING_STAGES",
     "infer_entrypoint_path_target",
 ]

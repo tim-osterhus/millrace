@@ -397,12 +397,12 @@ class TestCounterProjection:
 
 
 # ---------------------------------------------------------------------------
-# A3: Legacy snapshot fields update on counter increment
+# A3: Runtime counter increments stay in generic store
 # ---------------------------------------------------------------------------
 
 
-class TestLegacySnapshotFields:
-    def test_increment_updates_legacy_snapshot_field(self, tmp_path: Path) -> None:
+class TestGenericRuntimeCounterStore:
+    def test_increment_updates_generic_counter_store_only(self, tmp_path: Path) -> None:
         engine = _engine(tmp_path)
         snapshot = _snapshot(engine)
         engine.snapshot = snapshot
@@ -422,7 +422,9 @@ class TestLegacySnapshotFields:
         )
 
         updated = increment_route_counters(engine, snapshot, decision, _stage_result())
-        assert updated.troubleshoot_attempt_count == 1
+        assert updated.troubleshoot_attempt_count == 0
+        loaded = load_recovery_counters(engine.paths)
+        assert loaded.entries[0].counters["troubleshoot_attempt_count"] == 1
 
     def test_increment_non_legacy_counter_does_not_set_legacy_fields(
         self, tmp_path: Path
@@ -454,7 +456,7 @@ class TestLegacySnapshotFields:
         loaded = load_recovery_counters(engine.paths)
         assert loaded.entries[0].counters["custom_non_legacy_counter"] == 1
 
-    def test_snapshot_legacy_fields_reflect_generic_store(self, tmp_path: Path) -> None:
+    def test_snapshot_legacy_fields_do_not_drive_generic_store(self, tmp_path: Path) -> None:
         engine = _engine(tmp_path)
         snapshot = _snapshot(engine)
         engine.snapshot = snapshot
@@ -474,9 +476,9 @@ class TestLegacySnapshotFields:
         )
 
         updated = increment_route_counters(engine, snapshot, decision, _stage_result())
-        assert updated.mechanic_attempt_count == 1
+        assert updated.mechanic_attempt_count == 0
         loaded = load_recovery_counters(engine.paths)
-        assert loaded.entries[0].mechanic_attempt_count == 1
+        assert loaded.entries[0].counters["mechanic_attempt_count"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -678,7 +680,9 @@ class TestPolicyOwnedThresholdRouting:
             work_item_id="task-001",
             counter_id="troubleshoot_attempt_count",
         )
-        assert updated.troubleshoot_attempt_count == 1
+        assert updated.troubleshoot_attempt_count == 0
+        loaded = load_recovery_counters(engine.paths)
+        assert loaded.entries[0].counters["troubleshoot_attempt_count"] == 1
 
     def test_counter_key_not_dispatch_on_fixed_counter_names(self) -> None:
         """matching_counter_entry matches by scope (family, id, failure_class),
@@ -1294,9 +1298,8 @@ class TestGenericCounterZeroAuthoritative:
         result = incremented_repair_counter(engine, route)
         assert result == {"troubleshoot_attempt_count": 1}
 
-    def test_absent_counter_id_still_falls_back_to_legacy(self) -> None:
-        """When the generic counter entry exists but lacks the requested
-        counter ID, the legacy snapshot field is still used as fallback."""
+    def test_absent_counter_id_returns_zero_instead_of_legacy_fallback(self) -> None:
+        """Missing generic counter ids do not read legacy snapshot fields."""
         snapshot = RuntimeSnapshot(
             schema_version="1.0",
             kind="runtime_snapshot",
@@ -1342,8 +1345,7 @@ class TestGenericCounterZeroAuthoritative:
             "recoverable_failure",
             counter_id="troubleshoot_attempt_count",
         )
-        # Counter ID not in generic store → fall back to legacy value 3.
-        assert result == 3
+        assert result == 0
 
     def test_nonzero_counter_does_not_fall_back_to_legacy(self, tmp_path: Path) -> None:
         """A non-zero generic counter value is used directly, not the legacy

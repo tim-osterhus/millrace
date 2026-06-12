@@ -200,12 +200,18 @@ def compile_compiled_run_plan(
         ta.terminal_action_id: ta
         for ta in workflow_primitives.terminal_actions
     }
-    validate_required_extensions(
+    queue_claim_policies_by_plane = _map_queue_claim_policies_by_plane(
+        workflow_primitives.queue_claim_policies
+    )
+    scheduler_policy = _build_scheduler_policy(
         mode=mode,
-        discovered_manifests=extension_manifests,
-        graph_loops=graph_loops,
-        stage_kinds=stage_kinds,
-        terminal_actions_by_id=terminal_actions_by_id,
+        queue_claim_policies_by_plane=queue_claim_policies_by_plane,
+        workflow_primitives=workflow_primitives,
+    )
+    queue_claim_policies_by_plane = dict(scheduler_policy.claim_policies_by_plane)
+    selected_recovery_policies = _mode_selected_recovery_policies(
+        workflow_primitives.recovery_policies,
+        mode.recovery_policy_ids,
     )
     request_context_profiles_by_id = _map_by_attr(
         workflow_primitives.request_context_profiles,
@@ -233,14 +239,7 @@ def compile_compiled_run_plan(
         graphs_by_plane=graphs_by_plane,
         stage_kinds=stage_kinds,
         workflow_primitives=workflow_primitives,
-    )
-    queue_claim_policies_by_plane = _map_queue_claim_policies_by_plane(
-        workflow_primitives.queue_claim_policies
-    )
-    scheduler_policy = _build_scheduler_policy(
-        mode=mode,
-        queue_claim_policies_by_plane=queue_claim_policies_by_plane,
-        workflow_primitives=workflow_primitives,
+        scheduler_policy=scheduler_policy,
     )
     validate_scheduler_policy(
         mode=mode,
@@ -249,6 +248,16 @@ def compile_compiled_run_plan(
     validate_lane_conflict_coverage(
         scheduler_policy=scheduler_policy,
         mode=mode,
+    )
+    validate_required_extensions(
+        mode=mode,
+        discovered_manifests=extension_manifests,
+        graph_loops=graph_loops,
+        stage_kinds=stage_kinds,
+        terminal_actions_by_id=terminal_actions_by_id,
+        workflow_primitives=workflow_primitives,
+        scheduler_policy=scheduler_policy,
+        recovery_policies=selected_recovery_policies,
     )
 
     execution_graph = graphs_by_plane[Plane.EXECUTION]
@@ -478,8 +487,12 @@ def _map_queue_claim_policies_by_plane(
 ) -> dict[Plane, PlaneQueueClaimPolicyDefinition]:
     policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition] = {}
     for policy in policies:
+        if policy.policy_id != f"{policy.plane.value}.default":
+            continue
         if policy.plane in policies_by_plane:
-            raise CompilerValidationError(f"Duplicate queue claim policy for plane: {policy.plane.value}")
+            raise CompilerValidationError(
+                f"Duplicate default queue claim policy for plane: {policy.plane.value}"
+            )
         policies_by_plane[policy.plane] = policy
     return policies_by_plane
 
@@ -625,9 +638,9 @@ def _mode_selected_recovery_policies(
     all_policies: tuple[object, ...],
     selected_policy_ids: tuple[str, ...],
 ) -> tuple[object, ...]:
-    """Filter recovery policies to only those declared by the mode, or all if none declared."""
+    """Filter recovery policies to only those explicitly declared by the mode."""
     if not selected_policy_ids:
-        return all_policies
+        return ()
     selected_set = set(selected_policy_ids)
     return tuple(
         policy for policy in all_policies

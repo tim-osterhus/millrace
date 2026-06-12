@@ -59,17 +59,13 @@ def counter_attempts_for_counter_id(
     This is the canonical active runtime path for reading recovery counter
     values.  It does not dispatch on plane, family, stage, or enum.
 
-    When the generic counter store has no value for *counter_id*, falls back
-    to the snapshot's legacy compatibility field to avoid silently altering
-    recovery routing during migration from legacy counter state.
+    Missing counter ids are treated as zero.
     """
     entry = matching_counter_entry(snapshot, counters, failure_class)
     if entry is not None and counter_id in entry.counters:
         # Treat any explicit value (including zero) as authoritative.
         return entry.counters[counter_id]
-    # Fall back to snapshot legacy field only when the generic store has no
-    # matching entry or the entry lacks the requested counter ID.
-    return int(getattr(snapshot, counter_id, 0))
+    return 0
 
 
 def matching_counter_entry(

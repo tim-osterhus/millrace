@@ -89,33 +89,19 @@ def test_planning_queue_depth_uses_shared_inventory_for_blueprint_drafts(tmp_pat
     assert family_counts(paths)["blueprint_draft"]["queue"] == 1
 
 
-def test_active_work_item_path_uses_family_adapter_for_blueprint_family(
-    monkeypatch: pytest.MonkeyPatch,
+def test_active_work_item_path_rejects_absent_compiled_family_authority(
     tmp_path,
 ) -> None:
     paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
-
-    class _BlueprintAdapter:
-        adapter_id = "builtin.queue_lifecycle.blueprint_draft"
-
-        def active_path(self, paths, *, work_item_id: str):
-            return paths.runtime_root / "planning" / "active-blueprints" / f"{work_item_id}.json"
-
-    monkeypatch.setattr(
-        stage_requests_module,
-        "queue_adapter_for_id",
-        lambda adapter_id: _BlueprintAdapter() if adapter_id == "builtin.queue_lifecycle.blueprint_draft" else None,
-    )
-
     engine = SimpleNamespace(paths=paths, compiled_plan=None)
-    active_path = stage_requests_module.active_work_item_path(
-        engine,
-        work_item_kind=None,
-        work_item_id="draft-001",
-        work_item_family_id="blueprint_draft",
-    )
 
-    assert active_path == paths.runtime_root / "planning" / "active-blueprints" / "draft-001.json"
+    with pytest.raises(Exception, match="compiled plan is required"):
+        stage_requests_module.active_work_item_path(
+            engine,
+            work_item_kind=None,
+            work_item_id="draft-001",
+            work_item_family_id="blueprint_draft",
+        )
 
 
 def test_active_work_item_path_uses_custom_family_adapter_id_from_compiled_plan(

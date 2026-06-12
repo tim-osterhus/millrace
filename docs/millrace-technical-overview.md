@@ -77,6 +77,16 @@ describes *what happens*; the authority model describes *who decides*. See
 ADR-0012 through ADR-0016 for the full boundary definitions and active
 compatibility-facade status.
 
+The current pure graph-authority cleanup is a breaking contract. Runtime
+decisions must be selected by the compiled plan and its compiled graph,
+extension, policy, lifecycle, runtime-effect, queue-family, request-context,
+and artifact-contract metadata. If required compiled policy is missing, the
+runtime should fail with an authority error rather than fall back to shipped
+stage names, shipped work families, domain substrings, or legacy defaults.
+Custom graph behavior is therefore metadata-selected behavior. Blueprint is
+still shipped, but it is extension-backed graph configuration, not kernel-owned
+runtime behavior.
+
 In practice:
 
 - the operator points Millrace at a workspace
@@ -169,6 +179,12 @@ also the Python package that parses and lints those markdown manifests. Parsing,
 asset path inference, advisory skill-reference checks, lint policy, and
 diagnostic rendering are split into named modules behind the
 `millrace_ai.assets.entrypoints` facade.
+
+Workspaces created before the pure graph-authority cleanup can carry stale
+managed assets or compiled plans that omit required policy registries.
+Operators should refresh packaged assets with `millrace upgrade --apply`,
+re-run `millrace compile validate`, or reinitialize disposable workspaces
+instead of expecting the daemon to synthesize missing policy.
 
 Runner adapters remain behind the public `millrace_ai.runners` and
 `millrace_ai.runner` surfaces. The Codex CLI adapter keeps one public adapter

@@ -39,6 +39,7 @@ BUILTIN_MODE_ALIASES: dict[str, str] = {
     "standard_plain": "default_codex",
     "standard_millrace": "default_pi",
     "learning_enabled_millrace": "learning_pi",
+    "minimal_three_plane_fixture": "minimal_three_plane",
 }
 
 SHIPPED_MODE_IDS: tuple[str, ...] = (

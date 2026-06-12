@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from millrace_ai.architecture import CompiledRunPlan, FrozenGraphPlanePlan, MaterializedGraphNodePlan
 from millrace_ai.contracts import (
@@ -17,14 +16,8 @@ from millrace_ai.contracts import (
     RecoveryCounters,
     RuntimeSnapshot,
     StageName,
-    WorkItemKind,
 )
 from millrace_ai.errors import WorkspaceStateError
-
-from .paths import WorkspacePaths
-
-if TYPE_CHECKING:
-    from millrace_ai.workspace.blueprint_state import BlueprintManifestDiagnostic
 
 _IDLE_MARKER = "### IDLE"
 _INVALID_MARKER = "### INVALID_STATUS_MARKER"
@@ -83,19 +76,6 @@ def running_status_marker_for_stage(stage: StageName) -> str:
     return _RUNNING_MARKER_BY_STAGE[stage.value]
 
 
-def collect_blueprint_manifest_diagnostics(
-    paths: WorkspacePaths,
-) -> tuple[BlueprintManifestDiagnostic, ...]:
-    """Collect read-only diagnostics for Blueprint manifest/draft consistency.
-
-    Lazily imports the implementation from ``blueprint_state`` to keep
-    Blueprint module loading out of generic reconciliation import paths.
-    """
-    from millrace_ai.workspace.blueprint_state import collect_blueprint_manifest_diagnostics as _impl
-
-    return _impl(paths)
-
-
 def collect_reconciliation_signals(
     *,
     snapshot: RuntimeSnapshot,
@@ -105,6 +85,7 @@ def collect_reconciliation_signals(
     learning_status_marker: str = _IDLE_MARKER,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> tuple[ReconciliationSignal, ...]:
+    compiled_plan = _require_compiled_plan(compiled_plan)
     execution_marker = _normalize_marker_or_invalid(execution_status_marker, label="execution status")
     planning_marker = _normalize_marker_or_invalid(planning_status_marker, label="planning status")
     learning_marker = _normalize_marker_or_invalid(learning_status_marker, label="learning status")
@@ -236,9 +217,7 @@ def _has_impossible_marker_for_active_stage(
             if marker == running_marker:
                 return False
             return marker not in allowed and marker not in inbound
-    # No compiled plan available; return False (conservative fail-open)
-    # to avoid blocking daemon operation when compiled plan data is missing.
-    return False
+    raise WorkspaceStateError("compiled plan is required to validate active stage marker authority")
 
 
 def _active_stage_appears_running(
@@ -278,7 +257,7 @@ def _active_stage_running_marker(
             node = _compiled_node_for_id(graph, node_id)
             if node is not None:
                 return f"### {node.running_status_marker}"
-    return running_status_marker_for_stage(snapshot.active_stage)
+    raise WorkspaceStateError("compiled plan is required to resolve active stage running marker")
 
 
 def _stale_signal_recommended_stage(
@@ -287,29 +266,20 @@ def _stale_signal_recommended_stage(
     *,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> StageName:
-    if snapshot.active_plane == Plane.PLANNING:
-        return _stale_signal_recommended_stage_for_plane(Plane.PLANNING, compiled_plan=compiled_plan)
-
-    attempts = 0
-    if snapshot.active_work_item_family_id and snapshot.active_work_item_id:
-        for entry in counters.entries:
-            if (
-                entry.failure_class == _STALE_ACTIVE_FAILURE_CLASS
-                and entry.work_item_family_id == snapshot.active_work_item_family_id
-                and entry.work_item_id == snapshot.active_work_item_id
-            ):
-                attempts = max(attempts, entry.troubleshoot_attempt_count)
-
-    if attempts >= 2:
-        return ExecutionStageName.CONSULTANT
-
     if compiled_plan is not None and snapshot.active_plane is not None:
         graph = _graph_for_plane(compiled_plan, snapshot.active_plane)
         if graph is not None and graph.runtime_failure_recovery is not None:
+            exhausted_stage = _exhausted_recovery_stage(
+                snapshot,
+                counters,
+                graph=graph,
+            )
+            if exhausted_stage is not None:
+                return exhausted_stage
             repair_node = _compiled_node_for_id(graph, graph.runtime_failure_recovery.default_repair_node_id)
             if repair_node is not None and repair_node.runtime_stage is not None:
                 return repair_node.runtime_stage
-    return _stale_signal_recommended_stage_for_plane(snapshot.active_plane, compiled_plan=compiled_plan)
+    raise WorkspaceStateError("compiled graph is missing runtime failure recovery authority")
 
 
 def _stale_signal_recommended_stage_for_plane(
@@ -323,11 +293,7 @@ def _stale_signal_recommended_stage_for_plane(
             repair_node = _compiled_node_for_id(graph, graph.runtime_failure_recovery.default_repair_node_id)
             if repair_node is not None and repair_node.runtime_stage is not None:
                 return repair_node.runtime_stage
-    if plane == Plane.PLANNING:
-        return PlanningStageName.MECHANIC
-    if plane == Plane.LEARNING:
-        return LearningStageName.ANALYST
-    return ExecutionStageName.TROUBLESHOOTER
+    raise WorkspaceStateError(f"compiled graph is missing runtime failure recovery for {plane.value if plane else 'unknown'}")
 
 
 def _signal_for_orphaned_counters(
@@ -336,15 +302,9 @@ def _signal_for_orphaned_counters(
     compiled_plan: CompiledRunPlan | None = None,
 ) -> ReconciliationSignal | None:
     for entry in counters.entries:
-        if (
-            entry.troubleshoot_attempt_count > 0
-            or entry.mechanic_attempt_count > 0
-            or entry.fix_cycle_count > 0
-            or entry.consultant_invocations > 0
-        ):
+        if any(value > 0 for value in entry.counters.values()):
             plane, stage = _orphaned_counter_plane_and_stage(
                 entry.work_item_family_id,
-                entry.work_item_kind,
                 compiled_plan=compiled_plan,
             )
 
@@ -363,36 +323,18 @@ def _signal_for_orphaned_counters(
 
 def _orphaned_counter_plane_and_stage(
     work_item_family_id: str | None,
-    work_item_kind: WorkItemKind | None,
     *,
     compiled_plan: CompiledRunPlan | None = None,
 ) -> tuple[Plane, StageName]:
-    """Derive plane and recommended stage for orphaned recovery counters.
-
-    Uses compiled plan work-item family metadata when available.
-    Otherwise falls back to a generic kind-based mapping.
-    """
+    """Derive plane and recommended stage for orphaned recovery counters."""
     if compiled_plan is not None and work_item_family_id is not None:
         family = compiled_plan.work_item_families_by_id.get(work_item_family_id)
         if family is not None:
-            if family.plane is Plane.EXECUTION:
-                return Plane.EXECUTION, ExecutionStageName.TROUBLESHOOTER
-            if family.plane is Plane.LEARNING:
-                return Plane.LEARNING, LearningStageName.ANALYST
-            return Plane.PLANNING, PlanningStageName.MECHANIC
-    # Generic fallback: execution-plane families default to TROUBLESHOOTER,
-    # all others to MECHANIC.
-    if work_item_kind in (
-        WorkItemKind.TASK,
-        WorkItemKind.SPEC,
-        WorkItemKind.PROBE,
-        WorkItemKind.LEARNING_REQUEST,
-    ):
-        if work_item_kind is WorkItemKind.TASK:
-            return Plane.EXECUTION, ExecutionStageName.TROUBLESHOOTER
-        if work_item_kind is WorkItemKind.LEARNING_REQUEST:
-            return Plane.LEARNING, LearningStageName.ANALYST
-    return Plane.PLANNING, PlanningStageName.MECHANIC
+            return family.plane, _stale_signal_recommended_stage_for_plane(
+                family.plane,
+                compiled_plan=compiled_plan,
+            )
+    raise WorkspaceStateError("compiled plan is required to route orphaned recovery counters")
 
 
 def _normalize_marker_or_invalid(marker: str, *, label: str) -> str:
@@ -408,11 +350,7 @@ def _allowed_markers_for_plane(
     compiled_plan: CompiledRunPlan | None,
 ) -> frozenset[str]:
     if compiled_plan is None:
-        if plane is Plane.EXECUTION:
-            return _EXECUTION_STATUS_MARKERS
-        if plane is Plane.LEARNING:
-            return _LEARNING_STATUS_MARKERS
-        return _PLANNING_STATUS_MARKERS
+        raise WorkspaceStateError("compiled plan is required to derive status marker authority")
 
     graph = _graph_for_plane(compiled_plan, plane)
     if graph is None:
@@ -460,9 +398,54 @@ def _compiled_inbound_markers(
     return frozenset(markers)
 
 
+def _exhausted_recovery_stage(
+    snapshot: RuntimeSnapshot,
+    counters: RecoveryCounters,
+    *,
+    graph: FrozenGraphPlanePlan,
+) -> StageName | None:
+    recovery = graph.runtime_failure_recovery
+    if recovery is None:
+        return None
+    family_id = snapshot.active_work_item_family_id
+    work_item_id = snapshot.active_work_item_id
+    if family_id is None or work_item_id is None:
+        return None
+    counter_name = recovery.counter_name.value
+    attempts = 0
+    for entry in counters.entries:
+        if (
+            entry.failure_class == _STALE_ACTIVE_FAILURE_CLASS
+            and entry.work_item_family_id == family_id
+            and entry.work_item_id == work_item_id
+        ):
+            attempts = max(attempts, entry.counters.get(counter_name, 0))
+    if attempts < recovery.threshold:
+        return None
+    terminal_state = next(
+        (
+            state
+            for state in graph.terminal_states
+            if state.terminal_state_id == recovery.exhausted_terminal_state_id
+        ),
+        None,
+    )
+    next_node_id = getattr(terminal_state, "next_node_id", None)
+    if terminal_state is not None and next_node_id is not None:
+        node = _compiled_node_for_id(graph, next_node_id)
+        if node is not None and node.runtime_stage is not None:
+            return node.runtime_stage
+    return None
+
+
+def _require_compiled_plan(compiled_plan: CompiledRunPlan | None) -> CompiledRunPlan:
+    if compiled_plan is None:
+        raise WorkspaceStateError("compiled plan is required for runtime state reconciliation")
+    return compiled_plan
+
+
 __all__ = [
     "ReconciliationSignal",
-    "collect_blueprint_manifest_diagnostics",
     "collect_reconciliation_signals",
     "normalize_execution_status_marker",
     "normalize_learning_status_marker",

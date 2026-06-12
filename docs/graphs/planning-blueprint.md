@@ -14,6 +14,12 @@ Builder still performs implementation in the Execution plane. Blueprint
 Planning produces approved generated tasks; it does not directly edit the
 source repo.
 
+Blueprint is extension-backed graph configuration. Its stage kinds, work
+family, request-context providers, artifact contracts, runtime-effect rules,
+and operation runners are active only when selected by compiled mode, graph,
+extension, and registry metadata. Generic runtime code must not select
+Blueprint behavior by hard-coded stage names, family ids, or string matches.
+
 ## Nodes
 
 | Node | Stage Kind | Role |
@@ -164,4 +170,3 @@ candidate packets, approved-but-unpromoted packets, and generated tasks.
 
 - `blueprint_codex`
 - `blueprint_learning_codex`
-

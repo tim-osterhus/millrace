@@ -19,6 +19,7 @@ from millrace_ai.architecture import (
 )
 from millrace_ai.assets import load_builtin_workflow_primitives
 from millrace_ai.contracts import Plane
+from millrace_ai.contracts.model_resolution import resolve_contract_model
 from millrace_ai.errors import QueueStateError
 
 from .paths import WorkspacePaths
@@ -1070,31 +1071,25 @@ __all__ = [
 
 # -- family id field labels -----------------------------------------------
 
-_FAMILY_ID_LABELS: dict[str, str] = {
-    "task": "Task-ID:",
-    "spec": "Spec-ID:",
-    "probe": "Probe-ID:",
-    "incident": "Incident-ID:",
-    "learning_request": "Learning-Request-ID:",
-    "blueprint_draft": "Draft-ID:",
-}
-
 
 def _derive_id_label(family: WorkItemFamilyDefinition) -> str | None:
     """Derive the frontmatter id-label for a family's id_field.
 
-    Uses the static mapping for built-in families and derives a
-    PascalCase label for custom families (e.g. custom_id -> Custom-ID:).
     Returns None when the family has no id_field.
     """
     if not family.id_field:
         return None
-    builtin_label = _FAMILY_ID_LABELS.get(family.family_id)
-    if builtin_label is not None:
-        return builtin_label
-    # Derive label from id_field using standard title-case convention
-    label_title = family.id_field.replace("_", "-").title()
-    return f"{label_title}:"
+    builtin_family_ids = {
+        builtin_family.family_id
+        for builtin_family in load_builtin_workflow_primitives().work_item_families
+    }
+    label_parts: list[str] = []
+    for part in family.id_field.split("_"):
+        if family.family_id in builtin_family_ids and part.lower() == "id":
+            label_parts.append("ID")
+        else:
+            label_parts.append(part[:1].upper() + part[1:])
+    return f"{'-'.join(label_parts)}:"
 
 
 def _has_frontmatter_label(raw: str, label: str) -> bool:
@@ -1128,20 +1123,12 @@ def _validate_markdown_document_content(
     except (OSError, UnicodeDecodeError) as exc:
         return False, str(exc)
 
-    # For built-in families, attempt pydantic model validation as a
-    # best-effort check.  Parse failures indicate malformed documents that
-    # should be quarantined.  Parsing uses strict=False to only catch
+    # For known family schemas, attempt pydantic model validation as a
+    # best-effort check. Parse failures indicate malformed documents that
+    # should be quarantined. Parsing uses strict=False to only catch
     # critical structural issues, not missing optional fields.
-    _FAMILY_MODEL_MAP: dict[str, str] = {
-        "task": "TaskDocument",
-        "spec": "SpecDocument",
-        "probe": "ProbeDocument",
-        "incident": "IncidentDocument",
-        "learning_request": "LearningRequestDocument",
-        "blueprint_draft": "BlueprintDraftDocument",
-    }
-    model_name = _FAMILY_MODEL_MAP.get(family.family_id)
-    if model_name is None:
+    model_cls = resolve_contract_model(family.schema_id)
+    if model_cls is None:
         return True, None
 
     # Only validate if the document looks like it has the family's id field
@@ -1166,19 +1153,8 @@ def _validate_markdown_document_content(
     # Attempt pydantic model validation as best-effort
     from millrace_ai.work_documents import parse_work_document_as
 
-    model_cls = _resolve_model_class(model_name)
-    if model_cls is None:
-        return True, None
     try:
         parse_work_document_as(raw, model=model_cls, path=path)
     except Exception as exc:
         return False, str(exc)
     return True, None
-
-
-def _resolve_model_class(model_name: str):
-    """Resolve a document model class by name from millrace_ai.contracts."""
-    import importlib
-
-    mod = importlib.import_module("millrace_ai.contracts")
-    return getattr(mod, model_name, None)

@@ -13,14 +13,17 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from millrace_ai.architecture import GraphLoopDefinition
 from millrace_ai.assets.extensions import (
     discover_extension_package_manifests,
     load_extension_package_manifest,
 )
 from millrace_ai.compilation.outcomes import CompilerValidationError
+from millrace_ai.compilation.plan_authority import has_required_workflow_authority
 from millrace_ai.compilation.validation.extensions import validate_required_extensions
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
@@ -78,12 +81,30 @@ class TestExtensionManifestModels:
         """ExtensionItemKind covers all ADR-0015 vocabulary item types."""
         kinds = {k.value for k in ExtensionItemKind}
         assert "runtime_effect_operation_runner" in kinds
+        assert "runtime_effect_operation" in kinds
+        assert "runtime_effect_runner" in kinds
+        assert "runtime_effect_handler" in kinds
+        assert "runtime_effect_rule" in kinds
+        assert "runtime_effect_primitive" in kinds
+        assert "runtime_effect_validator" in kinds
+        assert "runtime_effect_store" in kinds
         assert "terminal_action" in kinds
         assert "request_context_provider" in kinds
+        assert "request_context_profile" in kinds
+        assert "request_context_render_plan" in kinds
         assert "work_item_document_adapter" in kinds
+        assert "work_item_family" in kinds
         assert "queue_claim_policy" in kinds
+        assert "queue_lifecycle_policy" in kinds
         assert "recovery_policy" in kinds
         assert "failure_policy" in kinds
+        assert "runtime_failure_policy" in kinds
+        assert "scheduler_policy" in kinds
+        assert "lifecycle_mutation_plan" in kinds
+        assert "artifact_contract" in kinds
+        assert "workspace_schema_epoch" in kinds
+        assert "doctor_diagnostic" in kinds
+        assert "status_projection" in kinds
 
     def test_item_manifest_constructor_and_roundtrip(self):
         """ExtensionItemManifest can be constructed and serialised round-trip."""
@@ -486,6 +507,530 @@ class TestRequiredExtensionValidation:
         assert "Available:" in error_msg
         assert "available.extension" in error_msg
 
+    def test_validation_rejects_duplicate_manifest_item_ownership(self):
+        """Two extension packages cannot own the same manifest item."""
+        item_a = ExtensionItemManifest(
+            item_kind="stage_kind",
+            item_id="extension.stage",
+            implementation_path="example.test",
+            version="1.0.0",
+        )
+        item_b = ExtensionItemManifest(
+            item_kind="stage_kind",
+            item_id="extension.stage",
+            implementation_path="other.test",
+            version="1.0.0",
+        )
+        manifest_a = ExtensionPackageManifest(
+            package_id="owner.a",
+            display_name="Owner A",
+            domain="generic",
+            version="1.0.0",
+            items=(item_a,),
+        )
+        manifest_b = ExtensionPackageManifest(
+            package_id="owner.b",
+            display_name="Owner B",
+            domain="generic",
+            version="1.0.0",
+            items=(item_b,),
+        )
+        mode = ModeDefinition(
+            mode_id="test_mode",
+            loop_ids_by_plane={
+                Plane.EXECUTION: "execution.standard",
+                Plane.PLANNING: "planning.standard",
+            },
+        )
+
+        with pytest.raises(CompilerValidationError, match="Duplicate extension-owned"):
+            validate_required_extensions(
+                mode=mode,
+                discovered_manifests=(manifest_a, manifest_b),
+            )
+
+    def test_validation_rejects_unknown_manifest_item_for_registry_family(self):
+        """Manifest-owned registry items must exist in the matching asset family."""
+        manifest = ExtensionPackageManifest(
+            package_id="owner.test",
+            display_name="Owner Test",
+            domain="generic",
+            version="1.0.0",
+            items=(
+                ExtensionItemManifest(
+                    item_kind="stage_kind",
+                    item_id="missing.stage",
+                    implementation_path="example.test",
+                    version="1.0.0",
+                ),
+            ),
+        )
+        mode = ModeDefinition(
+            mode_id="test_mode",
+            loop_ids_by_plane={
+                Plane.EXECUTION: "execution.standard",
+                Plane.PLANNING: "planning.standard",
+            },
+        )
+
+        with pytest.raises(CompilerValidationError) as exc_info:
+            validate_required_extensions(
+                mode=mode,
+                discovered_manifests=(manifest,),
+                stage_kinds={},
+            )
+
+        error_msg = str(exc_info.value)
+        assert "owner.test" in error_msg
+        assert "stage_kind" in error_msg
+        assert "missing.stage" in error_msg
+
+    def test_validation_rejects_undeclared_manifest_owned_graph_reference(self):
+        """Graph references to manifest-owned items require the owning package."""
+        manifest = ExtensionPackageManifest(
+            package_id="owner.test",
+            display_name="Owner Test",
+            domain="generic",
+            version="1.0.0",
+            items=(
+                ExtensionItemManifest(
+                    item_kind="stage_kind",
+                    item_id="extension.stage",
+                    implementation_path="example.test",
+                    version="1.0.0",
+                ),
+            ),
+        )
+        mode = ModeDefinition(
+            mode_id="test_mode",
+            loop_ids_by_plane={
+                Plane.EXECUTION: "execution.extension",
+                Plane.PLANNING: "planning.standard",
+            },
+            required_extensions=(),
+        )
+        graph = GraphLoopDefinition.model_validate(
+            {
+                "loop_id": "execution.extension",
+                "plane": "execution",
+                "nodes": [
+                    {"node_id": "extension_node", "stage_kind_id": "extension.stage"}
+                ],
+                "entry_nodes": [{"entry_key": "task", "node_id": "extension_node"}],
+                "edges": [
+                    {
+                        "edge_id": "done",
+                        "from_node_id": "extension_node",
+                        "terminal_state_id": "done",
+                        "on_outcomes": ["DONE"],
+                        "kind": "terminal",
+                    }
+                ],
+                "terminal_states": [
+                    {
+                        "terminal_state_id": "done",
+                        "terminal_class": "success",
+                        "terminal_action_id": "complete_work_item",
+                        "writes_status": "DONE",
+                    }
+                ],
+            }
+        )
+
+        with pytest.raises(CompilerValidationError) as exc_info:
+            validate_required_extensions(
+                mode=mode,
+                discovered_manifests=(manifest,),
+                graph_loops={Plane.EXECUTION: graph},
+                stage_kinds={"extension.stage": object()},  # type: ignore[dict-item]
+            )
+
+        error_msg = str(exc_info.value)
+        assert "test_mode" in error_msg
+        assert "owner.test" in error_msg
+        assert "stage_kind" in error_msg
+        assert "extension.stage" in error_msg
+        assert "extension_node" in error_msg
+
+    def test_validation_rejects_undeclared_family_document_and_queue_lifecycle_refs(self):
+        """Selected work-item family adapter dependencies require owning packages."""
+        manifest = ExtensionPackageManifest(
+            package_id="owner.test",
+            display_name="Owner Test",
+            domain="generic",
+            version="1.0.0",
+            items=(
+                ExtensionItemManifest(
+                    item_kind="work_item_document_adapter",
+                    item_id="owner.document_adapter",
+                    implementation_path="example.document_adapter",
+                    version="1.0.0",
+                ),
+                ExtensionItemManifest(
+                    item_kind="queue_lifecycle_policy",
+                    item_id="owner.queue_lifecycle",
+                    implementation_path="example.queue_lifecycle",
+                    version="1.0.0",
+                ),
+            ),
+        )
+        mode = ModeDefinition(
+            mode_id="test_mode",
+            loop_ids_by_plane={
+                Plane.EXECUTION: "execution.extension",
+                Plane.PLANNING: "planning.standard",
+            },
+            required_extensions=(),
+        )
+        graph = GraphLoopDefinition.model_validate(
+            {
+                "loop_id": "execution.extension",
+                "plane": "execution",
+                "nodes": [
+                    {"node_id": "worker", "stage_kind_id": "basic_worker"}
+                ],
+                "entry_nodes": [{"entry_key": "task", "node_id": "worker"}],
+                "edges": [
+                    {
+                        "edge_id": "done",
+                        "from_node_id": "worker",
+                        "terminal_state_id": "done",
+                        "on_outcomes": ["DONE"],
+                        "kind": "terminal",
+                    }
+                ],
+                "terminal_states": [
+                    {
+                        "terminal_state_id": "done",
+                        "terminal_class": "success",
+                        "terminal_action_id": "complete_work_item",
+                        "writes_status": "DONE",
+                    }
+                ],
+            }
+        )
+        workflow_primitives = SimpleNamespace(
+            artifact_contracts=(),
+            request_context_profiles=(),
+            request_context_providers=(),
+            request_context_render_plans=(),
+            work_item_families=(
+                SimpleNamespace(
+                    family_id="task",
+                    document_adapter_id="owner.document_adapter",
+                    queue_lifecycle_adapter_id="owner.queue_lifecycle",
+                ),
+            ),
+            document_adapters=(SimpleNamespace(adapter_id="owner.document_adapter"),),
+            queue_claim_policies=(),
+            terminal_actions=(),
+            lifecycle_mutation_plans=(),
+            runtime_effect_handlers=(),
+            runtime_effect_runners=(),
+            runtime_effect_rules=(),
+            effect_stores=(),
+            effect_validators=(),
+            runtime_effect_operations=(),
+            runtime_operations=(),
+            runtime_effect_primitives=(),
+            recovery_policies=(),
+            runtime_failure_policies=(),
+            scheduler_policies=(),
+            workspace_schema_epoch=None,
+        )
+
+        with pytest.raises(CompilerValidationError) as exc_info:
+            validate_required_extensions(
+                mode=mode,
+                discovered_manifests=(manifest,),
+                graph_loops={Plane.EXECUTION: graph},
+                stage_kinds={"basic_worker": object()},  # type: ignore[dict-item]
+                workflow_primitives=workflow_primitives,
+            )
+
+        error_msg = str(exc_info.value)
+        assert "test_mode" in error_msg
+        assert "owner.test" in error_msg
+        assert "work_item_document_adapter" in error_msg
+        assert "owner.document_adapter" in error_msg
+        assert "graph 'execution.extension' entry 'task'" in error_msg
+
+        declared_mode = mode.model_copy(
+            update={"required_extensions": [{"extension_package_id": "owner.test"}]}
+        )
+        validate_required_extensions(
+            mode=declared_mode,
+            discovered_manifests=(manifest,),
+            graph_loops={Plane.EXECUTION: graph},
+            stage_kinds={"basic_worker": object()},  # type: ignore[dict-item]
+            workflow_primitives=workflow_primitives,
+        )
+
+    def test_validation_rejects_undeclared_runtime_effect_refs(self):
+        """Graph-selected runtime-effect metadata requires owning packages."""
+        manifest = ExtensionPackageManifest(
+            package_id="owner.test",
+            display_name="Owner Test",
+            domain="generic",
+            version="1.0.0",
+            items=(
+                ExtensionItemManifest(
+                    item_kind="runtime_effect_rule",
+                    item_id="owner.effect_rule",
+                    implementation_path="example.effect_rule",
+                    version="1.0.0",
+                ),
+                ExtensionItemManifest(
+                    item_kind="runtime_effect_handler",
+                    item_id="owner.effect_handler",
+                    implementation_path="example.effect_handler",
+                    version="1.0.0",
+                ),
+                ExtensionItemManifest(
+                    item_kind="runtime_effect_operation",
+                    item_id="owner.effect_operation",
+                    implementation_path="example.effect_operation",
+                    version="1.0.0",
+                ),
+                ExtensionItemManifest(
+                    item_kind="runtime_effect_runner",
+                    item_id="owner.effect_runner",
+                    implementation_path="example.effect_runner",
+                    version="1.0.0",
+                ),
+            ),
+        )
+        mode = ModeDefinition(
+            mode_id="test_mode",
+            loop_ids_by_plane={
+                Plane.EXECUTION: "execution.extension",
+                Plane.PLANNING: "planning.standard",
+            },
+            required_extensions=(),
+        )
+        graph = GraphLoopDefinition.model_validate(
+            {
+                "loop_id": "execution.extension",
+                "plane": "execution",
+                "nodes": [
+                    {"node_id": "worker", "stage_kind_id": "basic_worker"}
+                ],
+                "entry_nodes": [{"entry_key": "task", "node_id": "worker"}],
+                "edges": [
+                    {
+                        "edge_id": "done",
+                        "from_node_id": "worker",
+                        "terminal_state_id": "done",
+                        "on_outcomes": ["DONE"],
+                        "kind": "terminal",
+                    }
+                ],
+                "terminal_states": [
+                    {
+                        "terminal_state_id": "done",
+                        "terminal_class": "success",
+                        "terminal_action_id": "complete_work_item",
+                        "writes_status": "DONE",
+                    }
+                ],
+            }
+        )
+        workflow_primitives = SimpleNamespace(
+            artifact_contracts=(),
+            request_context_profiles=(),
+            request_context_providers=(),
+            request_context_render_plans=(),
+            work_item_families=(),
+            document_adapters=(),
+            queue_claim_policies=(),
+            terminal_actions=(),
+            lifecycle_mutation_plans=(),
+            runtime_effect_handlers=(SimpleNamespace(handler_id="owner.effect_handler"),),
+            runtime_effect_runners=(
+                SimpleNamespace(
+                    runner_id="owner.effect_runner",
+                    operation_ids=("owner.effect_operation",),
+                    legacy_handler_ids=("owner.effect_handler",),
+                    legacy_handler_operation_ids={},
+                ),
+            ),
+            runtime_effect_rules=(
+                SimpleNamespace(
+                    rule_id="owner.effect_rule",
+                    source_node_id="worker",
+                    effect_operation_id="owner.effect_operation",
+                    handler_id="owner.effect_handler",
+                    destination_family_id=None,
+                    lifecycle_mutation_plan_id=None,
+                    source_completion_lifecycle_mutation_plan_id=None,
+                    source_blocking_lifecycle_mutation_plan_id=None,
+                    source_completion_lifecycle_mutation_plan_ids_by_family={},
+                    source_blocking_lifecycle_mutation_plan_ids_by_family={},
+                    required_run_artifacts=(),
+                ),
+            ),
+            effect_stores=(),
+            effect_validators=(),
+            runtime_effect_operations=(
+                SimpleNamespace(
+                    operation_id="owner.effect_operation",
+                    legacy_handler_ids=("owner.effect_handler",),
+                    required_artifacts=(),
+                    produced_artifacts=(),
+                    steps=(),
+                    failure_mappings=(),
+                    repair_closure_contracts=(),
+                ),
+            ),
+            runtime_operations=(),
+            runtime_effect_primitives=(),
+            recovery_policies=(),
+            runtime_failure_policies=(),
+            scheduler_policies=(),
+            workspace_schema_epoch=None,
+        )
+
+        with pytest.raises(CompilerValidationError) as exc_info:
+            validate_required_extensions(
+                mode=mode,
+                discovered_manifests=(manifest,),
+                graph_loops={Plane.EXECUTION: graph},
+                stage_kinds={"basic_worker": object()},  # type: ignore[dict-item]
+                workflow_primitives=workflow_primitives,
+            )
+
+        error_msg = str(exc_info.value)
+        assert "test_mode" in error_msg
+        assert "owner.test" in error_msg
+        assert "runtime_effect_rule" in error_msg
+        assert "owner.effect_rule" in error_msg
+        assert "graph 'execution.extension' node 'worker'" in error_msg
+
+        declared_mode = mode.model_copy(
+            update={"required_extensions": [{"extension_package_id": "owner.test"}]}
+        )
+        validate_required_extensions(
+            mode=declared_mode,
+            discovered_manifests=(manifest,),
+            graph_loops={Plane.EXECUTION: graph},
+            stage_kinds={"basic_worker": object()},  # type: ignore[dict-item]
+            workflow_primitives=workflow_primitives,
+        )
+
+    def test_validation_rejects_undeclared_runtime_failure_policy_refs(self):
+        """Active runtime-failure policies require the owning package."""
+        manifest = ExtensionPackageManifest(
+            package_id="owner.test",
+            display_name="Owner Test",
+            domain="generic",
+            version="1.0.0",
+            items=(
+                ExtensionItemManifest(
+                    item_kind="runtime_failure_policy",
+                    item_id="owner.failure_policy",
+                    implementation_path="example.failure_policy",
+                    version="1.0.0",
+                ),
+            ),
+        )
+        mode = ModeDefinition(
+            mode_id="test_mode",
+            loop_ids_by_plane={
+                Plane.EXECUTION: "execution.extension",
+                Plane.PLANNING: "planning.standard",
+            },
+            required_extensions=(),
+        )
+        graph = GraphLoopDefinition.model_validate(
+            {
+                "loop_id": "execution.extension",
+                "plane": "execution",
+                "nodes": [
+                    {"node_id": "worker", "stage_kind_id": "basic_worker"}
+                ],
+                "entry_nodes": [{"entry_key": "task", "node_id": "worker"}],
+                "edges": [
+                    {
+                        "edge_id": "done",
+                        "from_node_id": "worker",
+                        "terminal_state_id": "done",
+                        "on_outcomes": ["DONE"],
+                        "kind": "terminal",
+                    }
+                ],
+                "terminal_states": [
+                    {
+                        "terminal_state_id": "done",
+                        "terminal_class": "success",
+                        "terminal_action_id": "complete_work_item",
+                        "writes_status": "DONE",
+                    }
+                ],
+            }
+        )
+        workflow_primitives = SimpleNamespace(
+            artifact_contracts=(),
+            request_context_profiles=(),
+            request_context_providers=(),
+            request_context_render_plans=(),
+            work_item_families=(),
+            document_adapters=(),
+            queue_claim_policies=(),
+            terminal_actions=(),
+            lifecycle_mutation_plans=(),
+            runtime_effect_handlers=(),
+            runtime_effect_runners=(),
+            runtime_effect_rules=(),
+            effect_stores=(),
+            effect_validators=(),
+            runtime_effect_operations=(),
+            runtime_operations=(),
+            runtime_effect_primitives=(),
+            recovery_policies=(),
+            runtime_failure_policies=(
+                SimpleNamespace(
+                    policy_id="owner.failure_policy",
+                    applies_to_planes=(Plane.EXECUTION,),
+                    applies_to_source_node_ids=("worker",),
+                    applies_to_families=(),
+                    applies_to_operation_ids=(),
+                    applies_to_handler_ids=(),
+                    recovery_node_id=None,
+                    target_node_id=None,
+                    repair_closure_mappings=(),
+                ),
+            ),
+            scheduler_policies=(),
+            workspace_schema_epoch=None,
+        )
+
+        with pytest.raises(CompilerValidationError) as exc_info:
+            validate_required_extensions(
+                mode=mode,
+                discovered_manifests=(manifest,),
+                graph_loops={Plane.EXECUTION: graph},
+                stage_kinds={"basic_worker": object()},  # type: ignore[dict-item]
+                workflow_primitives=workflow_primitives,
+            )
+
+        error_msg = str(exc_info.value)
+        assert "test_mode" in error_msg
+        assert "owner.test" in error_msg
+        assert "runtime_failure_policy" in error_msg
+        assert "owner.failure_policy" in error_msg
+        assert "graph 'execution.extension' node 'worker'" in error_msg
+
+        declared_mode = mode.model_copy(
+            update={"required_extensions": [{"extension_package_id": "owner.test"}]}
+        )
+        validate_required_extensions(
+            mode=declared_mode,
+            discovered_manifests=(manifest,),
+            graph_loops={Plane.EXECUTION: graph},
+            stage_kinds={"basic_worker": object()},  # type: ignore[dict-item]
+            workflow_primitives=workflow_primitives,
+        )
+
 
 # ── identifier boundary tests ──────────────────────────────────────────────
 
@@ -540,6 +1085,28 @@ class TestFullCompilationIntegration:
         assert outcome.diagnostics.ok
         assert outcome.active_plan is not None
 
+    @pytest.mark.xfail(
+        reason=(
+            "Remediation target: compiled-plan currentness does not yet treat "
+            "scheduler/recovery policy authority as required workflow authority."
+        ),
+        strict=True,
+    )
+    def test_compiled_plan_authority_requires_policy_surfaces(self, tmp_path: Path):
+        """A persisted plan missing compiled policy surfaces must not be reused."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(tmp_path, assets_root)
+        assert outcome.active_plan is not None
+
+        stripped = outcome.active_plan.model_copy(
+            update={
+                "scheduler_policy": None,
+                "recovery_policies": (),
+            }
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
     def test_compilation_rejects_missing_required_extension(self, tmp_path: Path):
         """Full compilation rejects when a mode requires a missing extension."""
         assets_root = _copy_builtin_assets(tmp_path)
@@ -577,6 +1144,102 @@ class TestFullCompilationIntegration:
         mode_path.write_text(json.dumps(mode_data, indent=2) + "\n", encoding="utf-8")
 
         outcome = _compile_with_assets(tmp_path, assets_root)
+        assert outcome.diagnostics.ok
+        assert outcome.active_plan is not None
+
+    def test_blueprint_mode_rejects_missing_blueprint_extension(self, tmp_path: Path):
+        """Blueprint-owned vocabulary requires millrace.blueprint."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        mode_path = assets_root / "modes" / "blueprint_codex.json"
+        mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
+        mode_data["required_extensions"] = [
+            entry
+            for entry in mode_data["required_extensions"]
+            if entry["extension_package_id"] != "millrace.blueprint"
+        ]
+        _write_json(mode_path, mode_data)
+
+        workspace_root = tmp_path / "workspace"
+        bootstrap_workspace(workspace_root)
+        outcome = compile_and_persist_workspace_plan(
+            workspace_root,
+            config=RuntimeConfig(),
+            requested_mode_id="blueprint_codex",
+            assets_root=assets_root,
+        )
+
+        assert not outcome.diagnostics.ok
+        error_msg = outcome.diagnostics.errors[0]
+        assert "millrace.blueprint" in error_msg
+        assert "item_kind='stage_kind'" in error_msg
+        assert "manager_blueprint" in error_msg
+
+    @pytest.mark.parametrize(
+        ("mode_id", "removed_extension", "expected_item_id"),
+        (
+            ("default_codex", "millrace.recon", "recon"),
+            ("default_codex", "millrace.closure", "arbiter"),
+            ("learning_codex", "millrace.learning", "analyst"),
+        ),
+    )
+    def test_domain_modes_reject_missing_declared_owner(
+        self,
+        tmp_path: Path,
+        mode_id: str,
+        removed_extension: str,
+        expected_item_id: str,
+    ):
+        """Domain-owned vocabulary reports the missing owner and item kind."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        mode_path = assets_root / "modes" / f"{mode_id}.json"
+        mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
+        mode_data["required_extensions"] = [
+            entry
+            for entry in mode_data["required_extensions"]
+            if entry["extension_package_id"] != removed_extension
+        ]
+        _write_json(mode_path, mode_data)
+
+        workspace_root = tmp_path / "workspace"
+        bootstrap_workspace(workspace_root)
+        outcome = compile_and_persist_workspace_plan(
+            workspace_root,
+            config=RuntimeConfig(),
+            requested_mode_id=mode_id,
+            assets_root=assets_root,
+        )
+
+        assert not outcome.diagnostics.ok
+        error_msg = outcome.diagnostics.errors[0]
+        assert removed_extension in error_msg
+        assert "item_kind='stage_kind'" in error_msg
+        assert expected_item_id in error_msg
+
+    @pytest.mark.parametrize(
+        "mode_id",
+        ("default_codex", "default_pi", "generic_two_plane_fixture"),
+    )
+    def test_non_blueprint_modes_do_not_require_blueprint_extension(
+        self, tmp_path: Path, mode_id: str
+    ):
+        """Non-Blueprint shipped modes compile without millrace.blueprint."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        mode_path = assets_root / "modes" / f"{mode_id}.json"
+        mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
+        assert all(
+            entry["extension_package_id"] != "millrace.blueprint"
+            for entry in mode_data["required_extensions"]
+        )
+
+        workspace_root = tmp_path / "workspace"
+        bootstrap_workspace(workspace_root)
+        outcome = compile_and_persist_workspace_plan(
+            workspace_root,
+            config=RuntimeConfig(),
+            requested_mode_id=mode_id,
+            assets_root=assets_root,
+        )
+
         assert outcome.diagnostics.ok
         assert outcome.active_plan is not None
 

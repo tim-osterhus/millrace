@@ -5,6 +5,655 @@
   "display_name": "Millrace Generic Built-In Extensions",
   "domain": "generic",
   "version": "1.0.0",
-  "items": [],
+  "items": [
+    {
+      "item_id": "basic_worker",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builder",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "checker",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "consultant",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "doublechecker",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "fixer",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "integrator",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "troubleshooter",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "updater",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "basic_planner",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planner",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "auditor",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "basic_learner",
+      "item_kind": "stage_kind",
+      "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "complete_work_item",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "no_op_complete_work_item",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "block_work_item",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "requeue_work_item",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "complete_source_after_effect",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "block_source_after_effect",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "escalate_to_planning",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "idle_plane",
+      "item_kind": "terminal_action",
+      "implementation_path": "millrace_ai.runtime.terminal_actions.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "lifecycle.complete_work_item",
+      "item_kind": "runtime_operation",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.lifecycle",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "lifecycle.block_work_item",
+      "item_kind": "runtime_operation",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.lifecycle",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "generic.active_work_item",
+      "item_kind": "request_context_provider",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builder.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "checker.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "fixer.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "doublechecker.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "updater.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "troubleshooter.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "consultant.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "integrator.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planner.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "auditor.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "analyst.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "professor.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "curator.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "librarian.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "learning.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "stage_request.default.v1",
+      "item_kind": "request_context_render_plan",
+      "implementation_path": "millrace_ai.runtime.context.rendering",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "task",
+      "item_kind": "work_item_family",
+      "implementation_path": "millrace_ai.workspace.families.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "spec",
+      "item_kind": "work_item_family",
+      "implementation_path": "millrace_ai.workspace.families.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "probe",
+      "item_kind": "work_item_family",
+      "implementation_path": "millrace_ai.workspace.families.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "incident",
+      "item_kind": "work_item_family",
+      "implementation_path": "millrace_ai.workspace.families.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "learning_request",
+      "item_kind": "work_item_family",
+      "implementation_path": "millrace_ai.workspace.families.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builtin_markdown_v1",
+      "item_kind": "work_item_document_adapter",
+      "implementation_path": "millrace_ai.workspace.documents.markdown",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builtin.queue_lifecycle.task",
+      "item_kind": "queue_lifecycle_policy",
+      "implementation_path": "millrace_ai.workspace.lifecycle.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builtin.queue_lifecycle.spec",
+      "item_kind": "queue_lifecycle_policy",
+      "implementation_path": "millrace_ai.workspace.lifecycle.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builtin.queue_lifecycle.probe",
+      "item_kind": "queue_lifecycle_policy",
+      "implementation_path": "millrace_ai.workspace.lifecycle.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builtin.queue_lifecycle.incident",
+      "item_kind": "queue_lifecycle_policy",
+      "implementation_path": "millrace_ai.workspace.lifecycle.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builtin.queue_lifecycle.learning_request",
+      "item_kind": "queue_lifecycle_policy",
+      "implementation_path": "millrace_ai.workspace.lifecycle.builtin",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "execution.default",
+      "item_kind": "queue_claim_policy",
+      "implementation_path": "millrace_ai.scheduler.queue_claims",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planning.default",
+      "item_kind": "queue_claim_policy",
+      "implementation_path": "millrace_ai.scheduler.queue_claims",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "learning.default",
+      "item_kind": "queue_claim_policy",
+      "implementation_path": "millrace_ai.scheduler.queue_claims",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "default.two_plane",
+      "item_kind": "scheduler_policy",
+      "implementation_path": "millrace_ai.scheduler.policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "default.three_plane",
+      "item_kind": "scheduler_policy",
+      "implementation_path": "millrace_ai.scheduler.policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "execution.blocked_recovery",
+      "item_kind": "recovery_policy",
+      "implementation_path": "millrace_ai.recovery.policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "execution.blocked_recovery_heavy",
+      "item_kind": "recovery_policy",
+      "implementation_path": "millrace_ai.recovery.policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "complete_work_item",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.workspace.lifecycle.mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "block_work_item",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.workspace.lifecycle.mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "requeue_work_item",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.workspace.lifecycle.mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "complete_source_after_effect",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.workspace.lifecycle.mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "block_source_after_effect",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.workspace.lifecycle.mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "active_work_item",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builder_summary",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "integration_report",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planner_disposition",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "probe",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "report",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "runner_stderr",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "runtime_error_context",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "spec",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "spec_packet",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "stage_result",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "task",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "task_packet",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "troubleshoot_report",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.artifacts.contracts.generic",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planner_disposition",
+      "item_kind": "runtime_effect_operation",
+      "implementation_path": "millrace_ai.runtime.effects.planner_disposition",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planner_disposition",
+      "item_kind": "runtime_effect_handler",
+      "implementation_path": "millrace_ai.runtime.effects.planner_disposition",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planner_disposition_on_complete",
+      "item_kind": "runtime_effect_rule",
+      "implementation_path": "millrace_ai.runtime.effects.planner_disposition",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planner_disposition_on_blocked",
+      "item_kind": "runtime_effect_rule",
+      "implementation_path": "millrace_ai.runtime.effects.planner_disposition",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "legacy_python_handler",
+      "item_kind": "runtime_effect_runner",
+      "implementation_path": "millrace_ai.runtime.effects.legacy_python_handler",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "run_artifacts",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.runtime.effects.stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mutation_journal",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.runtime.effects.stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "task_queue",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.runtime.effects.stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "source_lifecycle",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.runtime.effects.stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planner_disposition.required_artifacts",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.runtime.effects.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "active_work_item_lookup",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "artifact_model_parse",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "artifact_presence",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "copy_artifact",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "enqueue_work_items",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "legacy_python_handler",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "move_record",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mutation_journal_append",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "persist_record",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "source_lifecycle",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "store_equivalence_check",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "work_item_patch",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "emit_event",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.runtime.effects.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "runner_timeout",
+      "item_kind": "runtime_failure_policy",
+      "implementation_path": "millrace_ai.runtime.failure_policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "model_provider_unavailable",
+      "item_kind": "runtime_failure_policy",
+      "implementation_path": "millrace_ai.runtime.failure_policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "workspace_schema_incompatible",
+      "item_kind": "runtime_failure_policy",
+      "implementation_path": "millrace_ai.runtime.failure_policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "v0.20",
+      "item_kind": "workspace_schema_epoch",
+      "implementation_path": "millrace_ai.workspace.schema",
+      "version": "1.0.0"
+    }
+  ],
   "requires": []
 }

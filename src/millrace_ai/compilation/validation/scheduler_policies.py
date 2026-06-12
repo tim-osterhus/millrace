@@ -53,8 +53,8 @@ def validate_scheduler_policy_compile(
         )
 
     claim_policy_ids_by_plane = {
-        policy.plane: policy.policy_id
-        for policy in workflow_primitives.queue_claim_policies
+        plane: policy.policy_id
+        for plane, policy in selected_policy.claim_policies_by_plane.items()
     }
     for lane in selected_policy.lanes:
         expected_claim_policy_id = claim_policy_ids_by_plane.get(lane.plane)

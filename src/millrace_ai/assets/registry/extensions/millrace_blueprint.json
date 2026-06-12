@@ -29,6 +29,666 @@
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.mechanic_blueprint",
       "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.manager",
+      "item_kind": "request_context_provider",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.contractor",
+      "item_kind": "request_context_provider",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.evaluator",
+      "item_kind": "request_context_provider",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.mechanic",
+      "item_kind": "request_context_provider",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.manager.default.v1",
+      "item_kind": "request_context_render_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context.rendering",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.contractor.default.v1",
+      "item_kind": "request_context_render_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context.rendering",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.evaluator.default.v1",
+      "item_kind": "request_context_render_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context.rendering",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.mechanic.default.v1",
+      "item_kind": "request_context_render_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.context.rendering",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_draft",
+      "item_kind": "work_item_family",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.work_items",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_draft_markdown_v1",
+      "item_kind": "work_item_document_adapter",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.document_adapters",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "builtin.queue_lifecycle.blueprint_draft",
+      "item_kind": "queue_lifecycle_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.queue_lifecycle",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planning.blueprint",
+      "item_kind": "queue_claim_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.queue_claims",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "default.two_plane.blueprint",
+      "item_kind": "scheduler_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.scheduler",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "default.three_plane.blueprint",
+      "item_kind": "scheduler_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.scheduler",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "active_blueprint_draft",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_candidate",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_critique",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_drafts",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_evaluation",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_evaluation_report",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_failure",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_manifest",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_markdown",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_packet",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_repair_decision",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "candidate_blueprint_packet",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint.manifest.diagnostics",
+      "item_kind": "doctor_diagnostic",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.doctor",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprints",
+      "item_kind": "status_projection",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.status",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_report",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_report",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "repaired_generated_task",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "repaired_blueprint_artifact",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "task_cards",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_manifest_to_blueprint_drafts",
+      "item_kind": "runtime_effect_operation",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_manifest_to_blueprint_drafts",
+      "item_kind": "runtime_effect_handler",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_manifest_to_blueprint_drafts",
+      "item_kind": "runtime_effect_rule",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint_candidate_persist",
+      "item_kind": "runtime_effect_operation",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint_candidate_persist",
+      "item_kind": "runtime_effect_handler",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint_candidate_persist",
+      "item_kind": "runtime_effect_rule",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task",
+      "item_kind": "runtime_effect_operation",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task",
+      "item_kind": "runtime_effect_handler",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task",
+      "item_kind": "runtime_effect_rule",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_rejected_to_draft_revision",
+      "item_kind": "runtime_effect_operation",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_rejected_to_draft_revision",
+      "item_kind": "runtime_effect_handler",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_rejected_to_draft_revision",
+      "item_kind": "runtime_effect_rule",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply",
+      "item_kind": "runtime_effect_operation",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply",
+      "item_kind": "runtime_effect_handler",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply",
+      "item_kind": "runtime_effect_rule",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effects",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_manifests",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_draft_queue",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_active_drafts",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_candidate_packets",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_candidate_markdown",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_approved_drafts",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_rejected_packets",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_rejected_markdown",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_rejected_markdown_checksums",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_approved_packets",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_approved_markdown",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_approved_markdown_checksums",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_evaluations",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_critiques_open",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_promotions",
+      "item_kind": "runtime_effect_store",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.effect_stores",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_critique_packet_validation",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_evaluation_packet_validation",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_generated_task_validation",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_manifest_sequence_validation",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_packet_draft_validation",
+      "item_kind": "runtime_effect_primitive",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.primitives",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_manifest_to_blueprint_drafts.required_artifacts",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_manifest_to_blueprint_drafts.manifest_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_manifest_to_blueprint_drafts.drafts_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_manifest_to_blueprint_drafts.sequence",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_manifest_to_blueprint_drafts.output_equivalence",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint_candidate_persist.required_artifacts",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint_candidate_persist.packet_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint_candidate_persist.active_draft",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint_candidate_persist.packet_matches_draft",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "contractor_blueprint_candidate_persist.output_equivalence",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task.required_artifacts",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task.evaluation_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task.generated_task_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task.approval_context",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task.generated_task_scope",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_approved_to_task.output_equivalence",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_rejected_to_draft_revision.required_artifacts",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_rejected_to_draft_revision.evaluation_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_rejected_to_draft_revision.critique_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_rejected_to_draft_revision.rejection_context",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "evaluator_blueprint_rejected_to_draft_revision.output_equivalence",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply.required_artifacts",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply.repair_decision_required",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply.decision_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply.repaired_task_schema",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply.repair_context",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply.repaired_task_scope",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "mechanic_blueprint_repair_apply.output_equivalence",
+      "item_kind": "runtime_effect_validator",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.validators",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "complete_spec_source_after_blueprint_effect",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.lifecycle_mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "block_spec_source_after_blueprint_effect",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.lifecycle_mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "complete_incident_source_after_blueprint_effect",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.lifecycle_mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "block_incident_source_after_blueprint_effect",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.lifecycle_mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "approve_blueprint_draft_after_effect",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.lifecycle_mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "block_blueprint_draft_after_effect",
+      "item_kind": "lifecycle_mutation_plan",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.lifecycle_mutations",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_pre_mutation_artifact_repair",
+      "item_kind": "runtime_failure_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.failure_policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_pre_mutation_conservative_block",
+      "item_kind": "runtime_failure_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.failure_policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "manager_blueprint_partial_mutation_conservative_block",
+      "item_kind": "runtime_failure_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.failure_policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "blueprint_approval_pre_mutation_effect_validation",
+      "item_kind": "runtime_failure_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.blueprint.failure_policies",
+      "version": "1.0.0"
     }
   ],
   "requires": []

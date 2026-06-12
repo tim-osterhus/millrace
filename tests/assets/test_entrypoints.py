@@ -864,6 +864,32 @@ def test_parse_markdown_asset_accepts_stage_suffixed_entrypoint_filename(tmp_pat
     assert parsed_entrypoint.manifest["plane"] == "execution"
 
 
+def test_entrypoint_target_inference_uses_stage_kind_default_entrypoint_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace_ai.assets.entrypoints import discovery
+
+    entrypoint_path = tmp_path / "entrypoints" / "planning" / "custom-authority.md"
+    entrypoint_path.parent.mkdir(parents=True, exist_ok=True)
+    entrypoint_path.write_text("# Custom Authority\n\nInstruction body.\n", encoding="utf-8")
+    monkeypatch.setattr(
+        discovery,
+        "_ENTRYPOINT_TARGETS_BY_PATH",
+        {
+            "entrypoints/planning/custom-authority.md": (
+                "planning",
+                "custom_authority",
+            )
+        },
+    )
+
+    assert discovery.infer_entrypoint_path_target(entrypoint_path) == (
+        "planning",
+        "custom_authority",
+    )
+
+
 def test_lint_accepts_stage_suffixed_entrypoint_filename(tmp_path: Path) -> None:
     assets_dir = tmp_path / "assets"
     entrypoint_path = assets_dir / "entrypoints" / "planning" / "custom-planner.md"

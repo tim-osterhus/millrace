@@ -614,6 +614,252 @@ def test_generic_mode_with_recon_runtime_operation_fails_without_recon_declared(
     )
 
 
+def test_generic_mode_with_blueprint_scheduler_family_fails_without_blueprint_declared(
+    tmp_path: Path,
+) -> None:
+    """A mode whose selected scheduler policy admits blueprint_draft work
+    must declare millrace.blueprint."""
+    assets_root = _copy_assets(tmp_path)
+
+    mode_path = assets_root / "modes" / "generic_with_blueprint_scheduler.json"
+    mode_payload = {
+        "schema_version": "1.0",
+        "kind": "mode",
+        "mode_id": "generic_with_blueprint_scheduler",
+        "loop_ids_by_plane": {
+            "execution": "execution.minimal_three_plane",
+            "planning": "planning.minimal_three_plane",
+        },
+        "stage_entrypoint_overrides": {},
+        "stage_skill_additions": {},
+        "stage_model_bindings": {},
+        "stage_runner_bindings": {
+            "basic_worker": "pi_rpc",
+            "basic_planner": "pi_rpc",
+        },
+        "scheduler_policy_id": "default.two_plane.blueprint",
+        "required_extensions": [
+            {"extension_package_id": "millrace.generic"},
+        ],
+    }
+    mode_path.write_text(json.dumps(mode_payload, indent=2) + "\n", encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    _write_default_config(workspace)
+    paths = bootstrap_workspace(workspace_paths(workspace), assets_root=assets_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        paths,
+        config=load_runtime_config(_config_path(workspace)),
+        requested_mode_id="generic_with_blueprint_scheduler",
+        assets_root=assets_root,
+        compile_if_needed=True,
+        refuse_stale_last_known_good=False,
+    )
+
+    assert outcome.active_plan is None, (
+        "Compile should fail when a generic-only mode selects a scheduler "
+        "policy whose planning lane admits blueprint_draft"
+    )
+    assert not outcome.diagnostics.ok
+    assert "blueprint" in " ".join(outcome.diagnostics.errors).lower()
+
+
+def test_generic_mode_with_planning_recovery_policy_fails_without_recon_declared(
+    tmp_path: Path,
+) -> None:
+    """A generic-only mode must not compile a domain recovery policy.
+
+    planning.blocked_recovery references planning/recon node vocabulary and
+    the mechanic recovery counter. A generic fixture selecting that policy
+    should be rejected unless the owning extension package is declared.
+    """
+    assets_root = _copy_assets(tmp_path)
+
+    mode_path = assets_root / "modes" / "generic_with_planning_recovery.json"
+    mode_payload = {
+        "schema_version": "1.0",
+        "kind": "mode",
+        "mode_id": "generic_with_planning_recovery",
+        "loop_ids_by_plane": {
+            "execution": "execution.minimal_three_plane",
+            "planning": "planning.standard",
+        },
+        "stage_entrypoint_overrides": {},
+        "stage_skill_additions": {},
+        "stage_model_bindings": {},
+        "stage_runner_bindings": {
+            "basic_worker": "pi_rpc",
+            "planner": "pi_rpc",
+            "manager": "pi_rpc",
+            "mechanic": "pi_rpc",
+            "auditor": "pi_rpc",
+            "recon": "pi_rpc",
+            "arbiter": "pi_rpc",
+        },
+        "recovery_policy_ids": ["planning.blocked_recovery"],
+        "required_extensions": [
+            {"extension_package_id": "millrace.generic"},
+        ],
+    }
+    mode_path.write_text(json.dumps(mode_payload, indent=2) + "\n", encoding="utf-8")
+
+    loop_path = assets_root / "graphs" / "planning" / "generic_recovery_probe.json"
+    loop_payload = {
+        "schema_version": "1.0",
+        "kind": "graph_loop",
+        "loop_id": "planning.generic_recovery_probe",
+        "plane": "planning",
+        "nodes": [
+            {"node_id": "planner", "stage_kind_id": "planner"},
+            {"node_id": "manager", "stage_kind_id": "manager"},
+            {"node_id": "mechanic", "stage_kind_id": "mechanic"},
+            {"node_id": "auditor", "stage_kind_id": "auditor"},
+            {"node_id": "recon", "stage_kind_id": "recon"},
+        ],
+        "entry_nodes": [{"entry_key": "spec", "node_id": "planner"}],
+        "edges": [
+            {
+                "edge_id": "done",
+                "from_node_id": "planner",
+                "terminal_state_id": "done",
+                "on_outcomes": ["PLANNER_COMPLETE"],
+                "kind": "terminal",
+            },
+            {
+                "edge_id": "blocked",
+                "from_node_id": "planner",
+                "terminal_state_id": "blocked",
+                "on_outcomes": ["BLOCKED"],
+                "kind": "terminal",
+            },
+            {
+                "edge_id": "manager-blocked",
+                "from_node_id": "manager",
+                "terminal_state_id": "blocked",
+                "on_outcomes": ["BLOCKED"],
+                "kind": "terminal",
+            },
+            {
+                "edge_id": "mechanic-blocked",
+                "from_node_id": "mechanic",
+                "terminal_state_id": "blocked",
+                "on_outcomes": ["BLOCKED"],
+                "kind": "terminal",
+            },
+            {
+                "edge_id": "auditor-blocked",
+                "from_node_id": "auditor",
+                "terminal_state_id": "blocked",
+                "on_outcomes": ["BLOCKED"],
+                "kind": "terminal",
+            },
+            {
+                "edge_id": "recon-blocked",
+                "from_node_id": "recon",
+                "terminal_state_id": "blocked",
+                "on_outcomes": ["BLOCKED"],
+                "kind": "terminal",
+            }
+        ],
+        "terminal_states": [
+            {
+                "terminal_state_id": "done",
+                "terminal_class": "success",
+                "terminal_action_id": "complete_work_item",
+                "writes_status": "PLANNER_COMPLETE",
+            },
+            {
+                "terminal_state_id": "blocked",
+                "terminal_class": "blocked",
+                "terminal_action_id": "block_work_item",
+                "writes_status": "BLOCKED",
+            }
+        ],
+    }
+    loop_path.write_text(json.dumps(loop_payload, indent=2) + "\n", encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    _write_default_config(workspace)
+    paths = bootstrap_workspace(workspace_paths(workspace), assets_root=assets_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        paths,
+        config=load_runtime_config(_config_path(workspace)),
+        requested_mode_id="generic_with_planning_recovery",
+        assets_root=assets_root,
+        compile_if_needed=True,
+        refuse_stale_last_known_good=False,
+    )
+
+    assert outcome.active_plan is None, (
+        "Compile should fail when a generic-only mode selects planning "
+        "recovery policy authority"
+    )
+    assert not outcome.diagnostics.ok
+    assert "recon" in " ".join(outcome.diagnostics.errors).lower()
+
+
+def test_compile_fails_when_mode_references_missing_recovery_policy(
+    tmp_path: Path,
+) -> None:
+    """A mode cannot reference a recovery policy absent from compiled assets."""
+    assets_root = _copy_assets(tmp_path)
+
+    mode_path = assets_root / "modes" / "missing_recovery_policy_codex.json"
+    mode_payload = {
+        "schema_version": "1.0",
+        "kind": "mode",
+        "mode_id": "missing_recovery_policy_codex",
+        "loop_ids_by_plane": {
+            "execution": "execution.standard",
+            "planning": "planning.standard",
+        },
+        "stage_entrypoint_overrides": {},
+        "stage_skill_additions": {},
+        "stage_model_bindings": {},
+        "stage_runner_bindings": {
+            "builder": "codex_cli",
+            "checker": "codex_cli",
+            "fixer": "codex_cli",
+            "doublechecker": "codex_cli",
+            "updater": "codex_cli",
+            "troubleshooter": "codex_cli",
+            "consultant": "codex_cli",
+            "recon": "codex_cli",
+            "planner": "codex_cli",
+            "manager": "codex_cli",
+            "mechanic": "codex_cli",
+            "auditor": "codex_cli",
+            "arbiter": "codex_cli",
+        },
+        "recovery_policy_ids": ["does.not.exist"],
+        "required_extensions": [
+            {"extension_package_id": "millrace.generic"},
+            {"extension_package_id": "millrace.recon"},
+            {"extension_package_id": "millrace.closure"},
+        ],
+    }
+    mode_path.write_text(json.dumps(mode_payload, indent=2) + "\n", encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    _write_default_config(workspace)
+    paths = bootstrap_workspace(workspace_paths(workspace), assets_root=assets_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        paths,
+        config=load_runtime_config(_config_path(workspace)),
+        requested_mode_id="missing_recovery_policy_codex",
+        assets_root=assets_root,
+        compile_if_needed=True,
+        refuse_stale_last_known_good=False,
+    )
+
+    assert outcome.active_plan is None
+    assert not outcome.diagnostics.ok
+    assert "unknown recovery policy" in " ".join(outcome.diagnostics.errors).lower()
+
+
 def _copy_assets(tmp_path: Path) -> Path:
     assets_root = Path(__file__).resolve().parents[2] / "src" / "millrace_ai" / "assets"
     copied_root = tmp_path / "assets"

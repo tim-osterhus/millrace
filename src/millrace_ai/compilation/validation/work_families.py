@@ -24,9 +24,11 @@ def queue_policies_by_plane(
 ) -> dict[Plane, PlaneQueueClaimPolicyDefinition]:
     policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition] = {}
     for policy in workflow_primitives.queue_claim_policies:
+        if policy.policy_id != f"{policy.plane.value}.default":
+            continue
         if policy.plane in policies_by_plane:
             raise CompilerValidationError(
-                f"Duplicate queue claim policy for plane: {policy.plane.value}"
+                f"Duplicate default queue claim policy for plane: {policy.plane.value}"
             )
         policies_by_plane[policy.plane] = policy
     return policies_by_plane

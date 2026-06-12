@@ -13,6 +13,12 @@
       "version": "1.0.0"
     },
     {
+      "item_id": "recon.default",
+      "item_kind": "request_context_profile",
+      "implementation_path": "millrace_ai.runtime.context.recon",
+      "version": "1.0.0"
+    },
+    {
       "item_id": "recon_enqueue_task",
       "item_kind": "terminal_action",
       "implementation_path": "millrace_ai.runtime.terminal_actions.recon_enqueue_task",
@@ -39,25 +45,55 @@
     {
       "item_id": "recon.enqueue_task",
       "item_kind": "runtime_operation",
-      "implementation_path": "millrace_ai.runtime.runtime_operations.recon.enqueue_task",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.recon",
       "version": "1.0.0"
     },
     {
       "item_id": "recon.enqueue_spec",
       "item_kind": "runtime_operation",
-      "implementation_path": "millrace_ai.runtime.runtime_operations.recon.enqueue_spec",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.recon",
       "version": "1.0.0"
     },
     {
       "item_id": "recon.noop",
       "item_kind": "runtime_operation",
-      "implementation_path": "millrace_ai.runtime.runtime_operations.recon.noop",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.recon",
       "version": "1.0.0"
     },
     {
       "item_id": "recon.block_work_item",
       "item_kind": "runtime_operation",
-      "implementation_path": "millrace_ai.runtime.runtime_operations.recon.block_work_item",
+      "implementation_path": "millrace_ai.runtime.runtime_operations.recon",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planning.blocked_recovery",
+      "item_kind": "recovery_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.recon.recovery_policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "planning.blocked_recovery_heavy",
+      "item_kind": "recovery_policy",
+      "implementation_path": "millrace_ai.extensions.builtin.recon.recovery_policies",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "recon_packet",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.recon.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "generated_task",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.recon.artifact_contracts",
+      "version": "1.0.0"
+    },
+    {
+      "item_id": "generated_spec",
+      "item_kind": "artifact_contract",
+      "implementation_path": "millrace_ai.extensions.builtin.recon.artifact_contracts",
       "version": "1.0.0"
     }
   ],

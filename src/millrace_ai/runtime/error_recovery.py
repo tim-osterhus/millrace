@@ -296,7 +296,18 @@ def schedule_pre_dispatch_exception_recovery(
     write_runtime_error_report(engine.paths, context)
     save_runtime_error_context(engine.paths, context)
 
-    if repair_route is None or runtime_repair_attempts_exhausted(engine, repair_route):
+    repair_exhausted = (
+        _pre_dispatch_repair_attempts_exhausted(
+            engine,
+            repair_route,
+            failure_class=error_code.value,
+            work_item_family_id=family_id,
+            work_item_id=item_id,
+        )
+        if repair_route is not None
+        else False
+    )
+    if repair_route is None or repair_exhausted:
         reason_suffix = "repair_unavailable" if repair_route is None else "repair_attempts_exhausted"
         reason = f"runtime_exception:{error_code.value}:{reason_suffix}"
         blocked_decision = (
@@ -635,6 +646,28 @@ def _increment_generic_counter(
     )
 
 
+def _pre_dispatch_repair_attempts_exhausted(
+    engine: RuntimeEngine,
+    repair_route: RuntimeRepairRoute,
+    *,
+    failure_class: str,
+    work_item_family_id: str,
+    work_item_id: str,
+) -> bool:
+    if repair_route.counter_name is None or repair_route.threshold is None:
+        return False
+    if engine.counters is None:
+        return False
+    for entry in engine.counters.entries:
+        if (
+            entry.failure_class == failure_class
+            and entry.work_item_family_id == work_item_family_id
+            and entry.work_item_id == work_item_id
+        ):
+            return entry.counters.get(repair_route.counter_name, 0) >= repair_route.threshold
+    return False
+
+
 def _pre_dispatch_work_identity(
     engine: RuntimeEngine,
     *,
@@ -682,18 +715,19 @@ def _is_learning_family(
     family_id: str | None,
     plane: Plane | None = None,
 ) -> bool:
-    """Determine whether a family is a Learning-domain family.
-
-    Uses compiled plan work-item family metadata when available.
-    Otherwise falls back to plane-based check.
-    """
+    """Determine whether a family is a Learning-domain family."""
+    compiled_plan = _require_compiled_plan(compiled_plan, "derive learning family authority")
     if family_id is None:
         return plane is Plane.LEARNING
-    if compiled_plan is not None:
-        family = compiled_plan.work_item_families_by_id.get(family_id)
-        if family is not None:
-            return family.plane is Plane.LEARNING
-    return plane is Plane.LEARNING
+    family = compiled_plan.work_item_families_by_id.get(family_id)
+    if family is None:
+        if plane is not None and family_id == lane_id_for_plane(compiled_plan, plane):
+            return plane is Plane.LEARNING
+        raise CompiledPlanAuthorityError(
+            f"compiled plan missing work item family `{family_id}`",
+            stale=False,
+        )
+    return family.plane is Plane.LEARNING
 
 
 def _request_kind_for_family(
@@ -702,11 +736,7 @@ def _request_kind_for_family(
     family_id: str | None,
     plane: Plane | None = None,
 ) -> str:
-    """Derive request_kind from compiled plan family metadata.
-
-    Returns "learning_request" when the family is registered in the
-    Learning plane, "active_work_item" otherwise.
-    """
+    """Derive request_kind from compiled plan family metadata."""
     if _is_learning_family(compiled_plan, family_id=family_id, plane=plane):
         return "learning_request"
     return "active_work_item"
@@ -717,30 +747,40 @@ def _resolve_family_id_from_compiled_plan(
     *,
     fallback_family_id: str,
 ) -> str:
-    """Resolve a family id from compiled plan metadata when available.
-
-    Returns *fallback_family_id* when no compiled plan is available.
-    """
-    if compiled_plan is not None and fallback_family_id in compiled_plan.work_item_families_by_id:
+    """Resolve a family id from compiled plan metadata."""
+    compiled_plan = _require_compiled_plan(compiled_plan, "resolve work item family")
+    if fallback_family_id in compiled_plan.work_item_families_by_id:
         return fallback_family_id
-    return fallback_family_id
+    raise CompiledPlanAuthorityError(
+        f"compiled plan missing work item family `{fallback_family_id}`",
+        stale=False,
+    )
 
 
 def _lane_id_for_plane(engine: RuntimeEngine, plane: Plane) -> str | None:
     """Resolve lane id for a plane from the compiled plan."""
-    if engine.compiled_plan is None:
-        return None
-    try:
-        return lane_id_for_plane(engine.compiled_plan, plane)
-    except Exception:
-        return None
+    return lane_id_for_plane(
+        _require_compiled_plan(engine.compiled_plan, f"resolve lane for {plane.value}"),
+        plane,
+    )
 
 
 def _compiled_plan_fingerprint(engine: RuntimeEngine) -> str:
-    if engine.compiled_plan is None:
-        assert engine.snapshot is not None
-        return engine.snapshot.compiled_plan_fingerprint
-    return compiled_plan_fingerprint_for_runtime(engine.compiled_plan)
+    return compiled_plan_fingerprint_for_runtime(
+        _require_compiled_plan(engine.compiled_plan, "resolve compiled plan fingerprint")
+    )
+
+
+def _require_compiled_plan(
+    compiled_plan: CompiledRunPlan | None,
+    action: str,
+) -> CompiledRunPlan:
+    if compiled_plan is None:
+        raise CompiledPlanAuthorityError(
+            f"compiled plan is required to {action}",
+            stale=False,
+        )
+    return compiled_plan
 
 
 __all__ = [

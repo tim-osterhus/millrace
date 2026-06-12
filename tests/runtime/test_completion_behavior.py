@@ -1015,7 +1015,21 @@ def test_pre_dispatch_recovery_exhaustion_uses_terminal_action_metadata(
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
     engine.startup()
     assert engine.snapshot is not None
-    engine.snapshot = engine.snapshot.model_copy(update={"mechanic_attempt_count": 2})
+    assert engine.counters is not None
+    from millrace_ai.contracts import RecoveryCounterEntry, RecoveryCounters
+
+    engine.counters = RecoveryCounters(
+        entries=(
+            RecoveryCounterEntry(
+                failure_class="planning_pre_dispatch_failed",
+                work_item_family_id=WorkItemKind.SPEC.value,
+                work_item_kind=WorkItemKind.SPEC,
+                work_item_id="spec-runtime-failure",
+                counters={"mechanic_attempt_count": 2},
+                last_updated_at=NOW,
+            ),
+        )
+    )
 
     decision = schedule_pre_dispatch_exception_recovery(
         engine,

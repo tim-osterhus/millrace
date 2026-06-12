@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import ValidationError
 
@@ -15,13 +15,13 @@ from millrace_ai.architecture import (
 )
 from millrace_ai.assets import load_builtin_workflow_primitives
 from millrace_ai.contracts import (
-    BlueprintDraftDocument,
     IncidentDocument,
     LearningRequestDocument,
     ProbeDocument,
     SpecDocument,
     TaskDocument,
 )
+from millrace_ai.contracts.model_resolution import resolve_contract_model
 from millrace_ai.errors import WorkspaceStateError
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.work_documents import read_work_document_as
@@ -31,22 +31,8 @@ from .models import DoctorIssue
 if TYPE_CHECKING:
     from .checks import DoctorContext
 
-DoctorModel: TypeAlias = (
-    type[TaskDocument]
-    | type[SpecDocument]
-    | type[ProbeDocument]
-    | type[IncidentDocument]
-    | type[LearningRequestDocument]
-    | type[BlueprintDraftDocument]
-)
-WorkDocument: TypeAlias = (
-    TaskDocument
-    | SpecDocument
-    | ProbeDocument
-    | IncidentDocument
-    | LearningRequestDocument
-    | BlueprintDraftDocument
-)
+DoctorModel: TypeAlias = Any
+WorkDocument: TypeAlias = Any
 
 
 def check_queue_parseability(context: DoctorContext) -> None:
@@ -120,15 +106,8 @@ def _family_state_dirs(
 
 
 def _known_document_model_for_family(family: WorkItemFamilyDefinition) -> DoctorModel | None:
-    models_by_schema_id: dict[str, DoctorModel] = {
-        "task_document_v1": TaskDocument,
-        "spec_document_v1": SpecDocument,
-        "probe_document_v1": ProbeDocument,
-        "incident_document_v1": IncidentDocument,
-        "learning_request_document_v1": LearningRequestDocument,
-        "blueprint_draft_document_v1": BlueprintDraftDocument,
-    }
-    return models_by_schema_id.get(family.schema_id)
+    model = resolve_contract_model(family.schema_id)
+    return model
 
 
 def _read_queue_document(
@@ -143,10 +122,6 @@ def _read_queue_document(
         if model is None:
             return _read_generic_markdown_queue_document(path)
         return _read_known_work_document(path, model)
-    if family.document_adapter_id == "blueprint_draft_markdown_v1":
-        if model is not BlueprintDraftDocument:
-            raise WorkspaceStateError("blueprint_draft adapter requires BlueprintDraftDocument")
-        return BlueprintDraftDocument.model_validate_json(path.read_text(encoding="utf-8"))
     if path.suffix == ".json":
         if model is not None:
             return model.model_validate_json(path.read_text(encoding="utf-8"))
@@ -170,8 +145,6 @@ def _read_known_work_document(path: Path, model: DoctorModel) -> WorkDocument:
         return read_work_document_as(path, model=IncidentDocument)
     if model is LearningRequestDocument:
         return read_work_document_as(path, model=LearningRequestDocument)
-    if model is BlueprintDraftDocument:
-        return BlueprintDraftDocument.model_validate_json(path.read_text(encoding="utf-8"))
     raise WorkspaceStateError(f"unsupported work document model: {model}")
 
 

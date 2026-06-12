@@ -123,20 +123,19 @@ The packaged registry now includes built-in manifests for `millrace.generic`,
 `millrace.recon`, `millrace.closure`, `millrace.blueprint`, and
 `millrace.learning`, plus the `example.blueprint.enhanced` test/example
 manifest. Shipped mode assets declare the built-in packages their selected
-graphs require. Built-in manifest `items` arrays currently claim the
-domain-owned stage-kind, terminal-action, and runtime-operation vocabulary used
-by required-extension ownership checks where applicable. `millrace.generic`
-intentionally carries an empty `items` array because it owns no
-domain-specific vocabulary.
+graphs require. Built-in manifest `items` arrays now claim the extension-owned
+item vocabulary used by required-extension ownership checks across the
+manifest item kinds defined in ADR-0015. `millrace.generic` now carries the
+generic registry vocabulary it owns instead of an empty `items` array.
 
-Compile validation rejects selected graph-loop vocabulary owned by undeclared
-built-in extension domains, including stage kinds, terminal actions, and
-terminal-action runtime operations. The compiler also cross-validates
-discovered built-in manifest domains against the canonical package-to-domain
-mapping, so conflicting per-manifest owners fail before plan freezing. The
-manifest model supports additional item kinds, but broad bidirectional
-manifest/registry ownership checks for those kinds are not part of the current
-compiled-plan gate.
+Compile validation rejects undeclared built-in extension vocabulary
+referenced by selected plans, including graph nodes, terminal actions,
+scheduler policies, work-item family dependencies, runtime-effect metadata,
+and runtime-failure policies. The compiler also cross-validates discovered
+built-in manifest domains against the canonical package-to-domain mapping, so
+conflicting per-manifest owners fail before plan freezing. Manifest item
+ownership now comes from item-kind/id maps rather than a narrow
+stage-kind/terminal-action/runtime-operation-only slice.
 
 The follow-up extension-boundary implementation now defines built-in domain
 boundary Protocols, lazy built-in interface resolution, and adapter modules for
@@ -147,8 +146,9 @@ package remain future implementation work.
 
 ### Extension Ownership Validation Coverage
 
-Compile-time extension ownership validation currently covers manifest-derived
-domain checks for selected graph-loop vocabulary:
+Compile-time extension ownership validation now derives ownership from
+manifest item-kind/id maps for the registry-owned extension vocabulary used by
+selected plans.
 
 **Covered — manifest-derived undeclared-extension detection:**
 - Stage kinds referenced by selected graph-loop nodes without a matching
@@ -157,25 +157,25 @@ domain checks for selected graph-loop vocabulary:
   extension declaration produce a compile diagnostic
 - Runtime operations referenced by terminal actions without a matching
   extension declaration produce a compile diagnostic
+- Request-context providers, request-context profiles, and request-context
+  render plans referenced by selected modes or graph nodes without a matching
+  extension declaration produce a compile diagnostic
+- Work-item families and work-item document adapters referenced by selected
+  modes, graph nodes, or family dependencies without a matching extension
+  declaration produce a compile diagnostic
+- Queue claim policies and queue lifecycle policies referenced by selected
+  modes or families without a matching extension declaration produce a compile
+  diagnostic
+- Runtime-effect handlers, runners, rules, operations, primitives, validators,
+  and stores referenced by selected runtime-effect metadata without a matching
+  extension declaration produce a compile diagnostic
+- Artifact contracts, lifecycle mutation plans, recovery policies,
+  runtime-failure policies, scheduler policies, and workspace schema epochs
+  referenced by selected compiler inputs without a matching extension
+  declaration produce a compile diagnostic
 
-**Validated separately, but not through extension manifest ownership:**
-- Request-context provider/profile existence, plane support, and render-plan
-  compatibility
-- Artifact contracts, work-item document adapters, runtime-effect handlers,
-  runtime-effect operations, and runtime-effect operation runners
-
-**Deferred — no compile-time manifest ownership gate:**
-- Request-context providers
-- Work-item document adapters
-- Artifact contracts
-- Runtime-effect handlers and operations
-- Runtime-effect operation runners
-- Claim policies: validated as compiled policy metadata but not
-  cross-referenced against extension manifest claims
-- Recovery policies: validated as compiled policy metadata but not
-  cross-referenced against extension manifest claims
-- Failure policies: validated as compiled policy metadata but not
-  cross-referenced against extension manifest claims
-
-These deferred categories require additional compiler wiring before extension
-manifest ownership can verify manifest claims against ownership declarations.
+Duplicate ownership is rejected, unknown manifest items that map to registry
+asset families are rejected, and undeclared references surface diagnostics
+that name the mode id, missing package id, item kind, item id, and reference
+context when available. Manifest syntax, semver, dependency validation, and
+implementation-path validation remain separate from ownership coverage.

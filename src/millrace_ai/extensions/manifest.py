@@ -42,14 +42,32 @@ class ExtensionItemKind(str, Enum):
     """
 
     OPERATION_RUNNER = "runtime_effect_operation_runner"
+    RUNTIME_EFFECT_RUNNER = "runtime_effect_runner"
+    RUNTIME_EFFECT_OPERATION = "runtime_effect_operation"
+    RUNTIME_EFFECT_HANDLER = "runtime_effect_handler"
+    RUNTIME_EFFECT_RULE = "runtime_effect_rule"
+    RUNTIME_EFFECT_PRIMITIVE = "runtime_effect_primitive"
+    RUNTIME_EFFECT_VALIDATOR = "runtime_effect_validator"
+    RUNTIME_EFFECT_STORE = "runtime_effect_store"
     TERMINAL_ACTION = "terminal_action"
     CONTEXT_PROVIDER = "request_context_provider"
+    REQUEST_CONTEXT_PROFILE = "request_context_profile"
+    REQUEST_CONTEXT_RENDER_PLAN = "request_context_render_plan"
     DOCUMENT_ADAPTER = "work_item_document_adapter"
+    WORK_ITEM_FAMILY = "work_item_family"
     STAGE_KIND = "stage_kind"
     RUNTIME_OPERATION = "runtime_operation"
     QUEUE_CLAIM_POLICY = "queue_claim_policy"
+    QUEUE_LIFECYCLE_POLICY = "queue_lifecycle_policy"
     RECOVERY_POLICY = "recovery_policy"
     FAILURE_POLICY = "failure_policy"
+    RUNTIME_FAILURE_POLICY = "runtime_failure_policy"
+    SCHEDULER_POLICY = "scheduler_policy"
+    LIFECYCLE_MUTATION_PLAN = "lifecycle_mutation_plan"
+    ARTIFACT_CONTRACT = "artifact_contract"
+    WORKSPACE_SCHEMA_EPOCH = "workspace_schema_epoch"
+    DOCTOR_DIAGNOSTIC = "doctor_diagnostic"
+    STATUS_PROJECTION = "status_projection"
 
 
 _SEMVER_RE = (
@@ -155,10 +173,10 @@ class ExtensionItemManifest:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ExtensionItemManifest):
             return NotImplemented
-        return self.item_id == other.item_id
+        return (self.item_kind, self.item_id) == (other.item_kind, other.item_id)
 
     def __hash__(self) -> int:
-        return hash(self.item_id)
+        return hash((self.item_kind, self.item_id))
 
     def __repr__(self) -> str:
         return (
@@ -237,13 +255,18 @@ class ExtensionPackageManifest:
                 f"extension package {self.package_id!r} may not require itself"
             )
 
-        # Validate item IDs are unique
-        item_ids = [item.item_id for item in items]
-        if len(item_ids) != len(set(item_ids)):
-            seen: set[str] = set()
-            duplicates = {iid for iid in item_ids if iid in seen or seen.add(iid)}
+        # Validate ownership keys are unique. Different registry families can
+        # legitimately use the same id string, so kind participates in the key.
+        item_keys = [(item.item_kind, item.item_id) for item in items]
+        if len(item_keys) != len(set(item_keys)):
+            seen: set[tuple[ExtensionItemKind, str]] = set()
+            duplicates = {
+                f"{kind.value}:{item_id}"
+                for kind, item_id in item_keys
+                if (kind, item_id) in seen or seen.add((kind, item_id))
+            }
             raise ValueError(
-                f"duplicate item ids in package {self.package_id!r}: "
+                f"duplicate item ids in package {self.package_id!r} for item-kind keys: "
                 + ", ".join(sorted(duplicates))
             )
 

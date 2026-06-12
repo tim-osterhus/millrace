@@ -62,11 +62,11 @@ def test_route_counter_mutation_uses_declared_counter_intent(tmp_path: Path) -> 
 
     updated = increment_route_counters(engine, snapshot, decision, _stage_result())
 
-    assert updated.troubleshoot_attempt_count == 1
+    assert updated.troubleshoot_attempt_count == 0
     counters = load_recovery_counters(paths)
     assert len(counters.entries) == 1
     assert counters.entries[0].failure_class == "custom_failure"
-    assert counters.entries[0].troubleshoot_attempt_count == 1
+    assert counters.entries[0].counters["troubleshoot_attempt_count"] == 1
 
 
 def test_route_counter_mutation_does_not_infer_from_next_stage_name(tmp_path: Path) -> None:

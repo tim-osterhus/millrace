@@ -2,21 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 from millrace_ai.architecture import CompiledRunPlan
+from millrace_ai.assets import load_builtin_workflow_primitives
 from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.compiler import CompiledPlanCurrentness, inspect_workspace_plan_currentness
 from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import ClosureTargetState, Plane, RuntimeErrorContext
-from millrace_ai.contracts.blueprint import (
-    BlueprintCritiqueDocument,
-    BlueprintDraftDocument,
-    BlueprintEvaluationDocument,
-    BlueprintPacketDocument,
-    BlueprintPromotionRecord,
-)
 from millrace_ai.events import RuntimeEventRecord, read_runtime_events
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.runtime.error_recovery import load_runtime_error_context
@@ -33,15 +24,7 @@ from millrace_ai.workspace.queue_selection import list_deferred_root_spec_ids
 from millrace_ai.workspace.work_inventory import family_counts, queue_depths_by_plane
 
 from .models import StatusViewModel
-
-_BUILTIN_STATUS_FAMILIES = {
-    "task",
-    "probe",
-    "spec",
-    "incident",
-    "learning_request",
-    "blueprint_draft",
-}
+from .projections import collect_status_projection_payloads, status_projection_payload
 
 _OPERATOR_INTERVENTION_EVENT_TYPES = {
     "work_item_cancelled",
@@ -68,6 +51,16 @@ def collect_status_view_model(paths: WorkspacePaths) -> StatusViewModel:
     latest_runtime_error_context = _latest_runtime_error_context(paths)
     latest_operator_intervention = _latest_operator_intervention(paths)
     usage_governance_state = load_usage_governance_state(paths)
+    persisted_mode_id = (
+        currentness.persisted_fingerprint.mode_id
+        if currentness is not None and currentness.persisted_fingerprint is not None
+        else None
+    )
+    extension_statuses = collect_status_projection_payloads(
+        paths,
+        active_mode_id=snapshot.active_mode_id,
+        persisted_mode_id=persisted_mode_id,
+    )
 
     try:
         config_enabled = load_runtime_config(
@@ -89,7 +82,6 @@ def collect_status_view_model(paths: WorkspacePaths) -> StatusViewModel:
         planning_status_marker=snapshot.planning_status_marker,
         current_failure_class=snapshot.current_failure_class,
     )
-
     return StatusViewModel(
         paths=paths,
         snapshot=snapshot,
@@ -101,7 +93,8 @@ def collect_status_view_model(paths: WorkspacePaths) -> StatusViewModel:
         queue_depths=queue_depths,
         queue_depths_by_family=queue_depths_by_family,
         closure_status=closure_status,
-        blueprint_status=_blueprint_status(paths),
+        extension_statuses=extension_statuses,
+        blueprint_status=status_projection_payload(extension_statuses, "blueprints"),
         latest_runtime_error_report_path=(
             latest_runtime_error_context.report_path
             if latest_runtime_error_context is not None
@@ -221,9 +214,13 @@ def _work_item_family_status_payload(paths: WorkspacePaths) -> list[dict[str, ob
     if compiled_plan is None:
         return []
     counts = family_counts(paths, compiled_plan=compiled_plan)
+    builtin_family_ids = {
+        family.family_id
+        for family in load_builtin_workflow_primitives().work_item_families
+    }
     payload: list[dict[str, object]] = []
     for family_id, family in sorted(compiled_plan.work_item_families_by_id.items()):
-        if family_id in _BUILTIN_STATUS_FAMILIES:
+        if family_id in builtin_family_ids:
             continue
         family_state_counts = counts.get(family_id, {})
         if not any(family_state_counts.values()):
@@ -238,133 +235,8 @@ def _work_item_family_status_payload(paths: WorkspacePaths) -> list[dict[str, ob
                 "done": family_state_counts.get("done", 0),
                 "canceled": family_state_counts.get("canceled", 0),
             }
-        )
+    )
     return payload
-
-
-def _blueprint_status(paths: WorkspacePaths) -> dict[str, object]:
-    root = paths.runtime_root / "blueprints"
-    draft_counts: dict[str, int] = {}
-    drafts: list[dict[str, object]] = []
-    for state in ("queue", "active", "blocked", "approved", "canceled", "superseded"):
-        directory = root / "drafts" / state
-        draft_counts[state] = 0
-        for path in _json_files(directory):
-            draft_counts[state] += 1
-            draft = _read_json_model(path, BlueprintDraftDocument)
-            if draft is None:
-                continue
-            drafts.append(
-                {
-                    "state": state,
-                    "draft_id": draft.draft_id,
-                    "root_spec_id": draft.root_spec_id,
-                    "draft_index": draft.draft_index,
-                    "current_revision": draft.current_revision,
-                    "latest_blueprint_id": draft.latest_blueprint_id,
-                    "latest_critique_id": draft.latest_critique_id,
-                    "path": _workspace_relative(paths, path),
-                }
-            )
-
-    packets: list[dict[str, object]] = []
-    packet_counts: dict[str, int] = {}
-    for state in ("candidates", "approved", "rejected", "superseded"):
-        directory = root / "packets" / state
-        packet_counts[state] = 0
-        for path in _json_files(directory):
-            packet_counts[state] += 1
-            packet = _read_json_model(path, BlueprintPacketDocument)
-            if packet is None:
-                continue
-            packets.append(
-                {
-                    "state": state,
-                    "blueprint_id": packet.blueprint_id,
-                    "draft_id": packet.draft_id,
-                    "root_spec_id": packet.root_spec_id,
-                    "revision": packet.revision,
-                    "path": _workspace_relative(paths, path),
-                }
-            )
-
-    critiques: list[dict[str, object]] = []
-    critique_counts: dict[str, int] = {}
-    for state in ("open", "resolved"):
-        directory = root / "critiques" / state
-        critique_counts[state] = 0
-        for path in _json_files(directory):
-            critique_counts[state] += 1
-            critique = _read_json_model(path, BlueprintCritiqueDocument)
-            if critique is None:
-                continue
-            critiques.append(
-                {
-                    "state": state,
-                    "critique_id": critique.critique_id,
-                    "blueprint_id": critique.blueprint_id,
-                    "draft_id": critique.draft_id,
-                    "root_spec_id": critique.root_spec_id,
-                    "path": _workspace_relative(paths, path),
-                }
-            )
-
-    evaluations: list[dict[str, object]] = []
-    for path in _json_files(root / "evaluations"):
-        evaluation = _read_json_model(path, BlueprintEvaluationDocument)
-        if evaluation is None:
-            continue
-        evaluations.append(
-            {
-                "evaluation_id": evaluation.evaluation_id,
-                "decision": evaluation.decision,
-                "blueprint_id": evaluation.blueprint_id,
-                "draft_id": evaluation.draft_id,
-                "root_spec_id": evaluation.root_spec_id,
-                "critique_id": evaluation.critique_id,
-                "path": _workspace_relative(paths, path),
-            }
-        )
-
-    promotions: list[dict[str, object]] = []
-    for path in _json_files(root / "promotions"):
-        promotion = _read_json_model(path, BlueprintPromotionRecord)
-        if promotion is None:
-            continue
-        promotions.append(
-            {
-                "promotion_id": promotion.promotion_id,
-                "blueprint_id": promotion.blueprint_id,
-                "evaluation_id": promotion.evaluation_id,
-                "draft_id": promotion.draft_id,
-                "root_spec_id": promotion.root_spec_id,
-                "generated_task_id": promotion.generated_task_id,
-                "generated_task_path": promotion.generated_task_path,
-                "path": _workspace_relative(paths, path),
-            }
-        )
-
-    return {
-        "draft_counts": draft_counts,
-        "packet_counts": packet_counts,
-        "critique_counts": critique_counts,
-        "evaluation_count": len(evaluations),
-        "promotion_count": len(promotions),
-        "drafts": sorted(
-            drafts,
-            key=lambda item: (str(item["state"]), str(item["draft_id"])),
-        ),
-        "packets": sorted(
-            packets,
-            key=lambda item: (str(item["state"]), str(item["blueprint_id"])),
-        ),
-        "critiques": sorted(
-            critiques,
-            key=lambda item: (str(item["state"]), str(item["critique_id"])),
-        ),
-        "evaluations": sorted(evaluations, key=lambda item: str(item["evaluation_id"])),
-        "promotions": sorted(promotions, key=lambda item: str(item["promotion_id"])),
-    }
 
 
 def _latest_runtime_error_context(paths: WorkspacePaths) -> RuntimeErrorContext | None:
@@ -428,29 +300,6 @@ def _load_compile_currentness(
         )
     except Exception as exc:
         return None, str(exc)
-
-
-def _json_files(directory: str | Path) -> tuple[Path, ...]:
-    path = Path(directory)
-    if not path.exists():
-        return ()
-    return tuple(
-        sorted(candidate for candidate in path.glob("*.json") if candidate.is_file())
-    )
-
-
-def _read_json_model(path: Path, model: type[Any]) -> Any | None:
-    try:
-        return model.model_validate_json(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def _workspace_relative(paths: WorkspacePaths, path: Path) -> str:
-    try:
-        return path.relative_to(paths.root).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def _plane_key(value: str) -> Plane:
