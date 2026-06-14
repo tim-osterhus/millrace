@@ -15,7 +15,7 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     TerminalOutcome,
 )
-from millrace_ai.router import RouterAction, RouterDecision
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.runtime.recon_transitions import ReconHandoffInvalidError, apply_recon_router_decision, is_recon_stage_result
 
 NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)

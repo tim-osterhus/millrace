@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import Plane, StageResultEnvelope
+from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
-from millrace_ai.router import RouterDecision
 from millrace_ai.state_store import (
     load_recovery_counters,
     reset_forward_progress_counters,

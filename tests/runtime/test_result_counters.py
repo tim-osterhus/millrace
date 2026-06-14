@@ -12,8 +12,8 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.result_counters import increment_route_counters

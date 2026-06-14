@@ -24,7 +24,7 @@ from millrace_ai.workspace.queue_selection import list_deferred_root_spec_ids
 from millrace_ai.workspace.work_inventory import family_counts, queue_depths_by_plane
 
 from .models import StatusViewModel
-from .projections import collect_status_projection_payloads, status_projection_payload
+from .projections import collect_status_projection_payloads
 
 _OPERATOR_INTERVENTION_EVENT_TYPES = {
     "work_item_cancelled",
@@ -94,7 +94,6 @@ def collect_status_view_model(paths: WorkspacePaths) -> StatusViewModel:
         queue_depths_by_family=queue_depths_by_family,
         closure_status=closure_status,
         extension_statuses=extension_statuses,
-        blueprint_status=status_projection_payload(extension_statuses, "blueprints"),
         latest_runtime_error_report_path=(
             latest_runtime_error_context.report_path
             if latest_runtime_error_context is not None

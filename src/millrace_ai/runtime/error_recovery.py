@@ -19,9 +19,9 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import save_snapshot
 from millrace_ai.workspace.queue_transitions import mark_learning_request_blocked
 

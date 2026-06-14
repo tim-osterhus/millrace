@@ -24,7 +24,7 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor, StageWorkerOutcome
-from millrace_ai.state_store import load_snapshot
+from millrace_ai.state_store import load_recovery_counters, load_snapshot
 
 NOW = datetime(2026, 4, 28, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -338,6 +338,167 @@ def test_supervisor_workers_return_typed_outcomes(tmp_path: Path) -> None:
         assert outcome.raw_result is not None
 
         await supervisor.drain_completed(wait=False)
+        engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_defers_reconciliation_for_lane_with_live_worker(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-001"))
+    started = Event()
+    release_worker = Event()
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        started.set()
+        assert release_worker.wait(timeout=5)
+        return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        try:
+            dispatched = await supervisor.dispatch_ready_work()
+            assert dispatched == 1
+            assert await asyncio.wait_for(asyncio.to_thread(started.wait), timeout=5)
+
+            before_snapshot = load_snapshot(paths)
+            before_counters = load_recovery_counters(paths)
+            before_active_run = before_snapshot.active_runs_by_plane[Plane.EXECUTION]
+            paths.execution_status_file.write_text("### UNKNOWN_TERMINAL\n", encoding="utf-8")
+
+            supervisor._prepare_cycle()
+
+            after_snapshot = load_snapshot(paths)
+            after_counters = load_recovery_counters(paths)
+            assert supervisor.active_worker_lanes == frozenset({"execution.main"})
+            assert after_snapshot.active_runs_by_plane[Plane.EXECUTION] == before_active_run
+            assert after_snapshot.active_stage is ExecutionStageName.BUILDER
+            assert after_snapshot.active_run_id == before_active_run.run_id
+            assert after_counters == before_counters
+            assert not any(
+                event.event_type == "runtime_reconciled"
+                for event in read_runtime_events(paths)
+            )
+            deferred_events = [
+                event
+                for event in read_runtime_events(paths)
+                if event.event_type == "runtime_reconciliation_deferred"
+            ]
+            assert len(deferred_events) == 1
+            deferred = deferred_events[0].data
+            recovery_stage = engine._stage_plan_for(Plane.EXECUTION, ExecutionStageName.TROUBLESHOOTER)
+            assert deferred == {
+                "signal": "impossible_execution_status_marker",
+                "failure_class": "impossible_status_marker",
+                "plane": "execution",
+                "lane": "execution.main",
+                "lane_id": "execution.main",
+                "snapshot_active_run_stage": ExecutionStageName.BUILDER.value,
+                "snapshot_active_run_node_id": before_active_run.node_id,
+                "snapshot_active_run_stage_kind_id": before_active_run.stage_kind_id,
+                "snapshot_active_run_id": before_active_run.run_id,
+                "active_worker_present": True,
+                "active_worker_stage": ExecutionStageName.BUILDER.value,
+                "active_worker_node_id": before_active_run.node_id,
+                "active_worker_stage_kind_id": before_active_run.stage_kind_id,
+                "active_worker_run_id": before_active_run.run_id,
+                "action": "deferred_active_worker",
+                "recovery_stage": ExecutionStageName.TROUBLESHOOTER.value,
+                "recommended_recovery_stage": ExecutionStageName.TROUBLESHOOTER.value,
+                "recommended_recovery_node_id": recovery_stage.node_id,
+                "recommended_recovery_stage_kind_id": recovery_stage.stage_kind_id,
+                "counter_incremented": False,
+                "signal_count": 1,
+            }
+        finally:
+            release_worker.set()
+            await supervisor.drain_completed(wait=True)
+            engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_supervisor_defers_reconciliation_for_lane_with_pending_completion(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    QueueStore(paths).enqueue_task(_task_doc("task-001"))
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        return _runner_result(request, terminal=ExecutionTerminalResult.BUILDER_COMPLETE.value)
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        dispatched = await supervisor.dispatch_ready_work()
+        assert dispatched == 1
+        worker_task = supervisor._tasks["execution.main"]
+        await asyncio.wait_for(worker_task, timeout=5)
+        assert worker_task.done()
+        assert supervisor.active_worker_lanes == frozenset({"execution.main"})
+
+        before_snapshot = load_snapshot(paths)
+        before_counters = load_recovery_counters(paths)
+        before_active_run = before_snapshot.active_runs_by_plane[Plane.EXECUTION]
+        paths.execution_status_file.write_text("### UNKNOWN_TERMINAL\n", encoding="utf-8")
+
+        supervisor._prepare_cycle()
+
+        after_snapshot = load_snapshot(paths)
+        after_counters = load_recovery_counters(paths)
+        assert supervisor.active_worker_lanes == frozenset({"execution.main"})
+        assert after_snapshot.active_runs_by_plane[Plane.EXECUTION] == before_active_run
+        assert after_snapshot.active_stage is ExecutionStageName.BUILDER
+        assert after_snapshot.active_run_id == before_active_run.run_id
+        assert after_counters == before_counters
+        assert not any(
+            event.event_type == "runtime_reconciled"
+            for event in read_runtime_events(paths)
+        )
+        deferred_events = [
+            event
+            for event in read_runtime_events(paths)
+            if event.event_type == "runtime_reconciliation_deferred"
+        ]
+        assert len(deferred_events) == 1
+        deferred = deferred_events[0].data
+        recovery_stage = engine._stage_plan_for(Plane.EXECUTION, ExecutionStageName.TROUBLESHOOTER)
+        assert deferred == {
+            "signal": "impossible_execution_status_marker",
+            "failure_class": "impossible_status_marker",
+            "plane": "execution",
+            "lane": "execution.main",
+            "lane_id": "execution.main",
+            "snapshot_active_run_stage": ExecutionStageName.BUILDER.value,
+            "snapshot_active_run_node_id": before_active_run.node_id,
+            "snapshot_active_run_stage_kind_id": before_active_run.stage_kind_id,
+            "snapshot_active_run_id": before_active_run.run_id,
+            "active_worker_present": True,
+            "active_worker_stage": ExecutionStageName.BUILDER.value,
+            "active_worker_node_id": before_active_run.node_id,
+            "active_worker_stage_kind_id": before_active_run.stage_kind_id,
+            "active_worker_run_id": before_active_run.run_id,
+            "action": "deferred_active_worker",
+            "recovery_stage": ExecutionStageName.TROUBLESHOOTER.value,
+            "recommended_recovery_stage": ExecutionStageName.TROUBLESHOOTER.value,
+            "recommended_recovery_node_id": recovery_stage.node_id,
+            "recommended_recovery_stage_kind_id": recovery_stage.stage_kind_id,
+            "counter_incremented": False,
+            "signal_count": 1,
+        }
+
+        completions = await supervisor.drain_completed(wait=True)
+        failure_classes = {
+            event.data.get("failure_class")
+            for event in read_runtime_events(paths)
+            if isinstance(event.data, dict)
+        }
+        assert len(completions) == 1
+        assert supervisor.active_worker_lanes == frozenset()
+        assert "execution_post_stage_apply_failed" not in failure_classes
         engine.close()
 
     asyncio.run(scenario())

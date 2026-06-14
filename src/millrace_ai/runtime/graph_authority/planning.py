@@ -20,7 +20,7 @@ from millrace_ai.contracts import (
     RuntimeSnapshot,
     StageResultEnvelope,
 )
-from millrace_ai.router import RouterDecision
+from millrace_ai.contracts.router import RouterDecision
 
 from .generic_router import (
     _threshold_failure_class_default,

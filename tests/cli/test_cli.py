@@ -25,11 +25,6 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ActiveRunState,
     ApprovalPolicyRef,
-    BlueprintCritiqueDocument,
-    BlueprintDraftDocument,
-    BlueprintEvaluationDocument,
-    BlueprintPacketDocument,
-    BlueprintPromotionRecord,
     CapabilityDecisionState,
     CapabilityEnforcementMode,
     CapabilityScope,
@@ -57,6 +52,21 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.control import ControlActionResult
+from millrace_ai.extensions.builtin.blueprint.contracts import (
+    BlueprintCritiqueDocument,
+    BlueprintDraftDocument,
+    BlueprintEvaluationDocument,
+    BlueprintPacketDocument,
+    BlueprintPromotionRecord,
+)
+from millrace_ai.extensions.builtin.blueprint.state import (
+    claim_next_blueprint_draft,
+    enqueue_blueprint_draft,
+    persist_blueprint_critique,
+    persist_blueprint_evaluation,
+    persist_blueprint_packet,
+    persist_blueprint_promotion,
+)
 from millrace_ai.mailbox import read_pending_mailbox_commands
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
@@ -72,14 +82,6 @@ from millrace_ai.runtime.usage_governance import (
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.state_store import load_snapshot, save_snapshot
 from millrace_ai.workspace.arbiter_state import save_closure_target_state
-from millrace_ai.workspace.blueprint_state import (
-    claim_next_blueprint_draft,
-    enqueue_blueprint_draft,
-    persist_blueprint_critique,
-    persist_blueprint_evaluation,
-    persist_blueprint_packet,
-    persist_blueprint_promotion,
-)
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 _LATEST_PACKET_FIELD = "latest_" "blueprint_id"
@@ -166,7 +168,7 @@ def _write_blueprint_repair_failure_then_apply_stage_results(
         stage=PlanningStageName.MANAGER,
         node_id="evaluator_blueprint",
         stage_kind_id="evaluator_blueprint",
-        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_family_id="blueprint_draft",
         work_item_id="draft-blueprint-001",
         terminal_result=PlanningTerminalResult.BLUEPRINT_APPROVED,
         result_class=ResultClass.SUCCESS,
@@ -192,7 +194,7 @@ def _write_blueprint_repair_failure_then_apply_stage_results(
         stage=PlanningStageName.MECHANIC,
         node_id="mechanic_blueprint",
         stage_kind_id="mechanic_blueprint",
-        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_family_id="blueprint_draft",
         work_item_id="draft-blueprint-001",
         terminal_result=PlanningTerminalResult.MECHANIC_BLUEPRINT_COMPLETE,
         result_class=ResultClass.SUCCESS,
@@ -1363,7 +1365,7 @@ def test_status_view_model_separates_collection_from_rendering(tmp_path: Path) -
     assert view_model.paths == paths
     assert view_model.snapshot.active_mode_id == "learning_codex"
     assert view_model.queue_depths["learning"] == 1
-    assert view_model.blueprint_status["draft_counts"] == {
+    assert view_model.extension_statuses["blueprints"]["draft_counts"] == {
         "queue": 0,
         "active": 0,
         "blocked": 0,
@@ -1607,7 +1609,7 @@ def test_status_surfaces_runtime_effect_recovery_metadata(
         stage=PlanningStageName.MANAGER,
         node_id="evaluator_blueprint",
         stage_kind_id="evaluator_blueprint",
-        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_family_id="blueprint_draft",
         work_item_id="draft-blueprint-001",
         terminal_result=PlanningTerminalResult.BLUEPRINT_APPROVED,
         result_class=ResultClass.SUCCESS,
@@ -1918,9 +1920,10 @@ def test_status_surfaces_blueprint_operator_state(tmp_path: Path) -> None:
 
     assert json_result.exit_code == 0
     payload = json.loads(json_result.output)
-    assert payload["blueprints"]["draft_counts"]["active"] == 1
-    assert payload["blueprints"]["drafts"][0]["latest_critique_id"] == "critique-blueprint-001"
-    assert payload["blueprints"]["promotions"][0]["generated_task_id"] == "task-blueprint-001"
+    blueprint_payload = payload["extension_statuses"]["blueprints"]
+    assert blueprint_payload["draft_counts"]["active"] == 1
+    assert blueprint_payload["drafts"][0]["latest_critique_id"] == "critique-blueprint-001"
+    assert blueprint_payload["promotions"][0]["generated_task_id"] == "task-blueprint-001"
 
 
 def test_runs_ls_uses_run_inspection_backend(
@@ -3721,7 +3724,7 @@ def test_doctor_does_not_emit_bespoke_runtime_effect_recovery_context(
         stage=PlanningStageName.MANAGER,
         node_id="evaluator_blueprint",
         stage_kind_id="evaluator_blueprint",
-        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_family_id="blueprint_draft",
         work_item_id="draft-blueprint-001",
         terminal_result=PlanningTerminalResult.BLUEPRINT_APPROVED,
         result_class=ResultClass.SUCCESS,

@@ -8,12 +8,13 @@ from typing import Mapping
 
 from millrace_ai.architecture import ArtifactContractDefinition, CompiledRunPlan
 from millrace_ai.contracts import (
+    StageResultEnvelope,
+)
+from millrace_ai.extensions.builtin.blueprint.contracts import (
     BlueprintCritiqueDocument,
     BlueprintDraftDocument,
     BlueprintEvaluationDocument,
     BlueprintPacketDocument,
-    StageResultEnvelope,
-    WorkItemKind,
 )
 from millrace_ai.extensions.builtin.blueprint.state import (
     read_active_blueprint_draft,
@@ -309,7 +310,7 @@ def _active_blueprint_draft_for_request(
     paths: WorkspacePaths,
     request: StageRunRequest,
 ) -> BlueprintDraftDocument:
-    if request.active_work_item_family_id != WorkItemKind.BLUEPRINT_DRAFT.value:
+    if request.active_work_item_family_id != "blueprint_draft":
         raise ValueError("Blueprint context requires an active blueprint_draft")
     if request.active_work_item_id is None:
         raise ValueError("Blueprint context requires an active draft id")

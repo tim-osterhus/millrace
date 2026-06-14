@@ -20,9 +20,9 @@ from millrace_ai.contracts import (
     TaskDocument,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.lanes import compiled_plan_fingerprint_for_runtime
 from millrace_ai.runtime.result_application import apply_router_decision, route_stage_result

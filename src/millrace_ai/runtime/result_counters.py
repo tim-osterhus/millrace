@@ -11,8 +11,8 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.contracts.work_refs import coerce_family_and_kind
-from millrace_ai.router import RouterDecision
 from millrace_ai.state_store import save_recovery_counters
 
 if TYPE_CHECKING:

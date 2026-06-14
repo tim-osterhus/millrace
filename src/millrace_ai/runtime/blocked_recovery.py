@@ -22,7 +22,7 @@ from .recovery.retry_policy import AUTO_REQUEUE_FAILURE_CLASSES
 
 if TYPE_CHECKING:
     from millrace_ai.config import RuntimeConfig
-    from millrace_ai.router import RouterDecision
+    from millrace_ai.contracts.router import RouterDecision
     from millrace_ai.runtime.engine import RuntimeEngine
 
 

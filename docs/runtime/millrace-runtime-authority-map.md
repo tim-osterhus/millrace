@@ -124,6 +124,14 @@ The compiled-plan router path uses:
   facades until their implementation moves behind extension-owned interfaces.
 - `runtime/supervisor.py` serializes result application in daemon mode even
   when workers run concurrently.
+- `runtime/reconciliation.py` may recover impossible persisted active-run
+  state only for lanes that are not still owned by the supervisor's
+  lane-keyed active-worker map. For a lane with a live or done-but-undrained
+  worker, the supervisor's active-worker ownership is authoritative until
+  serialized completion application runs; reconciliation must not replace that
+  lane's persisted active run or mutate recovery counters, but it does emit a
+  `runtime_reconciliation_deferred` diagnostic decision immediately for the
+  occupied lane before deferring recovery side effects.
 - `runtime/inspection.py`, CLI status/runs/queue views, `doctor.py`, monitor
   events, `runtime_snapshot.json`, status markdown files,
   `runtime/status_projections.py` (shared family-keyed queue-depth,
@@ -470,7 +478,8 @@ draft artifacts. The runtime persists queued Blueprint drafts under
 
 **Queue selection owner:** `runtime/activation.py` uses the compiled Planning
 queue claim policy. `workspace/queue_selection.py` delegates Blueprint draft
-claims to `workspace/blueprint_state.py`, which moves one eligible draft to
+claims to extension-owned Blueprint state helpers under
+`extensions/builtin/blueprint/state.py`, which move one eligible draft to
 `drafts/active/`. While a closure target is open, only same-lineage drafts
 remain claimable.
 
@@ -504,8 +513,10 @@ Mechanic repair actions, and block precise replay/partial-mutation failures.
 and runner id; legacy handler ids are compatibility aliases, not dispatch
 authority.
 `runtime/effects/operation_runners/` contains the Python executors for
-operations that still need file mutation code, and `workspace/blueprint_state.py`
-owns durable Blueprint file layout helpers.
+operations that still need file mutation code, and the retired
+`workspace/blueprint_state.py` removal stub now points callers to
+`extensions/builtin/blueprint/state.py` and
+`extensions/builtin/blueprint/doctor.py` for Blueprint file layout helpers.
 
 **Inspection/monitor visibility:** status exposes Blueprint counters and latest
 runtime-effect metadata; `runs show/trace` exposes runtime-effect operation, runner,

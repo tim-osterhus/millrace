@@ -79,13 +79,16 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   config-change boundary classification.
 - `contracts/` owns canonical typed runtime contracts behind the
   `millrace_ai.contracts` facade, including work documents, work references,
-  stage results, terminal outcome contracts, stage metadata, graph exports,
-  runtime snapshots, mailbox payloads, Recon contracts, required-extension
-  contracts, recovery counters, and token usage. `contracts/recovery.py`
-  preserves the legacy fixed-field recovery-counter compatibility projection
-  while the generic `counters` store remains canonical. Blueprint contract models are
-  now implemented under `extensions/builtin/blueprint/contracts.py`;
-  `contracts/blueprint.py` remains a lazy compatibility facade.
+  stage results, terminal outcome contracts, router contracts, stage
+  metadata, graph exports, runtime snapshots, mailbox payloads, Recon
+  contracts, required-extension contracts, recovery counters, and token
+  usage. `contracts/router.py` owns the neutral `RouterAction`/
+  `RouterDecision` contracts shared by runtime routing surfaces.
+  `contracts/recovery.py` exposes the generic recovery-counter contract whose
+  `counters` mapping is the canonical counter surface. Blueprint contract
+  models are implemented under `extensions/builtin/blueprint/contracts.py`;
+  `contracts/blueprint.py` is a deliberate removal stub. Generic contract
+  packages do not export Blueprint contract compatibility APIs.
 - `extensions/` owns extension package manifest contracts and built-in
   extension boundary interfaces, including extension domain and item-kind
   vocabulary, package/item manifests, implementation-path syntax validation
@@ -98,8 +101,8 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   `extensions/builtin/blueprint/`; the root `contracts/blueprint.py`,
   `workspace/blueprint_state.py`, `workspace/families/blueprint.py`,
   `runtime/context/blueprint.py`, and
-  `runtime/effects/operation_runners/__init__.py` modules remain lazy
-  compatibility facades.
+  `runtime/effects/operation_runners/__init__.py` modules are deliberate
+  removal stubs.
 - `doctor/` owns read-only workspace Doctor diagnostics, including the public
   Doctor facade, result models, check registry, manifest-discovered extension
   diagnostics, workspace/runtime state checks, queue parseability checks,
@@ -128,7 +131,7 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   implementation lives under
   `extensions/builtin/blueprint/operation_runners/`. The legacy
   `runtime/context/blueprint.py` and `runtime/effects/operation_runners/__init__.py`
-  modules remain lazy compatibility facades.
+  modules are deliberate removal stubs.
   `runtime/scheduler_policy.py` centralizes the compiled scheduler-policy
   interpreter used by `activation.py`, `tick_cycle.py`, `supervisor.py`, and
   `lanes.py` for predicate-backed foreground order, closure-target inversion,
@@ -141,8 +144,7 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   lineage integrity, Arbiter state, Blueprint state, runtime locks, and
   packaged asset deployment. Blueprint family and state helpers now delegate to
   `extensions/builtin/blueprint/`; the legacy `workspace/blueprint_state.py`
-  and `workspace/families/blueprint.py` modules remain lazy compatibility
-  facades.
+  and `workspace/families/blueprint.py` modules are deliberate removal stubs.
 
 ## Old-To-New Module Map
 
@@ -314,11 +316,11 @@ for future migration, not shipped runtime modules.
 
 These modules remain at the package root because they still have one coherent reason to change or they define foundational errors/adapters used across the package:
 
-- `src/millrace_ai/router.py` — stable compatibility surface for legacy
-  imports. Active dispatch runs through
-  `millrace_ai.runtime.graph_authority.routing` and
-  `generic_router`; the plane-specific routing functions here are not wired
-  into the active tick cycle.
+- `src/millrace_ai/router.py` — contract-only compatibility facade for legacy
+  imports. `RouterAction` and `RouterDecision` live in
+  `src/millrace_ai/contracts/router.py`; active dispatch runs through
+  `millrace_ai.runtime.graph_authority.routing` and `generic_router`, and the
+  root facade is not wired into the active tick cycle.
 - `src/millrace_ai/watchers.py`
 - `src/millrace_ai/errors.py`
 
@@ -357,9 +359,12 @@ cycles:
 - `workspace/queue_lifecycle.py` applies compiled lifecycle mutation plans to
   source queue documents with explicit source, outcome, family, and
   applicability-context metadata.
-- `workspace/blueprint_state.py` owns durable Blueprint manifest, draft,
-  packet, critique, evaluation, and promotion state helpers, plus read-only
-  manifest/draft diagnostic helpers used by Doctor.
+- `workspace/blueprint_state.py` is a deliberate removal stub for the durable
+  Blueprint manifest, draft, packet, critique, evaluation, and promotion state
+  helpers, plus read-only manifest/draft diagnostic helpers used by Doctor.
+  The live Blueprint state helpers live under
+  `extensions/builtin/blueprint/state.py` and
+  `extensions/builtin/blueprint/doctor.py`.
 - `workspace/schema_epoch.py` and `workspace/schema_epoch_marker.py` own schema
   epoch markers and daemon-safe archive/reset helpers.
 - `workspace/initialization.py` orchestrates initialization and keeps
@@ -372,11 +377,8 @@ cycles:
   loads manifest-declared projection modules. Blueprint status collection,
   default payload, default lines, and rendering live in
   `extensions/builtin/blueprint/status.py`, while `cli/status/blueprint.py`
-  remains a lazy compatibility facade and generic status collection stays
-  free of Blueprint implementation imports at import time. The retained facade
-  path is `src/millrace_ai/cli/status/blueprint.py`; allowed callers are
-  historical Blueprint status imports, while generic status assembly must stay
-  on manifest-discovered `status_projection` metadata. `cli/runs_view.py`,
+  is a deliberate removal stub and generic status collection stays free of
+  Blueprint implementation imports at import time. `cli/runs_view.py`,
   `cli/config_view.py`, and
   `cli/compile_view.py` continue to own their command-specific view assembly.
 - `cli/commands/model_aliases.py` owns operator commands for model alias CRUD
@@ -458,9 +460,10 @@ cycles:
   interpreter, journal, legacy handler registry, and helper modules, while
   `extensions/builtin/blueprint/operation_runners/` owns the Blueprint
   operation-runner implementation. Blueprint planning modes select those
-  generic operations through compiled runtime-effect rule assets; the runtime
-  compatibility export at `runtime/effects/operation_runners/__init__.py`
-  remains lazy and no runtime module is a dedicated Blueprint loop dispatcher.
+  generic operations through compiled runtime-effect rule assets; the retired
+  `runtime/effects/operation_runners/__init__.py` path now raises
+  `ImportError` and no runtime module is a dedicated Blueprint loop
+  dispatcher.
   Stage results and runtime events carry operation id and runner id as
   authority metadata; legacy handler id is
   optional compatibility metadata. `runtime/effect_execution.py` also
@@ -582,11 +585,10 @@ cycles:
   diagnostics behind that extension hook.
   `doctor/queue_checks.py` now resolves queue-artifact models from schema IDs
   and registered adapters instead of Blueprint-specific model branches.
-  `src/millrace_ai/workspace/blueprint_state.py` remains a lazy
-  non-authoritative compatibility facade for existing Blueprint state and
-  Doctor diagnostic helper imports; authoritative Blueprint state lives under
-  `extensions/builtin/blueprint/state.py`, and Blueprint Doctor diagnostics
-  live under `extensions/builtin/blueprint/doctor.py`.
+  `src/millrace_ai/workspace/blueprint_state.py` is a deliberate removal stub
+  for existing Blueprint state and Doctor diagnostic helper imports;
+  authoritative Blueprint state lives under `extensions/builtin/blueprint/state.py`,
+  and Blueprint Doctor diagnostics live under `extensions/builtin/blueprint/doctor.py`.
 - `runners/normalization/` keeps terminal parsing, artifact safety, failure
   classification, terminal-result mapping, and request provenance projection
   behind the stable `millrace_ai.runners.normalization.normalize_stage_result`
@@ -623,20 +625,23 @@ presets through canonical mode ids:
 `standard_plain` is preserved only as a compatibility alias in the asset-loading
 layer, not as a third duplicated mode asset file.
 
-## Pure Graph-Authority Retained Shims
+## Pure Graph-Authority Retired Facades and Retained Shims
 
 The pure graph-authority cleanup is intentionally breaking for runtime
-decisions, but a small set of import shims remains for compatibility. These
-shims are file-scoped and must not become active generic-kernel authority:
+decisions. The Blueprint-specific entries below are retired removal stubs;
+the remaining non-Blueprint rows are the live retained shims. These entries
+are file-scoped and must not become active generic-kernel authority:
+
+Old Python imports of the retired Blueprint paths may now raise `ImportError`.
+Use the extension-owned Blueprint modules instead of generic package paths.
 
 | Shim file or package | Allowed callers | Retention rationale | Guardrail coverage |
 | --- | --- | --- | --- |
-| `src/millrace_ai/contracts/blueprint.py` | Existing Blueprint contract imports and extension-backed Blueprint code | Lazy public compatibility facade while Blueprint contract implementations live under `extensions/builtin/blueprint/` | `tests/maintenance/test_pure_graph_authority_guardrails.py` and generic import/startup guardrails ensure generic paths do not load Blueprint implementation modules |
-| `src/millrace_ai/contracts/recovery.py` | Generic recovery-counter load/save, runtime snapshot hydration, and stale-state reconciliation paths | Legacy fixed-field recovery-counter compatibility projection while `RecoveryCounters.counters` remains canonical | `tests/maintenance/test_pure_graph_authority_guardrails.py` scans the `contracts/` package with an explicit allowlist for this shim; `tests/maintenance/test_generic_engine_boundary_guardrails.py` keeps `_LEGACY_COUNTER_IDS` out of active dispatch keys |
-| `src/millrace_ai/cli/status/blueprint.py` | Existing public callers of the historical Blueprint CLI status module; generic status assembly must use manifest-discovered `status_projection` items | Lazy non-authoritative compatibility facade while Blueprint status projection collection, defaults, and rendering live under `extensions/builtin/blueprint/status.py` | Pure graph-authority guardrails fail direct generic calls to Blueprint status APIs, generic `blueprints` projection branches, and domain-owned status projection manifest items that point into generic CLI/Doctor/workspace modules |
-| `src/millrace_ai/runtime/context/blueprint.py` | Blueprint request-context provider interface in Blueprint-declaring modes | Lazy compatibility facade for existing request-context callers while implementation lives under `extensions/builtin/blueprint/context.py` | Generic runtime import/startup guardrails and pure graph-authority guardrails prevent eager generic loading |
-| `src/millrace_ai/workspace/blueprint_state.py` and `src/millrace_ai/workspace/families/blueprint.py` | Blueprint extension state/family adapters and Blueprint Doctor diagnostic compatibility callers; generic Doctor checks must use manifest-discovered `doctor_diagnostic` items | Lazy non-authoritative compatibility facades while Blueprint state/family behavior lives under `extensions/builtin/blueprint/` and Doctor diagnostics live under `extensions/builtin/blueprint/doctor.py` | Pure graph-authority guardrails forbid generic family-id branching, direct Blueprint implementation imports outside allowed facades, direct Doctor registration of Blueprint diagnostics, domain-owned Doctor diagnostic manifest items that point into generic CLI/Doctor/workspace modules, and eager generic loading of Blueprint implementation modules |
-| `src/millrace_ai/runtime/effects/operation_runners/__init__.py` | Legacy Blueprint runner registration callers | Lazy compatibility export while current implementation lives in `extensions/builtin/blueprint/operation_runners/` | Runtime-effect registry and generic-kernel guardrails ensure the export stays lazy and generic paths do not select Blueprint branches |
+| `src/millrace_ai/contracts/blueprint.py` | Former Blueprint contract import path | Deliberate removal stub; Blueprint contract implementations live under `extensions/builtin/blueprint/` | `tests/maintenance/test_pure_graph_authority_guardrails.py` and generic import/startup guardrails ensure generic paths do not load Blueprint implementation modules or export Blueprint contract names |
+| `src/millrace_ai/cli/status/blueprint.py` | Former public import path for the historical Blueprint CLI status module; generic status assembly must use manifest-discovered `status_projection` items | Deliberate removal stub; Blueprint status projection collection, defaults, and rendering live under `extensions/builtin/blueprint/status.py` | Pure graph-authority guardrails fail direct generic calls to Blueprint status APIs, generic `blueprints` projection branches, `blueprint_status` in generic status models, and domain-owned status projection manifest items that point into generic CLI/Doctor/workspace modules |
+| `src/millrace_ai/runtime/context/blueprint.py` | Former Blueprint request-context provider import path | Deliberate removal stub; implementation lives under `extensions/builtin/blueprint/context.py` | Generic runtime import/startup guardrails and pure graph-authority guardrails prevent eager generic loading |
+| `src/millrace_ai/workspace/blueprint_state.py` and `src/millrace_ai/workspace/families/blueprint.py` | Former Blueprint state/family adapter and Doctor diagnostic helper import paths; generic Doctor checks must use manifest-discovered `doctor_diagnostic` items | Deliberate removal stubs; Blueprint state/family behavior lives under `extensions/builtin/blueprint/` and Doctor diagnostics live under `extensions/builtin/blueprint/doctor.py` | Pure graph-authority guardrails forbid generic family-id branching, direct Blueprint implementation imports outside allowed facades, direct Doctor registration of Blueprint diagnostics, domain-owned Doctor diagnostic manifest items that point into generic CLI/Doctor/workspace modules, and eager generic loading of Blueprint implementation modules |
+| `src/millrace_ai/runtime/effects/operation_runners/__init__.py` | Former legacy Blueprint runner registration import path | Deliberate removal stub; current implementation lives in `extensions/builtin/blueprint/operation_runners/` | Runtime-effect registry and generic-kernel guardrails ensure the export stays empty and generic paths do not select Blueprint branches |
 | `src/millrace_ai/contracts/stage_metadata.py` | Runner normalization, entrypoint linting, and compatibility lookups for shipped stages | Shipped-stage facade backed by JSON stage-kind assets; custom stage kinds derive authority from assets and compiled plans | Shipped-stage hardwiring and entrypoint discovery guardrails protect fixture/custom stage-kind behavior |
 
 The detailed compatibility inventory lives in

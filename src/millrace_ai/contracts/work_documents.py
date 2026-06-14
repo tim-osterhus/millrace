@@ -282,14 +282,7 @@ class LearningRequestDocument(ContractModel):
         return self
 
 
-ClosureBlockingWorkRefType = Literal[
-    "work_item",
-    "blueprint_draft",
-    "blueprint_candidate",
-    "blueprint_promotion",
-    "blueprint_approved",
-    "blueprint_invalid",
-]
+ClosureBlockingWorkRefType = str
 ClosureRootSourceKind = str
 
 
@@ -402,21 +395,10 @@ class ClosureTargetState(ContractModel):
 
         raw_ids = tuple(str(item) for item in payload.get("blocking_work_ids") or ())
         safe_ids: list[str] = []
-        migrated_refs: list[dict[str, object]] = []
         for raw_id in raw_ids:
             if _is_safe_identifier(raw_id):
                 safe_ids.append(raw_id.strip())
-                continue
-            migrated = _legacy_blocking_work_ref(raw_id)
-            if migrated is not None:
-                migrated_refs.append(migrated)
         payload["blocking_work_ids"] = tuple(dict.fromkeys(safe_ids))
-        if migrated_refs:
-            payload["blocking_work_refs"] = (
-                *(payload.get("blocking_work_refs") or ()),
-                *migrated_refs,
-            )
-            payload["closure_blocked_by_lineage_work"] = True
         return payload
 
     @model_validator(mode="after")
@@ -491,68 +473,6 @@ def _is_safe_identifier(value: str) -> bool:
     except ValueError:
         return False
     return True
-
-
-def _legacy_blocking_work_ref(value: str) -> dict[str, object] | None:
-    prefix, separator, rest = value.partition(":")
-    if not separator:
-        return {
-            "blocker_type": "blueprint_invalid",
-            "reason": "legacy_unsafe_blocking_work_id",
-            "artifact_path": value,
-            "detail": "legacy blocking_work_ids entry was not a safe identifier",
-        }
-    if prefix == "blueprint_draft" and _is_safe_identifier(rest):
-        return {
-            "blocker_type": "blueprint_draft",
-            "reason": "open_blueprint_draft",
-            "work_item_family_id": WorkItemKind.BLUEPRINT_DRAFT.value,
-            "work_item_kind": WorkItemKind.BLUEPRINT_DRAFT.value,
-            "work_item_id": rest,
-        }
-    if prefix == "blueprint_candidate" and _is_safe_identifier(rest):
-        return {
-            "blocker_type": "blueprint_candidate",
-            "reason": "candidate_packet",
-            "work_item_family_id": "blueprint_packet",
-            "work_item_id": rest,
-            "state": "candidates",
-        }
-    if prefix == "blueprint_approved":
-        blueprint_id, marker_separator, marker = rest.partition(":")
-        if marker_separator and marker == "missing_promotion" and _is_safe_identifier(blueprint_id):
-            return {
-                "blocker_type": "blueprint_approved",
-                "reason": "missing_promotion",
-                "work_item_family_id": "blueprint_packet",
-                "work_item_id": blueprint_id,
-                "state": "approved",
-            }
-    if prefix == "blueprint_promotion":
-        promotion_id, marker_separator, marker = rest.partition(":")
-        if (
-            marker_separator
-            and marker == "missing_generated_task"
-            and _is_safe_identifier(promotion_id)
-        ):
-            return {
-                "blocker_type": "blueprint_promotion",
-                "reason": "missing_generated_task",
-                "work_item_family_id": "blueprint_promotion",
-                "work_item_id": promotion_id,
-            }
-    if prefix == "blueprint_invalid":
-        return {
-            "blocker_type": "blueprint_invalid",
-            "reason": "invalid_artifact",
-            "artifact_path": rest,
-        }
-    return {
-        "blocker_type": "blueprint_invalid",
-        "reason": "legacy_unsafe_blocking_work_id",
-        "artifact_path": value,
-        "detail": "legacy blocking_work_ids entry was not a recognized packed blocker",
-    }
 
 
 __all__ = [

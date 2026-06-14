@@ -10,7 +10,6 @@ from millrace_ai.architecture import WorkItemFamilyDefinition
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
-    BlueprintDraftDocument,
     ExecutionStageName,
     IncidentDecision,
     IncidentDocument,
@@ -20,10 +19,11 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import read_runtime_events
+from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintDraftDocument
+from millrace_ai.extensions.builtin.blueprint.state import enqueue_blueprint_draft
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.work_documents import read_work_document_as
-from millrace_ai.workspace.blueprint_state import enqueue_blueprint_draft
 from millrace_ai.workspace.operator_interventions import (
     archive_invalid_incident_artifact,
     cancel_incident,
@@ -232,7 +232,7 @@ def test_cancel_queued_blueprint_family_uses_family_contract(tmp_path: Path) -> 
 
     assert result.action == "cancel"
     assert result.work_item_family_id == "blueprint_draft"
-    assert result.work_item_kind is WorkItemKind.BLUEPRINT_DRAFT
+    assert result.work_item_kind is None
     assert result.source_state == "queued"
     assert result.destination_state == "canceled"
     assert result.destination_path.parent == paths.runtime_root / "blueprints" / "drafts" / "canceled"

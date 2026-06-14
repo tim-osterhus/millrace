@@ -22,28 +22,28 @@ class BuiltInBlueprintValidator:
     domain: str = "blueprint"
 
     def validate_manifest(self, manifest: object) -> None:
-        from millrace_ai.contracts import BlueprintManifestDocument
+        from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintManifestDocument
 
         if isinstance(manifest, BlueprintManifestDocument):
             return
         BlueprintManifestDocument.model_validate(manifest)
 
     def validate_draft(self, draft: object) -> None:
-        from millrace_ai.contracts import BlueprintDraftDocument
+        from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintDraftDocument
 
         if isinstance(draft, BlueprintDraftDocument):
             return
         BlueprintDraftDocument.model_validate(draft)
 
     def validate_packet(self, packet: object) -> None:
-        from millrace_ai.contracts import BlueprintPacketDocument
+        from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintPacketDocument
 
         if isinstance(packet, BlueprintPacketDocument):
             return
         BlueprintPacketDocument.model_validate(packet)
 
     def validate_evaluation(self, evaluation: object) -> None:
-        from millrace_ai.contracts import BlueprintEvaluationDocument
+        from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintEvaluationDocument
 
         if isinstance(evaluation, BlueprintEvaluationDocument):
             return

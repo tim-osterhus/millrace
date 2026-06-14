@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from millrace_ai.contracts import StageResultEnvelope
+from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.extensions.interfaces import BUILTIN_INTERFACE_IDS
-from millrace_ai.router import RouterDecision
 
 if TYPE_CHECKING:
     from millrace_ai.architecture import CompiledRunPlan

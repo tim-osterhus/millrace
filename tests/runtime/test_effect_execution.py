@@ -9,8 +9,8 @@ import pytest
 
 from millrace_ai.architecture import RuntimeEffectOperationRunnerDefinition
 from millrace_ai.contracts import ResultClass, StageResultEnvelope
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runtime import effect_execution
 from millrace_ai.runtime.effect_execution import apply_runtime_effect_for_stage_result
 from millrace_ai.runtime.effects import (

@@ -34,10 +34,10 @@ from millrace_ai.contracts import (
     TaskDocument,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.recon_packets import render_recon_packet
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.run_inspection import inspect_run_trace
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
@@ -501,7 +501,7 @@ def test_run_stage_recovery_counter_uses_family_id_without_legacy_kind(tmp_path:
     assert entry.work_item_kind is None
     assert entry.work_item_id == "custom-001"
     assert entry.failure_class == "custom_failure"
-    assert entry.mechanic_attempt_count == 1
+    assert entry.counters["mechanic_attempt_count"] == 1
 
 
 def test_execution_run_stage_result_does_not_clear_active_learning_lane(tmp_path: Path) -> None:
@@ -893,7 +893,7 @@ def test_run_trace_marks_runtime_effect_recovery_edge(tmp_path: Path) -> None:
         stage=PlanningStageName.MANAGER,
         node_id="evaluator_blueprint",
         stage_kind_id="evaluator_blueprint",
-        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_family_id="blueprint_draft",
         work_item_id="draft-blueprint-001",
         terminal_result=PlanningTerminalResult.BLUEPRINT_APPROVED,
         result_class=ResultClass.SUCCESS,

@@ -591,6 +591,10 @@ Blueprint monitoring checklist:
 - An approved Blueprint should create an approved packet, evaluation,
   promotion record, and generated task. Arbiter should remain suppressed until
   that generated task has completed or blocked.
+- Blueprint implementation APIs are extension-owned. Old Python imports of
+  retired generic Blueprint facades may now raise `ImportError`; use
+  `millrace_ai.extensions.builtin.blueprint.*` modules for Blueprint contract,
+  status, context, state, Doctor, and operation-runner helpers.
 - `millrace status` exposes the open closure target and
   `planning_root_specs_deferred_by_closure_target` when bulk root-spec intake
   is backpressured behind the v1 one-open-target policy

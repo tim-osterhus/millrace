@@ -17,13 +17,6 @@ _SCHEMA_ID_TO_MODEL_NAME: dict[str, str] = {
     "spec_document_v1": "SpecDocument",
     "stage_result_envelope_v1": "StageResultEnvelope",
     "task_document_v1": "TaskDocument",
-    "blueprint_critique_document_v1": "BlueprintCritiqueDocument",
-    "blueprint_draft_document_v1": "BlueprintDraftDocument",
-    "blueprint_evaluation_document_v1": "BlueprintEvaluationDocument",
-    "blueprint_manifest_document_v1": "BlueprintManifestDocument",
-    "blueprint_packet_document_v1": "BlueprintPacketDocument",
-    "blueprint_promotion_record_v1": "BlueprintPromotionRecord",
-    "blueprint_repair_decision_document_v1": "BlueprintRepairDecisionDocument",
 }
 
 

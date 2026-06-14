@@ -10,7 +10,6 @@ from millrace_ai.architecture import WorkItemDocumentAdapterDefinition, WorkItem
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
-    BlueprintDraftDocument,
     ExecutionStageName,
     IncidentDecision,
     IncidentDocument,
@@ -23,11 +22,13 @@ from millrace_ai.contracts import (
     TaskDocument,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import read_runtime_events
+from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintDraftDocument
+from millrace_ai.extensions.builtin.blueprint.state import enqueue_blueprint_draft
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runtime.blocked_recovery import (
     retry_blocked_task,
     retry_blocked_work_item,
@@ -39,7 +40,6 @@ from millrace_ai.runtime.recovery.environmental import (
     failure_scope_from_metadata,
 )
 from millrace_ai.state_store import load_snapshot
-from millrace_ai.workspace.blueprint_state import enqueue_blueprint_draft
 
 NOW = datetime(2026, 5, 19, 12, 0, tzinfo=timezone.utc)
 
@@ -137,7 +137,6 @@ def test_blocked_metadata_blueprint_draft_includes_root_lineage(tmp_path) -> Non
         plane=Plane.PLANNING,
         stage=PlanningStageName.MANAGER,
         work_item_family_id="blueprint_draft",
-        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
         work_item_id="draft-001",
         terminal_result=PlanningTerminalResult.BLOCKED,
         result_class=ResultClass.BLOCKED,
@@ -164,7 +163,7 @@ def test_blocked_metadata_blueprint_draft_includes_root_lineage(tmp_path) -> Non
 
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert payload["work_item_family_id"] == "blueprint_draft"
-    assert payload["work_item_kind"] == "blueprint_draft"
+    assert payload["work_item_kind"] is None
     assert payload["work_item_id"] == "draft-001"
     assert payload["root_spec_id"] == "spec-001"
     assert payload["root_idea_id"] == "idea-001"
@@ -346,7 +345,7 @@ def test_retry_blocked_work_item_requeues_blueprint_draft_when_family_parser_val
 
     queued_path = paths.runtime_root / "blueprints" / "drafts" / "queue" / "draft-retry.json"
     assert result.work_item_family_id == "blueprint_draft"
-    assert result.work_item_kind is WorkItemKind.BLUEPRINT_DRAFT
+    assert result.work_item_kind is None
     assert queued_path.is_file()
     assert not blocked_path.exists()
     audit_lines = [

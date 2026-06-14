@@ -27,7 +27,6 @@ class StatusViewModel:
     queue_depths_by_family: dict[str, int]
     closure_status: dict[str, object]
     extension_statuses: dict[str, dict[str, object]]
-    blueprint_status: dict[str, object]
     latest_runtime_error_report_path: str | None
     latest_runtime_failure_origin: str | None
     latest_operator_intervention: RuntimeEventRecord | None

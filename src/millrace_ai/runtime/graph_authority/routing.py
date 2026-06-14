@@ -11,7 +11,7 @@ from millrace_ai.contracts import (
     StageName,
     StageResultEnvelope,
 )
-from millrace_ai.router import RouterDecision
+from millrace_ai.contracts.router import RouterDecision
 
 from .counters import normalize_failure_class
 from .generic_router import route_generic_stage_result_from_graph  # noqa: F401 — re-export

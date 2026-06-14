@@ -10,9 +10,9 @@ from pydantic import JsonValue
 
 from millrace_ai.assets import discover_extension_package_manifests
 from millrace_ai.contracts import Plane, RuntimeErrorCode, StageResultEnvelope
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.events import write_runtime_event
 from millrace_ai.extensions import ExtensionItemKind
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.state_store import load_recovery_counters, reset_forward_progress_counters, save_snapshot
 from millrace_ai.workspace.paths import WorkspacePaths
 

@@ -16,9 +16,9 @@ from millrace_ai.contracts import (
     StageName,
     StageResultEnvelope,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.contracts.stage_metadata import stage_plane
 from millrace_ai.extensions import builtin_extension_boundary_registry
-from millrace_ai.router import RouterAction, RouterDecision
 
 from .active_runs import (
     active_run_for_plane,

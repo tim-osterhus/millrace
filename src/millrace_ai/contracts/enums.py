@@ -106,7 +106,6 @@ class WorkItemKind(str, Enum):
     SPEC = "spec"
     INCIDENT = "incident"
     LEARNING_REQUEST = "learning_request"
-    BLUEPRINT_DRAFT = "blueprint_draft"
 
 
 class LearningRequestAction(str, Enum):

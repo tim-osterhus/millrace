@@ -43,6 +43,7 @@ from millrace_ai.contracts import (
     WorkItemKind,
     terminal_outcome_value,
 )
+from millrace_ai.contracts.router import RouterAction
 from millrace_ai.control import RuntimeControl
 from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError
 from millrace_ai.events import read_runtime_events
@@ -50,7 +51,6 @@ from millrace_ai.mailbox import read_pending_mailbox_commands, write_mailbox_com
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.recon_packets import render_recon_packet
-from millrace_ai.router import RouterAction
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor
@@ -2332,9 +2332,9 @@ def test_runtime_startup_reconciles_stale_state_to_recovery_stage(tmp_path: Path
     assert reconciled.current_failure_class == "stale_active_ownership"
     persisted_counters = load_recovery_counters(paths)
     assert persisted_counters.entries
-    assert persisted_counters.entries[0].troubleshoot_attempt_count == 1
+    assert persisted_counters.entries[0].counters["troubleshoot_attempt_count"] == 1
     assert engine.counters is not None
-    assert engine.counters.entries[0].troubleshoot_attempt_count == 1
+    assert engine.counters.entries[0].counters["troubleshoot_attempt_count"] == 1
 
     engine.tick()
     assert seen_stages[0] == "troubleshooter"
@@ -2401,7 +2401,7 @@ def test_runtime_tick_reconciles_execution_anomaly_before_stage_execution(
     counters = load_recovery_counters(paths)
     assert len(counters.entries) == 1
     assert counters.entries[0].failure_class == "stale_active_ownership"
-    assert counters.entries[0].troubleshoot_attempt_count == 1
+    assert counters.entries[0].counters["troubleshoot_attempt_count"] == 1
 
     event_types = [event.event_type for event in read_runtime_events(paths)]
     assert "runtime_reconciled" in event_types
@@ -2453,7 +2453,7 @@ def test_runtime_tick_routes_planning_anomaly_into_mechanic(tmp_path: Path) -> N
     counters = load_recovery_counters(paths)
     assert len(counters.entries) == 1
     assert counters.entries[0].failure_class == "impossible_status_marker"
-    assert counters.entries[0].mechanic_attempt_count == 1
+    assert counters.entries[0].counters["mechanic_attempt_count"] == 1
 
 
 def test_runtime_tick_routes_unknown_execution_marker_into_troubleshooter(tmp_path: Path) -> None:
@@ -3300,15 +3300,14 @@ def test_runtime_mailbox_retry_active_requeues_active_item_and_resets_counters(t
                     failure_class="missing_terminal_result",
                     work_item_kind=WorkItemKind.TASK,
                     work_item_id="task-001",
-                    troubleshoot_attempt_count=2,
-                    fix_cycle_count=1,
+                    counters={"troubleshoot_attempt_count": 2, "fix_cycle_count": 1},
                     last_updated_at=NOW,
                 ),
                 RecoveryCounterEntry(
                     failure_class="other_item",
                     work_item_kind=WorkItemKind.TASK,
                     work_item_id="task-keep",
-                    troubleshoot_attempt_count=1,
+                    counters={"troubleshoot_attempt_count": 1},
                     last_updated_at=NOW,
                 ),
             )
@@ -3377,7 +3376,7 @@ def test_runtime_mailbox_clear_stale_state_requeues_multiple_active_artifacts(tm
                     failure_class="stale_active_ownership",
                     work_item_kind=WorkItemKind.TASK,
                     work_item_id="task-001",
-                    troubleshoot_attempt_count=1,
+                    counters={"troubleshoot_attempt_count": 1},
                     last_updated_at=NOW,
                 ),
             )

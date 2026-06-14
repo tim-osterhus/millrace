@@ -8,6 +8,13 @@ The runtime contract stays:
 - input: `StageRunRequest`
 - output: `RunnerRawResult`
 
+Millrace treats a runner as a bounded harness invocation, not as the source of
+runtime authority. A harness may have its own tools, hooks, subagents, memory,
+session history, or internal loop helpers. Millrace still owns the compiled
+stage request, capability-gate evidence, allowed terminal markers, result
+normalization, queue mutation, recovery routing, and closure state around that
+harness invocation.
+
 Use `docs/runtime/millrace-compiler-and-frozen-plans.md` and
 `docs/runtime/millrace-modes-and-loops.md` for the compile-time surfaces that
 freeze `runner_name`, `model_name`, and other compiled node fields before runner

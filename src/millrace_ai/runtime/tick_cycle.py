@@ -12,9 +12,9 @@ from millrace_ai.contracts import (
     Plane,
     StageName,
 )
+from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.errors import StageWorkItemOwnershipError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
-from millrace_ai.router import RouterDecision
 from millrace_ai.runners import normalize_stage_result
 from millrace_ai.runtime.outcomes import RuntimeTickOutcome
 from millrace_ai.state_store import save_snapshot

@@ -70,6 +70,11 @@ assets that omit required policies, extension declarations, artifact contracts,
 or workflow registries must be refreshed or rejected with authority errors
 instead of normalized by runtime defaults.
 
+Blueprint APIs now live under the Blueprint extension package rather than
+generic package facades. Old Python imports of retired Blueprint compatibility
+paths may break, and generic runtime packages should not re-export Blueprint
+contract, status, context, state, or operation-runner APIs.
+
 Shipped compiler/runtime authority now includes:
 
 - compiled workflow primitive authority for work-item families, document

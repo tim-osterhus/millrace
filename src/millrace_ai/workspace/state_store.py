@@ -158,7 +158,6 @@ def _update_counter_entries(
             )
             updated_entry = entry.model_copy(
                 update={
-                    "troubleshoot_attempt_count": entry.troubleshoot_attempt_count + 1,
                     "counters": updated_counters,
                     "last_updated_at": now,
                 }
@@ -172,7 +171,7 @@ def _update_counter_entries(
             work_item_family_id=work_item_family_id,
             work_item_kind=work_item_kind,
             work_item_id=work_item_id,
-            troubleshoot_attempt_count=1,
+            counters={"troubleshoot_attempt_count": 1},
             last_updated_at=now,
         )
         mutable_entries.append(updated_entry)

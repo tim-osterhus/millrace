@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from .base import ContractModel as ContractModel
 from .capabilities import (
     BASE_EXECUTION_CAPABILITY_IDS,
@@ -91,6 +89,12 @@ from .recon import (
     ReconVerificationPlan,
 )
 from .recovery import RecoveryCounterEntry, RecoveryCounters
+from .router import (
+    RouterAction,
+    RouterDecision,
+    counter_key_for_failure_class,
+    normalize_failure_class,
+)
 from .run_trace import (
     RunTraceArtifactRef,
     RunTraceEdge,
@@ -131,36 +135,6 @@ from .work_refs import (
     plane_for_work_item_family_id,
 )
 
-_BLUEPRINT_EXPORTS = {
-    "BlueprintCritiqueDocument",
-    "BlueprintDraftDocument",
-    "BlueprintDraftStatus",
-    "BlueprintEvaluationDecision",
-    "BlueprintEvaluationDocument",
-    "BlueprintManifestDocument",
-    "BlueprintPacketDocument",
-    "BlueprintPromotionRecord",
-    "BlueprintRepairAction",
-    "BlueprintRepairDecisionDocument",
-    "BlueprintRepairMutationPhase",
-    "BlueprintSourceWorkItemKind",
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name not in _BLUEPRINT_EXPORTS:
-        raise AttributeError(name)
-    from millrace_ai.extensions.builtin.blueprint import contracts as blueprint_contracts
-
-    value = getattr(blueprint_contracts, name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted((*globals(), *_BLUEPRINT_EXPORTS))
-
-
 __all__ = [
     "ClosureBlockingWorkRef",
     "ClosureRootSource",
@@ -176,18 +150,6 @@ __all__ = [
     "ActiveRunState",
     "ApprovalPolicyRef",
     "BASE_EXECUTION_CAPABILITY_IDS",
-    "BlueprintCritiqueDocument",
-    "BlueprintDraftDocument",
-    "BlueprintDraftStatus",
-    "BlueprintEvaluationDecision",
-    "BlueprintEvaluationDocument",
-    "BlueprintManifestDocument",
-    "BlueprintPacketDocument",
-    "BlueprintPromotionRecord",
-    "BlueprintRepairAction",
-    "BlueprintRepairDecisionDocument",
-    "BlueprintRepairMutationPhase",
-    "BlueprintSourceWorkItemKind",
     "CapabilityDecisionState",
     "CapabilityEnforcementMode",
     "CapabilityEvidenceStatus",
@@ -253,6 +215,8 @@ __all__ = [
     "ReconVerificationPlan",
     "ResultClass",
     "RootIntakeKind",
+    "RouterAction",
+    "RouterDecision",
     "ReloadOutcome",
     "RuntimeMode",
     "RuntimeErrorCode",
@@ -275,11 +239,13 @@ __all__ = [
     "TokenUsage",
     "WatcherMode",
     "WorkItemKind",
+    "counter_key_for_failure_class",
     "capability_grant_fingerprint",
     "coerce_family_and_kind",
     "family_id_for_work_item_kind",
     "legacy_work_item_kind_for_family_id",
     "normalize_capability_id",
+    "normalize_failure_class",
     "normalize_work_item_family_id",
     "plane_for_work_item_family_id",
     "terminal_outcome_value",

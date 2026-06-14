@@ -287,8 +287,8 @@ def test_e2e_recovery_malformed_result_routes_to_consultant(tmp_path: Path) -> N
     assert entry.failure_class == "missing_terminal_result"
     assert entry.work_item_kind is WorkItemKind.TASK
     assert entry.work_item_id == "task-recover-001"
-    assert entry.troubleshoot_attempt_count == 2
-    assert entry.consultant_invocations == 0
+    assert entry.counters["troubleshoot_attempt_count"] == 2
+    assert entry.counters.get("consultant_invocations", 0) == 0
 
 
 def test_e2e_recovery_illegal_terminal_result_routes_to_consultant(tmp_path: Path) -> None:
@@ -330,8 +330,8 @@ def test_e2e_recovery_illegal_terminal_result_routes_to_consultant(tmp_path: Pat
     assert entry.failure_class == "illegal_terminal_result"
     assert entry.work_item_kind is WorkItemKind.TASK
     assert entry.work_item_id == "task-illegal-token-001"
-    assert entry.troubleshoot_attempt_count == 2
-    assert entry.consultant_invocations == 0
+    assert entry.counters["troubleshoot_attempt_count"] == 2
+    assert entry.counters.get("consultant_invocations", 0) == 0
 
 
 def test_e2e_needs_planning_incident_intake_reenters_execution(tmp_path: Path) -> None:

@@ -18,9 +18,9 @@ from millrace_ai.contracts import (
     TaskDocument,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.router import RouterDecision
 from millrace_ai.work_documents import read_work_document_as
 
 if TYPE_CHECKING:

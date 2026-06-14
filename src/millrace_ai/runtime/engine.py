@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 import millrace_ai.runtime.lifecycle as lifecycle
 import millrace_ai.runtime.mailbox_intake as mailbox_intake
@@ -25,11 +25,11 @@ from millrace_ai.contracts import (
     WatcherMode,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.paths import WorkspacePaths, bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueClaim
-from millrace_ai.router import RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime.active_runs import active_run_for_plane, snapshot_without_active_plane
 from millrace_ai.runtime.monitoring import NullRuntimeMonitorSink, RuntimeMonitorEvent, RuntimeMonitorSink
@@ -166,8 +166,17 @@ class RuntimeEngine:
     def _refresh_runtime_queue_depths(self, *, process_running: bool | None = None) -> None:
         reconciliation.refresh_runtime_queue_depths(self, process_running=process_running)
 
-    def _run_reconciliation_if_needed(self) -> tuple[ReconciliationSignal, ...]:
-        return reconciliation.run_reconciliation_if_needed(self)
+    def _run_reconciliation_if_needed(
+        self,
+        *,
+        active_worker_runs_by_lane: Mapping[str, ActiveRunState] | None = None,
+        active_worker_run_ids_by_lane: Mapping[str, str] | None = None,
+    ) -> tuple[ReconciliationSignal, ...]:
+        return reconciliation.run_reconciliation_if_needed(
+            self,
+            active_worker_runs_by_lane=active_worker_runs_by_lane,
+            active_worker_run_ids_by_lane=active_worker_run_ids_by_lane,
+        )
 
     def _status_marker_for_reconciliation(self, path: Path) -> str:
         return reconciliation.status_marker_for_reconciliation(path)

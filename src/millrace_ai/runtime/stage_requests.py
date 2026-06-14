@@ -14,10 +14,10 @@ from millrace_ai.contracts import (
     StageName,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.contracts.stage_metadata import stage_name_for_plane
 from millrace_ai.errors import StageWorkItemOwnershipError
 from millrace_ai.events import write_runtime_event
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest
 from millrace_ai.runners.requests import RequestKind
 from millrace_ai.runtime.outcomes import RuntimeTickOutcome

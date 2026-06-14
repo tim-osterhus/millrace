@@ -8,16 +8,17 @@ from pathlib import Path
 from typing import Literal, TypeVar
 
 from millrace_ai.contracts import (
+    ClosureBlockingWorkRef,
+)
+from millrace_ai.errors import QueueStateError
+from millrace_ai.extensions.builtin.blueprint.contracts import (
     BlueprintCritiqueDocument,
     BlueprintDraftDocument,
     BlueprintEvaluationDocument,
     BlueprintManifestDocument,
     BlueprintPacketDocument,
     BlueprintPromotionRecord,
-    ClosureBlockingWorkRef,
-    WorkItemKind,
 )
-from millrace_ai.errors import QueueStateError
 from millrace_ai.workspace.paths import WorkspacePaths
 from millrace_ai.workspace.queue_claims import QueueClaim
 
@@ -135,7 +136,7 @@ def claim_next_blueprint_draft(
                 destination.unlink()
             continue
         return QueueClaim(
-            work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+            family_id="blueprint_draft",
             work_item_id=draft.draft_id,
             path=destination,
             source_state="queued",
@@ -390,8 +391,7 @@ def list_open_blueprint_lineage_work_refs(
                 ClosureBlockingWorkRef(
                     blocker_type="blueprint_draft",
                     reason="open_blueprint_draft",
-                    work_item_family_id=WorkItemKind.BLUEPRINT_DRAFT.value,
-                    work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+                    work_item_family_id="blueprint_draft",
                     work_item_id=draft.draft_id,
                     state=state,
                     root_spec_id=draft.root_spec_id,

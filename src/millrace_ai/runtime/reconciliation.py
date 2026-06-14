@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
-from millrace_ai.contracts import Plane, RecoveryCounters, RuntimeSnapshot, StageName
+from millrace_ai.contracts import ActiveRunState, Plane, RecoveryCounters, RuntimeSnapshot, StageName
 from millrace_ai.state_store import ReconciliationSignal, collect_reconciliation_signals, load_recovery_counters, save_snapshot
 from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
 
@@ -56,7 +56,12 @@ def refresh_runtime_queue_depths(engine: RuntimeEngine, *, process_running: bool
     engine.snapshot = engine.snapshot.model_copy(update=update)
 
 
-def run_reconciliation_if_needed(engine: RuntimeEngine) -> tuple[ReconciliationSignal, ...]:
+def run_reconciliation_if_needed(
+    engine: RuntimeEngine,
+    *,
+    active_worker_runs_by_lane: Mapping[str, ActiveRunState] | None = None,
+    active_worker_run_ids_by_lane: Mapping[str, str] | None = None,
+) -> tuple[ReconciliationSignal, ...]:
     assert engine.snapshot is not None
     assert engine.counters is not None
 
@@ -71,8 +76,38 @@ def run_reconciliation_if_needed(engine: RuntimeEngine) -> tuple[ReconciliationS
     if not signals:
         return signals
 
-    engine.snapshot = apply_reconciliation_signals(engine, engine.snapshot, engine.counters, signals)
+    primary_context = _signal_active_worker_context(
+        engine.snapshot,
+        signals[0],
+        active_worker_runs_by_lane=active_worker_runs_by_lane,
+        active_worker_run_ids_by_lane=active_worker_run_ids_by_lane,
+    )
+    if primary_context["action"] == "deferred":
+        from millrace_ai.events import write_runtime_event
+
+        write_runtime_event(
+            engine.paths,
+            event_type="runtime_reconciliation_deferred",
+            data={
+                **_signal_event_data(
+                    signals[0],
+                    engine=engine,
+                    snapshot=engine.snapshot,
+                    active_worker_runs_by_lane=active_worker_runs_by_lane,
+                    active_worker_run_ids_by_lane=active_worker_run_ids_by_lane,
+                    action="deferred_active_worker",
+                    counter_incremented=False,
+                ),
+                "signal_count": len(signals),
+            },
+        )
+        return signals
+
+    signal_snapshot = engine.snapshot
+    counters_before = engine.counters
+    engine.snapshot = apply_reconciliation_signals(engine, signal_snapshot, counters_before, signals)
     engine.counters = load_recovery_counters(engine.paths)
+    counter_incremented = engine.counters != counters_before
     refresh_runtime_queue_depths(engine)
     save_snapshot(engine.paths, engine.snapshot)
     from millrace_ai.events import write_runtime_event
@@ -86,6 +121,33 @@ def run_reconciliation_if_needed(engine: RuntimeEngine) -> tuple[ReconciliationS
             "recovery_stage": (
                 signals[0].recommended_stage.value if signals[0].recommended_stage is not None else None
             ),
+            "available_signals": [
+                _signal_event_data(
+                    signal,
+                    engine=engine,
+                    snapshot=signal_snapshot,
+                    active_worker_runs_by_lane=active_worker_runs_by_lane,
+                    active_worker_run_ids_by_lane=active_worker_run_ids_by_lane,
+                    action="available",
+                    counter_incremented=None,
+                )
+                for signal in signals
+            ],
+            "failure_class": signals[0].failure_class,
+            "plane": signals[0].plane.value if signals[0].plane is not None else None,
+            "lane": primary_context["lane"],
+            "lane_id": primary_context["lane"],
+            "snapshot_active_run_stage": primary_context["snapshot_active_run_stage"],
+            "snapshot_active_run_node_id": primary_context["snapshot_active_run_node_id"],
+            "snapshot_active_run_stage_kind_id": primary_context["snapshot_active_run_stage_kind_id"],
+            "snapshot_active_run_id": primary_context["snapshot_active_run_id"],
+            "active_worker_present": primary_context["active_worker_present"],
+            "active_worker_stage": primary_context["active_worker_stage"],
+            "active_worker_node_id": primary_context["active_worker_node_id"],
+            "active_worker_stage_kind_id": primary_context["active_worker_stage_kind_id"],
+            "active_worker_run_id": primary_context["active_worker_run_id"],
+            "action": "applied",
+            "counter_incremented": counter_incremented,
         },
     )
     return signals
@@ -169,6 +231,92 @@ def set_recovery_counters(
             counter_id=counter_id,
         )
     return snapshot
+
+
+def _signal_active_worker_context(
+    snapshot: RuntimeSnapshot,
+    signal: ReconciliationSignal,
+    *,
+    active_worker_runs_by_lane: Mapping[str, ActiveRunState] | None,
+    active_worker_run_ids_by_lane: Mapping[str, str] | None,
+) -> dict[str, object]:
+    plane = signal.plane or Plane.EXECUTION
+    active_run = active_run_for_plane(snapshot, plane)
+    lane = active_run.lane_id if active_run is not None else None
+    active_worker_run = (
+        active_worker_runs_by_lane.get(lane)
+        if lane is not None and active_worker_runs_by_lane is not None
+        else None
+    )
+    active_worker_run_id = (
+        active_worker_run.run_id
+        if active_worker_run is not None
+        else active_worker_run_ids_by_lane.get(lane)
+        if lane is not None and active_worker_run_ids_by_lane is not None
+        else None
+    )
+    return {
+        "lane": lane,
+        "snapshot_active_run_stage": active_run.stage.value if active_run is not None else None,
+        "snapshot_active_run_node_id": active_run.node_id if active_run is not None else None,
+        "snapshot_active_run_stage_kind_id": active_run.stage_kind_id if active_run is not None else None,
+        "snapshot_active_run_id": active_run.run_id if active_run is not None else None,
+        "active_worker_present": active_worker_run is not None or active_worker_run_id is not None,
+        "active_worker_stage": active_worker_run.stage.value if active_worker_run is not None else None,
+        "active_worker_node_id": active_worker_run.node_id if active_worker_run is not None else None,
+        "active_worker_stage_kind_id": active_worker_run.stage_kind_id if active_worker_run is not None else None,
+        "active_worker_run_id": active_worker_run_id,
+        "action": "deferred" if active_worker_run_id is not None else "applied",
+        "counter_incremented": signal.recommended_stage is not None and active_run is not None,
+    }
+
+
+def _signal_event_data(
+    signal: ReconciliationSignal,
+    *,
+    engine: RuntimeEngine,
+    snapshot: RuntimeSnapshot,
+    active_worker_runs_by_lane: Mapping[str, ActiveRunState] | None,
+    active_worker_run_ids_by_lane: Mapping[str, str] | None,
+    action: str,
+    counter_incremented: bool | None,
+) -> dict[str, object]:
+    context = _signal_active_worker_context(
+        snapshot,
+        signal,
+        active_worker_runs_by_lane=active_worker_runs_by_lane,
+        active_worker_run_ids_by_lane=active_worker_run_ids_by_lane,
+    )
+    recovery_node_id = None
+    recovery_stage_kind_id = None
+    if signal.recommended_stage is not None:
+        recovery_node_id, recovery_stage_kind_id = _compiled_identity_for_stage(
+            engine,
+            plane=signal.plane or Plane.EXECUTION,
+            stage=signal.recommended_stage,
+        )
+    return {
+        "signal": signal.code,
+        "failure_class": signal.failure_class,
+        "plane": signal.plane.value if signal.plane is not None else None,
+        "lane": context["lane"],
+        "lane_id": context["lane"],
+        "snapshot_active_run_stage": context["snapshot_active_run_stage"],
+        "snapshot_active_run_node_id": context["snapshot_active_run_node_id"],
+        "snapshot_active_run_stage_kind_id": context["snapshot_active_run_stage_kind_id"],
+        "snapshot_active_run_id": context["snapshot_active_run_id"],
+        "active_worker_present": context["active_worker_present"],
+        "active_worker_stage": context["active_worker_stage"],
+        "active_worker_node_id": context["active_worker_node_id"],
+        "active_worker_stage_kind_id": context["active_worker_stage_kind_id"],
+        "active_worker_run_id": context["active_worker_run_id"],
+        "action": action,
+        "recovery_stage": signal.recommended_stage.value if signal.recommended_stage is not None else None,
+        "recommended_recovery_stage": signal.recommended_stage.value if signal.recommended_stage is not None else None,
+        "recommended_recovery_node_id": recovery_node_id,
+        "recommended_recovery_stage_kind_id": recovery_stage_kind_id,
+        "counter_incremented": counter_incremented,
+    }
 
 
 def _compiled_identity_for_stage(

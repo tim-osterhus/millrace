@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from millrace_ai.contracts import Plane, ResultClass, StageResultEnvelope, WorkItemKind
+from millrace_ai.contracts import Plane, ResultClass, StageResultEnvelope
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.runtime.runtime_effect_status import (
     latest_runtime_effect_status_metadata,
@@ -39,7 +39,7 @@ def _approval_failure_stage_result(
         stage="manager",
         node_id="evaluator_blueprint",
         stage_kind_id="evaluator_blueprint",
-        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_family_id="blueprint_draft",
         work_item_id="draft-001",
         terminal_result="BLUEPRINT_APPROVED",
         result_class=ResultClass.SUCCESS,
@@ -58,7 +58,7 @@ def _mechanic_apply_stage_result(*, completed_at: datetime = NOW) -> StageResult
         stage="mechanic",
         node_id="mechanic_blueprint",
         stage_kind_id="mechanic_blueprint",
-        work_item_kind=WorkItemKind.BLUEPRINT_DRAFT,
+        work_item_family_id="blueprint_draft",
         work_item_id="draft-001",
         terminal_result="MECHANIC_BLUEPRINT_COMPLETE",
         result_class=ResultClass.SUCCESS,

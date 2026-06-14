@@ -167,10 +167,13 @@ the generic interpreter or its declared adapter.
 - `src/millrace_ai/workspace/queue_lifecycle.py`: interpreter that applies
   compiled source lifecycle intents with explicit source, outcome, family, and
   applicability-context metadata to active queue documents.
-- `src/millrace_ai/workspace/blueprint_state.py`: durable Blueprint manifest,
-  draft, packet, critique, evaluation, and promotion state helpers. Manifest
-  reads resolve both new manifest-id-keyed paths and legacy root-keyed paths by
-  embedded `manifest_id`; root lineage listing can return multiple manifests.
+- `src/millrace_ai/workspace/blueprint_state.py`: retired removal stub for the
+  durable Blueprint manifest, draft, packet, critique, evaluation, and
+  promotion state helpers that now live under
+  `extensions/builtin/blueprint/state.py`. Manifest reads resolve both new
+  manifest-id-keyed paths and legacy root-keyed paths by embedded
+  `manifest_id`; root lineage listing can return multiple manifests. Old
+  Python imports of this retired generic path may now raise `ImportError`.
 - `src/millrace_ai/workspace/operator_interventions.py`: audited queue and
   incident cancellation, supersession, dependency retargeting, operator
   resolution, and invalid-incident archive helpers.
@@ -480,41 +483,32 @@ arbitrary `counter_id` values in a generic `counters` dict:
   "counters": {
     "troubleshoot_attempt_count": 2,
     "custom_op_counter": 1
-  },
-  "troubleshoot_attempt_count": 2,
-  "mechanic_attempt_count": 0,
-  "fix_cycle_count": 0,
-  "consultant_invocations": 0
+  }
 }
 ```
 
 The composite `(work_item_family_id, work_item_id, failure_class)` serves as
-the runtime scope key. Counter storage is generic — any stage or recovery path
+the runtime scope key. Counter storage is generic: any stage or recovery path
 can increment arbitrary `counter_id` strings through
-`increment_counter_field()` in `runtime/result_counters.py`.
+`increment_counter_field()` in `runtime/result_counters.py`, and
+`graph_authority/counters.py` reads the same generic store directly. Missing
+counter IDs resolve to `0`, and no legacy fixed-field recovery-counter
+projection or load-time migration path remains.
 
-### Legacy Compatibility Fields
+### Generic Counter IDs
 
-Four fixed legacy counter field names are preserved as compatibility
-projections derived from the generic `counters` dict:
+Runtime counter mutation uses compiled policy metadata (`counter_mutation_name`
+/ `recovery_counter_name`) to choose the `counter_id` to increment, rather
+than hard-coded fixed field-name dispatch. The generic counter IDs currently
+used by workspace and runtime helpers include
+`troubleshoot_attempt_count`, `mechanic_attempt_count`, `fix_cycle_count`,
+and `consultant_invocations`, but those are ordinary generic keys, not
+projected legacy fields.
 
-| Legacy field name | Counter dict key |
-| --- | --- |
-| `troubleshoot_attempt_count` | `"troubleshoot_attempt_count"` |
-| `mechanic_attempt_count` | `"mechanic_attempt_count"` |
-| `fix_cycle_count` | `"fix_cycle_count"` |
-| `consultant_invocations` | `"consultant_invocations"` |
-
-On load, `RecoveryCounterEntry` migrates non-zero legacy field values into
-the generic `counters` dict (old-state compatibility). On validation, the
-generic dict is projected back into the legacy fields so every existing
-consumer that reads `entry.troubleshoot_attempt_count` continues to work.
-New code should read and write the generic `counters` dict via
-`increment_counter_field(engine, snapshot, counters, counter_id=...)`.
-Active counter routing in `result_counters.py` and
-`graph_authority/counters.py` resolves counter mutations from compiled
-policy metadata (`counter_mutation_name` / `recovery_counter_name`) rather
-than from hard-coded fixed field-name dispatch.
+Blueprint contract, status, context, state, and operation-runner APIs live
+under `extensions/builtin/blueprint/`. Generic packages do not export those
+Blueprint compatibility APIs; old Python imports of retired Blueprint generic
+facades may now break.
 
 ### Policy-Owned Thresholds
 
@@ -584,8 +578,10 @@ Key boundary:
 - `runtime/graph_authority/execution.py`, `planning.py`, and `learning.py` are
   compatibility wrappers that forward to the generic router with plane-specific
   terminal formatters where needed.
-- `router.py` at the package root is a stable compatibility surface for
-  legacy imports; active dispatch does not call its plane-specific functions.
+- `router.py` at the package root is a contract-only compatibility facade for
+  legacy imports; `RouterAction` and `RouterDecision` live in
+  `millrace_ai.contracts.router`, and active dispatch does not call its
+  plane-specific functions.
 
 This boundary keeps workflow-authority changes (new graphs, terminals, or
 recovery policies) in graph assets and compiled plans without requiring
@@ -627,7 +623,15 @@ Per daemon scheduler cycle:
 3. Refresh queue depths.
 4. Respect stop control gates.
 5. Evaluate opt-in usage governance and respect pause gates.
-6. Run stale-state reconciliation and recovery routing.
+6. Run stale-state reconciliation and recovery routing. Reconciliation may
+   replace stale persisted active-run ownership only for lanes that are not
+   still present in the daemon supervisor's active-worker map. If the
+   supervisor still owns an active worker for the affected lane, that
+   lane-keyed active-worker ownership is authoritative: reconciliation leaves
+   persisted active-run ownership, status markers, and recovery counters
+   untouched, emits a `runtime_reconciliation_deferred` diagnostic decision for
+   the occupied lane, and defers only the recovery side effects until the
+   worker drains and serialized completion application can settle the lane.
 7. Refresh queue depths again.
 8. Claim planning, execution, or learning work item according to the compiled
    scheduler policy's foreground order. `runtime/scheduler_policy.py` provides

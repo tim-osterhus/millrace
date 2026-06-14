@@ -22,13 +22,12 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.graph_authority import route_stage_result_from_graph
 from millrace_ai.runtime.graph_authority.counters import (
-    counter_attempts,
     counter_attempts_for_counter_id,
     matching_counter_entry,
 )
@@ -140,7 +139,7 @@ class TestGenericCounterPersistence:
             last_updated_at=NOW,
         )
         assert entry.counters == {"custom_counter": 3, "troubleshoot_attempt_count": 1}
-        assert entry.troubleshoot_attempt_count == 1
+        assert entry.counters["troubleshoot_attempt_count"] == 1
 
     def test_counter_entry_scope_key_is_composite(self) -> None:
         entry = RecoveryCounterEntry(
@@ -266,58 +265,58 @@ class TestGenericCounterPersistence:
 
 
 # ---------------------------------------------------------------------------
-# A2: Migration from fixed-field records to generic scoped records
+# A2: Generic scoped records reject stale fixed-field projections
 # ---------------------------------------------------------------------------
 
 
-class TestCounterMigration:
-    def test_legacy_fixed_fields_migrate_into_generic_counters(self) -> None:
-        entry = RecoveryCounterEntry(
-            failure_class="test",
-            work_item_id="task-001",
-            work_item_kind=WorkItemKind.TASK,
-            troubleshoot_attempt_count=5,
-            mechanic_attempt_count=3,
-            last_updated_at=NOW,
-        )
-        assert entry.counters["troubleshoot_attempt_count"] == 5
-        assert entry.counters["mechanic_attempt_count"] == 3
-        assert "fix_cycle_count" not in entry.counters
-        assert "consultant_invocations" not in entry.counters
+class TestCounterAuthority:
+    def test_fixed_fields_are_rejected_instead_of_migrated(self) -> None:
+        from pydantic import ValidationError
 
-    def test_legacy_migration_preserves_existing_generic_counters(self) -> None:
+        with pytest.raises(ValidationError):
+            RecoveryCounterEntry(
+                failure_class="test",
+                work_item_id="task-001",
+                work_item_kind=WorkItemKind.TASK,
+                troubleshoot_attempt_count=5,
+                last_updated_at=NOW,
+            )
+
+    def test_generic_counters_preserve_arbitrary_counter_ids(self) -> None:
         entry = RecoveryCounterEntry(
             failure_class="test",
             work_item_id="task-001",
             work_item_kind=WorkItemKind.TASK,
-            counters={"custom": 10},
-            troubleshoot_attempt_count=5,
+            counters={"custom": 10, "troubleshoot_attempt_count": 5},
             last_updated_at=NOW,
         )
         assert entry.counters["custom"] == 10
         assert entry.counters["troubleshoot_attempt_count"] == 5
 
-    def test_legacy_migration_does_not_overwrite_generic_with_legacy(self) -> None:
-        entry = RecoveryCounterEntry(
-            failure_class="test",
-            work_item_id="task-001",
-            work_item_kind=WorkItemKind.TASK,
-            counters={"troubleshoot_attempt_count": 7},
-            troubleshoot_attempt_count=5,
-            last_updated_at=NOW,
-        )
-        # Generic counters already has the value; legacy should not overwrite
-        assert entry.counters["troubleshoot_attempt_count"] == 7
+    def test_stale_fixed_field_does_not_override_generic_counter(self) -> None:
+        from pydantic import ValidationError
 
-    def test_migration_from_empty_counters_with_nonzero_legacy(self) -> None:
+        with pytest.raises(ValidationError):
+            RecoveryCounterEntry(
+                failure_class="test",
+                work_item_id="task-001",
+                work_item_kind=WorkItemKind.TASK,
+                counters={"troubleshoot_attempt_count": 7},
+                troubleshoot_attempt_count=5,
+                last_updated_at=NOW,
+            )
+
+    def test_all_counter_ids_live_in_generic_store(self) -> None:
         entry = RecoveryCounterEntry(
             failure_class="test",
             work_item_id="task-001",
             work_item_kind=WorkItemKind.TASK,
-            troubleshoot_attempt_count=3,
-            mechanic_attempt_count=7,
-            fix_cycle_count=2,
-            consultant_invocations=4,
+            counters={
+                "troubleshoot_attempt_count": 3,
+                "mechanic_attempt_count": 7,
+                "fix_cycle_count": 2,
+                "consultant_invocations": 4,
+            },
             last_updated_at=NOW,
         )
         assert entry.counters == {
@@ -327,31 +326,35 @@ class TestCounterMigration:
             "consultant_invocations": 4,
         }
 
-    def test_migration_from_loaded_json_round_trips(self, tmp_path: Path) -> None:
-        """Simulate loading old state from disk with only legacy fields."""
+    def test_loaded_json_with_fixed_fields_is_rejected(self, tmp_path: Path) -> None:
+        from pydantic import ValidationError
+
         engine = _engine(tmp_path)
-        engine.counters = RecoveryCounters(
-            entries=[
-                RecoveryCounterEntry(
-                    failure_class="test",
-                    work_item_id="task-001",
-                    work_item_kind=WorkItemKind.TASK,
-                    troubleshoot_attempt_count=3,
-                    mechanic_attempt_count=1,
-                    last_updated_at=NOW,
-                )
-            ]
+        counters_path = engine.paths.recovery_counters_file
+        counters_path.write_text(
+            """
+{
+  "schema_version": "1.0",
+  "kind": "recovery_counters",
+  "entries": [
+    {
+      "failure_class": "test",
+      "work_item_id": "task-001",
+      "work_item_kind": "task",
+      "troubleshoot_attempt_count": 3,
+      "last_updated_at": "2026-06-01T00:00:00Z"
+    }
+  ]
+}
+""".strip(),
+            encoding="utf-8",
         )
-        save_recovery_counters(engine.paths, engine.counters)
-
-        # Reload and verify counters are in generic dict
-        loaded = load_recovery_counters(engine.paths)
-        assert loaded.entries[0].counters["troubleshoot_attempt_count"] == 3
-        assert loaded.entries[0].counters["mechanic_attempt_count"] == 1
+        with pytest.raises(ValidationError):
+            load_recovery_counters(engine.paths)
 
 
-class TestCounterProjection:
-    def test_generic_counters_project_into_legacy_fields(self) -> None:
+class TestCounterProjectionRemoval:
+    def test_generic_counters_do_not_create_fixed_fields(self) -> None:
         entry = RecoveryCounterEntry(
             failure_class="test",
             work_item_id="task-001",
@@ -359,12 +362,20 @@ class TestCounterProjection:
             counters={"troubleshoot_attempt_count": 4, "mechanic_attempt_count": 2},
             last_updated_at=NOW,
         )
-        assert entry.troubleshoot_attempt_count == 4
-        assert entry.mechanic_attempt_count == 2
-        assert entry.fix_cycle_count == 0
-        assert entry.consultant_invocations == 0
+        dumped = entry.model_dump()
+        assert dumped["counters"] == {
+            "troubleshoot_attempt_count": 4,
+            "mechanic_attempt_count": 2,
+        }
+        for fixed_field in (
+            "troubleshoot_attempt_count",
+            "mechanic_attempt_count",
+            "fix_cycle_count",
+            "consultant_invocations",
+        ):
+            assert fixed_field not in dumped
 
-    def test_legacy_fields_default_to_zero_when_generic_absent(self) -> None:
+    def test_absent_counter_ids_are_absent_from_generic_store(self) -> None:
         entry = RecoveryCounterEntry(
             failure_class="test",
             work_item_id="task-001",
@@ -372,12 +383,9 @@ class TestCounterProjection:
             counters={"custom": 5},
             last_updated_at=NOW,
         )
-        assert entry.troubleshoot_attempt_count == 0
-        assert entry.mechanic_attempt_count == 0
-        assert entry.fix_cycle_count == 0
-        assert entry.consultant_invocations == 0
+        assert entry.counters == {"custom": 5}
 
-    def test_all_four_legacy_fields_project_correctly(self) -> None:
+    def test_all_four_named_counter_ids_remain_generic_keys(self) -> None:
         entry = RecoveryCounterEntry(
             failure_class="test",
             work_item_id="task-001",
@@ -390,10 +398,12 @@ class TestCounterProjection:
             },
             last_updated_at=NOW,
         )
-        assert entry.troubleshoot_attempt_count == 1
-        assert entry.mechanic_attempt_count == 2
-        assert entry.fix_cycle_count == 3
-        assert entry.consultant_invocations == 4
+        assert entry.counters == {
+            "troubleshoot_attempt_count": 1,
+            "mechanic_attempt_count": 2,
+            "fix_cycle_count": 3,
+            "consultant_invocations": 4,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -926,13 +936,12 @@ class TestExceptionRecoveryCounters:
 
 
 # ---------------------------------------------------------------------------
-# A6: Counter migration divergence checks
+# A6: Counter authority divergence checks
 # ---------------------------------------------------------------------------
 
 
 class TestCounterDivergence:
-    def test_legacy_field_always_matches_generic_store(self) -> None:
-        """After construction, legacy fields must equal generic store projections."""
+    def test_generic_store_is_the_only_model_counter_surface(self) -> None:
         entry = RecoveryCounterEntry(
             failure_class="test",
             work_item_id="task-001",
@@ -940,13 +949,10 @@ class TestCounterDivergence:
             counters={"troubleshoot_attempt_count": 5},
             last_updated_at=NOW,
         )
-        assert entry.troubleshoot_attempt_count == entry.counters["troubleshoot_attempt_count"]
+        assert entry.counters["troubleshoot_attempt_count"] == 5
+        assert "troubleshoot_attempt_count" not in entry.model_dump(exclude={"counters"})
 
-    def test_incrementing_generic_updates_legacy_projection(self) -> None:
-        """When generic store is altered, legacy field must be consistent.
-
-        model_copy doesn't re-run model validators, so we construct a fresh
-        entry to show that projection works."""
+    def test_incrementing_generic_preserves_only_generic_store(self) -> None:
         entry = RecoveryCounterEntry(
             failure_class="test",
             work_item_id="task-001",
@@ -954,8 +960,7 @@ class TestCounterDivergence:
             counters={"troubleshoot_attempt_count": 6},
             last_updated_at=NOW,
         )
-        # Legacy projection should reflect the new value
-        assert entry.troubleshoot_attempt_count == 6
+        assert entry.model_dump()["counters"]["troubleshoot_attempt_count"] == 6
 
     def test_negative_count_rejected_in_generic_counters(self) -> None:
         from pydantic import ValidationError
@@ -969,7 +974,7 @@ class TestCounterDivergence:
                 last_updated_at=NOW,
             )
 
-    def test_negative_count_rejected_in_legacy_fields(self) -> None:
+    def test_negative_count_in_fixed_field_is_rejected_as_extra_input(self) -> None:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
@@ -981,8 +986,8 @@ class TestCounterDivergence:
                 last_updated_at=NOW,
             )
 
-    def test_migration_projection_round_trip_is_stable(self) -> None:
-        """Round-trip through JSON preserves legacy/generic consistency."""
+    def test_generic_counter_round_trip_is_stable(self) -> None:
+        """Round-trip through JSON preserves generic counter authority."""
         entry = RecoveryCounterEntry(
             failure_class="test",
             work_item_id="task-001",
@@ -997,11 +1002,12 @@ class TestCounterDivergence:
         )
         dumped = entry.model_dump_json()
         reloaded = RecoveryCounterEntry.model_validate_json(dumped)
-        assert reloaded.troubleshoot_attempt_count == 3
-        assert reloaded.mechanic_attempt_count == 2
-        assert reloaded.fix_cycle_count == 1
-        assert reloaded.consultant_invocations == 0
-        assert reloaded.counters["troubleshoot_attempt_count"] == 3
+        assert reloaded.counters == {
+            "troubleshoot_attempt_count": 3,
+            "mechanic_attempt_count": 2,
+            "fix_cycle_count": 1,
+            "consultant_invocations": 0,
+        }
 
     def test_missing_work_item_kind_rejected(self) -> None:
         from pydantic import ValidationError
@@ -1087,10 +1093,8 @@ class TestRuntimeFailurePolicySelection:
         assert "checker" not in key
         assert key == "task:task-001:provider_unavailable"
 
-    def test_legacy_counter_attempts_is_compatibility_projection(
-        self, tmp_path: Path
-    ) -> None:
-        """counter_attempts (plane-based dispatch) is a compatibility wrapper."""
+    def test_counter_id_read_path_is_canonical(self, tmp_path: Path) -> None:
+        """Graph-authority counter reads use compiled counter_id strings."""
         engine = _engine(tmp_path)
         snapshot = _snapshot(engine)
         engine.snapshot = snapshot
@@ -1106,18 +1110,24 @@ class TestRuntimeFailurePolicySelection:
             ]
         )
 
-        # Legacy plane-based read
-        exec_attempts = counter_attempts(
-            snapshot, engine.counters, "test_failure", plane=Plane.EXECUTION
+        assert (
+            counter_attempts_for_counter_id(
+                snapshot,
+                engine.counters,
+                "test_failure",
+                counter_id="troubleshoot_attempt_count",
+            )
+            == 5
         )
-        # Generic counter_id-based read should match
-        generic_attempts = counter_attempts_for_counter_id(
-            snapshot,
-            engine.counters,
-            "test_failure",
-            counter_id="troubleshoot_attempt_count",
+        assert (
+            counter_attempts_for_counter_id(
+                snapshot,
+                engine.counters,
+                "test_failure",
+                counter_id="mechanic_attempt_count",
+            )
+            == 0
         )
-        assert exec_attempts == generic_attempts == 5
 
 
 # ---------------------------------------------------------------------------

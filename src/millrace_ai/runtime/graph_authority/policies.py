@@ -12,7 +12,7 @@ from millrace_ai.architecture import (
     TerminalActionDefinition,
 )
 from millrace_ai.contracts import ExecutionStageName, PlanningStageName, RuntimeSnapshot, StageResultEnvelope
-from millrace_ai.router import RouterAction, RouterDecision
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 
 from .counters import counter_key_from_snapshot
 from .stage_mapping import node_plan_by_id, stage_for_node

@@ -1,43 +1,7 @@
-"""Deprecated compatibility facade for Blueprint contracts.
-
-Blueprint contract implementations are owned by
-``millrace_ai.extensions.builtin.blueprint.contracts``. This module remains as
-a lazy public import shim for existing callers and must not be used by generic
-startup paths.
-"""
+"""Removed compatibility module."""
 
 from __future__ import annotations
 
-from typing import Any
-
-_EXPORTED_NAMES = {
-    "BlueprintCritiqueDocument",
-    "BlueprintDraftDocument",
-    "BlueprintDraftStatus",
-    "BlueprintEvaluationDecision",
-    "BlueprintEvaluationDocument",
-    "BlueprintManifestDocument",
-    "BlueprintPacketDocument",
-    "BlueprintPromotionRecord",
-    "BlueprintRepairAction",
-    "BlueprintRepairDecisionDocument",
-    "BlueprintRepairMutationPhase",
-    "BlueprintSourceWorkItemKind",
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name not in _EXPORTED_NAMES:
-        raise AttributeError(name)
-    from millrace_ai.extensions.builtin.blueprint import contracts as impl
-
-    value = getattr(impl, name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted((*globals(), *_EXPORTED_NAMES))
-
-
-__all__ = sorted(_EXPORTED_NAMES)
+raise ImportError(
+    "compatibility module removed; import contracts from the extension package"
+)

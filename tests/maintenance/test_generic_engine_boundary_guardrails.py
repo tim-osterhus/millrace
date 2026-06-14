@@ -28,8 +28,8 @@ FAMILY_DISPATCH_SCAN_ROOTS = (
     SRC_ROOT / "cli",
 )
 
-# Known fixed counter field names (legacy compatibility only — must not be
-# used as active dispatch keys outside the _LEGACY_COUNTER_IDS set)
+# Known named counter ids that may appear as data keys, but must not drive
+# active dispatch through fixed model fields.
 LEGACY_COUNTER_FIELD_NAMES = frozenset({
     "troubleshoot_attempt_count",
     "mechanic_attempt_count",

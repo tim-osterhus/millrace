@@ -19,10 +19,10 @@ from millrace_ai.contracts import (
     StageResultEnvelope,
 )
 from millrace_ai.contracts.base import ContractModel
+from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.errors import StageWorkItemOwnershipError, WorkspaceStateError
 from millrace_ai.events import write_runtime_event
 from millrace_ai.extensions import builtin_extension_boundary_registry
-from millrace_ai.router import RouterDecision
 from millrace_ai.runners import RunnerRawResult, StageRunRequest, normalize_stage_result
 from millrace_ai.state_store import save_snapshot
 
@@ -371,7 +371,9 @@ class RuntimeDaemonSupervisor:
         self.engine._consume_watcher_events()
         self.engine._refresh_runtime_queue_depths()
         self.engine._evaluate_usage_governance()
-        self.engine._run_reconciliation_if_needed()
+        self.engine._run_reconciliation_if_needed(
+            active_worker_runs_by_lane=self._task_active_runs,
+        )
         self.engine._refresh_runtime_queue_depths(process_running=True)
 
     def _dispatch_blocked(self) -> bool:

@@ -14,7 +14,6 @@ from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
     ActiveRunState,
-    BlueprintDraftDocument,
     ClosureTargetState,
     ExecutionStageName,
     LearningRequestDocument,
@@ -32,6 +31,12 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.control import RuntimeControl
 from millrace_ai.errors import WorkspaceStateError
+from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintDraftDocument
+from millrace_ai.extensions.builtin.blueprint.state import (
+    claim_next_blueprint_draft,
+    enqueue_blueprint_draft,
+    read_blueprint_draft,
+)
 from millrace_ai.mailbox import read_pending_mailbox_commands
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
@@ -53,7 +58,6 @@ from millrace_ai.state_store import (
     set_planning_status,
 )
 from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
-from millrace_ai.workspace.blueprint_state import claim_next_blueprint_draft, enqueue_blueprint_draft, read_blueprint_draft
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -333,7 +337,6 @@ def _save_active_blueprint_snapshot(
                 "active_stage": PlanningStageName.MANAGER,
                 "active_run_id": "run-active-blueprint",
                 "active_work_item_family_id": "blueprint_draft",
-                "active_work_item_kind": WorkItemKind.BLUEPRINT_DRAFT,
                 "active_work_item_id": draft_id,
                 "active_since": NOW,
                 "updated_at": NOW,
@@ -505,7 +508,7 @@ def test_retry_active_requeues_directly_when_daemon_is_not_running(tmp_path: Pat
                     failure_class="test_failure",
                     work_item_kind=WorkItemKind.TASK,
                     work_item_id="task-001",
-                    troubleshoot_attempt_count=1,
+                    counters={"troubleshoot_attempt_count": 1},
                     last_updated_at=NOW,
                 ),
             )
@@ -743,7 +746,7 @@ def test_clear_stale_state_directly_resets_runtime_state(tmp_path: Path) -> None
                     failure_class="stale_active_ownership",
                     work_item_kind=WorkItemKind.TASK,
                     work_item_id="task-001",
-                    troubleshoot_attempt_count=1,
+                    counters={"troubleshoot_attempt_count": 1},
                     last_updated_at=NOW,
                 ),
             )

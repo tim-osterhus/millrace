@@ -18,6 +18,14 @@ Millrace is a filesystem-backed runtime for long-running agent work. It is not
 primarily a model wrapper, a prompt pack, or a chat workflow. It is a runtime
 that surrounds raw agent harnesses with durable structure.
 
+That distinction is important when comparing Millrace with coding harnesses
+such as Claude Code, Codex, or Pi. Those harnesses may already provide tool
+use, repository editing, shell execution, hooks, skills, subagents, memory, and
+session or conversation history. Millrace does not claim those features are
+absent from the harness. Millrace owns the layer above the harness: queue
+lineage, compiled stage contracts, graph-selected routing, runtime-owned
+mutation, persisted run evidence, operator intervention, and Arbiter closure.
+
 The core idea is simple:
 
 - the stage agent does one bounded unit of reasoning and emits one legal result
@@ -82,6 +90,9 @@ decisions must be selected by the compiled plan and its compiled graph,
 extension, policy, lifecycle, runtime-effect, queue-family, request-context,
 and artifact-contract metadata. If required compiled policy is missing, the
 runtime should fail with an authority error rather than fall back to shipped
+defaults. Blueprint APIs are extension-owned; generic packages do not export
+Blueprint compatibility APIs, and old Python imports of retired Blueprint
+facades may now raise `ImportError`. Runtime kernel code should not branch on
 stage names, shipped work families, domain substrings, or legacy defaults.
 Custom graph behavior is therefore metadata-selected behavior. Blueprint is
 still shipped, but it is extension-backed graph configuration, not kernel-owned

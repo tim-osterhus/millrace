@@ -11,7 +11,7 @@ from millrace_ai.runtime.pause_state import pause_sources_label
 from millrace_ai.workspace.baseline import BaselineManifest
 
 from .models import StatusViewModel
-from .projections import render_status_projection_lines, status_projection_payload
+from .projections import render_status_projection_lines
 
 _LATEST_RUNTIME_EFFECT_STATUS_KEYS = (
     "latest_runtime_effect_handler_id",
@@ -137,10 +137,7 @@ def status_payload(view_model: StatusViewModel) -> dict[str, Any]:
         ),
         "latest_runtime_effect": view_model.latest_runtime_effect or None,
         "work_item_families": view_model.work_item_families,
-        "blueprints": status_projection_payload(
-            view_model.extension_statuses,
-            "blueprints",
-        ),
+        "extension_statuses": view_model.extension_statuses,
         **view_model.closure_status,
     }
 

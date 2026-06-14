@@ -27,7 +27,6 @@ SOURCE_ALLOWLIST = {
 
 COMPATIBILITY_SHIM_ALLOWLIST = {
     "src/millrace_ai/contracts/blueprint.py",
-    "src/millrace_ai/contracts/recovery.py",
     "src/millrace_ai/cli/status/blueprint.py",
     "src/millrace_ai/runtime/context/blueprint.py",
     "src/millrace_ai/runtime/graph_authority/execution.py",
@@ -36,6 +35,14 @@ COMPATIBILITY_SHIM_ALLOWLIST = {
     "src/millrace_ai/workspace/blueprint_state.py",
     "src/millrace_ai/workspace/families/blueprint.py",
     "src/millrace_ai/workspace/state_reconciliation.py",
+}
+
+RETIRED_BLUEPRINT_FACADE_MODULES = {
+    "src/millrace_ai/cli/status/blueprint.py",
+    "src/millrace_ai/contracts/blueprint.py",
+    "src/millrace_ai/runtime/context/blueprint.py",
+    "src/millrace_ai/workspace/blueprint_state.py",
+    "src/millrace_ai/workspace/families/blueprint.py",
 }
 
 BLUEPRINT_OPERATION_RUNNER_MODULES = {
@@ -77,7 +84,6 @@ DOMAIN_OWNED_FORBIDDEN_IMPLEMENTATION_ROOTS = (
 
 HARDCODED_AUTHORITY_NAMES = {
     "CUSTOM_PLANNING_STAGES",
-    "_LEGACY_COUNTER_IDS",
     "idle_stage_for_no_work",
 }
 
@@ -379,32 +385,196 @@ def test_request_context_provider_resolver_has_no_blueprint_only_authority_symbo
     assert violations == []
 
 
-def test_retained_recovery_counter_compatibility_shim_is_documented() -> None:
+def test_recovery_counter_compatibility_shim_is_not_retained() -> None:
     rel = "src/millrace_ai/contracts/recovery.py"
-    assert rel in COMPATIBILITY_SHIM_ALLOWLIST
+    assert rel not in COMPATIBILITY_SHIM_ALLOWLIST
     for docs_rel in (
         "docs/source-package-map.md",
         "docs/maintenance/public-api-compatibility-inventory.md",
     ):
         text = (REPO_ROOT / docs_rel).read_text(encoding="utf-8")
-        assert rel in text, f"{docs_rel} is missing the retained shim entry for {rel}"
+        assert (
+            "Legacy fixed-field recovery-counter compatibility projection" not in text
+        ), f"{docs_rel} still documents the removed recovery-counter shim"
+
+
+def test_legacy_recovery_counter_ids_are_not_reintroduced() -> None:
+    violations: list[str] = []
+
+    for root in (SRC_ROOT, REPO_ROOT / "tests"):
+        for path in _python_files(root):
+            if path == Path(__file__).resolve():
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "_LEGACY_COUNTER_IDS" in text:
+                violations.append(f"{_relative(path)} references _LEGACY_COUNTER_IDS")
+
+    assert violations == []
+
+
+def test_retired_blueprint_facade_paths_are_not_active_authority() -> None:
+    violations: list[str] = []
+
+    for rel in sorted(RETIRED_BLUEPRINT_FACADE_MODULES):
+        path = REPO_ROOT / rel
+        text = path.read_text(encoding="utf-8")
+        if "compatibility module removed" not in text or "ImportError" not in text:
+            violations.append(f"{rel} is not a deliberate removal stub")
+        if any(token in text for token in ("Blueprint", "blueprint", "blueprints", "blueprint_draft")):
+            violations.append(f"{rel} still contains retired Blueprint spelling")
+        if rel in SOURCE_ALLOWLIST:
+            violations.append(f"{rel} is allowlisted as generic active source")
+
+    operation_runner_init = (
+        REPO_ROOT
+        / "src/millrace_ai/runtime/effects/operation_runners/__init__.py"
+    )
+    tree = _tree(operation_runner_init)
+    exports = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "__all__"
+    ]
+    if not exports:
+        violations.append(
+            "src/millrace_ai/runtime/effects/operation_runners/__init__.py "
+            "does not declare an empty removal-stub export surface"
+        )
+    elif not (
+        isinstance(exports[0].value, ast.List)
+        and exports[0].value.elts == []
+    ):
+        violations.append(
+            "src/millrace_ai/runtime/effects/operation_runners/__init__.py "
+            "exports runtime-effect compatibility names"
+        )
+
+    assert violations == []
+
+
+def test_generic_contract_facade_does_not_export_blueprint_contracts() -> None:
+    contracts_path = SRC_ROOT / "contracts" / "__init__.py"
+    tree = _tree(contracts_path)
+    violations: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "") == "blueprint":
+            violations.append(
+                f"{_relative(contracts_path)} imports Blueprint contracts at line "
+                f"{node.lineno}"
+            )
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith("Blueprint")
+        ):
+            violations.append(
+                f"{_relative(contracts_path)} exports {node.value} at line "
+                f"{node.lineno}"
+            )
+
+    assert violations == []
+
+
+def test_generic_contract_enums_do_not_export_blueprint_draft_work_item_kind() -> None:
+    violations: list[str] = []
+    path = SRC_ROOT / "contracts" / "enums.py"
+    tree = _tree(path)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "WorkItemKind":
+            for member in node.body:
+                if isinstance(member, ast.Assign):
+                    for target in member.targets:
+                        if isinstance(target, ast.Name) and target.id == "BLUEPRINT_DRAFT":
+                            violations.append(
+                                f"{_relative(path)} defines WorkItemKind.BLUEPRINT_DRAFT at line {member.lineno}"
+                            )
+                    if (
+                        isinstance(member.value, ast.Constant)
+                        and member.value.value == "blueprint_draft"
+                    ):
+                        violations.append(
+                            f"{_relative(path)} hardcodes blueprint_draft at line {member.lineno}"
+                        )
+
+    assert violations == []
+
+
+def test_generic_contract_work_refs_do_not_depend_on_blueprint_draft() -> None:
+    violations: list[str] = []
+    path = SRC_ROOT / "contracts" / "work_refs.py"
+    tree = _tree(path)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "BLUEPRINT_DRAFT":
+            violations.append(
+                f"{_relative(path)} references WorkItemKind.BLUEPRINT_DRAFT at line {node.lineno}"
+            )
+
+    assert violations == []
+
+
+def test_generic_status_view_model_has_no_blueprint_status_field() -> None:
+    path = SRC_ROOT / "cli" / "status" / "models.py"
+    tree = _tree(path)
+    violations: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "blueprint_status":
+                violations.append(
+                    f"{_relative(path)} declares blueprint_status at line "
+                    f"{node.lineno}"
+                )
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value == "blueprint_status"
+        ):
+            violations.append(
+                f"{_relative(path)} hardcodes blueprint_status at line "
+                f"{node.lineno}"
+            )
+
+    assert violations == []
+
+
+def test_active_runtime_source_does_not_import_root_router_facade() -> None:
+    violations: list[str] = []
+
+    for path in _python_files(SRC_ROOT / "runtime"):
+        tree = _tree(path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = _resolved_import_from(path, node)
+                if module == "millrace_ai.router":
+                    violations.append(
+                        f"{_relative(path)} imports {module} at line {node.lineno}"
+                    )
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "millrace_ai.router":
+                        violations.append(
+                            f"{_relative(path)} imports {alias.name} at line "
+                            f"{node.lineno}"
+                        )
+
+    assert violations == []
 
 
 @pytest.mark.parametrize(
     "rel",
-    [
-        "src/millrace_ai/cli/status/blueprint.py",
-        "src/millrace_ai/workspace/blueprint_state.py",
-    ],
+    sorted(RETIRED_BLUEPRINT_FACADE_MODULES),
 )
-def test_retained_blueprint_status_and_doctor_facades_are_documented(rel: str) -> None:
-    for docs_rel in (
-        "docs/adr/0016-extension-boundary-compatibility-facades.md",
-        "docs/maintenance/public-api-compatibility-inventory.md",
-        "docs/source-package-map.md",
-    ):
-        text = (REPO_ROOT / docs_rel).read_text(encoding="utf-8")
-        assert rel in text, f"{docs_rel} is missing the retained facade entry for {rel}"
+def test_removed_blueprint_facade_modules_fail_without_loading_implementation(rel: str) -> None:
+    module_name = rel.removeprefix("src/").removesuffix(".py").replace("/", ".")
+    with _isolated_millrace_modules():
+        with pytest.raises(ImportError, match="removed"):
+            importlib.import_module(module_name)
+        assert _loaded_blueprint_impl_modules() == []
 
 
 def test_generic_paths_do_not_import_domain_implementation_modules_directly() -> None:
@@ -745,7 +915,7 @@ def test_generic_status_collection_uses_extension_owned_blueprint_defaults(
         view_model = collection_module.collect_status_view_model(paths)
 
         assert BLUEPRINT_STATUS_IMPL_MODULE in _loaded_blueprint_impl_modules()
-        assert view_model.blueprint_status["draft_counts"] == {
+        assert view_model.extension_statuses["blueprints"]["draft_counts"] == {
             "queue": 0,
             "active": 0,
             "blocked": 0,

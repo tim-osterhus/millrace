@@ -37,7 +37,10 @@ from millrace_ai.runtime.graph_authority import (
     route_stage_result_from_graph,
     work_item_activation_for_graph,
 )
-from millrace_ai.runtime.graph_authority.counters import counter_attempts, counter_key_from_snapshot
+from millrace_ai.runtime.graph_authority.counters import (
+    counter_attempts_for_counter_id,
+    counter_key_from_snapshot,
+)
 
 NOW = datetime(2026, 4, 23, tzinfo=timezone.utc)
 
@@ -470,7 +473,7 @@ def test_completion_activation_fails_when_completion_entry_is_missing(tmp_path: 
                         "failure_class": "updater_blocked",
                         "work_item_kind": WorkItemKind.TASK,
                         "work_item_id": "task-001",
-                        "troubleshoot_attempt_count": 2,
+                        "counters": {"troubleshoot_attempt_count": 2},
                         "last_updated_at": NOW,
                     },
                 )
@@ -530,7 +533,7 @@ def test_completion_activation_fails_when_completion_entry_is_missing(tmp_path: 
                         "failure_class": "planning_artifact_mismatch",
                         "work_item_kind": WorkItemKind.SPEC,
                         "work_item_id": "spec-001",
-                        "mechanic_attempt_count": 2,
+                        "counters": {"mechanic_attempt_count": 2},
                         "last_updated_at": NOW,
                     },
                 )
@@ -598,7 +601,7 @@ def test_graph_authority_counters_use_family_id_without_legacy_kind() -> None:
                 "failure_class": "custom_failure",
                 "work_item_family_id": "custom_review",
                 "work_item_id": "custom-001",
-                "mechanic_attempt_count": 2,
+                "counters": {"mechanic_attempt_count": 2},
                 "last_updated_at": NOW,
             },
         )
@@ -607,7 +610,15 @@ def test_graph_authority_counters_use_family_id_without_legacy_kind() -> None:
     assert counter_key_from_snapshot(snapshot, "Custom Failure") == (
         "custom_review:custom-001:custom_failure"
     )
-    assert counter_attempts(snapshot, counters, "custom_failure", plane=Plane.PLANNING) == 2
+    assert (
+        counter_attempts_for_counter_id(
+            snapshot,
+            counters,
+            "custom_failure",
+            counter_id="mechanic_attempt_count",
+        )
+        == 2
+    )
 
 
 @pytest.mark.parametrize(

@@ -5,11 +5,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
-from millrace_ai.contracts import BlueprintManifestDocument
 from millrace_ai.doctor import run_workspace_doctor, workspace_checks
 from millrace_ai.doctor.checks import DoctorContext, run_doctor_checks
 from millrace_ai.doctor.models import DoctorIssue
 from millrace_ai.extensions import ExtensionDomain, ExtensionItemKind
+from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintManifestDocument
 from millrace_ai.extensions.manifest import ExtensionItemManifest, ExtensionPackageManifest
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 

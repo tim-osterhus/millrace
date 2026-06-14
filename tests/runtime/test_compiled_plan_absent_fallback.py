@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from millrace_ai.runtime.context.blueprint import _artifact_contracts_for_request
+from millrace_ai.extensions.builtin.blueprint.context import _artifact_contracts_for_request
 
 
 def test_blueprint_context_rejects_compiled_plan_absent_artifact_contract_fallback() -> None:

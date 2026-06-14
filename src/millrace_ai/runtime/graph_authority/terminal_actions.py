@@ -10,7 +10,7 @@ from millrace_ai.architecture import (
     TerminalActionDefinition,
 )
 from millrace_ai.contracts import Plane
-from millrace_ai.router import RouterAction, RouterDecision
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 
 from .stage_mapping import stage_for_node
 

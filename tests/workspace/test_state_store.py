@@ -140,12 +140,12 @@ def test_recovery_counter_helpers_persist_and_reset_forward_progress(tmp_path: P
         now=NOW,
     )
 
-    assert first.troubleshoot_attempt_count == 1
-    assert second.troubleshoot_attempt_count == 2
+    assert first.counters["troubleshoot_attempt_count"] == 1
+    assert second.counters["troubleshoot_attempt_count"] == 2
 
     counters = load_recovery_counters(paths)
     assert len(counters.entries) == 1
-    assert counters.entries[0].troubleshoot_attempt_count == 2
+    assert counters.entries[0].counters["troubleshoot_attempt_count"] == 2
 
     reset_forward_progress_counters(
         paths,
@@ -164,7 +164,7 @@ def test_save_recovery_counters_and_load_round_trip(tmp_path: Path) -> None:
                 "failure_class": "missing_terminal_result",
                 "work_item_kind": "task",
                 "work_item_id": "task-001",
-                "troubleshoot_attempt_count": 1,
+                "counters": {"troubleshoot_attempt_count": 1},
                 "last_updated_at": NOW,
             }
         ]
@@ -259,7 +259,7 @@ def test_collect_reconciliation_signals_escalates_repeated_execution_stale_state
                 "failure_class": "stale_active_ownership",
                 "work_item_kind": WorkItemKind.TASK,
                 "work_item_id": "task-001",
-                "troubleshoot_attempt_count": 2,
+                "counters": {"troubleshoot_attempt_count": 2},
                 "last_updated_at": NOW,
             }
         ]
@@ -521,7 +521,7 @@ def test_collect_reconciliation_signals_flags_orphaned_recovery_counters(
                 "failure_class": "missing_terminal_result",
                 "work_item_kind": WorkItemKind.TASK,
                 "work_item_id": "task-123",
-                "troubleshoot_attempt_count": 1,
+                "counters": {"troubleshoot_attempt_count": 1},
                 "last_updated_at": NOW,
             }
         ]

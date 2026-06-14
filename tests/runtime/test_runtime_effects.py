@@ -12,7 +12,6 @@ from millrace_ai.architecture.workflow_primitives import (
     builtin_queue_lifecycle_adapter_id_for_family,
 )
 from millrace_ai.contracts import (
-    BlueprintDraftDocument,
     IncidentDocument,
     Plane,
     PlanningStageName,
@@ -24,10 +23,11 @@ from millrace_ai.contracts import (
     TaskDocument,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.events import read_runtime_events
+from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintDraftDocument
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runtime import effect_execution
 from millrace_ai.runtime.effect_execution import apply_runtime_effect_for_stage_result
 from millrace_ai.runtime.effects import (
@@ -163,7 +163,7 @@ def _blueprint_approval_stage_result() -> StageResultEnvelope:
         stage="manager",
         node_id="evaluator_blueprint",
         stage_kind_id="evaluator_blueprint",
-        work_item_kind="blueprint_draft",
+        work_item_family_id="blueprint_draft",
         work_item_id="draft-blueprint-001",
         terminal_result="BLUEPRINT_APPROVED",
         result_class=ResultClass.SUCCESS,

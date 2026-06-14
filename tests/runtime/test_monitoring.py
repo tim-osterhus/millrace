@@ -7,11 +7,11 @@ from pathlib import Path
 import millrace_ai
 from millrace_ai.cli.monitoring import BasicTerminalMonitor
 from millrace_ai.contracts import ExecutionStageName, LearningRequestDocument, TaskDocument
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.events import read_runtime_events
 from millrace_ai.mailbox import write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.runtime.monitoring import (

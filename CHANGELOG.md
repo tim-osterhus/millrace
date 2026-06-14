@@ -50,14 +50,21 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Updated shipped mode `required_extensions` declarations to list only the
   built-in extensions each mode actually uses; compile validation rejects
   undeclared domain vocabulary.
+- Moved neutral router decision contracts to `millrace_ai.contracts.router`;
+  `millrace_ai.router` remains importable only as a contract facade, and active
+  runtime dispatch no longer imports it.
 
 ### Fixed
 
 - Fixed installed-wheel smoke failures by declaring `packaging>=24,<27` as a
   runtime dependency for extension validation's `packaging.version` import.
+- Fixed daemon reconciliation so a lane's persisted active-run ownership is not
+  replaced while the supervisor still owns a live or pending-completion worker
+  for that same lane, and occupied-lane deferrals now emit an auditable
+  `runtime_reconciliation_deferred` diagnostic decision.
 - Fixed runtime recovery-counter reads so generic `counter_id` records are
-  authoritative (including explicit `0` values) and legacy fixed-field
-  snapshots are fallback-only compatibility projections.
+  authoritative (including explicit `0` values) with no legacy fixed-field
+  compatibility projection.
 
 ### Documentation
 
@@ -66,6 +73,11 @@ This file starts at `0.13.0`, the current documented public baseline.
   boundary, extension-backed domains, compatibility-only surfaces, fixture
   mode limitations, and unsupported topologies (arbitrary plane IDs and
   arbitrary runtime stages remain deferred).
+- Clarified the public README and runner docs comparison with Claude Code and
+  other coding harnesses: Millrace does not claim those harnesses lack hooks,
+  skills, subagents, memory, or workflow helpers; the distinction is that
+  Millrace owns the external compiled-plan, queue, daemon, recovery, and
+  closure layer around bounded harness invocations.
 
 ### Compatibility Notes
 
@@ -75,8 +87,11 @@ This file starts at `0.13.0`, the current documented public baseline.
   authority derives from the compiled plan and compiled workflow primitives.
 - Blueprint remains available through `blueprint_codex` and
   `blueprint_learning_codex`, but it is extension-backed graph configuration.
-  Retained Blueprint compatibility shims are lazy, file-scoped, and covered by
-  maintenance guardrails; they are not active generic-kernel authority.
+  Generic packages do not export Blueprint compatibility APIs; old Python
+  imports of retired Blueprint facades such as
+  `millrace_ai.contracts.blueprint`, `millrace_ai.cli.status.blueprint`,
+  `millrace_ai.runtime.context.blueprint`, and
+  `millrace_ai.workspace.blueprint_state` may now raise `ImportError`.
 - `standard_plain`, `standard_millrace`, and `learning_enabled_millrace` remain
   compatibility aliases that resolve to `default_codex`, `default_pi`, and
   `learning_pi` respectively.

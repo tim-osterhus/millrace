@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import JsonValue, ValidationError
 
-from millrace_ai.contracts import StageResultEnvelope, WorkItemKind
+from millrace_ai.contracts import StageResultEnvelope
 from millrace_ai.errors import QueueStateError
 from millrace_ai.extensions.builtin.blueprint.contracts import (
     BlueprintDraftDocument,
@@ -37,7 +37,6 @@ from .artifact_workflow_common import (
     _normalized_markdown_content,
     _read_json_model,
     _runtime_mutation_journal,
-    _stage_result_work_item_kind,
 )
 
 if TYPE_CHECKING:
@@ -152,10 +151,9 @@ def _contractor_active_draft_for_stage_result(
     paths: WorkspacePaths,
     stage_result: StageResultEnvelope,
 ) -> BlueprintDraftDocument:
-    stage_result_kind = _stage_result_work_item_kind(stage_result)
-    if stage_result_kind is not WorkItemKind.BLUEPRINT_DRAFT:
+    if stage_result.work_item_family_id != "blueprint_draft":
         raise QueueStateError(
-            f"Blueprint handler requires blueprint_draft source, got {stage_result_kind.value}"
+            f"Blueprint handler requires blueprint_draft source, got {stage_result.work_item_family_id}"
         )
     return read_active_blueprint_draft(paths, stage_result.work_item_id)
 

@@ -28,8 +28,8 @@ from millrace_ai.contracts import (
     StageName,
     StageResultEnvelope,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.contracts.terminal_outcomes import terminal_outcome_value
-from millrace_ai.router import RouterAction, RouterDecision
 
 from .counters import (
     counter_attempts_for_counter_id,

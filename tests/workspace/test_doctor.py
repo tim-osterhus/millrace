@@ -11,19 +11,21 @@ from millrace_ai.architecture import WorkItemDocumentAdapterDefinition, WorkItem
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
-    BlueprintDraftDocument,
-    BlueprintManifestDocument,
     ClosureTargetState,
     Plane,
     TaskDocument,
 )
 from millrace_ai.doctor import run_workspace_doctor
+from millrace_ai.extensions.builtin.blueprint.contracts import (
+    BlueprintDraftDocument,
+    BlueprintManifestDocument,
+)
+from millrace_ai.extensions.builtin.blueprint.state import enqueue_blueprint_draft
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runtime_lock import acquire_runtime_ownership_lock
 from millrace_ai.work_documents import render_work_document
 from millrace_ai.workspace.arbiter_state import save_closure_target_state
-from millrace_ai.workspace.blueprint_state import enqueue_blueprint_draft
 
 NOW = datetime(2026, 4, 15, tzinfo=timezone.utc)
 

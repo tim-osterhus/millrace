@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from millrace_ai.contracts import RuntimeSnapshot, StageName, StageResultEnvelope
-from millrace_ai.router import RouterDecision
+from millrace_ai.contracts.router import RouterDecision
 
 
 @dataclass(frozen=True, slots=True)

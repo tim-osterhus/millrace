@@ -15,8 +15,8 @@ from millrace_ai.contracts import (
     TaskDocument,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.router import RouterAction, RouterDecision
 
 from .artifact_contracts import (
     parse_resolved_run_artifact_as,

@@ -127,7 +127,7 @@ def test_threshold_exhaustion_uses_terminal_action_metadata(tmp_path: Path) -> N
                 failure_class="mechanic_blocked",
                 work_item_kind=WorkItemKind.SPEC,
                 work_item_id="spec-001",
-                mechanic_attempt_count=2,
+                counters={"mechanic_attempt_count": 2},
                 last_updated_at=NOW,
             ),
         )
@@ -174,7 +174,7 @@ def test_execution_blocked_threshold_exhaustion_uses_exhausted_counter_mutation(
                 failure_class="builder_blocked",
                 work_item_kind=WorkItemKind.TASK,
                 work_item_id="task-001",
-                troubleshoot_attempt_count=2,
+                counters={"troubleshoot_attempt_count": 2},
                 last_updated_at=NOW,
             ),
         )

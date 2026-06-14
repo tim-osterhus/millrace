@@ -14,10 +14,10 @@ from millrace_ai.contracts import (
     TokenUsage,
     WorkItemKind,
 )
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.contracts.run_trace import RunTraceGraph
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.run_inspection import inspect_run_trace, inspect_run_trace_id
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine

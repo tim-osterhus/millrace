@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.contracts import StageResultEnvelope
 from millrace_ai.contracts.enums import WorkItemKind
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.contracts.run_trace import (
     RunTraceArtifactRef,
     RunTraceEdge,
@@ -23,7 +24,6 @@ from millrace_ai.contracts.run_trace import (
 )
 from millrace_ai.events import write_runtime_event
 from millrace_ai.paths import WorkspacePaths
-from millrace_ai.router import RouterAction, RouterDecision
 
 _LEGACY_WORK_KIND_PATH_MARKERS: tuple[tuple[str, RunTraceSpawnedWorkKind], ...] = (
     (WorkItemKind.LEARNING_REQUEST.value.removesuffix("_request"), WorkItemKind.LEARNING_REQUEST.value),

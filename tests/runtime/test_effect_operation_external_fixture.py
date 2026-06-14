@@ -12,8 +12,8 @@ from typing import Any
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import Plane, ResultClass, StageResultEnvelope, WorkItemKind
+from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
-from millrace_ai.router import RouterAction, RouterDecision
 from millrace_ai.runtime import effect_execution
 from millrace_ai.runtime.effects import RuntimeEffectDecision, RuntimeEffectResult
 from millrace_ai.runtime.effects.registry import (

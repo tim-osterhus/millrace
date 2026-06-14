@@ -17,6 +17,13 @@ Millrace is defined primarily by two core ideas. The first is that sequential or
 
 The second core idea is that the runtime owns the project state, not the agent. Millrace compiles workflow graphs, runner bindings, stage contracts, recovery rules, approvals, and closure behavior into one inspectable plan. A small daemon dispatches coding agents through that plan, applies their results through runtime-owned rules, and persists the evidence needed to resume, repair, inspect, or close the work later.
 
+That makes Millrace a runtime layer, not a replacement for a coding harness.
+Tools such as Claude Code, Codex, and Pi can already edit repositories, run
+commands, call tools, use hooks or skills, keep session context, and delegate
+side work. Millrace's job is different: it decides which bounded stage is
+allowed to run next, gives that stage a compiled contract, records the result,
+and keeps durable workspace state outside any one chat or terminal session.
+
 Status: Millrace is pre-1.0 and maintained. The current `0.20.x` line is still stabilizing, so pin patch versions when behavior matters.
 
 Breaking authority note: current `0.20.x` builds require compiled graph,
@@ -40,15 +47,27 @@ For the full system explanation, read `docs/millrace-technical-overview.md`.
 
 ## How Millrace Is Different
 
-Millrace is not another chat UI, coding harness, or graph library. It is the local runtime layer that decides what agent work is allowed to run, what state is durable, how recovery happens, and when the work can honestly close.
+Millrace is not another chat UI, coding harness, or graph library. It is the
+local runtime layer that decides what agent work is allowed to run, what state
+is durable, how recovery happens, and when the work can honestly close.
+
+The comparison is about layers, not whether another tool has useful agent
+features. A direct coding agent can run tests, react to failure messages,
+invoke hooks, spawn subagents, and remember project instructions. Millrace adds
+an external runtime owner: the compiled plan, queue lineage, daemon scheduler,
+operator controls, and closure evidence live in the workspace and remain
+inspectable after a single agent context ends.
 
 | Compared with | What that tool is good at | What Millrace adds or changes |
 | --- | --- | --- |
-| [Claude Code](https://code.claude.com/docs/en/overview) | A coding agent that reads a repo, edits files, runs commands, and works from surfaces such as terminal, IDE, desktop, and web. | Millrace is not the coding model or chat surface. It wraps stage work in durable queues, compiled plans, restartable daemon state, operator controls, and evidence-backed closure. |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) | A full coding harness: repo editing, shell/tool use, IDE and terminal surfaces, hooks, skills, subagents, memory, and conversation history. | Millrace is not the coding model or chat surface. It sits above harness runs with durable queues, compiled plans, a restartable daemon, runtime-owned mutation, operator controls, and Arbiter closure. The compiled plan, not the model's next self-directed step, owns stage routing. |
 | [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) | A low-level framework and runtime for building long-running, stateful agents and custom orchestration graphs. | Millrace ships an opinionated software-work runtime: Planning, Execution, optional Learning, queue intake, CLI operations, run artifacts, approval gates, and Arbiter closure are already part of the product. |
 | [Archon](https://archon.diy/) | A workflow engine for packaging AI coding workflows as YAML and running them across tools and channels. | Millrace is less about portable workflow recipes and more about runtime truth inside a managed workspace: one compiled plan, one daemon-owned mutation path, durable recovery, and inspectable completion state. |
 
-Use a direct coding agent when a single session is enough. Use Millrace when the work needs a real runtime around it.
+Use a direct coding agent when one session and its built-in workflow features
+are enough. Use Millrace when the work needs an external runtime around it: a
+durable queue, predeclared stage contracts, graph-selected recovery, visible
+operator intervention, and completion claims with receipts.
 
 ## What Millrace Does
 

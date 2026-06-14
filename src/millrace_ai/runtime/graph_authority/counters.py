@@ -4,47 +4,8 @@ from __future__ import annotations
 
 import re
 
-from millrace_ai.architecture.loop_graphs import GraphLoopCounterName
-from millrace_ai.contracts import Plane, RecoveryCounterEntry, RecoveryCounters, RuntimeSnapshot, StageResultEnvelope
-from millrace_ai.router import counter_key_for_failure_class
-
-
-def counter_attempts(
-    snapshot: RuntimeSnapshot,
-    counters: RecoveryCounters,
-    failure_class: str,
-    *,
-    plane: Plane,
-) -> int:
-    """Read a counter value from the generic counter store.
-
-    The active runtime path should prefer *counter_attempts_for_counter_id*
-    with a policy-supplied counter_id. This function is retained as a
-    compatibility projection for code that still dispatches by plane.
-    """
-    entry = matching_counter_entry(snapshot, counters, failure_class)
-    if entry is None:
-        return 0
-    if plane is Plane.EXECUTION:
-        return entry.troubleshoot_attempt_count
-    return entry.mechanic_attempt_count
-
-
-def counter_attempts_for_name(
-    snapshot: RuntimeSnapshot,
-    counters: RecoveryCounters,
-    failure_class: str,
-    *,
-    counter_name: GraphLoopCounterName,
-) -> int:
-    """Read a counter by GraphLoopCounterName from the generic counter store.
-
-    ``GraphLoopCounterName`` is used only as a compatibility/compiler migration
-    input; the active runtime authority is the generic ``counter_id`` string.
-    """
-    return counter_attempts_for_counter_id(
-        snapshot, counters, failure_class, counter_id=counter_name.value
-    )
+from millrace_ai.contracts import RecoveryCounterEntry, RecoveryCounters, RuntimeSnapshot, StageResultEnvelope
+from millrace_ai.contracts.router import counter_key_for_failure_class
 
 
 def counter_attempts_for_counter_id(
@@ -121,9 +82,7 @@ def normalize_failure_class(failure_class: str) -> str:
 
 
 __all__ = [
-    "counter_attempts",
     "counter_attempts_for_counter_id",
-    "counter_attempts_for_name",
     "counter_key_from_snapshot",
     "matching_counter_entry",
     "normalize_failure_class",

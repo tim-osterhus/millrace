@@ -42,7 +42,6 @@ from millrace_ai.workspace.paths import WorkspacePaths
 from .artifact_workflow_common import (
     _effect_path,
     _normalized_blueprint_model_payload,
-    _stage_result_work_item_kind,
 )
 
 if TYPE_CHECKING:
@@ -402,7 +401,12 @@ def _validate_manager_output(
     manifest: BlueprintManifestDocument,
     drafts: Sequence[BlueprintDraftDocument],
 ) -> None:
-    if manifest.source_work_item_kind != _stage_result_work_item_kind(stage_result).value:
+    stage_result_kind = stage_result.work_item_kind
+    if stage_result_kind is None:
+        stage_result_kind = stage_result.work_item_family_id
+    else:
+        stage_result_kind = stage_result_kind.value
+    if manifest.source_work_item_kind != stage_result_kind:
         raise ValueError("manifest source_work_item_kind does not match active source")
     if manifest.source_work_item_id != stage_result.work_item_id:
         raise ValueError("manifest source_work_item_id does not match active source")

@@ -49,9 +49,9 @@ modules listed below.
   `test_subprocess_import_runtime_engine_does_not_load_forbidden_prefixes`, and
   `test_subprocess_generic_only_runtime_startup_does_not_load_forbidden_prefixes`)
   prove generic startup does not eagerly load Blueprint modules.
-  **Migration path**: Keep `runtime/context/blueprint.py` as the lazy compatibility facade for existing Blueprint request-context callers until the remaining public shims can be retired.
+  **Migration path**: `runtime/context/blueprint.py` is now a deliberate removal stub; existing Blueprint request-context callers use `extensions/builtin/blueprint/context.py` directly.
 
-### Blueprint Context Provider Rendering (`runtime/context/blueprint.py`)
+### Blueprint Context Provider Rendering (retired `runtime/context/blueprint.py` removal stub)
 
 - **File**: `src/millrace_ai/runtime/context/blueprint.py`
 - **Import**: Direct imports of `BlueprintDraftDocument`, `BlueprintPacketDocument`,
@@ -63,21 +63,20 @@ modules listed below.
 - **Retention Reason**: Contains domain-specific rendering logic that
   should live in a Blueprint extension package; kept as compatibility
   facade until migration to operation-step model
-- **Status**: Compatibility facade
+- **Status**: Retired removal stub
 - **Guardrail**: This module contains domain-specific rendering logic that
   should live in a Blueprint extension package.  It is no longer loaded by
-  package-level runtime imports, but it is still loaded when the built-in
-  request-context provider registry is constructed. Subprocess import and
-  startup probes in
+  package-level runtime imports, and Blueprint request-context behavior is
+  selected only through compiled provider/render-plan authority plus
+  Blueprint extension-manifest ownership. Subprocess import and startup probes in
   `tests/maintenance/test_generic_engine_boundary_guardrails.py`
   confirm this module is not eagerly loaded.
   **Migration path**: The implementation now lives under
   `extensions/builtin/blueprint/context.py` and
-  `extensions/builtin/blueprint/contracts.py`. Keep
-  `runtime/context/blueprint.py` as a lazy compatibility facade for existing
-  callers until the remaining public shims can be retired.
+  `extensions/builtin/blueprint/contracts.py`. The generic
+  `runtime/context/blueprint.py` import path now raises `ImportError`.
 
-### Blueprint Status Compatibility Facade (`cli/status/blueprint.py`)
+### Blueprint Status Compatibility Facade (retired `cli/status/blueprint.py` removal stub)
 
 - **File**: `src/millrace_ai/cli/status/blueprint.py`
 - **Import**: Lazy function lookup into
@@ -91,17 +90,18 @@ modules listed below.
 - **Retention Reason**: Preserves the historical Blueprint status import path
   while the authoritative status projection, default payload, default lines,
   collection, and rendering live under the Blueprint extension package
-- **Status**: Lazy non-authoritative compatibility facade
+- **Status**: Retired removal stub
 - **Guardrail**: `tests/maintenance/test_pure_graph_authority_guardrails.py`
   fails if generic status code calls Blueprint status APIs directly, if generic
-  projection code reintroduces `blueprints` default branches, or if the
-  Blueprint manifest `status_projection` item points back into generic CLI,
-  Doctor, or workspace modules.
-  **Migration path**: Move remaining compatibility callers to the
-  manifest-declared status projection path, then retire this facade with a
-  release-note-backed compatibility plan.
+  projection code reintroduces `blueprints` default branches, if generic
+  status models restore a `blueprint_status` field, or if the Blueprint
+  manifest `status_projection` item points back into generic CLI, Doctor, or
+  workspace modules.
+  **Migration path**: The manifest-declared status projection path is now the
+  only supported Blueprint status surface; `cli/status/blueprint.py` now
+  raises `ImportError`.
 
-### Blueprint Workspace State / Doctor Diagnostic Compatibility Facade (`workspace/blueprint_state.py`)
+### Blueprint Workspace State / Doctor Diagnostic Compatibility Facade (retired `workspace/blueprint_state.py` removal stub)
 
 - **File**: `src/millrace_ai/workspace/blueprint_state.py`
 - **Import**: Lazy `__getattr__` exports from
@@ -116,15 +116,15 @@ modules listed below.
   including read-only manifest diagnostic helpers, while authoritative state
   and Doctor diagnostic implementation live under the Blueprint extension
   package
-- **Status**: Lazy non-authoritative compatibility facade
+- **Status**: Retired removal stub
 - **Guardrail**: `tests/maintenance/test_pure_graph_authority_guardrails.py`
   fails if default Doctor registration routes directly to Blueprint diagnostic
   helpers, if domain-owned `doctor_diagnostic` manifest items point into
   generic CLI/Doctor/workspace modules, or if generic import surfaces eagerly
   load Blueprint implementation modules.
-  **Migration path**: Move remaining callers to extension-owned Blueprint state
-  and Doctor diagnostic APIs, then retire this facade with a release-note-backed
-  compatibility plan.
+  **Migration path**: Remaining callers use extension-owned Blueprint state
+  and Doctor diagnostic APIs directly; `workspace/blueprint_state.py` now
+  raises `ImportError`.
 
 ### Planner Disposition Effects (`runtime/planner_effects.py`)
 
@@ -150,7 +150,7 @@ modules listed below.
   with interpreted operation steps, the disposition logic should move to
   primitives registered under the shared extension domain.
 
-### Blueprint Effect Operation Runner Compatibility Export (`runtime/effects/operation_runners/__init__.py`)
+### Blueprint Effect Operation Runner Compatibility Export (retired `runtime/effects/operation_runners/__init__.py` removal stub)
 
 - **File**: `src/millrace_ai/runtime/effects/operation_runners/__init__.py`
 - **Export**: `artifact_runtime_effect_handler_registrations`
@@ -159,9 +159,16 @@ modules listed below.
 - **Allowed Callers**: Legacy runner registration callers and compatibility importers
 - **Mode Scope**: Blueprint-declaring modes only
 - **Retention Reason**: Preserves import compatibility for legacy handler-backed Blueprint operation-runner registration while the implementation lives in the Blueprint extension package
-- **Status**: Lazy compatibility export
-- **Guardrail**: The compatibility package resolves `artifact_runtime_effect_handler_registrations` lazily from `extensions/builtin/blueprint/operation_runners/`; generic kernel paths do not import the Blueprint extension package unless a legacy caller requests the export. Guardrails in `tests/maintenance/test_kernel_import_guardrails.py` ensure the export stays lazy for generic startup paths.
-  **Migration path**: Keep `runtime/effects/operation_runners/__init__.py` as the export shim until all callers move to the extension-owned implementation directly.
+- **Status**: Retired removal stub
+- **Guardrail**: The compatibility package no longer exports Blueprint
+  operation-runner registrations. Guardrails in
+  `tests/maintenance/test_pure_graph_authority_guardrails.py` and
+  `tests/maintenance/test_kernel_import_guardrails.py` ensure generic kernel
+  paths do not import the Blueprint extension package or select Blueprint
+  operation runners through hard-coded branches.
+  **Migration path**: `runtime/effects/operation_runners/__init__.py` now has
+  an empty export surface; callers use
+  `extensions/builtin/blueprint/operation_runners/` directly.
 
 ### Closure Target Boundary (`runtime/closure_boundary.py` -> `runtime/completion_behavior.py`)
 
@@ -264,8 +271,8 @@ runtime implementation and is registered with the
 | `builtin/closure_transition_handler.py` | `ClosureTransitionHandler` | `runtime/closure_transitions.py` | `BuiltInExtensionBoundaryRegistry` | Modes declaring `millrace.closure` |
 | `builtin/learning_trigger_handler.py` | `LearningTriggerHandler` | `runtime/learning_triggers.py` | `BuiltInExtensionBoundaryRegistry` | Learning-enabled modes only |
 | `builtin/learning_promotion_handler.py` | `LearningPromotionHandler` | `runtime/learning_promotions.py` | `BuiltInExtensionBoundaryRegistry` | Learning-enabled modes only |
-| `builtin/blueprint_validator.py` | `BlueprintValidator` | `extensions/builtin/blueprint/contracts.py` (via `contracts/blueprint.py` lazy facade) | `BuiltInExtensionBoundaryRegistry` | Blueprint-declaring modes only |
-| `builtin/blueprint_context_provider.py` | `BlueprintContextProvider` | `extensions/builtin/blueprint/context.py` (via `runtime/context/blueprint.py` lazy facade) | `BuiltInExtensionBoundaryRegistry` | Blueprint-declaring modes only |
+| `builtin/blueprint_validator.py` | `BlueprintValidator` | `extensions/builtin/blueprint/contracts.py` | `BuiltInExtensionBoundaryRegistry` | Blueprint-declaring modes only |
+| `builtin/blueprint_context_provider.py` | `BlueprintContextProvider` | `extensions/builtin/blueprint/context.py` | `BuiltInExtensionBoundaryRegistry` | Blueprint-declaring modes only |
 | `builtin/generic_context_provider.py` | `ContextProvider` | `runtime/context/generic.py` | `BuiltInExtensionBoundaryRegistry` | All modes |
 | `builtin/generic_artifact_adapter.py` | `ArtifactAdapter` | workspace document loaders | `BuiltInExtensionBoundaryRegistry` | All modes |
 
@@ -281,10 +288,12 @@ The `default_request_context_provider_registry()` function in
 `runtime/context/providers.py` now constructs the generic registry without
 loading Blueprint providers at module-import time. This closes the former
 package-import eager-loading gap for `millrace_ai.runtime` and `RuntimeEngine`.
-Blueprint context provider selection now resolves lazily through compiled
+Blueprint context provider selection now resolves through compiled
 provider/render-plan authority and Blueprint extension-manifest ownership,
-while `runtime/context/blueprint.py` remains the compatibility facade for
-existing Blueprint request-context callers.
+and `runtime/context/blueprint.py` is now a deliberate removal stub for
+existing Blueprint request-context callers. Old Python imports of retired
+Blueprint facades may raise `ImportError`; generic packages do not export
+Blueprint compatibility APIs.
 
 The `runtime/closure_boundary.py` module also uses function-body imports for
 its completion-behavior delegation. Kernel modules import the boundary, not the
