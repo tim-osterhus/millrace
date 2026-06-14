@@ -121,8 +121,10 @@ When one closure target is open:
 - queued root specs for other lineages stay in `millrace-agents/specs/queue/`
 - same-lineage tasks and remediation planning items remain claimable
 - runtime-created execution-to-planning handoff incidents inherit root lineage
-  from their source work item before enqueue, so Consultant `NEEDS_PLANNING`
-  escalation stays visible to closure-scoped planning selection
+  from their source work item before enqueue, and runtime-created
+  closure-target remediation incidents carry `created_by=millrace-runtime`
+  plus `trigger_metadata` provenance so same-lineage planning selection stays
+  visible after restart
 - Arbiter is activated before an unrelated root spec is claimed once same-lineage work drains
 - `closure_target_backpressure` events record the open root spec and deferred root specs
 - `millrace status` reports `planning_root_specs_deferred_by_closure_target`
@@ -150,11 +152,23 @@ The stage request uses `request_kind = closure_target` and includes:
 - `closure_target_root_source_id`
 - `closure_target_root_source_path`
 - `closure_target_root_idea_id` for legacy idea-rooted work
+- `closure_evidence_window_path`
 - `canonical_root_spec_path`
 - `canonical_seed_idea_path` for legacy idea-rooted work
 - `preferred_rubric_path`
 - `preferred_verdict_path`
 - `preferred_report_path`
+
+The rendered request context includes `Closure Evidence Window Path:` and
+`Stale Evidence Policy: old evidence requires revalidation` for
+closure-target runs.
+
+Arbiter must read the closure evidence window before consulting previous
+verdict or report artifacts. The window defines the current freshness
+watermark and lists completed same-lineage remediation after the prior Arbiter
+verdict. Evidence before that watermark remains useful historical context, but
+it is not current pass/fail evidence after newer remediation unless Arbiter
+explicitly revalidates it against the current source tree.
 
 The normalized stage result still projects onto `work_item_kind = spec` and
 `work_item_id = <root_spec_id>` so the result envelope stays typed and stable.
@@ -171,6 +185,16 @@ The per-run report is copied into the Arbiter reports directory by runtime
 result application so the durable report path is stable even though the stage
 itself writes inside the run directory during execution.
 
+Arbiter verdicts use the `arbiter_verdict_v1` schema. The current durable
+shape keeps the existing top-level metadata and criterion fields while
+carrying machine-checkable criterion provenance values: `fresh`,
+`revalidated`, `historical_only`, and `missing`. Runtime closure validation
+only treats `fresh` and `revalidated` as current decision provenance when the
+freshness window shows newer same-lineage remediation. Every deciding criterion
+must carry current decision provenance before `ARBITER_COMPLETE` can close the
+target or `REMEDIATION_NEEDED` can hand off remediation; historical-only or
+missing criterion evidence stays contextual and cannot decide closure by itself.
+
 ## Runtime-Owned Outcomes
 
 Arbiter may emit only:
@@ -184,7 +208,7 @@ Runtime result application owns the workflow consequences:
 - `ARBITER_COMPLETE`: close the target, stamp `closed_at`, persist latest
   verdict/report paths, and return the runtime to idle.
 - `REMEDIATION_NEEDED`: keep the target open, persist latest verdict/report
-  paths, and enqueue a planning incident under
+  paths, and enqueue a runtime-owned closure remediation incident under
   `millrace-agents/incidents/incoming/`.
 - `BLOCKED`: keep the target open, persist the latest run/report context, and
   leave the planning status blocked without fabricating queue work.
@@ -193,11 +217,34 @@ Arbiter does not mutate closure-target workflow authority directly. It produces
 artifacts and a terminal result; the runtime applies the authoritative state
 change.
 
+Arbiter also does not create closure remediation incident files. If it emits
+`REMEDIATION_NEEDED`, its verdict and report carry the gap-specific remediation
+guidance, and runtime-owned result application creates, deduplicates, suppresses,
+or quarantines the corresponding planning incident.
+
+Runtime-created closure remediation incidents carry `created_by=millrace-runtime`
+and machine-checkable `trigger_metadata.runtime_created=true`, source stage,
+Arbiter run/request IDs, closure root spec ID, and previous Arbiter
+run/request IDs when available.
+
+Repeated-remediation blocker surfaces use `closure_repeated_remediation_guard`
+and `closure_repeated_remediation_without_execution` so status, monitor, and
+diagnostics read the failure as stale remediation-loop evidence rather than a
+fresh source failure. Queue selection quarantines matching Arbiter-authored
+incoming closure-remediation incident markdown for the blocked root unless it
+carries `trigger_metadata.runtime_created=true`; Consultant and other
+non-Arbiter handoffs keep their existing path.
+
 ## Operator Inspection Surfaces
 
 The current operator-facing surfaces expose this behavior directly:
 
 - `millrace compile show` prints frozen `completion_behavior`
+- `millrace compile show` also prints Arbiter `model_assignment_alias_id`,
+  `model_assignment_source`, `model_name`, and `thinking_level`; shipped
+  closure-capable modes assign Arbiter through a high-depth stage alias so a
+  missing or downgraded assignment is visible without relying on a
+  mode-specific special case
 - `millrace status` prints the active open closure target root source,
   deferred-root count,
   latest verdict/report paths, and Blueprint draft/packet/critique/evaluation

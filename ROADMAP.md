@@ -52,6 +52,9 @@ contracts:
   without adding runtime authority or weight to the base deployment package
 - hot-swappable model assignment aliases so operators can change model/depth
   policy through compiler-owned config without editing every stage binding
+- Arbiter closure freshness windows, criterion-level evidence provenance, and
+  runtime-owned remediation enqueueing so closure audits distinguish historical
+  context from current or explicitly revalidated evidence
 
 ## Active
 
@@ -116,6 +119,8 @@ Expected user impact:
 - easier comparison between legal compiled topology and what one run actually did
 - fewer hidden differences between what the compiler reports and what the
   runtime actually executes
+- clearer closure diagnostics when repeated remediation is blocked as stale
+  remediation-loop evidence rather than treated as a fresh source failure
 
 ### Runner Harness Validation
 

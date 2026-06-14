@@ -81,6 +81,7 @@ def _request(
             closure_target_path="millrace-agents/arbiter/targets/spec-root-001.json",
             closure_target_root_spec_id="spec-root-001",
             closure_target_root_idea_id="idea-001",
+            closure_evidence_window_path=str(tmp_path / "closure_evidence_window.json"),
             canonical_root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
             canonical_seed_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
             preferred_rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",
@@ -177,6 +178,7 @@ def test_stage_run_request_accepts_closure_target_without_active_work_item() -> 
     assert request.active_work_item_kind is None
     assert request.active_work_item_id is None
     assert request.closure_target_root_spec_id == "spec-root-001"
+    assert request.closure_evidence_window_path == "/tmp/closure_evidence_window.json"
     assert request.preferred_verdict_path == "millrace-agents/arbiter/verdicts/spec-root-001.json"
 
 
@@ -188,7 +190,51 @@ def test_render_stage_request_context_lines_include_closure_target_fields(tmp_pa
     assert "Request Kind: closure_target" in lines
     assert "Closure Target Root Spec ID: spec-root-001" in lines
     assert "Closure Target Path: millrace-agents/arbiter/targets/spec-root-001.json" in lines
+    assert f"Closure Evidence Window Path: {tmp_path / 'closure_evidence_window.json'}" in lines
+    assert "Stale Evidence Policy: old evidence requires revalidation" in lines
     assert "Active Work Item Path: none" in lines
+
+
+def test_stage_run_request_requires_closure_evidence_window_for_closure_target(
+    tmp_path: Path,
+) -> None:
+    payload = _request(tmp_path, stage="arbiter", request_kind="closure_target").model_dump()
+    payload.pop("closure_evidence_window_path")
+
+    try:
+        StageRunRequest(**payload)
+    except ValueError as exc:
+        assert "closure_target requests require closure target fields" in str(exc)
+    else:  # pragma: no cover - defensive assertion clarity
+        raise AssertionError("closure target request accepted without evidence window path")
+
+
+def test_stage_run_request_rejects_closure_evidence_window_for_active_work_item(
+    tmp_path: Path,
+) -> None:
+    payload = _request(tmp_path).model_dump()
+    payload["closure_evidence_window_path"] = str(tmp_path / "closure_evidence_window.json")
+
+    try:
+        StageRunRequest(**payload)
+    except ValueError as exc:
+        assert "active_work_item requests cannot declare closure target fields" in str(exc)
+    else:  # pragma: no cover - defensive assertion clarity
+        raise AssertionError("active work item request accepted closure evidence window path")
+
+
+def test_stage_run_request_does_not_embed_closure_evidence_window_object(
+    tmp_path: Path,
+) -> None:
+    payload = _request(tmp_path, stage="arbiter", request_kind="closure_target").model_dump()
+    payload["closure_evidence_window"] = {"schema_version": 1}
+
+    try:
+        StageRunRequest(**payload)
+    except ValueError as exc:
+        assert "closure_evidence_window" in str(exc)
+    else:  # pragma: no cover - defensive assertion clarity
+        raise AssertionError("request accepted nested closure evidence window object")
 
 
 def test_normalize_falls_back_to_final_stdout_terminal_token(tmp_path: Path) -> None:
@@ -342,8 +388,14 @@ def test_runner_artifacts_surface_request_kind_and_closure_target_identity(tmp_p
 
     assert invocation.request_kind == "closure_target"
     assert invocation.closure_target_root_spec_id == "spec-root-001"
+    assert invocation.closure_evidence_window_path == str(
+        tmp_path / "closure_evidence_window.json"
+    )
     assert completion.request_kind == "closure_target"
     assert completion.closure_target_root_spec_id == "spec-root-001"
+    assert completion.closure_evidence_window_path == str(
+        tmp_path / "closure_evidence_window.json"
+    )
 
 
 def test_normalize_classifies_conflicting_terminal_results(tmp_path: Path) -> None:
@@ -683,6 +735,7 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "closure_target_root_source_id": "Closure Target Root Source:",
         "closure_target_root_source_path": "Closure Target Root Source Path:",
         "closure_target_root_idea_id": "Closure Target Root Idea ID:",
+        "closure_evidence_window_path": "Closure Evidence Window Path:",
         "canonical_root_spec_path": "Canonical Root Spec Path:",
         "canonical_seed_idea_path": "Canonical Seed Idea Path:",
         "run_dir": "Run Directory:",

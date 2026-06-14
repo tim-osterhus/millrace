@@ -642,6 +642,12 @@ def apply_stage_completion(
                     compiled_plan=result_compiled_plan,
                 ),
             )
+        from .closure_transitions import repeated_remediation_effective_router_decision
+
+        router_decision = repeated_remediation_effective_router_decision(
+            engine.snapshot,
+            router_decision,
+        )
         effect_spawned_paths = frozenset(effect_application.spawned_paths)
         spawned_work = tuple(
             spawned_work_ref_from_path(

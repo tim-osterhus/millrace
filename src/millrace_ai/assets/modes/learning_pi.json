@@ -29,6 +29,11 @@
     "curator": "pi_rpc",
     "librarian": "pi_rpc"
   },
+  "model_assignment": {
+    "by_stage": {
+      "arbiter": "deep"
+    }
+  },
   "concurrency_policy": {
     "mutually_exclusive_planes": [["execution", "planning"]],
     "may_run_concurrently": [["learning", "execution"], ["learning", "planning"]]

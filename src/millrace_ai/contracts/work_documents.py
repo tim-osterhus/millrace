@@ -230,6 +230,8 @@ class IncidentDocument(ContractModel):
 
     opened_at: datetime
     opened_by: str
+    trigger_metadata: dict[str, JsonValue] = Field(default_factory=dict)
+    created_by: str | None = None
     updated_at: datetime | None = None
 
     @model_validator(mode="after")

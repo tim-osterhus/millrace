@@ -46,6 +46,7 @@ class BuiltinWorkFamilyQueueAdapter:
             self.family_id,
             root_spec_id=root_spec_id,
             document_validator=_make_pydantic_document_validator(
+                paths,
                 self.family_id,
                 families=work_item_families,
             ),

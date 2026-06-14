@@ -5,12 +5,14 @@ import importlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from io import StringIO
 from pathlib import Path
 
 import pytest
 
 from millrace_ai.architecture import WorkItemFamilyDefinition
 from millrace_ai.cli.commands.run import _run_daemon_supervisor_loop
+from millrace_ai.cli.monitoring import BasicTerminalMonitor
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
@@ -18,6 +20,7 @@ from millrace_ai.contracts import (
     ClosureTargetState,
     ExecutionStageName,
     ExecutionTerminalResult,
+    IncidentDecision,
     IncidentDocument,
     LearningRequestDocument,
     LearningStageName,
@@ -53,6 +56,7 @@ from millrace_ai.queue_store import QueueStore
 from millrace_ai.recon_packets import render_recon_packet
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine, closure_transitions
+from millrace_ai.runtime.monitoring import RuntimeMonitorEvent
 from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor
 from millrace_ai.runtime.watcher_intake import safe_spec_id_from_idea_path
 from millrace_ai.runtime_lock import (
@@ -126,6 +130,37 @@ def _spec_doc(spec_id: str, *, created_at: datetime) -> SpecDocument:
         references=["lab/specs/drafts/millrace-agent-topology-and-transition-table.md"],
         created_at=created_at,
         created_by="tests",
+    )
+
+
+def _incident_doc(
+    incident_id: str,
+    *,
+    source_stage=PlanningStageName.ARBITER,
+    source_plane: Plane = Plane.PLANNING,
+    root_spec_id: str = "spec-root-001",
+    trigger_metadata: dict[str, object] | None = None,
+    related_run_ids: tuple[str, ...] = (),
+    created_by: str | None = None,
+) -> IncidentDocument:
+    return IncidentDocument(
+        incident_id=incident_id,
+        title=f"Incident {incident_id}",
+        summary="runtime test incident",
+        root_idea_id="idea-001",
+        root_spec_id=root_spec_id,
+        source_spec_id=root_spec_id,
+        source_stage=source_stage,
+        source_plane=source_plane,
+        failure_class="arbiter_parity_gap",
+        needs_planning=True,
+        trigger_reason="arbiter_remediation_needed",
+        consultant_decision=IncidentDecision.NEEDS_PLANNING,
+        related_run_ids=related_run_ids,
+        opened_at=NOW,
+        opened_by="test",
+        trigger_metadata=trigger_metadata or {},
+        created_by=created_by,
     )
 
 
@@ -1467,6 +1502,9 @@ def test_runtime_can_build_closure_target_request_without_active_work_item(tmp_p
     assert request.active_work_item_id is None
     assert request.active_work_item_path is None
     assert request.closure_target_root_spec_id == "spec-root-001"
+    assert request.closure_evidence_window_path == str(
+        Path(request.run_dir) / "closure_evidence_window.json"
+    )
     assert request.canonical_root_spec_path.endswith("spec-root-001.md")
 
 
@@ -3359,12 +3397,21 @@ def test_runtime_tick_enqueues_remediation_incident_for_arbiter_gap(tmp_path: Pa
     assert target.latest_verdict_path == "millrace-agents/arbiter/verdicts/spec-root-001.json"
     assert target.latest_report_path == f"millrace-agents/arbiter/reports/{outcome.stage_result.run_id}.md"
     assert len(incident_paths) == 1
+    incident = read_work_document_as(incident_paths[0], model=IncidentDocument)
+    assert incident.created_by == "millrace-runtime"
+    assert incident.trigger_metadata["runtime_created"] is True
+    assert incident.trigger_metadata["source_stage"] == "arbiter"
+    assert incident.trigger_metadata["arbiter_run_id"] == outcome.stage_result.run_id
+    assert incident.trigger_metadata["arbiter_request_id"] == outcome.stage_result.metadata["request_id"]
+    assert incident.trigger_metadata["closure_root_spec_id"] == "spec-root-001"
     incident_text = incident_paths[0].read_text(encoding="utf-8")
     assert "Failure-Class: arbiter_parity_gap" in incident_text
     assert "Root-Spec-ID: spec-root-001" in incident_text
     assert "Root-Idea-ID: idea-001" in incident_text
     assert "Source-Stage: arbiter" in incident_text
     assert "Trigger-Reason: arbiter_remediation_needed" in incident_text
+    assert "Created-By: millrace-runtime" in incident_text
+    assert '"runtime_created":true' in incident_text
 
 
 def test_runtime_tick_blocks_repeated_arbiter_remediation_without_execution(
@@ -3406,13 +3453,39 @@ def test_runtime_tick_blocks_repeated_arbiter_remediation_without_execution(
 
     outcome = engine.tick()
     snapshot = load_snapshot(paths)
+    router_event = next(
+        event for event in read_runtime_events(paths) if event.event_type == "router_decision"
+    )
     incident_paths = tuple(paths.incidents_incoming_dir.glob("*.md"))
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream)
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="router_decision",
+            occurred_at=router_event.occurred_at,
+            payload=router_event.data,
+        )
+    )
+    monitor_output = stream.getvalue()
 
     assert outcome.stage is PlanningStageName.ARBITER
+    assert outcome.router_decision.action is RouterAction.BLOCKED
+    assert outcome.router_decision.reason == "closure_repeated_remediation_guard"
+    assert outcome.router_decision.failure_class == "closure_repeated_remediation_without_execution"
+    assert outcome.router_decision.create_incident is False
     assert incident_paths == ()
     assert snapshot.active_stage is None
     assert snapshot.planning_status_marker == "### BLOCKED"
     assert snapshot.current_failure_class == "closure_repeated_remediation_without_execution"
+    assert router_event.data["action"] == "blocked"
+    assert router_event.data["reason"] == "closure_repeated_remediation_guard"
+    assert router_event.data["failure_class"] == "closure_repeated_remediation_without_execution"
+    assert router_event.data["create_incident"] is False
+    assert "route planning blocked" in monitor_output
+    assert "reason=closure_repeated_remediation_guard" in monitor_output
+    assert "failure=closure_repeated_remediation_without_execution" in monitor_output
+    assert "arbiter_remediation_needed" not in monitor_output
+    assert "incident=true" not in monitor_output
     assert any(
         event.event_type == "closure_repeated_remediation_blocked"
         and event.data.get("root_spec_id") == "spec-root-001"
@@ -3448,6 +3521,139 @@ def test_repeated_arbiter_remediation_check_streams_events_without_full_history_
     engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
 
     assert closure_transitions._is_repeated_remediation_without_execution(engine, target) is False
+
+
+def test_repeated_remediation_guard_quarantines_matching_arbiter_authored_incident(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "planning_status_marker": "### BLOCKED",
+            "current_failure_class": "closure_repeated_remediation_without_execution",
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+    write_runtime_event(
+        paths,
+        event_type="closure_repeated_remediation_blocked",
+        data={
+            "root_spec_id": "spec-root-001",
+            "failure_class": "closure_repeated_remediation_without_execution",
+            "run_id": "run-current",
+            "request_id": "request-current",
+        },
+        occurred_at=NOW,
+    )
+    queue.enqueue_incident(
+        _incident_doc(
+            "incident-arbiter-authored",
+            trigger_metadata={
+                "closure_root_spec_id": "spec-root-001",
+                "arbiter_run_id": "run-current",
+                "arbiter_request_id": "request-current",
+            },
+            related_run_ids=("run-current",),
+        )
+    )
+
+    assert queue.claim_next_planning_item() is None
+    assert not (paths.incidents_incoming_dir / "incident-arbiter-authored.md").exists()
+    assert (paths.incidents_incoming_dir / "incident-arbiter-authored.md.invalid").is_file()
+
+
+def test_repeated_remediation_guard_allows_runtime_created_arbiter_incident(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "planning_status_marker": "### BLOCKED",
+            "current_failure_class": "closure_repeated_remediation_without_execution",
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+    write_runtime_event(
+        paths,
+        event_type="closure_repeated_remediation_blocked",
+        data={
+            "root_spec_id": "spec-root-001",
+            "failure_class": "closure_repeated_remediation_without_execution",
+            "run_id": "run-current",
+            "request_id": "request-current",
+        },
+        occurred_at=NOW,
+    )
+    queue.enqueue_incident(
+        _incident_doc(
+            "incident-runtime-created",
+            trigger_metadata={
+                "runtime_created": True,
+                "closure_root_spec_id": "spec-root-001",
+                "arbiter_run_id": "run-current",
+                "arbiter_request_id": "request-current",
+            },
+            related_run_ids=("run-current",),
+            created_by="millrace-runtime",
+        )
+    )
+
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+    assert claim.family_id == "incident"
+    assert claim.work_item_id == "incident-runtime-created"
+    assert (paths.incidents_active_dir / "incident-runtime-created.md").is_file()
+
+
+def test_repeated_remediation_guard_preserves_consultant_incident_handoff(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    snapshot = load_snapshot(paths).model_copy(
+        update={
+            "planning_status_marker": "### BLOCKED",
+            "current_failure_class": "closure_repeated_remediation_without_execution",
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, snapshot)
+    write_runtime_event(
+        paths,
+        event_type="closure_repeated_remediation_blocked",
+        data={
+            "root_spec_id": "spec-root-001",
+            "failure_class": "closure_repeated_remediation_without_execution",
+            "run_id": "run-current",
+            "request_id": "request-current",
+        },
+        occurred_at=NOW,
+    )
+    queue.enqueue_incident(
+        _incident_doc(
+            "incident-consultant",
+            source_stage=ExecutionStageName.CONSULTANT,
+            source_plane=Plane.EXECUTION,
+            trigger_metadata={
+                "closure_root_spec_id": "spec-root-001",
+                "arbiter_run_id": "run-current",
+                "arbiter_request_id": "request-current",
+            },
+            related_run_ids=("run-current",),
+        )
+    )
+
+    claim = queue.claim_next_planning_item()
+
+    assert claim is not None
+    assert claim.family_id == "incident"
+    assert claim.work_item_id == "incident-consultant"
+    assert (paths.incidents_active_dir / "incident-consultant.md").is_file()
 
 
 def test_runtime_mailbox_retry_active_requeues_active_item_and_resets_counters(tmp_path: Path) -> None:

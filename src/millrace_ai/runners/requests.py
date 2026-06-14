@@ -68,6 +68,7 @@ class StageRunRequest(BaseModel):
     closure_target_root_source_id: str | None = None
     closure_target_root_source_path: str | None = None
     closure_target_root_idea_id: str | None = None
+    closure_evidence_window_path: str | None = None
     canonical_root_spec_path: str | None = None
     canonical_seed_idea_path: str | None = None
     preferred_rubric_path: str | None = None
@@ -148,6 +149,7 @@ class StageRunRequest(BaseModel):
             self.closure_target_root_source_id,
             self.closure_target_root_source_path,
             self.closure_target_root_idea_id,
+            self.closure_evidence_window_path,
             self.canonical_root_spec_path,
             self.canonical_seed_idea_path,
             self.preferred_rubric_path,
@@ -170,6 +172,7 @@ class StageRunRequest(BaseModel):
                 self.closure_target_root_source_id,
                 self.closure_target_root_source_path,
                 self.closure_target_root_idea_id,
+                self.closure_evidence_window_path,
                 self.canonical_root_spec_path,
                 self.canonical_seed_idea_path,
                 self.preferred_rubric_path,
@@ -182,6 +185,7 @@ class StageRunRequest(BaseModel):
             self.closure_target_root_source_kind,
             self.closure_target_root_source_id,
             self.closure_target_root_source_path,
+            self.closure_evidence_window_path,
             self.canonical_root_spec_path,
             self.preferred_rubric_path,
             self.preferred_verdict_path,
@@ -259,6 +263,11 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
         ),
         f"Closure Target Root Source Path: {request.closure_target_root_source_path or 'none'}",
         f"Closure Target Root Idea ID: {request.closure_target_root_idea_id or 'none'}",
+        f"Closure Evidence Window Path: {request.closure_evidence_window_path or 'none'}",
+        (
+            "Stale Evidence Policy: "
+            f"{'old evidence requires revalidation' if request.request_kind == 'closure_target' else 'none'}"
+        ),
         f"Canonical Root Spec Path: {request.canonical_root_spec_path or 'none'}",
         f"Canonical Seed Idea Path: {request.canonical_seed_idea_path or 'none'}",
         f"Preferred Rubric Path: {request.preferred_rubric_path or 'none'}",

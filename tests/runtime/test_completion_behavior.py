@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ import millrace_ai.runtime.completion_behavior as completion_behavior
 import millrace_ai.runtime.supervisor as supervisor_module
 from millrace_ai.architecture import CompiledRunPlan, WorkItemFamilyDefinition
 from millrace_ai.contracts import (
+    ClosureEvidenceWindow,
     ClosureTargetState,
     ExecutionStageName,
     LearningRequestDocument,
@@ -23,7 +25,7 @@ from millrace_ai.contracts import (
     TaskDocument,
     WorkItemKind,
 )
-from millrace_ai.events import read_runtime_events
+from millrace_ai.events import read_runtime_events, write_runtime_event
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
@@ -33,6 +35,7 @@ from millrace_ai.runtime.error_recovery import schedule_pre_dispatch_exception_r
 from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor
 from millrace_ai.state_store import load_planning_status, load_snapshot
 from millrace_ai.workspace.arbiter_state import (
+    build_closure_evidence_window,
     load_closure_target_state,
     save_closure_target_state,
 )
@@ -607,6 +610,157 @@ def test_open_closure_target_activates_arbiter_before_unrelated_root_spec(
     assert request.closure_target_root_source_id == "idea-001"
     assert (paths.specs_queue_dir / "spec-root-002.md").is_file()
     assert not (paths.specs_active_dir / "spec-root-002.md").exists()
+
+
+def test_first_closure_arbiter_request_writes_empty_evidence_window(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    save_closure_target_state(paths, _target_state())
+    captured_windows: list[ClosureEvidenceWindow] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        assert request.closure_evidence_window_path is not None
+        window_path = Path(request.closure_evidence_window_path)
+        assert window_path.is_file()
+        captured_windows.append(
+            ClosureEvidenceWindow.model_validate_json(window_path.read_text(encoding="utf-8"))
+        )
+        return _runner_result(request, terminal="ARBITER_COMPLETE")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+
+    engine.tick()
+
+    assert len(captured_windows) == 1
+    window = captured_windows[0]
+    assert window.root_spec_id == "spec-root-001"
+    assert window.current_arbiter_run_id
+    assert window.current_arbiter_request_id
+    assert window.previous_arbiter.run_id is None
+    assert window.previous_arbiter.request_id is None
+    assert window.previous_arbiter.verdict_path is None
+    assert window.previous_arbiter.report_path is None
+    assert window.freshness_watermark_at is None
+    assert window.completed_lineage_evidence == ()
+
+
+def test_repeat_closure_arbiter_request_writes_freshness_window_with_lineage_evidence(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    previous_arbiter_at = NOW
+    remediation_at = NOW + timedelta(minutes=5)
+    target = _target_state().model_copy(
+        update={
+            "latest_verdict_path": "millrace-agents/arbiter/verdicts/spec-root-001.json",
+            "latest_report_path": "millrace-agents/arbiter/reports/run-prev.md",
+            "last_arbiter_run_id": "run-prev",
+        }
+    )
+    save_closure_target_state(paths, target)
+    (paths.tasks_done_dir / "task-remediate-001.md").write_text(
+        render_work_document(
+            _task_doc(
+                "task-remediate-001",
+                root_spec_id="spec-root-001",
+                root_idea_id="idea-001",
+                created_at=NOW,
+            )
+        ),
+        encoding="utf-8",
+    )
+    (paths.tasks_done_dir / "task-other-root.md").write_text(
+        render_work_document(
+            _task_doc(
+                "task-other-root",
+                root_spec_id="spec-root-002",
+                root_idea_id="idea-002",
+                created_at=NOW,
+            )
+        ),
+        encoding="utf-8",
+    )
+    write_runtime_event(
+        paths,
+        event_type="stage_completed",
+        occurred_at=previous_arbiter_at,
+        data={
+            "request_id": "request-prev",
+            "stage": "arbiter",
+            "node_id": "arbiter",
+            "stage_kind_id": "arbiter",
+            "plane": "planning",
+            "run_id": "run-prev",
+            "work_item_family_id": "spec",
+            "work_item_kind": "spec",
+            "work_item_id": "spec-root-001",
+            "terminal_result": "REMEDIATION_NEEDED",
+        },
+    )
+    write_runtime_event(
+        paths,
+        event_type="stage_completed",
+        occurred_at=remediation_at,
+        data={
+            "request_id": "request-remediate",
+            "stage": "builder",
+            "node_id": "builder",
+            "stage_kind_id": "builder",
+            "plane": "execution",
+            "run_id": "run-remediate",
+            "work_item_family_id": "task",
+            "work_item_kind": "task",
+            "work_item_id": "task-remediate-001",
+            "terminal_result": "BUILDER_COMPLETE",
+        },
+    )
+    write_runtime_event(
+        paths,
+        event_type="stage_completed",
+        occurred_at=remediation_at + timedelta(minutes=1),
+        data={
+            "request_id": "request-other",
+            "stage": "builder",
+            "node_id": "builder",
+            "stage_kind_id": "builder",
+            "plane": "execution",
+            "run_id": "run-other",
+            "work_item_family_id": "task",
+            "work_item_kind": "task",
+            "work_item_id": "task-other-root",
+            "terminal_result": "BUILDER_COMPLETE",
+        },
+    )
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    arbiter_plan = engine._stage_plan_for(Plane.PLANNING, PlanningStageName.ARBITER)
+    request = engine._build_closure_target_stage_run_request(arbiter_plan, target)
+
+    assert request.closure_evidence_window_path is not None
+    window = ClosureEvidenceWindow.model_validate_json(
+        Path(request.closure_evidence_window_path).read_text(encoding="utf-8")
+    )
+    assert window.previous_arbiter.run_id == "run-prev"
+    assert window.previous_arbiter.request_id == "request-prev"
+    assert window.previous_arbiter.verdict_path == "millrace-agents/arbiter/verdicts/spec-root-001.json"
+    assert window.previous_arbiter.report_path == "millrace-agents/arbiter/reports/run-prev.md"
+    assert window.freshness_watermark_at == previous_arbiter_at
+    assert len(window.completed_lineage_evidence) == 1
+    evidence = window.completed_lineage_evidence[0]
+    assert evidence.run_id == "run-remediate"
+    assert evidence.request_id == "request-remediate"
+    assert evidence.work_item_id == "task-remediate-001"
+    assert evidence.completed_at == remediation_at
+    assert evidence.stage_result_path == (
+        "millrace-agents/runs/run-remediate/stage_results/request-remediate.json"
+    )
+
+
+def test_closure_evidence_window_builder_uses_bounded_event_reader() -> None:
+    source = inspect.getsource(build_closure_evidence_window)
+
+    assert "iter_runtime_events(" in source
+    assert "read_runtime_events(" not in source
 
 
 def test_maybe_activate_completion_stage_marks_target_blocked_when_lineage_work_remains(

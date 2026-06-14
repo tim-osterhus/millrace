@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .arbiter_verdict import ArbiterCriterionEvidence, ArbiterVerdict
 from .base import ContractModel as ContractModel
 from .capabilities import (
     BASE_EXECUTION_CAPABILITY_IDS,
@@ -18,6 +19,13 @@ from .capabilities import (
     ExecutionCapabilityGrant,
     capability_grant_fingerprint,
     normalize_capability_id,
+)
+from .closure_evidence import (
+    ClosureEvidenceWindow,
+    CriterionEvidenceProvenance,
+    LineageRunEvidence,
+    PreviousArbiterEvidence,
+    StaleEvidencePolicy,
 )
 from .compile_diagnostics import CompileDiagnostics
 from .enums import (  # noqa: F401
@@ -136,7 +144,10 @@ from .work_refs import (
 )
 
 __all__ = [
+    "ArbiterCriterionEvidence",
+    "ArbiterVerdict",
     "ClosureBlockingWorkRef",
+    "ClosureEvidenceWindow",
     "ClosureRootSource",
     "ClosureRootSourceKind",
     "ClosureTargetState",
@@ -146,6 +157,7 @@ __all__ = [
     "RequiredExtensionsSpec",
     "CompletionBehaviorDefinition",
     "ContractModel",
+    "CriterionEvidenceProvenance",
     "ActiveRunRequestKind",
     "ActiveRunState",
     "ApprovalPolicyRef",
@@ -177,6 +189,7 @@ __all__ = [
     "LaneRuntimeState",
     "LaneRuntimeStatus",
     "LearningTriggerRuleDefinition",
+    "LineageRunEvidence",
     "LoopConfigDefinition",
     "LoopEdgeDefinition",
     "LoopEdgeKind",
@@ -203,6 +216,7 @@ __all__ = [
     "PlannerDispositionValue",
     "PlanningStageName",
     "PlanningTerminalResult",
+    "PreviousArbiterEvidence",
     "ProbeDocument",
     "ProbeStatusHint",
     "RecoveryCounterEntry",
@@ -230,6 +244,7 @@ __all__ = [
     "RunTraceSpawnedWorkRef",
     "SpecDocument",
     "StageName",
+    "StaleEvidencePolicy",
     "StageMapKey",
     "StageResultEnvelope",
     "TaskDocument",

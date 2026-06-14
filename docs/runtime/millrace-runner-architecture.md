@@ -162,6 +162,11 @@ rendered prompt-context path, and visible context artifact refs. Normalization
 persists those fields into stage-result metadata so `millrace runs show` can
 explain which context the stage actually saw.
 
+Closure-target requests also carry `closure_evidence_window_path` so the
+Arbiter entrypoint can reference the run-local freshness window, and the
+rendered prompt context includes that path plus the stale-evidence policy line
+for those closure-target runs.
+
 Request-context authority follows graph/stage-kind-declared compiled node data
 first, then request-level explicit fields. Missing or unknown profile/render-plan
 ids are treated as operator-facing stale-plan compatibility errors with

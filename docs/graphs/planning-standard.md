@@ -83,7 +83,7 @@ completion behavior after the runtime finds an eligible open closure target.
 | `recon_blocked` | `RECON_BLOCKED` | `blocked` | Recon could not classify or safely hand off the probe. |
 | `manager_complete` | `MANAGER_COMPLETE` | `success` | Manager produced executable work items. |
 | `arbiter_complete` | `ARBITER_COMPLETE` | `success` | Arbiter judged the closure target complete. |
-| `remediation_needed` | `REMEDIATION_NEEDED` | `followup_needed` | Arbiter found closure gaps and the runtime creates remediation work. |
+| `remediation_needed` | `REMEDIATION_NEEDED` | `followup_needed` | Arbiter found closure gaps with current or revalidated evidence, and the runtime creates remediation work. |
 | `blocked` | `BLOCKED` | `blocked` | Planning could not recover autonomously. |
 
 ## Recovery Policies
@@ -118,6 +118,15 @@ Blocked recovery:
 - Pass terminal: `arbiter_complete`
 - Gap terminal: `remediation_needed`
 - Gap behavior: create a planning incident
+
+Arbiter closure requests include a runtime-authored closure evidence window.
+Arbiter reads that window before old verdict/report artifacts and records
+per-criterion evidence provenance as `fresh`, `revalidated`,
+`historical_only`, or `missing`. When same-lineage remediation is newer than
+the prior Arbiter verdict, historical-only evidence is context, not a current
+pass/fail basis. On the gap terminal, Arbiter writes remediation guidance in
+its verdict/report; runtime owns incident enqueueing, dedupe, and repeated
+remediation suppression.
 
 ## Selected By
 

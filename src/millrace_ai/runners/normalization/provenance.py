@@ -56,6 +56,7 @@ def request_metadata(request: StageRunRequest) -> dict[str, JsonValue]:
         "closure_target_root_source_id": request.closure_target_root_source_id,
         "closure_target_root_source_path": request.closure_target_root_source_path,
         "closure_target_root_idea_id": request.closure_target_root_idea_id,
+        "closure_evidence_window_path": request.closure_evidence_window_path,
         "preferred_rubric_path": request.preferred_rubric_path,
         "preferred_verdict_path": request.preferred_verdict_path,
         "preferred_report_path": request.preferred_report_path,

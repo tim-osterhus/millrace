@@ -10,9 +10,11 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from millrace_ai.contracts import (
+    ClosureEvidenceWindow,
     IncidentDecision,
     IncidentDocument,
     IncidentSeverity,
+    PlanningStageName,
     SpecDocument,
     StageResultEnvelope,
     TaskDocument,
@@ -45,11 +47,35 @@ def enqueue_handoff_incident(
 ) -> Path:
     queue = QueueStore(engine.paths)
     is_closure_target = _is_closure_target_result(stage_result)
+    trigger_metadata = _handoff_trigger_metadata(
+        engine,
+        stage_result,
+        runtime_created=is_closure_target,
+    )
     lineage = (
         _closure_target_lineage(stage_result)
         if is_closure_target
         else _source_work_item_lineage(engine, stage_result)
     )
+    if is_closure_target:
+        existing_incident = _existing_closure_remediation_incident(
+            engine,
+            root_spec_id=lineage.root_spec_id,
+            trigger_metadata=trigger_metadata,
+        )
+        if existing_incident is not None:
+            write_runtime_event(
+                engine.paths,
+                event_type="runtime_handoff_incident_deduped",
+                data={
+                    "source_work_item_id": stage_result.work_item_id,
+                    "root_spec_id": lineage.root_spec_id,
+                    "existing_destination": str(existing_incident.relative_to(engine.paths.root)),
+                    "previous_arbiter_run_id": trigger_metadata.get("previous_arbiter_run_id"),
+                    "previous_arbiter_request_id": trigger_metadata.get("previous_arbiter_request_id"),
+                },
+            )
+            return existing_incident
     incident_id = (
         f"arbiter-gap-{lineage.root_spec_id}-{uuid4().hex[:8]}"
         if is_closure_target and lineage.root_spec_id is not None
@@ -103,6 +129,8 @@ def enqueue_handoff_incident(
         references=(),
         opened_at=engine._now(),
         opened_by="runtime",
+        trigger_metadata=trigger_metadata,
+        created_by="millrace-runtime" if is_closure_target else None,
     )
     destination = queue.enqueue_incident(incident)
     write_runtime_event(
@@ -123,6 +151,101 @@ def enqueue_handoff_incident(
         },
     )
     return destination
+
+
+def _handoff_trigger_metadata(
+    engine: RuntimeEngine,
+    stage_result: StageResultEnvelope,
+    *,
+    runtime_created: bool,
+) -> dict[str, bool | str]:
+    if not runtime_created:
+        return {}
+    metadata: dict[str, bool | str] = {
+        "runtime_created": runtime_created,
+        "source_stage": stage_result.stage.value,
+        "arbiter_run_id": stage_result.run_id,
+    }
+    request_id = _metadata_string(stage_result, "request_id")
+    if request_id is not None:
+        metadata["arbiter_request_id"] = request_id
+    root_spec_id = _metadata_string(stage_result, "closure_target_root_spec_id")
+    if root_spec_id is not None:
+        metadata["closure_root_spec_id"] = root_spec_id
+    previous_arbiter = _closure_previous_arbiter(engine, stage_result)
+    if previous_arbiter.run_id is not None:
+        metadata["previous_arbiter_run_id"] = previous_arbiter.run_id
+    if previous_arbiter.request_id is not None:
+        metadata["previous_arbiter_request_id"] = previous_arbiter.request_id
+    return metadata
+
+
+@dataclass(frozen=True, slots=True)
+class _PreviousArbiter:
+    run_id: str | None = None
+    request_id: str | None = None
+
+
+def _closure_previous_arbiter(
+    engine: RuntimeEngine,
+    stage_result: StageResultEnvelope,
+) -> _PreviousArbiter:
+    window_path = _metadata_string(stage_result, "closure_evidence_window_path")
+    if window_path is None:
+        return _PreviousArbiter()
+    path = Path(window_path).expanduser()
+    if not path.is_absolute():
+        path = engine.paths.root / path
+    if not path.is_file():
+        return _PreviousArbiter()
+    try:
+        window = ClosureEvidenceWindow.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError):
+        return _PreviousArbiter()
+    return _PreviousArbiter(
+        run_id=window.previous_arbiter.run_id,
+        request_id=window.previous_arbiter.request_id,
+    )
+
+
+def _existing_closure_remediation_incident(
+    engine: RuntimeEngine,
+    *,
+    root_spec_id: str | None,
+    trigger_metadata: dict[str, bool | str],
+) -> Path | None:
+    if root_spec_id is None:
+        return None
+    previous_run_id = trigger_metadata.get("previous_arbiter_run_id")
+    previous_request_id = trigger_metadata.get("previous_arbiter_request_id")
+    if previous_run_id is None and previous_request_id is None:
+        return None
+    for directory in (
+        engine.paths.incidents_incoming_dir,
+        engine.paths.incidents_active_dir,
+        engine.paths.incidents_blocked_dir,
+        engine.paths.incidents_resolved_dir,
+    ):
+        for path in sorted(directory.glob("*.md")):
+            incident = _read_incident_document_at(path)
+            if incident is None:
+                continue
+            if incident.root_spec_id != root_spec_id:
+                continue
+            if incident.source_stage is not PlanningStageName.ARBITER:
+                continue
+            existing_metadata = incident.trigger_metadata
+            if existing_metadata.get("runtime_created") is not True:
+                continue
+            if previous_run_id is not None and existing_metadata.get("previous_arbiter_run_id") != previous_run_id:
+                continue
+            if (
+                previous_request_id is not None
+                and existing_metadata.get("previous_arbiter_request_id") != previous_request_id
+            ):
+                continue
+            return path
+    return None
 
 
 def _closure_target_lineage(stage_result: StageResultEnvelope) -> _HandoffLineage:
@@ -201,6 +324,13 @@ def _read_incident_document(engine: RuntimeEngine, incident_id: str) -> Incident
         ),
         model=IncidentDocument,
     )
+
+
+def _read_incident_document_at(path: Path) -> IncidentDocument | None:
+    try:
+        return read_work_document_as(path, model=IncidentDocument)
+    except (FileNotFoundError, ValidationError, ValueError):
+        return None
 
 
 def _read_first_existing_document(paths: tuple[Path, ...], *, model: type[_DocT]) -> _DocT | None:

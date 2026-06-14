@@ -363,7 +363,10 @@ generic `QueueFamilyInterpreter` path. The foreground claim order and
 closure-target inversion come from the compiled scheduler-policy interpreter.
 In shipped policy, incidents and Blueprint drafts can take precedence over
 probes/specs; while a closure target is open, claims are restricted to
-same-lineage Planning work.
+same-lineage Planning work. Matching Arbiter-authored repeated-remediation
+incident markdown is quarantined unless its `trigger_metadata` marks it
+`runtime_created`, so stale remediation-loop artifacts do not re-enter the
+claim set.
 
 **Compiled plan authority:** `compiled_plan.json` selects
 `planning.standard` or `planning.blueprint`, maps probe work to Recon, maps
@@ -561,7 +564,10 @@ incident-stage terminal result. Stage-result persistence and run-trace writers
 record the concrete route and artifacts.
 
 **Runtime mutation owner:** `runtime/handoff_incidents.py` materializes
-handoff incidents with inherited lineage. `runtime/closure_transitions.py`
+planning handoffs and runtime-owned closure-target Arbiter remediation
+incidents. Closure-target remediation incidents carry durable
+`created_by=millrace-runtime` and `trigger_metadata` provenance, while
+non-closure handoffs keep their existing path. `runtime/closure_transitions.py`
 handles Arbiter remediation incidents. Planning result application then moves
 the incident through active/resolved/blocked lifecycle and enqueues any
 validated generated follow-up work through runtime-owned effects.
@@ -572,8 +578,10 @@ closure-target latest verdict/report paths when Arbiter caused the incident.
 
 **Root-source contract:** runtime-created handoff incidents inherit
 `Root-Idea-ID`, `Root-Spec-ID`, `Source-Spec-ID`, and generic root-source
-metadata from the source work item or closure target. That inheritance keeps
-the incident visible to strict same-lineage selection after restart.
+metadata from the source work item or closure target. Closure-target Arbiter
+remediation incidents also record source stage, current Arbiter run/request
+IDs, previous Arbiter run/request IDs when known, and closure root spec ID so
+strict same-lineage selection and dedupe survive restart.
 
 ### Self-Contained Intake Artifact Flow
 

@@ -24,6 +24,11 @@
     "auditor": "pi_rpc",
     "arbiter": "pi_rpc"
   },
+  "model_assignment": {
+    "by_stage": {
+      "arbiter": "deep"
+    }
+  },
   "recovery_policy_ids": [
     "execution.blocked_recovery_heavy",
     "planning.blocked_recovery_heavy"

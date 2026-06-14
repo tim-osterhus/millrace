@@ -148,6 +148,8 @@ _INCIDENT_SCHEMA = _DocumentSchema(
         ("Consultant-Decision", "consultant_decision"),
         ("Opened-At", "opened_at"),
         ("Opened-By", "opened_by"),
+        ("Trigger-Metadata", "trigger_metadata"),
+        ("Created-By", "created_by"),
         ("Updated-At", "updated_at"),
     ),
     list_fields=(

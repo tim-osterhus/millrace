@@ -550,6 +550,21 @@ Blueprint monitoring checklist:
 - Diagnose `blueprint_manifest_duplicate` by comparing `manifest_id` and
   normalized manifest content. Do not block or edit solely because two
   manifests share `root_spec_id`; that is normal same-lineage remediation.
+- For Arbiter closure audits, inspect the request's
+  `closure_evidence_window_path` before trusting older verdicts or reports.
+  Criterion evidence provenance values mean: `fresh` was collected for the
+  current audit, `revalidated` was explicitly checked against the current source
+  tree, `historical_only` is pre-watermark context, and `missing` cannot support
+  a current pass/fail decision. After newer same-lineage remediation exists,
+  historical-only evidence is not enough to close a target.
+- Treat Arbiter remediation as runtime-owned. Arbiter reports gaps and
+  remediation guidance; the runtime creates closure remediation incidents with
+  `created_by=millrace-runtime` and `trigger_metadata.runtime_created=true`.
+  A `closure_repeated_remediation_blocked` status means the repeated-remediation
+  guard detected a planning-only remediation loop or stale remediation-loop
+  evidence. Do not work around it by hand-adding Arbiter-authored incoming
+  incident files; inspect the latest Arbiter report, the freshness window, and
+  same-lineage execution completions.
 - Manager Blueprint runtime-effect failures route by class. The shipped policy
   blocks missing, malformed, schema-invalid, or manifest/draft-mismatched
   pre-mutation outputs conservatively, the same as duplicate manifest ids,

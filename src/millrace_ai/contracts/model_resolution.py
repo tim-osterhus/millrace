@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from millrace_ai import contracts as _contracts_module
 
 _SCHEMA_ID_TO_MODEL_NAME: dict[str, str] = {
+    "arbiter_verdict_v1": "ArbiterVerdict",
     "incident_document_v1": "IncidentDocument",
     "learning_request_document_v1": "LearningRequestDocument",
     "planner_disposition_document_v1": "PlannerDispositionDocument",

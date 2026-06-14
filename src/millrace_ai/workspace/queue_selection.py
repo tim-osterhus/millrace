@@ -14,11 +14,14 @@ from millrace_ai.assets import load_builtin_workflow_primitives
 from millrace_ai.contracts import (
     IncidentDocument,
     Plane,
+    PlanningStageName,
     SpecDocument,
     TaskDocument,
 )
 from millrace_ai.contracts.model_resolution import resolve_contract_model
 from millrace_ai.errors import QueueStateError
+from millrace_ai.events import find_latest_runtime_event
+from millrace_ai.state_store import load_snapshot
 
 from .lineage_integrity import effective_root_spec_id
 from .paths import WorkspacePaths
@@ -49,6 +52,7 @@ def claim_next_for_family(
         family_id,
         root_spec_id=root_spec_id,
         document_validator=_make_pydantic_document_validator(
+            paths,
             family_id,
             families=families,
         ),
@@ -339,6 +343,7 @@ def _lineage_scan_specs(
 
 
 def _make_pydantic_document_validator(
+    paths: WorkspacePaths,
     family_id: str,
     *,
     families: tuple[WorkItemFamilyDefinition, ...] | None = None,
@@ -361,16 +366,75 @@ def _make_pydantic_document_validator(
             return True, None  # Raced away; don't quarantine
         except (OSError, UnicodeDecodeError) as exc:
             return False, str(exc)
+        document = None
         try:
             if path.suffix == ".json":
                 model_cls.model_validate_json(raw)
             else:
-                parse_work_document_as(raw, model=model_cls, path=path)
+                document = parse_work_document_as(raw, model=model_cls, path=path)
         except Exception as exc:
             return False, str(exc)
+        if (
+            family_id == "incident"
+            and isinstance(document, IncidentDocument)
+            and _is_quarantined_repeated_remediation_incident(paths, document)
+        ):
+            return False, "arbiter-authored closure remediation incident blocked by repeated-remediation guard"
         return True, None
 
     return _validate
+
+
+def _is_quarantined_repeated_remediation_incident(
+    paths: WorkspacePaths,
+    incident: IncidentDocument,
+) -> bool:
+    """Identify Arbiter-authored closure remediation files that bypass runtime guards."""
+    if incident.source_stage is not PlanningStageName.ARBITER:
+        return False
+    if incident.trigger_metadata.get("runtime_created") is True:
+        return False
+    if incident.created_by == "millrace-runtime":
+        return False
+    if incident.root_spec_id is None:
+        return False
+
+    try:
+        snapshot = load_snapshot(paths)
+    except (OSError, ValueError):
+        return False
+    if snapshot.current_failure_class != "closure_repeated_remediation_without_execution":
+        return False
+
+    blocker = find_latest_runtime_event(
+        paths,
+        lambda event: event.event_type == "closure_repeated_remediation_blocked",
+    )
+    if blocker is None:
+        return False
+    if blocker.data.get("root_spec_id") != incident.root_spec_id:
+        return False
+
+    incident_root = incident.trigger_metadata.get("closure_root_spec_id")
+    if isinstance(incident_root, str) and incident_root != incident.root_spec_id:
+        return False
+
+    blocker_run_id = blocker.data.get("run_id")
+    incident_run_id = incident.trigger_metadata.get("arbiter_run_id")
+    if isinstance(incident_run_id, str) and isinstance(blocker_run_id, str):
+        if incident_run_id != blocker_run_id:
+            return False
+    elif isinstance(blocker_run_id, str) and incident.related_run_ids:
+        if blocker_run_id not in incident.related_run_ids:
+            return False
+
+    blocker_request_id = blocker.data.get("request_id")
+    incident_request_id = incident.trigger_metadata.get("arbiter_request_id")
+    if isinstance(incident_request_id, str) and isinstance(blocker_request_id, str):
+        if incident_request_id != blocker_request_id:
+            return False
+
+    return True
 
 
 def _family_by_id(

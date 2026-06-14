@@ -6,7 +6,16 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from millrace_ai.contracts import ClosureTargetState, Plane, StageResultEnvelope
+from pydantic import ValidationError
+
+from millrace_ai.contracts import (
+    ArbiterVerdict,
+    ClosureEvidenceWindow,
+    ClosureTargetState,
+    Plane,
+    RuntimeSnapshot,
+    StageResultEnvelope,
+)
 from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.errors import QueueStateError
 from millrace_ai.events import iter_runtime_events, write_runtime_event
@@ -20,8 +29,10 @@ from .active_runs import snapshot_without_active_plane
 from .handoff_incidents import enqueue_handoff_incident
 
 if TYPE_CHECKING:
-    from millrace_ai.contracts import RuntimeSnapshot
     from millrace_ai.runtime.engine import RuntimeEngine
+
+_REPEATED_REMEDIATION_FAILURE_CLASS = "closure_repeated_remediation_without_execution"
+_REPEATED_REMEDIATION_BLOCK_REASON = "closure_repeated_remediation_guard"
 
 
 def apply_closure_target_router_decision(
@@ -41,6 +52,29 @@ def apply_closure_target_router_decision(
         "closure_blocked_by_lineage_work": False,
         "blocking_work_ids": (),
     }
+
+    if (
+        decision.action in {RouterAction.IDLE, RouterAction.HANDOFF}
+        and _has_insufficient_fresh_verdict_evidence(
+            engine,
+            stage_result=stage_result,
+            latest_verdict_path=target_update["latest_verdict_path"],
+        )
+    ):
+        updated_target = target.model_copy(
+            update={
+                **target_update,
+                "closure_open": True,
+                "closed_at": None,
+            }
+        )
+        save_closure_target_state(engine.paths, updated_target)
+        _block_insufficient_fresh_verdict_evidence(
+            engine,
+            stage_result=stage_result,
+            root_spec_id=target.root_spec_id,
+        )
+        return
 
     if decision.action is RouterAction.IDLE:
         updated_target = target.model_copy(
@@ -147,7 +181,7 @@ def _block_repeated_remediation_without_execution(
     root_spec_id: str,
 ) -> None:
     assert engine.snapshot is not None
-    failure_class = "closure_repeated_remediation_without_execution"
+    failure_class = _REPEATED_REMEDIATION_FAILURE_CLASS
     engine.snapshot = _cleared_closure_active_snapshot(
         engine,
         current_failure_class=failure_class,
@@ -167,8 +201,118 @@ def _block_repeated_remediation_without_execution(
             "root_spec_id": root_spec_id,
             "failure_class": failure_class,
             "run_id": stage_result.run_id,
+            "request_id": _metadata_string(stage_result, "request_id"),
         },
     )
+
+
+def _block_insufficient_fresh_verdict_evidence(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    root_spec_id: str,
+) -> None:
+    assert engine.snapshot is not None
+    failure_class = "closure_insufficient_fresh_arbiter_evidence"
+    engine.snapshot = _cleared_closure_active_snapshot(
+        engine,
+        current_failure_class=failure_class,
+        planning_status_marker="### BLOCKED",
+    )
+    save_snapshot(engine.paths, engine.snapshot)
+    engine._set_plane_status_marker(
+        plane=Plane.PLANNING,
+        marker="### BLOCKED",
+        run_id=stage_result.run_id,
+        source="closure_fresh_evidence_guard",
+    )
+    write_runtime_event(
+        engine.paths,
+        event_type="closure_fresh_evidence_blocked",
+        data={
+            "root_spec_id": root_spec_id,
+            "failure_class": failure_class,
+            "run_id": stage_result.run_id,
+        },
+    )
+
+
+def repeated_remediation_effective_router_decision(
+    snapshot: RuntimeSnapshot | None,
+    decision: RouterDecision,
+) -> RouterDecision:
+    if snapshot is None:
+        return decision
+    if snapshot.current_failure_class != _REPEATED_REMEDIATION_FAILURE_CLASS:
+        return decision
+    if decision.action is not RouterAction.HANDOFF:
+        return decision
+    return RouterDecision(
+        action=RouterAction.BLOCKED,
+        next_plane=None,
+        next_stage=None,
+        reason=_REPEATED_REMEDIATION_BLOCK_REASON,
+        failure_class=_REPEATED_REMEDIATION_FAILURE_CLASS,
+    )
+
+
+def _has_insufficient_fresh_verdict_evidence(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    latest_verdict_path: object,
+) -> bool:
+    window = _load_closure_evidence_window(engine, stage_result)
+    if window is None or not window.completed_lineage_evidence:
+        return False
+
+    verdict = _load_arbiter_verdict(engine, latest_verdict_path)
+    if verdict is None:
+        return True
+
+    current_provenance = set(window.stale_evidence_policy.current_decision_provenance)
+    decision_provenance = verdict.decision_provenance
+    if not decision_provenance:
+        return True
+    return not all(provenance in current_provenance for provenance in decision_provenance)
+
+
+def _load_closure_evidence_window(
+    engine: RuntimeEngine,
+    stage_result: StageResultEnvelope,
+) -> ClosureEvidenceWindow | None:
+    window_path = _metadata_string(stage_result, "closure_evidence_window_path")
+    if window_path is None:
+        return None
+    path = _resolve_workspace_path(engine, window_path)
+    if not path.is_file():
+        return None
+    try:
+        return ClosureEvidenceWindow.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError):
+        return None
+
+
+def _load_arbiter_verdict(
+    engine: RuntimeEngine,
+    latest_verdict_path: object,
+) -> ArbiterVerdict | None:
+    if not isinstance(latest_verdict_path, str) or not latest_verdict_path:
+        return None
+    path = _resolve_workspace_path(engine, latest_verdict_path)
+    if not path.is_file():
+        return None
+    try:
+        return ArbiterVerdict.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError):
+        return None
+
+
+def _resolve_workspace_path(engine: RuntimeEngine, value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = engine.paths.root / path
+    return path
 
 
 def _cleared_closure_active_snapshot(
@@ -240,4 +384,7 @@ def _canonicalize_arbiter_report(engine: RuntimeEngine, stage_result: StageResul
     return str(destination.relative_to(engine.paths.root))
 
 
-__all__ = ["apply_closure_target_router_decision"]
+__all__ = [
+    "apply_closure_target_router_decision",
+    "repeated_remediation_effective_router_decision",
+]

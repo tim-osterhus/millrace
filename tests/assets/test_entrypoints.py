@@ -1119,6 +1119,15 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     assert "marathon-qa-audit" in stage_to_body["arbiter"]
     assert "if no rubric exists yet" in stage_to_body["arbiter"].lower()
     assert "full-band audit" in stage_to_body["arbiter"].lower()
+    assert "closure_evidence_window_path" in stage_to_body["arbiter"]
+    assert "freshness window" in stage_to_body["arbiter"].lower()
+    assert "pre-watermark" in stage_to_body["arbiter"].lower()
+    assert "fresh" in stage_to_body["arbiter"]
+    assert "revalidated" in stage_to_body["arbiter"]
+    assert "historical_only" in stage_to_body["arbiter"]
+    assert "missing" in stage_to_body["arbiter"]
+    assert "Do not write files under `millrace-agents/incidents/incoming/`" in stage_to_body["arbiter"]
+    assert "write one bespoke remediation incident payload" not in stage_to_body["arbiter"]
 
     assert "summary_status_path" in stage_to_body["checker"]
     assert "summary_status_path" in stage_to_body["integrator"]
@@ -1147,6 +1156,17 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     assert "generated_task.json" in stage_to_body["evaluator_blueprint"]
     assert "mechanic_report.md" in stage_to_body["mechanic_blueprint"]
     assert "repaired blueprint packet" in stage_to_body["mechanic_blueprint"].lower()
+
+    arbiter_core = (SKILLS_DIR / "stage" / "planning" / "arbiter-core" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "closure evidence freshness window" in arbiter_core
+    assert "before old verdict/report artifacts" in arbiter_core
+    assert "fresh" in arbiter_core
+    assert "revalidated" in arbiter_core
+    assert "historical_only" in arbiter_core
+    assert "missing" in arbiter_core
+    assert "Do not write closure remediation incident files" in arbiter_core
 
     shipped_skill_ids = _load_shipped_skill_asset_ids()
     assert "skills-readme" in shipped_skill_ids

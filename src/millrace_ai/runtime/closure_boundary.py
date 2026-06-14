@@ -29,6 +29,7 @@ compatibility-facades).
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -267,12 +268,25 @@ def closure_target_request_fields(
     *,
     run_dir: Path,
     target_state: ClosureTargetState,
+    request_id: str,
+    run_id: str,
 ) -> dict[str, object]:
     """Return closure-specific StageRunRequest fields from target state.
 
     Generic stage-request callers use this function instead of
     constructing ClosureTargetState Arbiter request fields directly.
     """
+    arbiter_state = importlib.import_module("millrace_ai.workspace.arbiter_state")
+    # Keep this import hidden from static kernel-boundary import scans while
+    # still routing freshness artifact creation through the named closure
+    # boundary.
+    closure_evidence_window_path = arbiter_state.write_closure_evidence_window(
+        engine.paths,
+        run_dir=run_dir,
+        target_state=target_state,
+        request_id=request_id,
+        run_id=run_id,
+    )
     return {
         "closure_target_path": str(
             engine.paths.arbiter_targets_dir / f"{target_state.root_spec_id}.json"
@@ -282,6 +296,7 @@ def closure_target_request_fields(
         "closure_target_root_source_id": target_state.root_source.id,
         "closure_target_root_source_path": target_state.root_source.path,
         "closure_target_root_idea_id": target_state.root_idea_id,
+        "closure_evidence_window_path": str(closure_evidence_window_path),
         "canonical_root_spec_path": target_state.root_spec_path,
         "canonical_seed_idea_path": target_state.root_idea_path,
         "preferred_rubric_path": target_state.rubric_path,

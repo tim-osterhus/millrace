@@ -340,6 +340,9 @@ def test_default_request_context_uses_closure_target_ref_without_active_work_ite
         closure_target_root_source_id="idea-001",
         closure_target_root_source_path="ideas/done/idea-001.md",
         closure_target_root_idea_id="idea-001",
+        closure_evidence_window_path=(
+            "millrace-agents/runs/run-closure-001/closure_evidence_window.json"
+        ),
         canonical_root_spec_path="millrace-agents/arbiter/contracts/root-specs/spec-root-001.md",
         canonical_seed_idea_path="millrace-agents/arbiter/contracts/ideas/idea-001.md",
         preferred_rubric_path="millrace-agents/arbiter/rubrics/spec-root-001.md",

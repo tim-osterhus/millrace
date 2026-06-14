@@ -26,6 +26,11 @@
     "auditor": "codex_cli",
     "arbiter": "codex_cli"
   },
+  "model_assignment": {
+    "by_stage": {
+      "arbiter": "deep"
+    }
+  },
   "scheduler_policy_id": "default.two_plane.blueprint",
   "required_extensions": [
     {"extension_package_id": "millrace.generic"},

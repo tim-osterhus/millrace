@@ -168,7 +168,7 @@ the generic interpreter or its declared adapter.
 - `src/millrace_ai/workspace/initialization.py`: explicit `millrace init` workspace baseline orchestration and the `bootstrap_workspace` compatibility alias.
 - `src/millrace_ai/workspace/baseline.py`: managed baseline manifests and upgrade classification.
 - `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/probe/spec/incident/learning-request documents.
-- `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents.
+- `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents; `queue_selection.py` quarantines matching Arbiter-authored repeated-remediation incident markdown unless it carries runtime-created provenance.
 - `src/millrace_ai/workspace/work_item_adapters.py`: family-aware document
   adapters for built-in queue work documents.
 - `src/millrace_ai/workspace/queue_lifecycle.py`: interpreter that applies
@@ -308,7 +308,7 @@ the generic interpreter or its declared adapter.
 - `src/millrace_ai/runtime/result_application.py`: stable façade over routed post-stage mutation helpers and ordinary source work-item lifecycle application.
 - `src/millrace_ai/runtime/result_counters.py`: recovery-counter entry mutation, normalized terminal-outcome comparisons, and snapshot counter increments.
 - `src/millrace_ai/runtime/work_item_transitions.py`: non-closure work-item completion, blocked transitions, terminal-action-driven source lifecycle application, explicit non-mutating terminal-action clearing, and active-snapshot clearing.
-- `src/millrace_ai/runtime/handoff_incidents.py`: planning-handoff and arbiter-gap incident materialization, including source work-item lineage inheritance and terminal-action failure-class defaults for runtime-created handoff incidents.
+- `src/millrace_ai/runtime/handoff_incidents.py`: planning-handoff and closure-target arbiter-gap incident materialization, including source work-item lineage inheritance, runtime-created provenance fields (`created_by`, `trigger_metadata`, source stage, Arbiter run/request IDs, closure root spec, previous Arbiter run/request IDs when known), and dedupe across incoming, active, blocked, and resolved incident queues.
 - `src/millrace_ai/runtime/recon_transitions.py`: Recon packet persistence and runtime-operation-driven probe-to-task/spec/no-op/blocked mutation. Recon route selection resolves the registered `runtime_operation_id` from the compiled terminal action against the compiled runtime operation registry; the fixed `_TERMINAL_ACTION_RUNTIME_OPERATION_IDS` whitelist has been removed from active source.
 - `src/millrace_ai/runtime/stage_result_persistence.py`: persisted stage-result JSON writes and plane status-marker updates.
 - `src/millrace_ai/runtime/learning_triggers.py`: compiler-frozen learning-trigger evaluation and learning-request enqueueing.
@@ -740,8 +740,10 @@ Idle:
 - If Consultant or another routed stage escalates a same-lineage work item back
   into planning while a closure target is open, the runtime-created handoff
   incident inherits `Root-Idea-ID`, `Root-Spec-ID`, and `Source-Spec-ID` from
-  the source work document before it is enqueued. That keeps the incident
-  visible to the strict closure-scoped planning selector.
+  the source work document before it is enqueued; runtime-owned closure-target
+  Arbiter remediation incidents also carry durable provenance and dedupe keys
+  when the gap path is used. That keeps the incident visible to the strict
+  closure-scoped planning selector.
 - If a stage-authored same-ID continuation bypassed queue API uniqueness and
   later reaches `tasks/done/`, the task transition layer retires a same-root
   stale predecessor from `tasks/blocked/` into
@@ -762,7 +764,17 @@ Idle:
 - If Arbiter asks for remediation more than once without any intervening
   execution-stage completion, runtime blocks with
   `closure_repeated_remediation_without_execution` instead of opening another
-  planning incident.
+  planning incident. Status, monitor, and diagnostics surface the blocker as
+  `closure_repeated_remediation_guard` / `closure_repeated_remediation_without_execution`
+  so it reads as stale remediation-loop evidence rather than a fresh source
+  failure.
+- Arbiter closure requests carry a compact closure evidence window under the
+  run directory. Arbiter reads that window before previous verdict/report
+  artifacts and must mark criterion evidence provenance as `fresh`,
+  `revalidated`, `historical_only`, or `missing`. Runtime accepts current
+  closure decisions after same-lineage remediation only from fresh or
+  revalidated criterion evidence; historical-only evidence remains audit
+  context.
 
 Usage governance notes:
 

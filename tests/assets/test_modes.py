@@ -592,7 +592,7 @@ def test_learning_codex_integrated_compiles_with_learning_plane(tmp_path: Path) 
 
 
 def _compile_mode(tmp_path: Path, mode_id: str, **config_kwargs) -> "CompiledRunPlan":
-    workspace_root = tmp_path / "workspace"
+    workspace_root = tmp_path / f"workspace-{mode_id}"
     bootstrap_workspace(workspace_root)
 
     outcome = compile_and_persist_workspace_plan(
@@ -616,6 +616,40 @@ def _stage_kind_ids(plan: "CompiledRunPlan") -> set[str]:
         for graph in plan.graphs_by_plane.values()
         for node in graph.nodes
     }
+
+
+def test_shipped_closure_modes_assign_arbiter_explicit_high_reasoning_alias(
+    tmp_path: Path,
+) -> None:
+    expected_alias_by_mode = {
+        "efficient_learning_mixed": "codex_max",
+    }
+
+    for mode_id in (*SHIPPED_MODE_IDS, "recovery_heavy_millrace"):
+        mode = load_builtin_mode_definition(mode_id)
+        assert mode.model_assignment.by_stage["arbiter"] == expected_alias_by_mode.get(
+            mode_id,
+            "deep",
+        )
+
+        plan = _compile_mode(tmp_path, mode_id)
+        arbiter_nodes = [
+            node
+            for graph in plan.graphs_by_plane.values()
+            for node in graph.nodes
+            if node.stage_kind_id == "arbiter"
+        ]
+        assert len(arbiter_nodes) == 1
+        arbiter = arbiter_nodes[0]
+        expected_alias = expected_alias_by_mode.get(mode_id, "deep")
+        assert arbiter.model_assignment_alias_id == expected_alias
+        assert arbiter.model_assignment_source == "mode:stage:arbiter"
+        assert arbiter.model_name is not None
+        assert arbiter.thinking_level in {"xhigh", "max"}
+        if arbiter.runner_name == "codex_cli":
+            assert arbiter.model_reasoning_effort == arbiter.thinking_level
+        else:
+            assert arbiter.model_reasoning_effort is None
 
 
 def test_config_swap_minimal_three_plane_compiles_without_blueprint_recon_closure_or_learning(

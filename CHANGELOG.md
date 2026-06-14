@@ -29,6 +29,12 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Changed
 
+- Tightened Arbiter closure freshness discipline: Arbiter prompts now require
+  reading the runtime-authored freshness window before old verdict/report
+  artifacts, per-criterion evidence provenance, and runtime-owned closure
+  remediation enqueueing. Shipped closure-capable modes now assign Arbiter via
+  an explicit high-depth model alias so missing or downgraded assignment is
+  visible in compile diagnostics.
 - Made the pure graph-authority cleanup explicit as a breaking `0.20.x`
   contract: runtime decisions require compiled graph, extension, policy,
   lifecycle, runtime-effect, queue-family, and artifact-contract metadata.
@@ -77,6 +83,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Documentation
 
+- Documented closure freshness windows, historical versus current Arbiter
+  evidence, runtime-owned remediation incidents, repeated-remediation guard
+  interpretation, and operator diagnosis for `closure_repeated_remediation_blocked`.
 - Updated `README.md`, `ROADMAP.md`, graph docs, runtime docs, source package
   map, and maintenance registers to accurately describe the generic engine
   boundary, extension-backed domains, compatibility-only surfaces, fixture

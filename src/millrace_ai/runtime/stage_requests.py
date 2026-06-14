@@ -260,6 +260,8 @@ def build_closure_target_stage_run_request(
         engine,
         run_dir=run_dir,
         target_state=target_state,
+        request_id=request_id,
+        run_id=run_id,
     )
     request = StageRunRequest(
         request_id=request_id,

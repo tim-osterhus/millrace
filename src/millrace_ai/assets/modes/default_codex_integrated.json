@@ -25,6 +25,11 @@
     "auditor": "codex_cli",
     "arbiter": "codex_cli"
   },
+  "model_assignment": {
+    "by_stage": {
+      "arbiter": "deep"
+    }
+  },
   "required_extensions": [
     {"extension_package_id": "millrace.generic"},
     {"extension_package_id": "millrace.recon"},
