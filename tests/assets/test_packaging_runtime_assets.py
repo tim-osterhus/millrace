@@ -51,24 +51,24 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
 
     assert entries
     required_assets = {
-        "millrace_ai/assets/entrypoints/execution/builder.md",
-        "millrace_ai/assets/entrypoints/execution/integrator.md",
+        "millrace_ai/assets/entrypoints/execution/lad_builder.md",
+        "millrace_ai/assets/entrypoints/execution/lad_integrator.md",
         "millrace_ai/assets/entrypoints/learning/librarian.md",
-        "millrace_ai/assets/entrypoints/planning/planner.md",
-        "millrace_ai/assets/graphs/execution/standard.json",
-        "millrace_ai/assets/graphs/execution/with_integrator.json",
-        "millrace_ai/assets/graphs/planning/standard.json",
-        "millrace_ai/assets/loops/execution/default.json",
-        "millrace_ai/assets/loops/execution/with_integrator.json",
-        "millrace_ai/assets/modes/default_codex.json",
-        "millrace_ai/assets/modes/default_codex_integrated.json",
-        "millrace_ai/assets/modes/default_pi.json",
-        "millrace_ai/assets/modes/efficient_learning_mixed.json",
-        "millrace_ai/assets/modes/" "blueprint_" "learning_codex" ".json",
-        "millrace_ai/assets/registry/stage_kinds/execution/builder.json",
-        "millrace_ai/assets/registry/stage_kinds/execution/integrator.json",
+        "millrace_ai/assets/entrypoints/planning/lad_planner.md",
+        "millrace_ai/assets/graphs/execution/lad.json",
+        "millrace_ai/assets/graphs/execution/lad_integrator.json",
+        "millrace_ai/assets/graphs/planning/lad.json",
+        "millrace_ai/assets/loops/execution/lad.json",
+        "millrace_ai/assets/loops/execution/lad_integrator.json",
+        "millrace_ai/assets/modes/lad_codex.json",
+        "millrace_ai/assets/modes/lad_codex_integrated.json",
+        "millrace_ai/assets/modes/lad_pi.json",
+        "millrace_ai/assets/modes/efficient_learning_lad_mixed.json",
+        "millrace_ai/assets/modes/" "blueprint_" "learning_lad_codex" ".json",
+        "millrace_ai/assets/registry/stage_kinds/execution/lad_builder.json",
+        "millrace_ai/assets/registry/stage_kinds/execution/lad_integrator.json",
         "millrace_ai/assets/registry/stage_kinds/learning/librarian.json",
-        "millrace_ai/assets/registry/stage_kinds/planning/arbiter.json",
+        "millrace_ai/assets/registry/stage_kinds/planning/lad_arbiter.json",
         "millrace_ai/assets/registry/document_adapters/builtin_markdown_v1.json",
         "millrace_ai/assets/registry/lifecycle_mutation_plans/default_lifecycle_mutations.json",
         "millrace_ai/assets/registry/queue_claim_policies/default_queue_claim_policies.json",
@@ -96,6 +96,13 @@ def test_wheel_includes_runtime_assets(tmp_path: Path) -> None:
         "millrace_ai/assets/skills/stage/planning/planner-core/SKILL.md",
     }
     assert required_assets.issubset(entries)
+    removed_assets = {
+        "millrace_ai/assets/modes/default_codex.json",
+        "millrace_ai/assets/graphs/execution/standard.json",
+        "millrace_ai/assets/registry/stage_kinds/execution/builder.json",
+        "millrace_ai/assets/entrypoints/execution/builder.md",
+    }
+    assert not removed_assets & entries
     assert "millrace_ai/py.typed" in wheel_names
     assert all(not name.startswith("millrace_ai/assets/roles/") for name in entries)
     assert all(not name.startswith("millrace_ai/web/") for name in wheel_names)

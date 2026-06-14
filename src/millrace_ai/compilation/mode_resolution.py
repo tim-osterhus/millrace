@@ -8,7 +8,7 @@ from millrace_ai.assets import resolve_builtin_mode_id
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.paths import WorkspacePaths, workspace_paths
 
-DEFAULT_MODE_ID = "default_codex"
+DEFAULT_MODE_ID = "lad_codex"
 
 
 def resolve_mode_id(requested_mode_id: str | None, config: RuntimeConfig) -> str:

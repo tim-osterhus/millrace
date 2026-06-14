@@ -85,12 +85,12 @@ def _add_updater_alias_terminal(
     *,
     terminal_action_id: str = "complete_work_item",
 ) -> None:
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["nodes"].append(
         {
             "node_id": "updater_alias",
-            "stage_kind_id": "updater",
+            "stage_kind_id": "lad_updater",
             "request_context_profile_id": "updater.default",
             "context_render_plan_id": "stage_request.default.v1",
         }
@@ -131,7 +131,7 @@ def _diagnostic_text(outcome) -> str:
 
 def test_compile_requires_terminal_state_action_id(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["terminal_states"][0].pop("terminal_action_id", None)
     _write_json(graph_path, payload)
@@ -148,7 +148,7 @@ def test_compile_requires_terminal_state_action_id(tmp_path: Path) -> None:
 
 def test_compile_rejects_terminal_state_unknown_action_id(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["terminal_states"][0]["terminal_action_id"] = "missing_terminal_action"
     _write_json(graph_path, payload)
@@ -165,7 +165,7 @@ def test_compile_rejects_terminal_state_unknown_action_id(tmp_path: Path) -> Non
 
 def test_compile_rejects_terminal_state_action_class_mismatch(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["terminal_states"][0]["terminal_action_id"] = "block_work_item"
     _write_json(graph_path, payload)
@@ -261,7 +261,7 @@ def test_compile_accepts_stage_kind_scope_for_distinct_graph_nodes(
             "kind": "lifecycle_mutation_plan",
             "plan_id": "test_alias_complete",
             "source_scope": "stage_kind",
-            "source_stage_kind_id": "updater",
+            "source_stage_kind_id": "lad_updater",
             "outcome_scope": "outcome",
             "outcome_id": "UPDATE_COMPLETE",
             "source_family_scope": "any",
@@ -447,7 +447,7 @@ def test_compile_rejects_threshold_exhaustion_lifecycle_outcome_mismatch(
             "router_consequence": "blocked",
         },
     )
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     payload = _load_json(graph_path)
     payload["terminal_states"].append(
         {
@@ -507,7 +507,7 @@ def test_compile_rejects_runtime_failure_exhaustion_without_any_outcome(
             "router_consequence": "blocked",
         },
     )
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     payload = _load_json(graph_path)
     payload["terminal_states"].append(
         {
@@ -552,7 +552,7 @@ def test_compile_rejects_non_mutating_terminal_action_for_reachable_source(
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     payload = _load_json(graph_path)
     for terminal_state in payload["terminal_states"]:
         if terminal_state["terminal_state_id"] == "recon_noop":

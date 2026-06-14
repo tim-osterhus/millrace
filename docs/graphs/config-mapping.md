@@ -11,31 +11,31 @@ publicly declared in `SHIPPED_MODE_IDS`; three (`minimal_three_plane`,
 `recovery_heavy_millrace`, and `generic_two_plane_fixture`) are fixtures
 discoverable through asset discovery but not in the shipped defaults list.
 
-### Two-Plane Standard Modes (execution + planning)
+### Two-Plane LAD Modes (execution + planning)
 
 | # | Mode ID | Loops | Runner | Extensions | Shipped? |
 |---|---------|-------|--------|------------|----------|
-| 1 | `default_codex` | execution.standard, planning.standard | codex_cli | generic, recon, closure | Yes |
-| 2 | `default_pi` | execution.standard, planning.standard | pi_rpc | generic, recon, closure | Yes |
-| 3 | `default_codex_integrated` | execution.with_integrator, planning.standard | codex_cli | generic, recon, closure | Yes |
-| 4 | `blueprint_codex` | execution.standard, planning.blueprint | codex_cli | generic, recon, closure, blueprint | Yes |
+| 1 | `lad_codex` | execution.lad, planning.lad | codex_cli | generic, recon, closure | Yes |
+| 2 | `lad_pi` | execution.lad, planning.lad | pi_rpc | generic, recon, closure | Yes |
+| 3 | `lad_codex_integrated` | execution.lad_integrator, planning.lad | codex_cli | generic, recon, closure | Yes |
+| 4 | `blueprint_lad_codex` | execution.lad, planning.blueprint | codex_cli | generic, recon, closure, blueprint | Yes |
 
 ### Three-Plane Learning Modes (execution + planning + learning)
 
 | # | Mode ID | Loops | Runner | Extensions | Shipped? |
 |---|---------|-------|--------|------------|----------|
-| 5 | `learning_codex` | execution.standard, planning.standard, learning.standard | codex_cli | generic, recon, closure, learning | Yes |
-| 6 | `learning_pi` | execution.standard, planning.standard, learning.standard | pi_rpc | generic, recon, closure, learning | Yes |
-| 7 | `efficient_learning_mixed` | execution.standard, planning.standard, learning.standard | mixed | generic, recon, closure, learning | Yes |
-| 8 | `learning_codex_integrated` | execution.with_integrator, planning.standard, learning.standard | codex_cli | generic, recon, closure, learning | Yes |
-| 9 | `blueprint_learning_codex` | execution.standard, planning.blueprint, learning.standard | codex_cli | generic, recon, closure, blueprint, learning | Yes |
+| 5 | `learning_lad_codex` | execution.lad, planning.lad, learning.standard | codex_cli | generic, recon, closure, learning | Yes |
+| 6 | `learning_lad_pi` | execution.lad, planning.lad, learning.standard | pi_rpc | generic, recon, closure, learning | Yes |
+| 7 | `efficient_learning_lad_mixed` | execution.lad, planning.lad, learning.standard | mixed | generic, recon, closure, learning | Yes |
+| 8 | `learning_lad_codex_integrated` | execution.lad_integrator, planning.lad, learning.standard | codex_cli | generic, recon, closure, learning | Yes |
+| 9 | `blueprint_learning_lad_codex` | execution.lad, planning.blueprint, learning.standard | codex_cli | generic, recon, closure, blueprint, learning | Yes |
 
 ### Fixture Modes (Discoverable, Not In SHIPPED_MODE_IDS)
 
 | # | Mode ID | Loops | Runner | Extensions | Shipped? |
 |---|---------|-------|--------|------------|----------|
 | 10 | `minimal_three_plane` | execution.minimal_three_plane, planning.minimal_three_plane, learning.minimal_three_plane | pi_rpc | generic | No (fixture) |
-| 11 | `recovery_heavy_millrace` | execution.standard, planning.standard | pi_rpc | generic, recon, closure | No (fixture) |
+| 11 | `recovery_heavy_millrace` | execution.lad, planning.lad | pi_rpc | generic, recon, closure | No (fixture) |
 | 12 | `generic_two_plane_fixture` | execution.minimal_three_plane, planning.minimal_three_plane | pi_rpc | generic | No (fixture) |
 
 ## Conceptual Config Mapping
@@ -58,36 +58,36 @@ or dedicated fixture packages:
 ### 2. `standard_millrace`
 
 - **Status**: Documented alias.
-- **Mapping**: Alias `standard_millrace` → canonical mode ID `default_pi`.
-- **Description**: Standard two-plane (execution + planning) Millrace
-  configuration using the `pi_rpc` runner. Selects `execution.standard` and
-  `planning.standard` loops. Requires `millrace.generic`, `millrace.recon`,
+- **Mapping**: Alias `standard_millrace` → canonical mode ID `lad_pi`.
+- **Description**: LAD two-plane (execution + planning) Millrace
+  configuration using the `pi_rpc` runner. Selects `execution.lad` and
+  `planning.lad` loops. Requires `millrace.generic`, `millrace.recon`,
   and `millrace.closure` extensions.
 - **Alternative**: For `codex_cli` runner, use `standard_plain` →
-  `default_codex`. For integrator-based execution, use
-  `default_codex_integrated`.
+  `lad_codex`. For integrator-based execution, use
+  `lad_codex_integrated`.
 
 ### 3. `learning_enabled_millrace`
 
 - **Status**: Documented alias.
 - **Mapping**: Alias `learning_enabled_millrace` → canonical mode ID
-  `learning_pi`.
+  `learning_lad_pi`.
 - **Description**: Three-plane (execution + planning + learning) Millrace
-  configuration using the `pi_rpc` runner. Selects `execution.standard`,
-  `planning.standard`, and `learning.standard` loops. Learning trigger rules
+  configuration using the `pi_rpc` runner. Selects `execution.lad`,
+  `planning.lad`, and `learning.standard` loops. Learning trigger rules
   route Doublechecker passes and Troubleshooter/Consultant recovery events to
   the Analyst, and Planner completes to the Librarian. Requires
-  `millrace.learning` in addition to the standard extension set.
-- **Alternative**: For `codex_cli` runner, use `learning_codex`. For mixed
-  runner profiles, use `efficient_learning_mixed`.
+  `millrace.learning` in addition to the LAD extension set.
+- **Alternative**: For `codex_cli` runner, use `learning_lad_codex`. For mixed
+  runner profiles, use `efficient_learning_lad_mixed`.
 
 ### 4. `recovery_heavy_millrace`
 
 - **Status**: Fixture config (not a shipped product mode).
 - **Mapping**: Direct fixture ID `recovery_heavy_millrace`.
 - **Description**: Two-plane (execution + planning) configuration with
-  aggressive recovery thresholds. Uses `execution.standard` and
-  `planning.standard` loops with `pi_rpc` runner. Recovery behavior is
+  aggressive recovery thresholds. Uses `execution.lad` and
+  `planning.lad` loops with `pi_rpc` runner. Recovery behavior is
   expressed through mode-selected registry asset data, not mode-level code
   edits.
 - **Recovery-policy data**: See
@@ -101,11 +101,11 @@ or dedicated fixture packages:
   `planning.blocked_recovery_heavy`. Compilation resolves those workflow
   recovery policies from registry data and applies their lower threshold
   policies before runtime threshold resolution.
-- **Distinction from product modes**: This fixture uses the same standard
-  loops as `default_pi` but is not a shipped product mode. The recovery-heavy
+- **Distinction from product modes**: This fixture uses the same LAD
+  loops as `lad_pi` but is not a shipped product mode. The recovery-heavy
   behavior comes from registry-level recovery-policy asset data with lower
   retry thresholds. Config-swap tests load this mode with the same default
-  `RuntimeConfig` shape used by standard mode and prove the same kernel makes
+  `RuntimeConfig` shape used by LAD modes and prove the same kernel makes
   different recovery-routing decisions from mode-owned recovery-policy data.
 
 ### 5. `generic_two_plane_fixture`
@@ -137,16 +137,25 @@ or dedicated fixture packages:
 
 | Conceptual Config | Resolution | Canonical Mode ID | Kind |
 |---|---|---|---|
-| `standard_plain` | Alias | `default_codex` | Shipped product mode |
-| `standard_millrace` | Alias | `default_pi` | Shipped product mode |
-| `learning_enabled_millrace` | Alias | `learning_pi` | Shipped product mode |
+| `standard_plain` | Alias | `lad_codex` | Shipped product mode |
+| `standard_millrace` | Alias | `lad_pi` | Shipped product mode |
+| `learning_enabled_millrace` | Alias | `learning_lad_pi` | Shipped product mode |
+| `default_codex` | Alias | `lad_codex` | Shipped product mode |
+| `default_pi` | Alias | `lad_pi` | Shipped product mode |
+| `learning_codex` | Alias | `learning_lad_codex` | Shipped product mode |
+| `efficient_learning_mixed` | Alias | `efficient_learning_lad_mixed` | Shipped product mode |
+| `learning_pi` | Alias | `learning_lad_pi` | Shipped product mode |
+| `default_codex_integrated` | Alias | `lad_codex_integrated` | Shipped product mode |
+| `learning_codex_integrated` | Alias | `learning_lad_codex_integrated` | Shipped product mode |
+| `blueprint_codex` | Alias | `blueprint_lad_codex` | Shipped product mode |
+| `blueprint_learning_codex` | Alias | `blueprint_learning_lad_codex` | Shipped product mode |
 | `minimal_three_plane` | Direct | `minimal_three_plane` | Fixture |
 | `recovery_heavy_millrace` | Direct | `recovery_heavy_millrace` | Fixture |
 | `generic_two_plane_fixture` | Direct | `generic_two_plane_fixture` | Fixture |
 
 ## Product Mode vs. Fixture Distinction
 
-**Product modes** (in `SHIPPED_MODE_IDS`): Default configurations shipped as
+**Product modes** (in `SHIPPED_MODE_IDS`): Supported configurations shipped as
 the public Millrace product surface. These are the modes operators select via
 `runtime.default_mode` in workspace config. They are subject to the
 same-graph-safety rule and are validated on every workspace compile.

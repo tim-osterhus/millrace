@@ -12,7 +12,7 @@
     },
     {
       "node_id": "planner",
-      "stage_kind_id": "planner",
+      "stage_kind_id": "lad_planner",
       "request_context_profile_id": "planner.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
@@ -42,13 +42,13 @@
     },
     {
       "node_id": "auditor",
-      "stage_kind_id": "auditor",
+      "stage_kind_id": "lad_auditor",
       "request_context_profile_id": "auditor.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "arbiter",
-      "stage_kind_id": "arbiter",
+      "stage_kind_id": "lad_arbiter",
       "request_context_profile_id": "arbiter.default",
       "context_render_plan_id": "closure_target.default.v1"
     }

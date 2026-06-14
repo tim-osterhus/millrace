@@ -25,7 +25,7 @@ class ConfigModel(BaseModel):
 
 
 class RuntimeSection(ConfigModel):
-    default_mode: str = "default_codex"
+    default_mode: str = "lad_codex"
     run_style: RuntimeMode = RuntimeMode.DAEMON
     idle_sleep_seconds: float = Field(default=1.0, gt=0)
     idle_event_heartbeat_seconds: float = Field(default=DEFAULT_IDLE_EVENT_HEARTBEAT_SECONDS, gt=0)

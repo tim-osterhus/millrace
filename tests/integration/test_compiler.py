@@ -116,14 +116,14 @@ def _write_custom_family_assets(assets_root: Path) -> None:
 def _write_workspace_local_graph_mode_assets(assets_root: Path) -> None:
     execution_graph_path = assets_root / "graphs" / "execution" / "local_review.json"
     execution_graph = json.loads(
-        (assets_root / "graphs" / "execution" / "standard.json").read_text(encoding="utf-8")
+        (assets_root / "graphs" / "execution" / "lad.json").read_text(encoding="utf-8")
     )
     execution_graph["loop_id"] = "execution.local_review"
     execution_graph_path.write_text(json.dumps(execution_graph, indent=2) + "\n", encoding="utf-8")
 
     planning_graph_path = assets_root / "graphs" / "planning" / "local_review.json"
     planning_graph = json.loads(
-        (assets_root / "graphs" / "planning" / "standard.json").read_text(encoding="utf-8")
+        (assets_root / "graphs" / "planning" / "lad.json").read_text(encoding="utf-8")
     )
     planning_graph["loop_id"] = "planning.local_review"
     planning_graph_path.write_text(json.dumps(planning_graph, indent=2) + "\n", encoding="utf-8")
@@ -292,14 +292,14 @@ def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) 
         diagnostics_path.read_text(encoding="utf-8")
     )
 
-    assert persisted_plan.mode_id == "default_codex"
+    assert persisted_plan.mode_id == "lad_codex"
     assert persisted_plan.loop_ids_by_plane == {
-        Plane.EXECUTION: "execution.standard",
-        Plane.PLANNING: "planning.standard",
+        Plane.EXECUTION: "execution.lad",
+        Plane.PLANNING: "planning.lad",
     }
     assert set(persisted_plan.graphs_by_plane) == {Plane.EXECUTION, Plane.PLANNING}
-    assert persisted_plan.execution_loop_id == "execution.standard"
-    assert persisted_plan.planning_loop_id == "planning.standard"
+    assert persisted_plan.execution_loop_id == "execution.lad"
+    assert persisted_plan.planning_loop_id == "planning.lad"
     assert persisted_plan.learning_graph is None
     assert persisted_plan.learning_trigger_rules == ()
     assert persisted_plan.resolved_assets
@@ -344,7 +344,7 @@ def test_compile_writes_compiled_plan_and_diagnostics_artifacts(tmp_path: Path) 
     assert any(ref.logical_id == "terminal_action:complete_work_item" for ref in persisted_plan.resolved_assets)
     assert any(ref.logical_id == "workspace_schema_epoch:v0.20" for ref in persisted_plan.resolved_assets)
     assert persisted_diagnostics.ok is True
-    assert persisted_diagnostics.mode_id == "default_codex"
+    assert persisted_diagnostics.mode_id == "lad_codex"
 
 
 def test_load_existing_plan_accepts_legacy_plan_without_artifact_contract_fields(tmp_path: Path) -> None:
@@ -381,7 +381,7 @@ def test_load_existing_plan_rejects_missing_runtime_stage_for_blueprint_nodes(
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_" "codex",
+        requested_mode_id="blueprint_" "lad_codex",
     )
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
@@ -412,7 +412,7 @@ def test_load_existing_plan_rejects_missing_runtime_stage_for_blueprint_nodes(
     currentness = inspect_workspace_plan_currentness(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_" "codex",
+        requested_mode_id="blueprint_" "lad_codex",
     )
 
     assert currentness.state == "missing"
@@ -567,14 +567,14 @@ def test_compile_asset_driven_mode_materializes_custom_planning_graph(tmp_path: 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_" "codex",
+        requested_mode_id="blueprint_" "lad_codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
 
     plan = outcome.active_plan
-    assert plan.mode_id == "blueprint_" "codex"
+    assert plan.mode_id == "blueprint_" "lad_codex"
     assert plan.planning_loop_id == "planning.blueprint"
     assert {entry.entry_key.value: entry.node_id for entry in plan.planning_graph.compiled_entries} == {
         "probe": "recon",
@@ -605,7 +605,7 @@ def test_compile_asset_driven_mode_materializes_custom_planning_graph(tmp_path: 
         "generated_task_missing",
         "generated_task_invalid",
     )
-    assert any(ref.logical_id == "mode:" "blueprint_" "codex" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "mode:" "blueprint_" "lad_codex" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "graph_loop:planning.blueprint" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "stage_kind:evaluator_blueprint" for ref in plan.resolved_assets)
     assert any(ref.logical_id == "work_item_family:blueprint_draft" for ref in plan.resolved_assets)
@@ -620,16 +620,16 @@ def test_compile_asset_driven_learning_mode_materializes_planning_and_learning_g
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_" "learning_codex",
+        requested_mode_id="blueprint_" "learning_lad_codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
 
     plan = outcome.active_plan
-    assert plan.mode_id == "blueprint_" "learning_codex"
+    assert plan.mode_id == "blueprint_" "learning_lad_codex"
     assert plan.loop_ids_by_plane == {
-        Plane.EXECUTION: "execution.standard",
+        Plane.EXECUTION: "execution.lad",
         Plane.PLANNING: "planning.blueprint",
         Plane.LEARNING: "learning.standard",
     }
@@ -641,7 +641,7 @@ def test_compile_asset_driven_learning_mode_materializes_planning_and_learning_g
         "librarian",
     }
     assert any(
-        ref.logical_id == "mode:" "blueprint_" "learning_codex"
+        ref.logical_id == "mode:" "blueprint_" "learning_lad_codex"
         for ref in plan.resolved_assets
     )
     assert any(ref.logical_id == "graph_loop:planning.blueprint" for ref in plan.resolved_assets)
@@ -680,9 +680,9 @@ def test_compile_materializes_compiled_plan_graph_surface(tmp_path: Path) -> Non
     assert builder_node.declared_output_artifacts == ("stage_result", "report")
     assert arbiter_node.entrypoint_contract_id == "arbiter.contract.v1"
     assert arbiter_node.running_status_marker == "ARBITER_RUNNING"
-    assert any(ref.logical_id == "mode:default_codex" for ref in plan.resolved_assets)
-    assert any(ref.logical_id == "stage_kind:builder" for ref in plan.resolved_assets)
-    assert any(ref.logical_id == "entrypoint:entrypoints/execution/builder.md" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "mode:lad_codex" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "stage_kind:lad_builder" for ref in plan.resolved_assets)
+    assert any(ref.logical_id == "entrypoint:entrypoints/execution/lad_builder.md" for ref in plan.resolved_assets)
     assert {
         (
             policy.policy_id,
@@ -748,7 +748,7 @@ def test_compile_materializes_compiled_plan_graph_surface(tmp_path: Path) -> Non
     assert plan.planning_graph.compiled_completion_entry is not None
     assert plan.planning_graph.compiled_completion_entry.entry_key.value == "closure_target"
     assert plan.planning_graph.compiled_completion_entry.node_id == "arbiter"
-    assert plan.planning_graph.compiled_completion_entry.stage_kind_id == "arbiter"
+    assert plan.planning_graph.compiled_completion_entry.stage_kind_id == "lad_arbiter"
     assert plan.planning_graph.compiled_completion_entry.request_kind == "closure_target"
     assert plan.planning_graph.compiled_completion_entry.target_selector == "active_closure_target"
     assert plan.execution_graph.transitions
@@ -855,15 +855,15 @@ def test_compile_materializes_learning_mode_planes_and_trigger_rules(tmp_path: P
                 },
             }
         ),
-        requested_mode_id="learning_codex",
+        requested_mode_id="learning_lad_codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "learning_codex"
+    assert outcome.active_plan.mode_id == "learning_lad_codex"
     assert outcome.active_plan.loop_ids_by_plane == {
-        Plane.EXECUTION: "execution.standard",
-        Plane.PLANNING: "planning.standard",
+        Plane.EXECUTION: "execution.lad",
+        Plane.PLANNING: "planning.lad",
         Plane.LEARNING: "learning.standard",
     }
     assert outcome.active_plan.learning_graph is not None
@@ -899,7 +899,7 @@ def test_compile_rejects_direct_curator_trigger_without_destination(tmp_path: Pa
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
     paths = workspace_paths(workspace_root)
-    mode_path = paths.runtime_root / "modes" / "learning_codex.json"
+    mode_path = paths.runtime_root / "modes" / "learning_lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["learning_trigger_rules"] = [
         {
@@ -916,7 +916,7 @@ def test_compile_rejects_direct_curator_trigger_without_destination(tmp_path: Pa
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="learning_codex",
+        requested_mode_id="learning_lad_codex",
         assets_root=paths.runtime_root,
         refuse_stale_last_known_good=True,
     )
@@ -930,7 +930,7 @@ def test_compile_accepts_direct_curator_trigger_with_destination(tmp_path: Path)
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
     paths = workspace_paths(workspace_root)
-    mode_path = paths.runtime_root / "modes" / "learning_codex.json"
+    mode_path = paths.runtime_root / "modes" / "learning_lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["learning_trigger_rules"] = [
         {
@@ -948,7 +948,7 @@ def test_compile_accepts_direct_curator_trigger_with_destination(tmp_path: Path)
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="learning_codex",
+        requested_mode_id="learning_lad_codex",
         assets_root=paths.runtime_root,
     )
 
@@ -989,7 +989,7 @@ def test_compiled_graph_export_surfaces_terminal_action_metadata(tmp_path: Path)
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
     )
 
     assert outcome.active_plan is not None
@@ -1006,7 +1006,7 @@ def test_compiled_graph_export_surfaces_terminal_action_metadata(tmp_path: Path)
     assert update_complete.writes_status == "UPDATE_COMPLETE"
 
 
-def test_standard_plain_alias_and_default_codex_compile_to_identical_plan_ids(
+def test_standard_plain_alias_and_lad_codex_compile_to_identical_plan_ids(
     tmp_path: Path,
 ) -> None:
     workspace_root = tmp_path / "workspace"
@@ -1020,45 +1020,45 @@ def test_standard_plain_alias_and_default_codex_compile_to_identical_plan_ids(
     canonical_outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
     )
 
     assert alias_outcome.diagnostics.ok is True
     assert canonical_outcome.diagnostics.ok is True
     assert alias_outcome.active_plan is not None
     assert canonical_outcome.active_plan is not None
-    assert alias_outcome.active_plan.mode_id == "default_codex"
-    assert canonical_outcome.active_plan.mode_id == "default_codex"
+    assert alias_outcome.active_plan.mode_id == "lad_codex"
+    assert canonical_outcome.active_plan.mode_id == "lad_codex"
     assert alias_outcome.active_plan.compiled_plan_id == canonical_outcome.active_plan.compiled_plan_id
 
 
-def test_default_pi_compiles_with_pi_runner_bound_for_every_node(tmp_path: Path) -> None:
+def test_lad_pi_compiles_with_pi_runner_bound_for_every_node(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_pi",
+        requested_mode_id="lad_pi",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "default_pi"
+    assert outcome.active_plan.mode_id == "lad_pi"
     assert {node.runner_name for node in _all_nodes(outcome.active_plan)} == {"pi_rpc"}
 
 
 def test_compile_resolves_runner_neutral_thinking_precedence_for_pi(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
 
-    execution_graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    execution_graph_path = assets_root / "graphs" / "execution" / "lad.json"
     execution_graph = json.loads(execution_graph_path.read_text(encoding="utf-8"))
     for node in execution_graph["nodes"]:
         if node["node_id"] == "builder":
             node["thinking_level"] = "low"
     execution_graph_path.write_text(json.dumps(execution_graph, indent=2) + "\n", encoding="utf-8")
 
-    mode_path = assets_root / "modes" / "default_pi.json"
+    mode_path = assets_root / "modes" / "lad_pi.json"
     mode = json.loads(mode_path.read_text(encoding="utf-8"))
     mode["stage_thinking_bindings"] = {
         "builder": "high",
@@ -1079,7 +1079,7 @@ def test_compile_resolves_runner_neutral_thinking_precedence_for_pi(tmp_path: Pa
                 "fixer": {"model_reasoning_effort": "high"},
             }
         ),
-        requested_mode_id="default_pi",
+        requested_mode_id="lad_pi",
         assets_root=assets_root,
     )
 
@@ -1098,7 +1098,7 @@ def test_compile_resolves_runner_neutral_thinking_precedence_for_pi(tmp_path: Pa
 def test_compile_materializes_graph_loop_thinking_default(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
 
-    execution_graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    execution_graph_path = assets_root / "graphs" / "execution" / "lad.json"
     execution_graph = json.loads(execution_graph_path.read_text(encoding="utf-8"))
     for node in execution_graph["nodes"]:
         if node["node_id"] == "builder":
@@ -1111,7 +1111,7 @@ def test_compile_materializes_graph_loop_thinking_default(tmp_path: Path) -> Non
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=assets_root,
     )
 
@@ -1126,7 +1126,7 @@ def test_compile_materializes_graph_loop_thinking_default(tmp_path: Path) -> Non
 
 def test_compile_rejects_stage_thinking_binding_outside_selected_loops(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     mode = json.loads(mode_path.read_text(encoding="utf-8"))
     mode["stage_thinking_bindings"] = {"professor": "high"}
     mode_path.write_text(json.dumps(mode, indent=2) + "\n", encoding="utf-8")
@@ -1137,7 +1137,7 @@ def test_compile_rejects_stage_thinking_binding_outside_selected_loops(tmp_path:
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=assets_root,
     )
 
@@ -1151,7 +1151,7 @@ def test_compile_rejects_custom_stage_entrypoint_override_outside_selected_loops
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     mode = json.loads(mode_path.read_text(encoding="utf-8"))
     mode["stage_entrypoint_overrides"] = {"not_a_stage": "entrypoints/planning/planner.md"}
     mode_path.write_text(json.dumps(mode, indent=2) + "\n", encoding="utf-8")
@@ -1162,7 +1162,7 @@ def test_compile_rejects_custom_stage_entrypoint_override_outside_selected_loops
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=assets_root,
     )
 
@@ -1213,7 +1213,7 @@ def test_compile_plan_identity_changes_when_graph_completion_behavior_changes(tm
     assert baseline.active_plan is not None
 
     assets_root = _copy_builtin_assets(tmp_path / "mutated")
-    planning_graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    planning_graph_path = assets_root / "graphs" / "planning" / "lad.json"
     payload = json.loads(planning_graph_path.read_text(encoding="utf-8"))
     payload["completion_behavior"]["skip_if_already_closed"] = False
     planning_graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -1255,7 +1255,7 @@ def test_compile_surfaces_stage_skill_attachments_without_role_overlays(tmp_path
     workspace_skill.write_text("builder attached skill\n", encoding="utf-8")
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_skill_additions"] = {
         "builder": ["skills/execution/builder.md"],
@@ -1284,7 +1284,7 @@ def test_compile_rejects_invalid_entrypoint_override_deterministically(tmp_path:
     bootstrap_workspace(workspace_root)
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_entrypoint_overrides"] = {"builder": "roles/not-an-entrypoint.md"}
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -1309,7 +1309,7 @@ def test_compile_rejects_entrypoint_override_path_traversal(tmp_path: Path) -> N
     bootstrap_workspace(workspace_root)
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_entrypoint_overrides"] = {"builder": "../entrypoints/execution/builder.md"}
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -1334,7 +1334,7 @@ def test_compile_ignores_removed_stage_role_overlay_field_in_mode_assets(tmp_pat
     bootstrap_workspace(workspace_root)
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_role_overlays"] = {"builder": ["roles/execution/builder_advisory.md"]}
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -1351,7 +1351,7 @@ def test_compile_ignores_removed_stage_role_overlay_field_in_mode_assets(tmp_pat
     assert outcome.used_last_known_good is False
     assert outcome.diagnostics.errors == (
         "Invalid mode definition in asset: "
-        f"{assets_root / 'modes' / 'default_codex.json'}",
+        f"{assets_root / 'modes' / 'lad_codex.json'}",
     )
 
 
@@ -1372,7 +1372,7 @@ def test_recompile_failure_keeps_last_known_good_plan(tmp_path: Path) -> None:
     baseline_plan_text = compiled_plan_path.read_text(encoding="utf-8")
 
     assets_root = _copy_builtin_assets(tmp_path / "recompile")
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["planning_loop_id"] = "planning.unknown"
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -1393,7 +1393,7 @@ def test_recompile_failure_keeps_last_known_good_plan(tmp_path: Path) -> None:
     diagnostics_path = paths.state_dir / "compile_diagnostics.json"
     diagnostics = CompileDiagnostics.model_validate_json(diagnostics_path.read_text(encoding="utf-8"))
     assert diagnostics.ok is False
-    assert diagnostics.mode_id == "default_codex"
+    assert diagnostics.mode_id == "lad_codex"
     assert diagnostics.errors[0] == "Unknown graph loop id: planning.unknown"
 
 
@@ -1405,7 +1405,7 @@ def test_inspect_workspace_plan_currentness_detects_current_and_stale_inputs(tmp
     compiled = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
     assert compiled.active_plan is not None
@@ -1413,20 +1413,20 @@ def test_inspect_workspace_plan_currentness_detects_current_and_stale_inputs(tmp
     current = inspect_workspace_plan_currentness(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
     assert current.state == "current"
     assert current.persisted_plan_id == compiled.active_plan.compiled_plan_id
 
-    (paths.runtime_root / "entrypoints" / "execution" / "builder.md").write_text(
+    (paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md").write_text(
         "stale builder entrypoint\n",
         encoding="utf-8",
     )
     stale = inspect_workspace_plan_currentness(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
 
@@ -1444,7 +1444,7 @@ def test_inspect_workspace_plan_currentness_ignores_unreferenced_asset_changes(
     compiled = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
     assert compiled.active_plan is not None
@@ -1461,7 +1461,7 @@ def test_inspect_workspace_plan_currentness_ignores_unreferenced_asset_changes(
     current = inspect_workspace_plan_currentness(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
 
@@ -1478,7 +1478,7 @@ def test_inspect_workspace_plan_currentness_detects_attached_skill_drift(tmp_pat
     workspace_skill.write_text("builder attached skill\n", encoding="utf-8")
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_skill_additions"] = {
         "builder": ["skills/execution/builder.md"],
@@ -1514,7 +1514,7 @@ def test_inspect_workspace_plan_currentness_detects_missing_attached_skill_becom
     paths = workspace_paths(workspace_root)
 
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["stage_skill_additions"] = {
         "builder": ["skills/execution/builder.md"],
@@ -1560,13 +1560,13 @@ def test_compile_refuses_stale_last_known_good_when_requested(tmp_path: Path) ->
     initial = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
     assert initial.diagnostics.ok is True
     assert initial.active_plan is not None
 
-    mode_path = paths.runtime_root / "modes" / "default_codex.json"
+    mode_path = paths.runtime_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["loop_ids_by_plane"]["planning"] = "planning.unknown"
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -1574,7 +1574,7 @@ def test_compile_refuses_stale_last_known_good_when_requested(tmp_path: Path) ->
     failed = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
         refuse_stale_last_known_good=True,
     )
@@ -1628,7 +1628,7 @@ def test_compile_minimal_three_plane_fixture_succeeds_with_three_planes(
     assert worker.runner_name == "pi_rpc"
     assert worker.request_context_profile_id == "builder.default"
     assert worker.context_render_plan_id == "stage_request.default.v1"
-    assert worker.entrypoint_path == "entrypoints/execution/builder.md"
+    assert worker.entrypoint_path == "entrypoints/execution/lad_builder.md"
     assert worker.required_skill_paths == ("skills/stage/execution/builder-core/SKILL.md",)
     assert worker.allowed_work_item_families == ("task",)
     assert worker.running_status_marker == "BASIC_EXECUTION_RUNNING"
@@ -1652,7 +1652,7 @@ def test_compile_minimal_three_plane_fixture_succeeds_with_three_planes(
     assert planner.runner_name == "pi_rpc"
     assert planner.request_context_profile_id == "planner.default"
     assert planner.context_render_plan_id == "stage_request.default.v1"
-    assert planner.entrypoint_path == "entrypoints/planning/planner.md"
+    assert planner.entrypoint_path == "entrypoints/planning/lad_planner.md"
     assert planner.required_skill_paths == ("skills/stage/planning/planner-core/SKILL.md",)
     assert planner.allowed_work_item_families == ("spec",)
     assert planner.running_status_marker == "BASIC_PLANNING_RUNNING"
@@ -1726,21 +1726,21 @@ def test_config_swap_standard_millrace_compiles_with_standard_stages(
     assert outcome.active_plan is not None
 
     plan = outcome.active_plan
-    assert plan.mode_id == "default_pi"
-    assert plan.execution_loop_id == "execution.standard"
-    assert plan.planning_loop_id == "planning.standard"
+    assert plan.mode_id == "lad_pi"
+    assert plan.execution_loop_id == "execution.lad"
+    assert plan.planning_loop_id == "planning.lad"
 
     exec_nodes = {node.stage_kind_id for node in plan.execution_graph.nodes}
-    assert "builder" in exec_nodes
-    assert "checker" in exec_nodes
-    assert "fixer" in exec_nodes
-    assert "troubleshooter" in exec_nodes
+    assert "lad_builder" in exec_nodes
+    assert "lad_checker" in exec_nodes
+    assert "lad_fixer" in exec_nodes
+    assert "lad_troubleshooter" in exec_nodes
 
     plan_nodes = {node.stage_kind_id for node in plan.planning_graph.nodes}
     assert "recon" in plan_nodes
-    assert "planner" in plan_nodes
-    assert "manager" in plan_nodes
-    assert "arbiter" in plan_nodes
+    assert "lad_planner" in plan_nodes
+    assert "lad_manager" in plan_nodes
+    assert "lad_arbiter" in plan_nodes
 
     # All nodes use pi_rpc
     assert {node.runner_name for node in plan.execution_graph.nodes} == {"pi_rpc"}
@@ -1766,7 +1766,7 @@ def test_config_swap_learning_enabled_millrace_compiles_with_learning_plane(
     assert outcome.active_plan is not None
 
     plan = outcome.active_plan
-    assert plan.mode_id == "learning_pi"
+    assert plan.mode_id == "learning_lad_pi"
     assert plan.learning_graph is not None
     assert Plane.LEARNING in plan.loop_ids_by_plane
     assert plan.learning_loop_id == "learning.standard"

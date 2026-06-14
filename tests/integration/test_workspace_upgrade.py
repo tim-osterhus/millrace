@@ -31,7 +31,7 @@ def test_workspace_lifecycle_end_to_end(tmp_path: Path) -> None:
     compiled = compile_and_persist_workspace_plan(
         paths,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
     assert compiled.diagnostics.ok is True
@@ -40,7 +40,7 @@ def test_workspace_lifecycle_end_to_end(tmp_path: Path) -> None:
     current = inspect_workspace_plan_currentness(
         paths,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
     assert current.state == "current"
@@ -53,14 +53,14 @@ def test_workspace_lifecycle_end_to_end(tmp_path: Path) -> None:
     assert load_snapshot(paths).process_running is False
 
     candidate_assets_root = _copy_builtin_assets(tmp_path)
-    (candidate_assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+    (candidate_assets_root / "entrypoints" / "execution" / "lad_builder.md").write_text(
         "candidate builder update\n",
         encoding="utf-8",
     )
     preview = preview_baseline_upgrade(paths, candidate_assets_root=candidate_assets_root)
     assert preview.baseline_manifest_id != preview.candidate_manifest_id
     assert (
-        preview.classifications_by_path["entrypoints/execution/builder.md"].value
+        preview.classifications_by_path["entrypoints/execution/lad_builder.md"].value
         == "safe_package_update"
     )
 
@@ -71,7 +71,7 @@ def test_workspace_lifecycle_end_to_end(tmp_path: Path) -> None:
     stale = inspect_workspace_plan_currentness(
         paths,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
     assert stale.state == "stale"
@@ -79,13 +79,13 @@ def test_workspace_lifecycle_end_to_end(tmp_path: Path) -> None:
     refreshed = compile_and_persist_workspace_plan(
         paths,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
     assert refreshed.diagnostics.ok is True
     assert refreshed.active_plan is not None
 
-    mode_path = paths.runtime_root / "modes" / "default_codex.json"
+    mode_path = paths.runtime_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["loop_ids_by_plane"]["planning"] = "planning.unknown"
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -93,7 +93,7 @@ def test_workspace_lifecycle_end_to_end(tmp_path: Path) -> None:
     failed = compile_and_persist_workspace_plan(
         paths,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
         refuse_stale_last_known_good=True,
     )

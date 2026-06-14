@@ -64,7 +64,7 @@ def test_builtin_learning_mode_declares_conflict_policy_for_overlap(tmp_path: Pa
 
 def test_compile_rejects_concurrency_overlap_without_lane_conflict_policy(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    mode_path = assets_root / "modes" / "learning_codex.json"
+    mode_path = assets_root / "modes" / "learning_lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["lane_conflict_policies"] = []
     _write_json(mode_path, payload)
@@ -78,7 +78,7 @@ def test_compile_rejects_concurrency_overlap_without_lane_conflict_policy(tmp_pa
 
 def test_compile_rejects_concurrency_overlap_with_invalid_plane_arity(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    mode_path = assets_root / "modes" / "learning_codex.json"
+    mode_path = assets_root / "modes" / "learning_lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["concurrency_policy"]["may_run_concurrently"].append(
         ["execution", "planning", "learning"]
@@ -269,7 +269,7 @@ def test_compile_rejects_scheduler_policy_with_unknown_family_in_lane(
 def test_compile_rejects_mode_with_unknown_scheduler_policy_id(tmp_path: Path) -> None:
     """A mode with an explicit scheduler_policy_id not found in assets is rejected."""
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["scheduler_policy_id"] = "nonexistent.policy"
     _write_json(mode_path, payload)
@@ -287,7 +287,7 @@ def test_compile_accepts_mode_with_explicit_valid_scheduler_policy_id(
     """A mode with an explicit scheduler_policy_id pointing to an existing
     policy compiles successfully."""
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["scheduler_policy_id"] = "default.two_plane"
     _write_json(mode_path, payload)

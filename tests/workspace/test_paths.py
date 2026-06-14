@@ -186,10 +186,10 @@ def test_bootstrap_creates_canonical_workspace_surfaces(tmp_path: Path) -> None:
     assert not (root / "millrace-agents" / "roles").exists()
 
     expected_runtime_assets = [
-        root / "millrace-agents" / "graphs" / "execution" / "standard.json",
-        root / "millrace-agents" / "graphs" / "planning" / "standard.json",
-        root / "millrace-agents" / "registry" / "stage_kinds" / "execution" / "builder.json",
-        root / "millrace-agents" / "registry" / "stage_kinds" / "planning" / "arbiter.json",
+        root / "millrace-agents" / "graphs" / "execution" / "lad.json",
+        root / "millrace-agents" / "graphs" / "planning" / "lad.json",
+        root / "millrace-agents" / "registry" / "stage_kinds" / "execution" / "lad_builder.json",
+        root / "millrace-agents" / "registry" / "stage_kinds" / "planning" / "lad_arbiter.json",
     ]
     for asset_path in expected_runtime_assets:
         assert asset_path.is_file(), f"Missing runtime asset: {asset_path}"
@@ -298,12 +298,12 @@ def test_bootstrap_initializes_status_and_state_defaults(tmp_path: Path) -> None
     assert counters.entries == ()
 
     config = load_runtime_config(paths.runtime_root / "millrace.toml")
-    assert config.runtime.default_mode == "default_codex"
+    assert config.runtime.default_mode == "lad_codex"
     assert config.runtime.run_style == "daemon"
     assert config.runners.codex.permission_default is CodexPermissionLevel.MAXIMUM
     config_text = paths.runtime_root.joinpath("millrace.toml").read_text(encoding="utf-8")
     assert "[runners.codex]" in config_text
-    assert '[runtime]\ndefault_mode = "default_codex"' in config_text
+    assert '[runtime]\ndefault_mode = "lad_codex"' in config_text
     assert 'permission_default = "maximum"' in config_text
 
 

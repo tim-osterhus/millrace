@@ -6,8 +6,8 @@ Loop id: `planning.blueprint`
 Plane: `planning`
 
 `planning.blueprint` is the opt-in Planning graph for strict draft-packet
-decomposition. It keeps Recon, Planner, Auditor, and Arbiter, but replaces the
-standard Manager handoff with Manager Blueprint, Contractor Blueprint,
+decomposition. It keeps Recon plus the LAD Planner, Auditor, and Arbiter stage
+kinds, but replaces the LAD Manager handoff with Manager Blueprint, Contractor Blueprint,
 Evaluator Blueprint, and Mechanic Blueprint.
 
 Builder still performs implementation in the Execution plane. Blueprint
@@ -25,13 +25,13 @@ Blueprint behavior by hard-coded stage names, family ids, or string matches.
 | Node | Stage Kind | Role |
 | --- | --- | --- |
 | `recon` | `recon` | Classifies probe intake and emits execution, planning, no-op, or blocked packets. |
-| `planner` | `planner` | Produces the root Planning disposition before Blueprint decomposition. |
+| `planner` | `lad_planner` | Produces the root Planning disposition before Blueprint decomposition. |
 | `manager_blueprint` | `manager_blueprint` | Creates a Blueprint manifest and ordered draft records. |
 | `contractor_blueprint` | `contractor_blueprint` | Proposes or revises one Blueprint packet for one active draft. |
 | `evaluator_blueprint` | `evaluator_blueprint` | Approves a packet into a generated task or rejects it with critique. |
 | `mechanic_blueprint` | `mechanic_blueprint` | Handles blocked Blueprint Planning work and supported runtime-effect repair. |
-| `auditor` | `auditor` | Interprets incidents before returning them to Planner. |
-| `arbiter` | `arbiter` | Performs closure-target judgment after same-lineage backlog drain. |
+| `auditor` | `lad_auditor` | Interprets incidents before returning them to Planner. |
+| `arbiter` | `lad_arbiter` | Performs closure-target judgment after same-lineage backlog drain. |
 
 ## Entries
 
@@ -70,7 +70,7 @@ incident -> auditor -> planner -> manager_blueprint
 ```
 
 Probe classification uses the same Recon terminal handoffs as
-`planning.standard`.
+`planning.lad`.
 
 ## Edges
 
@@ -150,7 +150,7 @@ Blocked recovery:
 ## Completion Behavior
 
 `planning.blueprint` ships the same Arbiter completion behavior shape as
-`planning.standard`:
+`planning.lad`:
 
 - Trigger: `backlog_drained`
 - Readiness rule: `no_open_lineage_work`
@@ -168,5 +168,5 @@ candidate packets, approved-but-unpromoted packets, and generated tasks.
 
 ## Selected By
 
-- `blueprint_codex`
-- `blueprint_learning_codex`
+- `blueprint_lad_codex`
+- `blueprint_learning_lad_codex`

@@ -476,10 +476,10 @@ def test_policy_lint_flags_unnegated_escalate_phrase(tmp_path: Path) -> None:
 
 
 def _load_runtime_entrypoint_paths_from_docs() -> list[Path]:
-    doc_text = ENTRYPOINT_MAPPING_DOC.read_text(encoding="utf-8")
-    runtime_paths = [match.group("runtime") for match in ENTRYPOINT_MAPPING_ROW.finditer(doc_text)]
-    assert runtime_paths, "Entrypoint mapping doc must include runtime asset paths"
-    return [REPO_ROOT / relative_path for relative_path in runtime_paths]
+    runtime_root = REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints"
+    runtime_paths = sorted(runtime_root.rglob("*.md"))
+    assert runtime_paths, "Runtime entrypoint assets must be discoverable"
+    return runtime_paths
 
 
 def _expected_stage_result_sets() -> dict[str, set[str]]:
@@ -962,7 +962,7 @@ def test_runtime_entrypoint_required_result_sets() -> None:
         assert not raw.startswith("---")
 
         asset = parse_markdown_asset(runtime_path)
-        stage = str(asset.manifest["stage"])
+        stage = str(asset.manifest["stage"]).removeprefix("lad_")
         assert stage in expected_stage_results
 
         plane = runtime_path.parent.name
@@ -1098,9 +1098,9 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     for runtime_path in runtime_paths:
         body = parse_markdown_asset(runtime_path).body
         entrypoint_id = runtime_path.stem
-        stage = entrypoint_id
+        stage = entrypoint_id.removeprefix("lad_")
         entrypoint_bodies.append((entrypoint_id, stage, body))
-        stage_to_body[entrypoint_id] = body
+        stage_to_body[stage] = body
         for token in LEGACY_ENTRYPOINT_TOKENS:
             assert token not in body
         assert "runs/<RUN_ID>" not in body
@@ -1418,10 +1418,10 @@ def test_evaluator_blueprint_assets_match_artifact_contract_filenames() -> None:
 
 def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> None:
     manager_body = (
-        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "manager.md"
+        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "lad_manager.md"
     ).read_text(encoding="utf-8")
     mechanic_body = (
-        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "mechanic.md"
+        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "lad_mechanic.md"
     ).read_text(encoding="utf-8")
     troubleshooter_body = (
         REPO_ROOT
@@ -1430,7 +1430,7 @@ def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> 
         / "assets"
         / "entrypoints"
         / "execution"
-        / "troubleshooter.md"
+        / "lad_troubleshooter.md"
     ).read_text(encoding="utf-8")
     runtime_error_doc = REPO_ROOT / "docs" / "runtime" / "millrace-runtime-error-codes.md"
 
@@ -1448,10 +1448,10 @@ def test_runtime_recovery_entrypoints_reference_runtime_error_context_docs() -> 
 
 def test_planner_and_manager_assets_require_root_lineage_preservation() -> None:
     planner_body = (
-        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "planner.md"
+        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "lad_planner.md"
     ).read_text(encoding="utf-8")
     manager_body = (
-        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "manager.md"
+        REPO_ROOT / "src" / "millrace_ai" / "assets" / "entrypoints" / "planning" / "lad_manager.md"
     ).read_text(encoding="utf-8")
     planner_skill = (
         REPO_ROOT
@@ -1506,7 +1506,7 @@ def test_troubleshooter_assets_treat_runtime_prompt_contract_mismatches_as_local
         / "assets"
         / "entrypoints"
         / "execution"
-        / "troubleshooter.md"
+        / "lad_troubleshooter.md"
     ).read_text(encoding="utf-8")
     troubleshooter_skill = (
         REPO_ROOT

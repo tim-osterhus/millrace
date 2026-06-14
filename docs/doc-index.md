@@ -67,10 +67,10 @@ runtime behavior around it.
   differences.
 - `graphs/config-mapping.md`: conceptual config aliases, fixture mappings, and
   product-mode versus fixture distinctions.
-- `graphs/execution-standard.md`: default Execution graph.
-- `graphs/execution-with-integrator.md`: high-assurance Execution graph with
+- `graphs/execution-lad.md`: LAD Execution graph.
+- `graphs/execution-lad-integrator.md`: high-assurance Execution graph with
   Integrator.
-- `graphs/planning-standard.md`: default Planning graph.
+- `graphs/planning-lad.md`: LAD Planning graph.
 - `graphs/planning-blueprint.md`: Blueprint Planning graph.
 - `graphs/learning-standard.md`: standard Learning graph.
 

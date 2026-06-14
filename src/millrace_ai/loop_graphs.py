@@ -2,6 +2,7 @@
 
 from millrace_ai.assets.loop_graphs import (
     ASSETS_ROOT,
+    BUILTIN_GRAPH_LOOP_ALIASES,
     BUILTIN_GRAPH_LOOP_PATHS,
     SHIPPED_GRAPH_LOOP_IDS,
     GraphLoopAssetError,
@@ -10,10 +11,12 @@ from millrace_ai.assets.loop_graphs import (
     load_builtin_graph_loop_definition,
     load_builtin_graph_loop_definitions,
     load_graph_loop_definition,
+    resolve_builtin_graph_loop_id,
 )
 
 __all__ = [
     "ASSETS_ROOT",
+    "BUILTIN_GRAPH_LOOP_ALIASES",
     "BUILTIN_GRAPH_LOOP_PATHS",
     "GraphLoopAssetError",
     "SHIPPED_GRAPH_LOOP_IDS",
@@ -22,4 +25,5 @@ __all__ = [
     "load_graph_loop_definition",
     "load_builtin_graph_loop_definition",
     "load_builtin_graph_loop_definitions",
+    "resolve_builtin_graph_loop_id",
 ]

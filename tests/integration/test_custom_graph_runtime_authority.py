@@ -85,7 +85,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "plane": "execution",
         "runtime_stage": "builder",
         "display_name": "Synthetic Worker",
-        "default_entrypoint_path": "entrypoints/execution/builder.md",
+        "default_entrypoint_path": "entrypoints/execution/lad_builder.md",
         "required_skill_paths": ["skills/stage/execution/builder-core/SKILL.md"],
         "suggested_skill_paths": [],
         "running_status_marker": "SYNTHETIC_RUNNING",

@@ -67,7 +67,7 @@ def test_stage_run_request_prompt_defaults_stay_metadata_driven() -> None:
         stage=ExecutionStageName.BUILDER,
         mode_id="default_codex",
         compiled_plan_id="plan-001",
-        entrypoint_path="entrypoints/execution/builder.md",
+        entrypoint_path="entrypoints/execution/lad_builder.md",
         active_work_item_kind="task",
         active_work_item_id="task-001",
         active_work_item_path="millrace-agents/tasks/active/task-001.md",
@@ -94,7 +94,7 @@ def _compiled_node_plan(
         stage_kind_id=stage_kind_id,
         runtime_stage=PlanningStageName(stage_kind_id),
         plane=Plane.PLANNING,
-        entrypoint_path="entrypoints/planning/planner.md",
+        entrypoint_path="entrypoints/planning/lad_planner.md",
         running_status_marker="PLANNER_RUNNING",
         allowed_result_classes_by_outcome={"PLANNER_COMPLETE": (ResultClass.SUCCESS,)},
         allowed_work_item_families=allowed_work_item_families,
@@ -144,11 +144,11 @@ def test_stage_work_item_ownership_skips_non_active_work_item_requests() -> None
 def test_builtin_stage_kind_registry_assets_match_stage_metadata() -> None:
     stage_kinds = load_builtin_stage_kind_definitions()
 
-    assert {stage_kind.stage_kind_id for stage_kind in stage_kinds} == set(
+    assert {stage_kind.runtime_stage.value for stage_kind in stage_kinds} == set(
         STAGE_METADATA_BY_VALUE
     )
     for stage_kind in stage_kinds:
-        metadata = stage_metadata(stage_kind.stage_kind_id)
+        metadata = stage_metadata(stage_kind.runtime_stage.value)
 
         assert stage_kind.plane is metadata.plane
         assert stage_kind.running_status_marker == metadata.running_status_marker

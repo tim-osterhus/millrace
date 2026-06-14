@@ -293,8 +293,8 @@ def _snapshot(
         process_running=True,
         paused=False,
         active_mode_id="default_codex",
-        execution_loop_id="execution.standard",
-        planning_loop_id="planning.standard",
+        execution_loop_id="execution.lad",
+        planning_loop_id="planning.lad",
         compiled_plan_id="plan-001",
         compiled_plan_path="state/compiled_plan.json",
         active_plane=plane,
@@ -364,8 +364,8 @@ def test_runtime_startup_loads_compiled_plan(tmp_path: Path) -> None:
     engine.startup()
 
     assert engine.compiled_plan is not None
-    assert engine.compiled_plan.execution_graph.loop_id == "execution.standard"
-    assert engine.compiled_plan.planning_graph.loop_id == "planning.standard"
+    assert engine.compiled_plan.execution_graph.loop_id == "execution.lad"
+    assert engine.compiled_plan.planning_graph.loop_id == "planning.lad"
 
 
 def test_work_item_activation_resolves_from_compiled_plan_entries(tmp_path: Path) -> None:

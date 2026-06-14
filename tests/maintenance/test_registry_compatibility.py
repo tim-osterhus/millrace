@@ -37,13 +37,16 @@ def test_all_shipped_stages_have_known_plane_membership() -> None:
 
 def test_plane_membership_is_loaded_from_stage_kind_assets() -> None:
     """Plane membership must come from the JSON stage-kind registry assets."""
-    from millrace_ai.assets.architecture import discover_stage_kind_definitions
+    from millrace_ai.assets.architecture import load_builtin_stage_kind_definitions
 
-    kinds = discover_stage_kind_definitions()
-    kind_by_id = {k.stage_kind_id: k for k in kinds}
+    kinds = load_builtin_stage_kind_definitions()
+    kind_by_runtime_stage = {
+        k.runtime_stage.value if k.runtime_stage is not None else k.stage_kind_id: k
+        for k in kinds
+    }
 
     for stage_value in known_stage_values():
-        kind = kind_by_id.get(stage_value)
+        kind = kind_by_runtime_stage.get(stage_value)
         assert kind is not None, (
             f"Shipped stage {stage_value} has no stage-kind asset"
         )
@@ -56,13 +59,16 @@ def test_plane_membership_is_loaded_from_stage_kind_assets() -> None:
 
 def test_running_markers_are_loaded_from_stage_kind_assets() -> None:
     """Running/blocked markers must come from stage-kind assets."""
-    from millrace_ai.assets.architecture import discover_stage_kind_definitions
+    from millrace_ai.assets.architecture import load_builtin_stage_kind_definitions
 
-    kinds = discover_stage_kind_definitions()
-    kind_by_id = {k.stage_kind_id: k for k in kinds}
+    kinds = load_builtin_stage_kind_definitions()
+    kind_by_runtime_stage = {
+        k.runtime_stage.value if k.runtime_stage is not None else k.stage_kind_id: k
+        for k in kinds
+    }
 
     for stage_value in known_stage_values():
-        kind = kind_by_id.get(stage_value)
+        kind = kind_by_runtime_stage.get(stage_value)
         if kind is None:
             continue
         runtime_marker = running_status_marker(stage_value)
@@ -75,13 +81,16 @@ def test_running_markers_are_loaded_from_stage_kind_assets() -> None:
 
 def test_legal_terminal_markers_are_loaded_from_stage_kind_assets() -> None:
     """Legal terminal markers must come from stage-kind assets."""
-    from millrace_ai.assets.architecture import discover_stage_kind_definitions
+    from millrace_ai.assets.architecture import load_builtin_stage_kind_definitions
 
-    kinds = discover_stage_kind_definitions()
-    kind_by_id = {k.stage_kind_id: k for k in kinds}
+    kinds = load_builtin_stage_kind_definitions()
+    kind_by_runtime_stage = {
+        k.runtime_stage.value if k.runtime_stage is not None else k.stage_kind_id: k
+        for k in kinds
+    }
 
     for stage_value in known_stage_values():
-        kind = kind_by_id.get(stage_value)
+        kind = kind_by_runtime_stage.get(stage_value)
         if kind is None:
             continue
         markers = frozenset(legal_terminal_markers(stage_value))
@@ -96,13 +105,16 @@ def test_legal_terminal_markers_are_loaded_from_stage_kind_assets() -> None:
 
 def test_result_class_mappings_are_loaded_from_stage_kind_assets() -> None:
     """Result-class policy must come from stage-kind assets."""
-    from millrace_ai.assets.architecture import discover_stage_kind_definitions
+    from millrace_ai.assets.architecture import load_builtin_stage_kind_definitions
 
-    kinds = discover_stage_kind_definitions()
-    kind_by_id = {k.stage_kind_id: k for k in kinds}
+    kinds = load_builtin_stage_kind_definitions()
+    kind_by_runtime_stage = {
+        k.runtime_stage.value if k.runtime_stage is not None else k.stage_kind_id: k
+        for k in kinds
+    }
 
     for stage_value in known_stage_values():
-        kind = kind_by_id.get(stage_value)
+        kind = kind_by_runtime_stage.get(stage_value)
         if kind is None:
             continue
         metadata_classes = allowed_result_classes_by_outcome(stage_value)
@@ -170,9 +182,9 @@ def test_shipped_graph_loops_declare_correct_plane() -> None:
     loops_by_id = {loop_def.loop_id: loop_def for loop_def in loops}
 
     for loop_id, expected_plane in (
-        ("execution.standard", Plane.EXECUTION),
-        ("execution.with_integrator", Plane.EXECUTION),
-        ("planning.standard", Plane.PLANNING),
+        ("execution.lad", Plane.EXECUTION),
+        ("execution.lad_integrator", Plane.EXECUTION),
+        ("planning.lad", Plane.PLANNING),
         ("planning.blueprint", Plane.PLANNING),
         ("learning.standard", Plane.LEARNING),
     ):

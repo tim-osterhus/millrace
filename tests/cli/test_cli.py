@@ -375,7 +375,7 @@ def _inspected_run_summary(
     failure_class: str | None = None,
     report_artifact: str | None = "troubleshoot_report.md",
     compiled_plan_id: str | None = "plan-001",
-    mode_id: str | None = "default_codex",
+    mode_id: str | None = "lad_codex",
     request_kind: str | None = None,
     closure_target_root_spec_id: str | None = None,
     closure_target_root_source_kind: str | None = None,
@@ -829,8 +829,8 @@ def test_run_daemon_with_monitor_basic_installs_monitor_and_prints_output(
                         "baseline_manifest_id": "baseline-001",
                         "baseline_seed_package_version": "0.15.5",
                         "loop_ids_by_plane": {
-                            "execution": "execution.standard",
-                            "planning": "planning.standard",
+                            "execution": "execution.lad",
+                            "planning": "planning.lad",
                         },
                         "concurrency_policy": None,
                         "status_markers_by_plane": {
@@ -1248,7 +1248,7 @@ def test_status_surfaces_active_mode_and_compiled_plan_id(tmp_path: Path) -> Non
     paths = _workspace(tmp_path)
     snapshot = load_snapshot(paths).model_copy(
         update={
-            "active_mode_id": "default_codex",
+            "active_mode_id": "lad_codex",
             "compiled_plan_id": "plan-status-123",
             "compiled_plan_fingerprint": "fingerprint-status-123",
             "pending_compiled_plan_id": "plan-pending-456",
@@ -1274,7 +1274,7 @@ def test_status_surfaces_active_mode_and_compiled_plan_id(tmp_path: Path) -> Non
     result = runner.invoke(cli.app, ["status", "--workspace", str(paths.root)])
 
     assert result.exit_code == 0
-    assert "active_mode_id: default_codex" in result.output
+    assert "active_mode_id: lad_codex" in result.output
     assert "compiled_plan_id: plan-status-123" in result.output
     assert "compiled_plan_fingerprint: fingerprint-status-123" in result.output
     assert "pending_compiled_plan_id: plan-pending-456" in result.output
@@ -1294,7 +1294,7 @@ def test_status_surfaces_baseline_manifest_identity_and_compile_currentness(tmp_
     cli.compile_and_persist_workspace_plan(
         paths,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
         assets_root=paths.runtime_root,
     )
 
@@ -1305,7 +1305,7 @@ def test_status_surfaces_baseline_manifest_identity_and_compile_currentness(tmp_
     assert "baseline_manifest_id:" in current.output
     assert "compiled_plan_currentness: current" in current.output
 
-    (paths.runtime_root / "entrypoints" / "execution" / "builder.md").write_text(
+    (paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md").write_text(
         "stale builder override\n",
         encoding="utf-8",
     )
@@ -1328,7 +1328,7 @@ def test_status_surfaces_learning_plane_depth_and_status(tmp_path: Path) -> None
     )
     snapshot = load_snapshot(paths).model_copy(
         update={
-            "active_mode_id": "learning_codex",
+            "active_mode_id": "learning_lad_codex",
             "learning_loop_id": "learning.standard",
             "learning_status_marker": "### ANALYST_COMPLETE",
         }
@@ -1356,7 +1356,7 @@ def test_status_view_model_separates_collection_from_rendering(tmp_path: Path) -
     )
     snapshot = load_snapshot(paths).model_copy(
         update={
-            "active_mode_id": "learning_codex",
+            "active_mode_id": "learning_lad_codex",
             "learning_status_marker": "### ANALYST_COMPLETE",
         }
     )
@@ -1365,7 +1365,7 @@ def test_status_view_model_separates_collection_from_rendering(tmp_path: Path) -
     view_model = collect_status_view_model(paths)
 
     assert view_model.paths == paths
-    assert view_model.snapshot.active_mode_id == "learning_codex"
+    assert view_model.snapshot.active_mode_id == "learning_lad_codex"
     assert view_model.queue_depths["learning"] == 1
     assert view_model.extension_statuses["blueprints"]["draft_counts"] == {
         "queue": 0,
@@ -1491,7 +1491,7 @@ def test_status_surfaces_usage_governance_pause_context(tmp_path: Path) -> None:
         "\n".join(
             [
                 "[runtime]",
-                'default_mode = "default_codex"',
+                'default_mode = "lad_codex"',
                 "",
                 "[usage_governance]",
                 "enabled = true",
@@ -2156,7 +2156,7 @@ def test_runs_show_prints_stage_terminal_and_artifact_paths(
     assert "artifact_status: valid" in result.output
     assert "runtime_outcome: complete" in result.output
     assert "compiled_plan_id: plan-001" in result.output
-    assert "mode_id: default_codex" in result.output
+    assert "mode_id: lad_codex" in result.output
     assert "request_id: request-001" in result.output
     assert "stage: checker" in result.output
     assert "node_id: execution.checker.primary" in result.output
@@ -3418,7 +3418,7 @@ def test_config_validate_returns_nonzero_for_invalid_config(tmp_path: Path) -> N
         "\n".join(
             [
                 "[compile]",
-                'default_execution_loop = "execution.standard"',
+                'default_execution_loop = "execution.lad"',
             ]
         ),
         encoding="utf-8",
@@ -3466,12 +3466,12 @@ def test_modes_list_outputs_shipped_modes() -> None:
     result = runner.invoke(cli.app, ["modes", "list"])
 
     assert result.exit_code == 0
-    assert "default_codex" in result.output
-    assert "default_pi" in result.output
-    assert "standard_plain -> default_codex" in result.output
-    assert "efficient_learning_mixed" in result.output
-    assert "default_codex_integrated" in result.output
-    assert "learning_codex_integrated" in result.output
+    assert "lad_codex" in result.output
+    assert "lad_pi" in result.output
+    assert "standard_plain -> lad_codex" in result.output
+    assert "efficient_learning_lad_mixed" in result.output
+    assert "lad_codex_integrated" in result.output
+    assert "learning_lad_codex_integrated" in result.output
     assert "standard_role_augmented" not in result.output
 
 
@@ -3480,8 +3480,8 @@ def test_modes_show_reports_alias_resolution_for_standard_plain() -> None:
     result = runner.invoke(cli.app, ["modes", "show", "standard_plain"])
 
     assert result.exit_code == 0
-    assert "alias_of: default_codex" in result.output
-    assert "mode_id: default_codex" in result.output
+    assert "alias_of: lad_codex" in result.output
+    assert "mode_id: lad_codex" in result.output
 
 
 def test_compile_validate_returns_diagnostics(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -3563,16 +3563,16 @@ def test_compile_show_surfaces_compiled_plan_summary(
             lifecycle_mutation_plans_by_id={
                 "complete_work_item": SimpleNamespace(lifecycle_action_id="complete"),
             },
-            execution_loop_id="execution.standard",
-            planning_loop_id="planning.standard",
+            execution_loop_id="execution.lad",
+            planning_loop_id="planning.lad",
             execution_graph=SimpleNamespace(
                 nodes=(
                     SimpleNamespace(
                         plane=Plane.EXECUTION,
                         node_id="builder",
-                        stage_kind_id="builder",
+                        stage_kind_id="lad_builder",
                         running_status_marker="BUILDER_RUNNING",
-                        entrypoint_path="entrypoints/execution/builder.md",
+                        entrypoint_path="entrypoints/execution/lad_builder.md",
                         entrypoint_contract_id="builder.contract.v1",
                         required_skill_paths=("skills/stage/execution/builder-core/SKILL.md",),
                         attached_skill_additions=(),
@@ -3709,9 +3709,9 @@ def test_compile_show_surfaces_compiled_plan_summary(
     assert "compile_input.assets_fingerprint: assets-001" in result.output
     assert "compiled_plan_id: plan-001" in result.output
     assert "stage: execution.builder" in result.output
-    assert "stage_kind_id: builder" in result.output
+    assert "stage_kind_id: lad_builder" in result.output
     assert "running_status_marker: BUILDER_RUNNING" in result.output
-    assert "entrypoint_path: entrypoints/execution/builder.md" in result.output
+    assert "entrypoint_path: entrypoints/execution/lad_builder.md" in result.output
     assert "entrypoint_contract_id: builder.contract.v1" in result.output
     assert "required_skills: skills/stage/execution/builder-core/SKILL.md" in result.output
     assert "attached_skills: none" in result.output
@@ -3820,7 +3820,7 @@ def test_upgrade_command_previews_three_way_classification(
 ) -> None:
     paths = _workspace(tmp_path)
     assets_root = _copy_assets(tmp_path)
-    (assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+    (assets_root / "entrypoints" / "execution" / "lad_builder.md").write_text(
         "candidate builder update\n",
         encoding="utf-8",
     )
@@ -3837,7 +3837,7 @@ def test_upgrade_command_previews_three_way_classification(
     assert "applied: false" in result.output
     assert "baseline_manifest_id:" in result.output
     assert "candidate_manifest_id:" in result.output
-    assert "entry: entrypoints/execution/builder.md safe_package_update" in result.output
+    assert "entry: entrypoints/execution/lad_builder.md safe_package_update" in result.output
 
 
 def test_upgrade_command_apply_refreshes_managed_assets(
@@ -3846,7 +3846,7 @@ def test_upgrade_command_apply_refreshes_managed_assets(
 ) -> None:
     paths = _workspace(tmp_path)
     assets_root = _copy_assets(tmp_path)
-    (assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+    (assets_root / "entrypoints" / "execution" / "lad_builder.md").write_text(
         "candidate builder update\n",
         encoding="utf-8",
     )
@@ -3862,7 +3862,7 @@ def test_upgrade_command_apply_refreshes_managed_assets(
     assert result.exit_code == 0
     assert "applied: true" in result.output
     assert "result_manifest_id:" in result.output
-    assert (paths.runtime_root / "entrypoints" / "execution" / "builder.md").read_text(
+    assert (paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md").read_text(
         encoding="utf-8"
     ) == "candidate builder update\n"
 
@@ -3873,7 +3873,7 @@ def test_upgrade_command_localizes_removed_managed_asset(
 ) -> None:
     paths = _workspace(tmp_path)
     assets_root = _copy_assets(tmp_path)
-    removed_relative_path = "entrypoints/execution/builder.md"
+    removed_relative_path = "entrypoints/execution/lad_builder.md"
     (assets_root / removed_relative_path).unlink()
 
     monkeypatch.setattr(

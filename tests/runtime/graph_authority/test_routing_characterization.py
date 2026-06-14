@@ -42,7 +42,7 @@ def test_default_execution_graph_routes_builder_complete_to_checker(tmp_path: Pa
         active_plane=Plane.EXECUTION,
         active_stage=ExecutionStageName.BUILDER,
         active_node_id="builder",
-        active_stage_kind_id="builder",
+        active_stage_kind_id="lad_builder",
         active_run_id="run-001",
         active_work_item_kind=WorkItemKind.TASK,
         active_work_item_id="task-001",
@@ -57,7 +57,7 @@ def test_default_execution_graph_routes_builder_complete_to_checker(tmp_path: Pa
         plane=Plane.EXECUTION,
         stage=ExecutionStageName.BUILDER,
         node_id="builder",
-        stage_kind_id="builder",
+        stage_kind_id="lad_builder",
         work_item_kind=WorkItemKind.TASK,
         work_item_id="task-001",
         terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
@@ -79,5 +79,5 @@ def test_default_execution_graph_routes_builder_complete_to_checker(tmp_path: Pa
     assert decision.next_plane is Plane.EXECUTION
     assert decision.next_stage is ExecutionStageName.CHECKER
     assert decision.next_node_id == "checker"
-    assert decision.next_stage_kind_id == "checker"
+    assert decision.next_stage_kind_id == "lad_checker"
     assert decision.reason == "builder:BUILDER_COMPLETE"

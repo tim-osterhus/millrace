@@ -13,49 +13,49 @@
       "version": "1.0.0"
     },
     {
-      "item_id": "builder",
+      "item_id": "lad_builder",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "checker",
+      "item_id": "lad_checker",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "consultant",
+      "item_id": "lad_consultant",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "doublechecker",
+      "item_id": "lad_doublechecker",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "fixer",
+      "item_id": "lad_fixer",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "integrator",
+      "item_id": "lad_integrator",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "troubleshooter",
+      "item_id": "lad_troubleshooter",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "updater",
+      "item_id": "lad_updater",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
@@ -67,25 +67,25 @@
       "version": "1.0.0"
     },
     {
-      "item_id": "planner",
+      "item_id": "lad_planner",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "manager",
+      "item_id": "lad_manager",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "mechanic",
+      "item_id": "lad_mechanic",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"
     },
     {
-      "item_id": "auditor",
+      "item_id": "lad_auditor",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.generic",
       "version": "1.0.0"

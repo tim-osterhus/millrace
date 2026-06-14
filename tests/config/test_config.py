@@ -84,7 +84,7 @@ def test_runtime_config_defaults_codex_permissions_to_maximum() -> None:
 def test_runtime_config_defaults_canonical_mode_and_pi_determinism_flags() -> None:
     config = RuntimeConfig()
 
-    assert config.runtime.default_mode == "default_codex"
+    assert config.runtime.default_mode == "lad_codex"
     assert config.runners.pi.disable_context_files is True
     assert config.runners.pi.disable_skills is True
     assert config.runners.pi.event_log_policy is PiEventLogPolicy.FAILURE_FULL

@@ -21,7 +21,7 @@ def test_stage_alias_overrides_stage_config(tmp_path: Path) -> None:
         },
     )
 
-    builder = _node(plan, Plane.EXECUTION, "builder")
+    builder = _node(plan, Plane.EXECUTION, "lad_builder")
 
     assert builder.model_name == "gpt-5.5"
     assert builder.thinking_level == "xhigh"
@@ -74,7 +74,7 @@ def test_invalid_global_alias_warns_and_falls_back_to_builtin_standard(tmp_path:
         }
     )
 
-    builder = _node(plan, Plane.EXECUTION, "builder")
+    builder = _node(plan, Plane.EXECUTION, "lad_builder")
 
     assert builder.model_assignment_alias_id == "standard"
     assert builder.model_name == "gpt-5.5"
@@ -97,7 +97,7 @@ def test_alias_values_are_trimmed_before_materialization(tmp_path: Path) -> None
         },
     )
 
-    builder = _node(plan, Plane.EXECUTION, "builder")
+    builder = _node(plan, Plane.EXECUTION, "lad_builder")
 
     assert builder.model_name == "gpt-5.5"
     assert builder.thinking_level == "high"

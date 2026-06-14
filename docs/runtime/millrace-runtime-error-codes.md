@@ -37,7 +37,7 @@ status payload does not include `runtime_error_code` or
   runtime-effect operation closure contracts before falling back to the graph
   default repair node.
 - `recon_handoff_invalid` is a runtime-owned Planning failure. In
-  `planning.standard` it routes to `mechanic`; in `planning.blueprint` it routes
+  `planning.lad` it routes to `mechanic`; in `planning.blueprint` it routes
   to `mechanic_blueprint`. Attempt counters still cap repeated repair loops, and
   the probe blocks with the runtime error report when the threshold is exhausted.
 - `learning.standard` currently declares no default runtime repair node.

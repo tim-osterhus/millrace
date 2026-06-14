@@ -20,13 +20,15 @@ expanding the public surface area.
 
 ## Current Focus
 
-Millrace is focused on stabilizing the pre-1.0 runtime line around four
-contracts:
+Millrace is focused on stabilizing the pre-1.0 runtime line around explicit
+loop engineering contracts:
 
 - the compiled graph plan as the runtime-authoritative structure
 - graph-shaped inspection artifacts that distinguish legal topology from
   concrete run history
 - first-class runner harnesses with clear diagnostics and artifacts
+- canonical LAD code-development loop names that leave room for future
+  non-LAD loop families
 - durable local workspaces that can be inspected, resumed, and debugged without
   guessing what happened
 - learning-plane skill improvement workflows that remain explicit,
@@ -125,7 +127,7 @@ Expected user impact:
 ### Runner Harness Validation
 
 Codex and Pi are the current first-class runner harnesses. The active work is to
-keep `default_codex` and `default_pi` aligned around the same Millrace-owned
+keep `lad_codex` and `lad_pi` aligned around the same Millrace-owned
 stage prompt contract while preserving runner-specific diagnostics, timeout
 handling, and persisted artifacts.
 
@@ -251,8 +253,8 @@ Expected user impact:
 
 ### Learning Plane Stabilization
 
-The learning plane now ships as an opt-in mode family through `learning_codex`,
-`efficient_learning_codex`, and `learning_pi`. Active work is to keep the
+The learning plane now ships as an opt-in mode family through `learning_lad_codex`,
+`efficient_learning_lad_mixed`, and `learning_lad_pi`. Active work is to keep the
 Analyst, Professor, Curator, and Librarian flow grounded in runtime evidence
 and to avoid automatic skill changes without clear operator-controlled
 promotion. Generic success-triggered learning now starts at Analyst, Planner

@@ -81,16 +81,16 @@ def test_config_swap_standard_millrace_compiles_full_standard_planes(tmp_path: P
     stages, pi_rpc runner."""
     plan = _compile_for_config(tmp_path, "standard_millrace")
 
-    assert plan.mode_id == "default_pi"
+    assert plan.mode_id == "lad_pi"
     assert plan.learning_graph is None
 
     stage_ids = _stage_kind_ids(plan)
-    assert "builder" in stage_ids
-    assert "checker" in stage_ids
-    assert "troubleshooter" in stage_ids
+    assert "lad_builder" in stage_ids
+    assert "lad_checker" in stage_ids
+    assert "lad_troubleshooter" in stage_ids
     assert "recon" in stage_ids
-    assert "planner" in stage_ids
-    assert "arbiter" in stage_ids
+    assert "lad_planner" in stage_ids
+    assert "lad_arbiter" in stage_ids
 
     # Standard thresholds present
     all_thresholds = {
@@ -106,7 +106,7 @@ def test_config_swap_learning_enabled_millrace_has_learning_plane(tmp_path: Path
     """learning_enabled_millrace compiles three planes with triggers."""
     plan = _compile_for_config(tmp_path, "learning_enabled_millrace")
 
-    assert plan.mode_id == "learning_pi"
+    assert plan.mode_id == "learning_lad_pi"
     assert plan.learning_graph is not None
 
     assert set(plan.graphs_by_plane) == {

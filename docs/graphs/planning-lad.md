@@ -1,11 +1,11 @@
-# Planning Standard Graph
+# LAD Planning Graph
 
-Source asset: `src/millrace_ai/assets/graphs/planning/standard.json`
+Source asset: `src/millrace_ai/assets/graphs/planning/lad.json`
 
-Loop id: `planning.standard`
+Loop id: `planning.lad`
 Plane: `planning`
 
-`planning.standard` is the default Planning graph. It classifies probes through
+`planning.lad` is the LAD Planning graph. It classifies probes through
 Recon, turns specs into executable tasks through Planner and Manager, routes
 incidents through Auditor, recovers blocked Planning work through Mechanic, and
 activates Arbiter when backlog drain makes a closure target eligible.
@@ -106,7 +106,7 @@ Blocked recovery:
 
 ## Completion Behavior
 
-`planning.standard` ships compiled completion behavior:
+`planning.lad` ships compiled completion behavior:
 
 - Trigger: `backlog_drained`
 - Readiness rule: `no_open_lineage_work`
@@ -130,10 +130,10 @@ remediation suppression.
 
 ## Selected By
 
-- `default_codex`
-- `default_pi`
-- `learning_codex`
-- `efficient_learning_mixed`
-- `learning_pi`
-- `default_codex_integrated`
-- `learning_codex_integrated`
+- `lad_codex`
+- `lad_pi`
+- `learning_lad_codex`
+- `efficient_learning_lad_mixed`
+- `learning_lad_pi`
+- `lad_codex_integrated`
+- `learning_lad_codex_integrated`

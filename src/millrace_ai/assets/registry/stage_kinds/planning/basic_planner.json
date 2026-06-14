@@ -4,7 +4,7 @@
   "stage_kind_id": "basic_planner",
   "plane": "planning",
   "display_name": "Basic Planner",
-  "default_entrypoint_path": "entrypoints/planning/planner.md",
+  "default_entrypoint_path": "entrypoints/planning/lad_planner.md",
   "request_context_profile_id": "planner.default",
   "context_render_plan_id": "stage_request.default.v1",
   "required_skill_paths": [

@@ -369,7 +369,7 @@ surfaces, then applies alias assignment as the final overlay:
 Mode-selected assignments resolve mode-local alias definitions first; workspace
 config assignments resolve workspace alias definitions first. This preserves
 explicit operator overrides while allowing modes such as
-`efficient_learning_mixed` to package local alias meanings.
+`efficient_learning_lad_mixed` to package local alias meanings.
 
 If `model_assignment.enabled = false`, the alias resolver does nothing and the
 pre-alias behavior is preserved. Unknown or syntactically invalid selected

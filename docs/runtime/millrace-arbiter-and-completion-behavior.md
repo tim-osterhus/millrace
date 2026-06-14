@@ -1,10 +1,10 @@
 # Millrace Arbiter And Completion Behavior
 
 This document describes the shipped completion model for modes that select
-`planning.standard` or `planning.blueprint`, including `default_codex`,
-`default_pi`, `learning_codex`, `efficient_learning_mixed`, `learning_pi`,
-`default_codex_integrated`, `learning_codex_integrated`, `blueprint_codex`,
-and `blueprint_learning_codex`.
+`planning.lad` or `planning.blueprint`, including `lad_codex`,
+`lad_pi`, `learning_lad_codex`, `efficient_learning_lad_mixed`, `learning_lad_pi`,
+`lad_codex_integrated`, `learning_lad_codex_integrated`, `blueprint_lad_codex`,
+and `blueprint_learning_lad_codex`.
 
 Millrace no longer treats backlog drain as automatic completion. When a root
 lineage has an open closure target and no queued, active, or blocked work
@@ -72,7 +72,7 @@ records:
 
 ## Backlog-Drain Behavior
 
-The compiled planning-loop `completion_behavior` for `planning.standard` is:
+The compiled planning-loop `completion_behavior` for `planning.lad` is:
 
 - trigger: `backlog_drained`
 - readiness rule: `no_open_lineage_work`

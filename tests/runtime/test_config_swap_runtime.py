@@ -60,7 +60,7 @@ def test_config_swap_runtime_startup_standard_millrace(tmp_path: Path) -> None:
     engine, plan = _bootstrap_and_startup(tmp_path, "standard_millrace")
 
     assert engine.compiled_plan is not None
-    assert engine.compiled_plan.mode_id == "default_pi"
+    assert engine.compiled_plan.mode_id == "lad_pi"
     assert engine.compiled_plan.compiled_plan_id == plan.compiled_plan_id
     assert engine.compiled_plan.learning_graph is None
     assert set(engine.compiled_plan.graphs_by_plane) == {
@@ -73,7 +73,7 @@ def test_config_swap_runtime_startup_learning_enabled_millrace(tmp_path: Path) -
     engine, plan = _bootstrap_and_startup(tmp_path, "learning_enabled_millrace")
 
     assert engine.compiled_plan is not None
-    assert engine.compiled_plan.mode_id == "learning_pi"
+    assert engine.compiled_plan.mode_id == "learning_lad_pi"
     assert engine.compiled_plan.compiled_plan_id == plan.compiled_plan_id
     assert engine.compiled_plan.learning_graph is not None
     assert len(engine.compiled_plan.learning_trigger_rules) == 4

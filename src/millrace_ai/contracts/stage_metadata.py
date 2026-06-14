@@ -40,6 +40,21 @@ SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Shipped stage-kind asset root (relative to this module)
 # ---------------------------------------------------------------------------
 _STAGE_KIND_REGISTRY_ROOT = Path(__file__).resolve().parent.parent / "assets" / "registry" / "stage_kinds"
+_RUNTIME_STAGE_TO_CANONICAL_STAGE_KIND_ID = {
+    "builder": "lad_builder",
+    "fixer": "lad_fixer",
+    "checker": "lad_checker",
+    "doublechecker": "lad_doublechecker",
+    "updater": "lad_updater",
+    "troubleshooter": "lad_troubleshooter",
+    "consultant": "lad_consultant",
+    "integrator": "lad_integrator",
+    "planner": "lad_planner",
+    "manager": "lad_manager",
+    "mechanic": "lad_mechanic",
+    "auditor": "lad_auditor",
+    "arbiter": "lad_arbiter",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +118,7 @@ def _resolve_stage_enum(stage_value: str) -> StageName:
 
 
 def _build_stage_metadata_from_payload(payload: dict[str, Any]) -> StageMetadata:
-    stage_value = payload["stage_kind_id"]
+    stage_value = str(payload.get("runtime_stage") or payload["stage_kind_id"])
     plane = _plane_from_value(payload["plane"])
     running_status_marker = str(payload.get("running_status_marker", f"{stage_value.upper()}_RUNNING"))
 
@@ -139,12 +154,15 @@ def _build_registry() -> dict[str, StageMetadata]:
     payloads = _load_stage_kind_payloads()
     registry: dict[str, StageMetadata] = {}
     for payload in payloads:
-        stage_value = payload.get("stage_kind_id", "")
+        stage_value = str(payload.get("runtime_stage") or payload.get("stage_kind_id", ""))
+        stage_kind_id = str(payload.get("stage_kind_id", ""))
         # Only register stages that correspond to known shipped enum members.
         # Fixture/custom stage kinds (basic_worker, etc.) are not shipped stages.
         try:
             _resolve_stage_enum(stage_value)
         except ValueError:
+            continue
+        if _RUNTIME_STAGE_TO_CANONICAL_STAGE_KIND_ID.get(stage_value, stage_value) != stage_kind_id:
             continue
         metadata = _build_stage_metadata_from_payload(payload)
         registry[metadata.stage.value] = metadata

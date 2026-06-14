@@ -1,17 +1,17 @@
 # Millrace Runtime Lifecycle Diagram
 
-This is the dense, implementation-accurate lifecycle chart for the shipped
-default runtime configuration:
+This is the dense, implementation-accurate lifecycle chart for the shipped LAD
+Codex runtime configuration:
 
-- mode: `default_codex`
-- planning loop: `planning.standard`
-- execution loop: `execution.standard`
+- mode: `lad_codex`
+- planning loop: `planning.lad`
+- execution loop: `execution.lad`
 
-Learning-enabled modes (`learning_codex`, `efficient_learning_mixed`,
-`learning_pi`, `learning_codex_integrated`, and `blueprint_learning_codex`)
-add `learning.standard`; this default-mode chart omits that optional claim path
-except where noted. `blueprint_learning_codex` uses `planning.blueprint`
-instead of the standard Planning topology.
+Learning-enabled modes (`learning_lad_codex`, `efficient_learning_lad_mixed`,
+`learning_lad_pi`, `learning_lad_codex_integrated`, and `blueprint_learning_lad_codex`)
+add `learning.standard`; this LAD-mode chart omits that optional claim path
+except where noted. `blueprint_learning_lad_codex` uses `planning.blueprint`
+instead of the LAD Planning topology.
 
 The README embeds a simplified version. This file keeps the fuller chart that
 tracks startup, scheduling, result application, recovery routing, and Arbiter
@@ -115,8 +115,8 @@ stateDiagram-v2
 
 ## Execution Loop Detail
 
-This diagram shows `execution.standard`. Integrated Codex modes select
-`execution.with_integrator`, which inserts `Integrator` between `Builder` and
+This diagram shows `execution.lad`. Integrated Codex modes select
+`execution.lad_integrator`, which inserts `Integrator` between `Builder` and
 `Checker`; `INTEGRATION_COMPLETE` continues to Checker and `BLOCKED` uses the
 same recovery path as other execution stages.
 

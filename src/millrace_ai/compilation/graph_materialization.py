@@ -18,6 +18,22 @@ from .node_materialization import materialize_graph_node_plan, stage_name_for_id
 from .policies import compile_graph_resume_policies, compile_graph_threshold_policies
 from .transitions import compile_graph_transitions
 
+_CANONICAL_STAGE_KIND_TO_RUNTIME_STAGE = {
+    "lad_builder": "builder",
+    "lad_fixer": "fixer",
+    "lad_checker": "checker",
+    "lad_doublechecker": "doublechecker",
+    "lad_updater": "updater",
+    "lad_troubleshooter": "troubleshooter",
+    "lad_consultant": "consultant",
+    "lad_integrator": "integrator",
+    "lad_planner": "planner",
+    "lad_manager": "manager",
+    "lad_mechanic": "mechanic",
+    "lad_auditor": "auditor",
+    "lad_arbiter": "arbiter",
+}
+
 
 def materialize_graph_plane_plan(
     *,
@@ -87,7 +103,9 @@ def selected_stages_for_graph_loops(*graph_loops: GraphLoopDefinition) -> set[St
     selected_stages: set[StageMapKey] = set()
     for graph_loop in graph_loops:
         for node in graph_loop.nodes:
-            stage_name = stage_name_for_identifier(node.stage_kind_id)
+            stage_name = stage_name_for_identifier(
+                _CANONICAL_STAGE_KIND_TO_RUNTIME_STAGE.get(node.stage_kind_id, node.stage_kind_id)
+            )
             selected_stages.add(stage_name or node.stage_kind_id)
     return selected_stages
 

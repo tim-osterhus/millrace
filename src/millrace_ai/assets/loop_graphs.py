@@ -19,14 +19,20 @@ ASSETS_ROOT = Path(__file__).resolve().parent
 GRAPH_LOOPS_ROOT = Path("graphs")
 
 BUILTIN_GRAPH_LOOP_PATHS: dict[str, Path] = {
-    "execution.standard": Path("graphs/execution/standard.json"),
-    "execution.with_integrator": Path("graphs/execution/with_integrator.json"),
+    "execution.lad": Path("graphs/execution/lad.json"),
+    "execution.lad_integrator": Path("graphs/execution/lad_integrator.json"),
     "learning.standard": Path("graphs/learning/standard.json"),
-    "planning.standard": Path("graphs/planning/standard.json"),
+    "planning.lad": Path("graphs/planning/lad.json"),
     "planning.blueprint": Path("graphs/planning/blueprint.json"),
 }
 
 SHIPPED_GRAPH_LOOP_IDS: tuple[str, ...] = tuple(BUILTIN_GRAPH_LOOP_PATHS)
+
+BUILTIN_GRAPH_LOOP_ALIASES: dict[str, str] = {
+    "execution.standard": "execution.lad",
+    "execution.with_integrator": "execution.lad_integrator",
+    "planning.standard": "planning.lad",
+}
 
 
 class GraphLoopAssetError(AssetValidationError):
@@ -39,7 +45,8 @@ def load_builtin_graph_loop_definition(
     assets_root: Path | None = None,
 ) -> GraphLoopDefinition:
     root = _resolve_assets_root(assets_root)
-    graph_path = _resolve_graph_loop_path(loop_id, root)
+    canonical_loop_id = resolve_builtin_graph_loop_id(loop_id)
+    graph_path = _resolve_graph_loop_path(canonical_loop_id, root)
     payload = _load_json_asset(graph_path, asset_kind="graph loop")
     _validate_terminal_state_action_declarations(payload)
 
@@ -51,9 +58,9 @@ def load_builtin_graph_loop_definition(
             f"Invalid graph loop definition in asset: {graph_path} ({first_error})"
         ) from exc
 
-    if graph_loop.loop_id != loop_id:
+    if graph_loop.loop_id != canonical_loop_id:
         raise GraphLoopAssetError(
-            f"Graph loop asset id mismatch: expected {loop_id}, found {graph_loop.loop_id}"
+            f"Graph loop asset id mismatch: expected {canonical_loop_id}, found {graph_loop.loop_id}"
         )
 
     _validate_graph_loop_against_stage_kinds(graph_loop, assets_root=root)
@@ -76,16 +83,21 @@ def load_graph_loop_definition(
     assets_root: Path | None = None,
 ) -> GraphLoopDefinition:
     root = _resolve_assets_root(assets_root)
+    canonical_loop_id = resolve_builtin_graph_loop_id(loop_id)
     discovered = {graph_loop.loop_id: graph_loop for graph_loop in discover_graph_loop_definitions(assets_root=root)}
-    graph_loop = discovered.get(loop_id)
+    graph_loop = discovered.get(canonical_loop_id)
     if graph_loop is None:
-        raise GraphLoopAssetError(f"Unknown discovered graph loop id: {loop_id}")
+        raise GraphLoopAssetError(f"Unknown discovered graph loop id: {canonical_loop_id}")
     return graph_loop
 
 
 def graph_loop_asset_relative_path(loop_id: str, *, assets_root: Path | None = None) -> Path:
     root = _resolve_assets_root(assets_root)
-    return _resolve_graph_loop_path(loop_id, root).relative_to(root)
+    return _resolve_graph_loop_path(resolve_builtin_graph_loop_id(loop_id), root).relative_to(root)
+
+
+def resolve_builtin_graph_loop_id(loop_id: str) -> str:
+    return BUILTIN_GRAPH_LOOP_ALIASES.get(loop_id, loop_id)
 
 
 def discover_graph_loop_definitions(
@@ -288,6 +300,7 @@ def _validate_terminal_state_action_declarations(payload: dict[str, Any]) -> Non
 
 __all__ = [
     "ASSETS_ROOT",
+    "BUILTIN_GRAPH_LOOP_ALIASES",
     "BUILTIN_GRAPH_LOOP_PATHS",
     "GRAPH_LOOPS_ROOT",
     "GraphLoopAssetError",
@@ -297,4 +310,5 @@ __all__ = [
     "load_graph_loop_definition",
     "load_builtin_graph_loop_definition",
     "load_builtin_graph_loop_definitions",
+    "resolve_builtin_graph_loop_id",
 ]

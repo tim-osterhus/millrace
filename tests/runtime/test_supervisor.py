@@ -911,7 +911,7 @@ def test_supervisor_learning_disabled_mode_creates_no_learning_request(
     """With a learning-disabled mode config, the supervisor does not create
     Learning requests when execution stages complete.
 
-    Config asset: assets/modes/default_codex.json
+    Config asset: assets/modes/lad_codex.json
     """
     paths = _workspace(tmp_path)
     QueueStore(paths).enqueue_task(_task_doc("task-001"))
@@ -947,7 +947,7 @@ def test_supervisor_learning_enabled_mode_creates_learning_request(
     completions through the correct config path.  When a stage result
     matches learning trigger rules, Learning requests are created.
 
-    Config asset: assets/modes/learning_codex.json
+    Config asset: assets/modes/learning_lad_codex.json
     """
     paths = _workspace(tmp_path)
     QueueStore(paths).enqueue_task(_task_doc("task-001"))

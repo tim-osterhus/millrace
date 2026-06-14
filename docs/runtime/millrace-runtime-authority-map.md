@@ -302,7 +302,7 @@ learning eligibility come from the compiled scheduler-policy interpreter
 restricts execution claims to the open root lineage before unrelated work.
 
 **Compiled plan authority:** `compiled_plan.json` selects the Execution graph
-(`execution.standard` or `execution.with_integrator`), node bindings, legal
+(`execution.lad` or `execution.lad_integrator`), node bindings, legal
 terminal results, runtime failure recovery node, capability grants, scheduler
 lane policy, and transition table.
 
@@ -369,7 +369,7 @@ incident markdown is quarantined unless its `trigger_metadata` marks it
 claim set.
 
 **Compiled plan authority:** `compiled_plan.json` selects
-`planning.standard` or `planning.blueprint`, maps probe work to Recon, maps
+`planning.lad` or `planning.blueprint`, maps probe work to Recon, maps
 spec work to Planner, validates stage/work-item ownership, carries the
 Planning transition table, runtime failure recovery node, queue claim policy,
 runtime-effect rules with operation/runner authority plus optional

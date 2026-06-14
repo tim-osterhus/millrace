@@ -15,7 +15,7 @@ from millrace_ai.architecture import (
     RuntimeFailurePolicyDefinition,
     WorkItemFamilyDefinition,
 )
-from millrace_ai.assets import WorkflowPrimitiveBundle
+from millrace_ai.assets import WorkflowPrimitiveBundle, resolve_stage_kind_id
 from millrace_ai.contracts import Plane
 
 from ..outcomes import CompilerValidationError
@@ -357,7 +357,7 @@ def _runtime_failure_policy_is_active_for_plane(
     if not source_node_ids:
         return True
     return any(
-        node_id in plane_node_ids or node_id in plane_stage_kind_ids
+        node_id in plane_node_ids or resolve_stage_kind_id(node_id) in plane_stage_kind_ids
         for node_id in _policy_activating_node_ids(policy)
     )
 
@@ -369,7 +369,11 @@ def _stage_kind_for_node_or_kind(
     stage_kinds: dict[str, RegisteredStageKindDefinition],
     source_label: str,
 ) -> RegisteredStageKindDefinition:
-    stage_kind = stage_kinds_by_node_id.get(node_or_kind_id) or stage_kinds.get(node_or_kind_id)
+    stage_kind = (
+        stage_kinds_by_node_id.get(node_or_kind_id)
+        or stage_kinds.get(node_or_kind_id)
+        or stage_kinds.get(resolve_stage_kind_id(node_or_kind_id))
+    )
     if stage_kind is None:
         raise CompilerValidationError(f"{source_label} references unknown node {node_or_kind_id}")
     return stage_kind

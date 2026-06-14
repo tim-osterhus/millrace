@@ -1,22 +1,21 @@
-# Execution With Integrator Graph
+# LAD Execution Graph
 
-Source asset: `src/millrace_ai/assets/graphs/execution/with_integrator.json`
+Source asset: `src/millrace_ai/assets/graphs/execution/lad.json`
 
-Loop id: `execution.with_integrator`
+Loop id: `execution.lad`
 Plane: `execution`
 
-`execution.with_integrator` is the high-assurance Execution graph. It keeps the
-standard task intake, QA, repair, troubleshooting, and planning-escalation
-shape, but inserts Integrator between Builder and Checker so Builder output is
-reviewed before normal QA begins.
+`execution.lad` is the LAD task-execution graph. It turns queued
+tasks into bounded Builder work, sends successful builds through QA, routes
+repairable failures into Fixer and Doublechecker, and escalates repeated or
+unrecoverable blockage through Troubleshooter and Consultant.
 
 ## Nodes
 
 | Node | Stage Kind | Role |
 | --- | --- | --- |
 | `builder` | `builder` | Implements the queued task scope. |
-| `integrator` | `integrator` | Reviews Builder output, integration surfaces, and required/discoverable gates. |
-| `checker` | `checker` | Performs normal QA after Integrator completes. |
+| `checker` | `checker` | Verifies Builder output against task acceptance and required checks. |
 | `fixer` | `fixer` | Repairs Checker or Doublechecker failures. |
 | `doublechecker` | `doublechecker` | Rechecks Fixer output before update. |
 | `updater` | `updater` | Writes final completion evidence and terminal update output. |
@@ -32,27 +31,24 @@ reviewed before normal QA begins.
 ## Primary Success Path
 
 ```text
-task -> builder -> integrator -> checker -> updater -> UPDATE_COMPLETE
+task -> builder -> checker -> updater -> UPDATE_COMPLETE
 ```
 
-The repair path after Checker remains:
+When Checker finds work that needs repair, the graph uses the repair path:
 
 ```text
 checker -> fixer -> doublechecker -> updater -> UPDATE_COMPLETE
 ```
 
-Integrator is a quality gate, not a second Builder. It writes
-`integration_report.md` and hands the same task forward to Checker when the
-integrated output is ready for QA.
+Doublechecker can route back to Fixer on `FIX_NEEDED`, so repair is a bounded
+cycle rather than a single retry.
 
 ## Edges
 
 | From | Outcome | To |
 | --- | --- | --- |
-| `builder` | `BUILDER_COMPLETE` | `integrator` |
+| `builder` | `BUILDER_COMPLETE` | `checker` |
 | `builder` | `BLOCKED` | `troubleshooter` |
-| `integrator` | `INTEGRATION_COMPLETE` | `checker` |
-| `integrator` | `BLOCKED` | `troubleshooter` |
 | `checker` | `CHECKER_PASS` | `updater` |
 | `checker` | `FIX_NEEDED` | `fixer` |
 | `checker` | `BLOCKED` | `troubleshooter` |
@@ -79,20 +75,38 @@ integrated output is ready for QA.
 
 ## Recovery Policies
 
-The Integrator graph inherits the standard Execution resume policies:
+Troubleshooter resume:
 
-- Troubleshooter can resume to a metadata-selected stage through `resume_stage`,
-  defaulting to `builder`; it cannot resume to `consultant`.
-- Consultant can resume through `target_stage` or `resume_stage`, defaulting to
-  `troubleshooter`; it cannot resume to itself.
+- Source node: `troubleshooter`
+- Outcome: `TROUBLESHOOT_COMPLETE`
+- Default target: `builder`
+- Metadata key: `resume_stage`
+- Disallowed target: `consultant`
 
-The same fix-needed exhaustion policy applies to `checker` and
-`doublechecker` with threshold `2`, routing exhausted fix cycles to
-`troubleshooter`.
+Consultant resume:
 
-Blocked recovery also uses threshold `2`, routing exhausted blockage to
-`consultant`. In this graph the blocked-recovery source set includes
-`integrator` in addition to the standard Execution nodes.
+- Source node: `consultant`
+- Outcome: `CONSULT_COMPLETE`
+- Default target: `troubleshooter`
+- Metadata keys: `target_stage`, `resume_stage`
+- Disallowed target: `consultant`
+
+Fix-needed exhaustion:
+
+- Source nodes: `checker`, `doublechecker`
+- Outcome: `FIX_NEEDED`
+- Counter: `fix_cycle_count`
+- Threshold: `2`
+- Exhausted target: `troubleshooter`
+
+Blocked recovery:
+
+- Source nodes: `builder`, `checker`, `fixer`, `doublechecker`, `updater`,
+  `troubleshooter`
+- Outcome: `BLOCKED`
+- Counter: `troubleshoot_attempt_count`
+- Threshold: `2`
+- Exhausted target: `consultant`
 
 The Troubleshooter `BLOCKED` edge also targets `consultant` directly, so a
 blocked Troubleshooter hands preserved recovery evidence to Consultant instead
@@ -100,5 +114,10 @@ of re-entering Troubleshooter.
 
 ## Selected By
 
-- `default_codex_integrated`
-- `learning_codex_integrated`
+- `lad_codex`
+- `lad_pi`
+- `learning_lad_codex`
+- `efficient_learning_lad_mixed`
+- `learning_lad_pi`
+- `blueprint_lad_codex`
+- `blueprint_learning_lad_codex`

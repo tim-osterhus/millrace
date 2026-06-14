@@ -3,8 +3,8 @@
   "kind": "mode",
   "mode_id": "recovery_heavy_millrace",
   "loop_ids_by_plane": {
-    "execution": "execution.standard",
-    "planning": "planning.standard"
+    "execution": "execution.lad",
+    "planning": "planning.lad"
   },
   "stage_entrypoint_overrides": {},
   "stage_skill_additions": {},
@@ -34,8 +34,14 @@
     "planning.blocked_recovery_heavy"
   ],
   "required_extensions": [
-    {"extension_package_id": "millrace.generic"},
-    {"extension_package_id": "millrace.recon"},
-    {"extension_package_id": "millrace.closure"}
+    {
+      "extension_package_id": "millrace.generic"
+    },
+    {
+      "extension_package_id": "millrace.recon"
+    },
+    {
+      "extension_package_id": "millrace.closure"
+    }
   ]
 }

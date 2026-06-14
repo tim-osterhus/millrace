@@ -7,7 +7,7 @@
   "version": "1.0.0",
   "items": [
     {
-      "item_id": "arbiter",
+      "item_id": "lad_arbiter",
       "item_kind": "stage_kind",
       "implementation_path": "millrace_ai.runtime.stage_kinds.arbiter",
       "version": "1.0.0"

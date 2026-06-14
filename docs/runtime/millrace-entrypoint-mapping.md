@@ -11,27 +11,27 @@ pre-packaging draft tree for entrypoints.
 
 ### Execution Plane
 
-- `src/millrace_ai/assets/entrypoints/execution/builder.md` -> `millrace-agents/entrypoints/execution/builder.md`
-- `src/millrace_ai/assets/entrypoints/execution/integrator.md` -> `millrace-agents/entrypoints/execution/integrator.md`
-- `src/millrace_ai/assets/entrypoints/execution/checker.md` -> `millrace-agents/entrypoints/execution/checker.md`
-- `src/millrace_ai/assets/entrypoints/execution/fixer.md` -> `millrace-agents/entrypoints/execution/fixer.md`
-- `src/millrace_ai/assets/entrypoints/execution/doublechecker.md` -> `millrace-agents/entrypoints/execution/doublechecker.md`
-- `src/millrace_ai/assets/entrypoints/execution/updater.md` -> `millrace-agents/entrypoints/execution/updater.md`
-- `src/millrace_ai/assets/entrypoints/execution/troubleshooter.md` -> `millrace-agents/entrypoints/execution/troubleshooter.md`
-- `src/millrace_ai/assets/entrypoints/execution/consultant.md` -> `millrace-agents/entrypoints/execution/consultant.md`
+- `src/millrace_ai/assets/entrypoints/execution/lad_builder.md` -> `millrace-agents/entrypoints/execution/lad_builder.md`
+- `src/millrace_ai/assets/entrypoints/execution/lad_integrator.md` -> `millrace-agents/entrypoints/execution/lad_integrator.md`
+- `src/millrace_ai/assets/entrypoints/execution/lad_checker.md` -> `millrace-agents/entrypoints/execution/lad_checker.md`
+- `src/millrace_ai/assets/entrypoints/execution/lad_fixer.md` -> `millrace-agents/entrypoints/execution/lad_fixer.md`
+- `src/millrace_ai/assets/entrypoints/execution/lad_doublechecker.md` -> `millrace-agents/entrypoints/execution/lad_doublechecker.md`
+- `src/millrace_ai/assets/entrypoints/execution/lad_updater.md` -> `millrace-agents/entrypoints/execution/lad_updater.md`
+- `src/millrace_ai/assets/entrypoints/execution/lad_troubleshooter.md` -> `millrace-agents/entrypoints/execution/lad_troubleshooter.md`
+- `src/millrace_ai/assets/entrypoints/execution/lad_consultant.md` -> `millrace-agents/entrypoints/execution/lad_consultant.md`
 
 ### Planning Plane
 
 - `src/millrace_ai/assets/entrypoints/planning/recon.md` -> `millrace-agents/entrypoints/planning/recon.md`
-- `src/millrace_ai/assets/entrypoints/planning/planner.md` -> `millrace-agents/entrypoints/planning/planner.md`
-- `src/millrace_ai/assets/entrypoints/planning/manager.md` -> `millrace-agents/entrypoints/planning/manager.md`
+- `src/millrace_ai/assets/entrypoints/planning/lad_planner.md` -> `millrace-agents/entrypoints/planning/lad_planner.md`
+- `src/millrace_ai/assets/entrypoints/planning/lad_manager.md` -> `millrace-agents/entrypoints/planning/lad_manager.md`
 - `src/millrace_ai/assets/entrypoints/planning/manager_blueprint.md` -> `millrace-agents/entrypoints/planning/manager_blueprint.md`
 - `src/millrace_ai/assets/entrypoints/planning/contractor_blueprint.md` -> `millrace-agents/entrypoints/planning/contractor_blueprint.md`
 - `src/millrace_ai/assets/entrypoints/planning/evaluator_blueprint.md` -> `millrace-agents/entrypoints/planning/evaluator_blueprint.md`
-- `src/millrace_ai/assets/entrypoints/planning/mechanic.md` -> `millrace-agents/entrypoints/planning/mechanic.md`
+- `src/millrace_ai/assets/entrypoints/planning/lad_mechanic.md` -> `millrace-agents/entrypoints/planning/lad_mechanic.md`
 - `src/millrace_ai/assets/entrypoints/planning/mechanic_blueprint.md` -> `millrace-agents/entrypoints/planning/mechanic_blueprint.md`
-- `src/millrace_ai/assets/entrypoints/planning/auditor.md` -> `millrace-agents/entrypoints/planning/auditor.md`
-- `src/millrace_ai/assets/entrypoints/planning/arbiter.md` -> `millrace-agents/entrypoints/planning/arbiter.md`
+- `src/millrace_ai/assets/entrypoints/planning/lad_auditor.md` -> `millrace-agents/entrypoints/planning/lad_auditor.md`
+- `src/millrace_ai/assets/entrypoints/planning/lad_arbiter.md` -> `millrace-agents/entrypoints/planning/lad_arbiter.md`
 
 ### Learning Plane
 
@@ -44,7 +44,7 @@ pre-packaging draft tree for entrypoints.
 
 - Entrypoints are plain markdown instruction files (no required YAML frontmatter).
 - Stage agents are invoked against deployed workspace paths, for example:
-  - `millrace-agents/entrypoints/execution/builder.md`
+  - `millrace-agents/entrypoints/execution/lad_builder.md`
 - Entrypoints read active work from request-provided paths such as:
   - `active_work_item_path`: `millrace-agents/tasks/active/<TASK_ID>.md`
   - `active_work_item_path`: `millrace-agents/probes/active/<PROBE_ID>.md`

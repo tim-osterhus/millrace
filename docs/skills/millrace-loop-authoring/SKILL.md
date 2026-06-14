@@ -40,13 +40,13 @@ Before changing anything, load the relevant source-of-truth files:
 - `src/millrace_ai/architecture/materialization.py`
 - `src/millrace_ai/compiler.py`
 - `src/millrace_ai/assets/modes.py`
-- `src/millrace_ai/assets/loops/execution/default.json`
-- `src/millrace_ai/assets/loops/execution/with_integrator.json`
-- `src/millrace_ai/assets/loops/planning/default.json`
+- `src/millrace_ai/assets/loops/execution/lad.json`
+- `src/millrace_ai/assets/loops/execution/lad_integrator.json`
+- `src/millrace_ai/assets/loops/planning/lad.json`
 - `src/millrace_ai/assets/loops/learning/default.json`
-- `src/millrace_ai/assets/graphs/execution/standard.json`
-- `src/millrace_ai/assets/graphs/execution/with_integrator.json`
-- `src/millrace_ai/assets/graphs/planning/standard.json`
+- `src/millrace_ai/assets/graphs/execution/lad.json`
+- `src/millrace_ai/assets/graphs/execution/lad_integrator.json`
+- `src/millrace_ai/assets/graphs/planning/lad.json`
 - `src/millrace_ai/assets/graphs/planning/blueprint.json`
 - `src/millrace_ai/assets/graphs/learning/standard.json`
 - `src/millrace_ai/assets/registry/stage_kinds/`
@@ -60,15 +60,15 @@ Before changing anything, load the relevant source-of-truth files:
 - `src/millrace_ai/assets/registry/recovery_policies/`
 - `src/millrace_ai/assets/registry/runtime_failure_policies/`
 - `src/millrace_ai/assets/registry/workspace_schema_epochs/`
-- `src/millrace_ai/assets/modes/default_codex.json`
-- `src/millrace_ai/assets/modes/default_pi.json`
-- `src/millrace_ai/assets/modes/learning_codex.json`
-- `src/millrace_ai/assets/modes/efficient_learning_mixed.json`
-- `src/millrace_ai/assets/modes/learning_pi.json`
-- `src/millrace_ai/assets/modes/default_codex_integrated.json`
-- `src/millrace_ai/assets/modes/learning_codex_integrated.json`
-- `src/millrace_ai/assets/modes/blueprint_codex.json`
-- `src/millrace_ai/assets/modes/blueprint_learning_codex.json`
+- `src/millrace_ai/assets/modes/lad_codex.json`
+- `src/millrace_ai/assets/modes/lad_pi.json`
+- `src/millrace_ai/assets/modes/learning_lad_codex.json`
+- `src/millrace_ai/assets/modes/efficient_learning_lad_mixed.json`
+- `src/millrace_ai/assets/modes/learning_lad_pi.json`
+- `src/millrace_ai/assets/modes/lad_codex_integrated.json`
+- `src/millrace_ai/assets/modes/learning_lad_codex_integrated.json`
+- `src/millrace_ai/assets/modes/blueprint_lad_codex.json`
+- `src/millrace_ai/assets/modes/blueprint_learning_lad_codex.json`
 
 If you are writing docs as part of the change, also read:
 

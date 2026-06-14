@@ -120,24 +120,24 @@ The default monitor mode is `none`; `millrace run daemon` does not print live
 monitor lines unless `--monitor basic` is passed explicitly. The existing
 daemon summary output remains unchanged.
 
-Daemon mode uses a compiled lane scheduler. Default modes remain one active
+Daemon mode uses a compiled lane scheduler. LAD modes remain one active
 lane per plane, and shipped policies keep Planning and Execution mutually
 exclusive. Runtime-owned queue, snapshot, counter, status, and router mutation
 remains single-writer and serialized by the daemon supervisor.
 In learning-enabled modes, successful Planner runs can trigger Librarian on the
 Learning plane to install relevant remote optional skills into the workspace
 without blocking foreground work.
-Integrated Codex modes remain opt-in: `default_codex_integrated` and
-`learning_codex_integrated` select `execution.with_integrator`, so every
+Integrated Codex modes remain opt-in: `lad_codex_integrated` and
+`learning_lad_codex_integrated` select `execution.lad_integrator`, so every
 successful Builder run goes through Integrator before Checker. The integrated
-learning mode keeps the same Learning concurrency policy as `learning_codex`.
-`efficient_learning_mixed` keeps the standard execution loop, leaves
+learning mode keeps the same Learning concurrency policy as `learning_lad_codex`.
+`efficient_learning_lad_mixed` keeps the LAD execution loop, leaves
 Integrator inactive by default, and uses the same Learning concurrency policy
 with a mode-local mixed Codex/Pi model/depth alias profile. DeepSeek stages use
 `pi_rpc`; Codex stages use `codex_cli`.
-`blueprint_learning_codex` keeps the standard execution loop, selects
+`blueprint_learning_lad_codex` keeps the LAD execution loop, selects
 `planning.blueprint`, and uses the same Learning concurrency and
-Planner-to-Librarian trigger policy as `learning_codex`.
+Planner-to-Librarian trigger policy as `learning_lad_codex`.
 
 `--monitor basic` prints a compact terminal stream for visible daemon sessions:
 startup lifecycle context, baseline/currentness identity, loop and concurrency
@@ -686,7 +686,7 @@ capabilities, and allows shell run and workspace write capability requests.
 Model aliases are configured under `[model_aliases.<alias>]` and selected under
 `[model_assignment]`. `config show` prints `model_assignment.*`, each
 `model_alias.<alias>`, and any loop or stage assignment overrides. Some shipped
-modes, such as `efficient_learning_mixed`, also carry mode-local aliases; use
+modes, such as `efficient_learning_lad_mixed`, also carry mode-local aliases; use
 `compile show --mode <mode>` to inspect the resolved per-node assignments.
 
 ### `millrace config validate [--mode MODE_ID]`
@@ -886,20 +886,20 @@ Default subscription rules, when enabled, pause at 95 percent usage for the
 
 Lists built-in modes and loop references. Current packaged modes are:
 
-- `default_codex`
-- `default_pi`
-- `learning_codex`
-- `efficient_learning_mixed`
-- `learning_pi`
-- `default_codex_integrated`
-- `learning_codex_integrated`
-- `blueprint_codex`
-- `blueprint_learning_codex`
+- `lad_codex`
+- `lad_pi`
+- `learning_lad_codex`
+- `efficient_learning_lad_mixed`
+- `learning_lad_pi`
+- `lad_codex_integrated`
+- `learning_lad_codex_integrated`
+- `blueprint_lad_codex`
+- `blueprint_learning_lad_codex`
 
 ### `millrace modes show MODE_ID`
 
 Prints one mode definition summary. Use this to confirm whether a mode selects
-`execution.standard` or the quality-first `execution.with_integrator` loop.
+`execution.lad` or the quality-first `execution.lad_integrator` loop.
 
 ## Skills Commands
 
@@ -1011,9 +1011,10 @@ Command summary:
 - `millrace skills export <SKILL_ID>`
 
 Create/improve workflows require a learning-enabled mode such as
-`learning_codex`, `efficient_learning_mixed`, `learning_pi`,
-`learning_codex_integrated`, or `blueprint_learning_codex` because they enqueue
-learning requests for the Analyst/Professor/Curator skill-improvement path.
+`learning_lad_codex`, `efficient_learning_lad_mixed`, `learning_lad_pi`,
+`learning_lad_codex_integrated`, or `blueprint_learning_lad_codex` because they
+enqueue learning requests for the Analyst/Professor/Curator skill-improvement
+path.
 Install/list/show/search/refresh can be used for the deployed skill surface
 without changing the active runtime mode, and Librarian uses the same remote
 index/install surface after Planner in learning-enabled modes.

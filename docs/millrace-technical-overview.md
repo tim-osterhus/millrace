@@ -273,19 +273,20 @@ compiled plan.
 The compiler currently ships with baseline, learning-enabled, integrated, and
 Blueprint built-in modes:
 
-- baseline modes: `default_codex`, `default_pi`
-- learning-enabled modes: `learning_codex`, `efficient_learning_mixed`,
-  `learning_pi`, `learning_codex_integrated`, `blueprint_learning_codex`
-- integrated quality modes: `default_codex_integrated`,
-  `learning_codex_integrated`
-- Blueprint Planning modes: `blueprint_codex`, `blueprint_learning_codex`
-- execution loops: `execution.standard`, `execution.with_integrator`
-- planning loops: `planning.standard`, `planning.blueprint`
+- baseline modes: `lad_codex`, `lad_pi`
+- learning-enabled modes: `learning_lad_codex`, `efficient_learning_lad_mixed`,
+  `learning_lad_pi`, `learning_lad_codex_integrated`, `blueprint_learning_lad_codex`
+- integrated quality modes: `lad_codex_integrated`,
+  `learning_lad_codex_integrated`
+- Blueprint Planning modes: `blueprint_lad_codex`, `blueprint_learning_lad_codex`
+- execution loops: `execution.lad`, `execution.lad_integrator`
+- planning loops: `planning.lad`, `planning.blueprint`
 - learning loop: `learning.standard`
 
-`standard_plain` remains accepted as a compatibility alias that canonicalizes to
-`default_codex` before compile diagnostics, compiled-plan ids, and runtime
-snapshot state are written.
+`standard_plain`, `standard_millrace`, and `learning_enabled_millrace` remain
+accepted as compatibility aliases. The older `default_*`, unqualified
+`learning_*`, `efficient_learning_mixed`, and `*.standard` names are also
+compatibility names for the canonical LAD mode and loop IDs.
 
 Compile output is operator-visible through `millrace compile validate`,
 `millrace compile show`, and `millrace compile graph`. Failed recompiles
@@ -353,20 +354,20 @@ add compile-time overrides such as:
 In the shipped baseline, that runner binding map is how harness choice is
 expressed:
 
-- `default_codex` binds all shipped stages to `codex_cli`
-- `default_pi` binds all shipped stages to `pi_rpc`
-- `learning_codex` binds execution, planning, and learning stages to
+- `lad_codex` binds all shipped stages to `codex_cli`
+- `lad_pi` binds all shipped stages to `pi_rpc`
+- `learning_lad_codex` binds execution, planning, and learning stages to
   `codex_cli`
-- `efficient_learning_mixed` binds the same standard loops to a mixed
+- `efficient_learning_lad_mixed` binds the same LAD plus Learning loops to a mixed
   Codex/Pi runner profile, keeps Integrator inactive, and assigns stage
   model/depth through mode-local aliases
-- `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
-- `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
-  while selecting `execution.with_integrator`
-- `blueprint_codex` binds Codex stages while selecting `planning.blueprint`
-  and standard execution
-- `blueprint_learning_codex` binds Codex stages while selecting
-  `planning.blueprint`, `learning.standard`, and standard execution
+- `learning_lad_pi` binds execution, planning, and learning stages to `pi_rpc`
+- `lad_codex_integrated` and `learning_lad_codex_integrated` bind Codex stages
+  while selecting `execution.lad_integrator`
+- `blueprint_lad_codex` binds Codex stages while selecting `planning.blueprint`
+  and LAD execution
+- `blueprint_learning_lad_codex` binds Codex stages while selecting
+  `planning.blueprint`, `learning.standard`, and LAD execution
 
 The loop topology does not fork just because the harness changes. It forks only
 when the operator intentionally selects an integrated quality mode or the
@@ -376,7 +377,7 @@ Model selection can be controlled through the compiler-owned
 `model_aliases` / `model_assignment` surface. Workspace config ships `fast`,
 `standard`, and `deep` aliases, and operators can assign aliases globally, by
 loop, or by stage with `millrace model-aliases ...`. Mode assets may also carry
-mode-local aliases; `efficient_learning_mixed` uses that mechanism so its
+mode-local aliases; `efficient_learning_lad_mixed` uses that mechanism so its
 mixed Codex/Pi profile is part of the mode rather than an accidental workspace
 default. Workspace stage and loop assignments still take precedence over
 mode-local assignments.
@@ -394,7 +395,7 @@ relevant, and writes `integration_report.md` before Checker performs normal QA.
 
 The learning modes preserve execution/planning mutual exclusion and freeze
 scheduler lane/concurrency policy into the compiled plan. Daemon mode enforces
-that policy through lane-keyed dispatch: default modes remain one active lane
+that policy through lane-keyed dispatch: LAD modes remain one active lane
 per plane, while experimental multi-lane policy must declare valid conflict
 coverage before it can run. Runtime-owned mutation stays single-writer and
 serialized by the supervisor. Learning trigger rules can enqueue targeted
@@ -432,7 +433,7 @@ is recorded as a per-run trace graph.
 
 ## The Shipped Planning And Execution Planes
 
-The standard execution loop is:
+The LAD execution loop is:
 
 - `builder`
 - `checker`
@@ -445,7 +446,7 @@ The standard execution loop is:
 The integrated execution loop inserts `integrator` after `builder` for
 operator-selected high-assurance Codex modes.
 
-The standard planning loop is:
+The LAD planning loop is:
 
 - `recon`
 - `planner`
@@ -506,7 +507,7 @@ with a stricter draft-packet loop:
 Blueprint Planning still keeps implementation in Execution. Contractor
 Blueprint proposes a plan; Builder edits source only after Evaluator Blueprint
 approves and the runtime promotes a generated task. Blueprint closure is also
-stricter than standard Planning: Arbiter remains suppressed while same-lineage
+stricter than LAD Planning: Arbiter remains suppressed while same-lineage
 drafts, candidate packets, approved-but-unpromoted packets, or generated tasks
 remain open.
 
@@ -517,8 +518,8 @@ The current learning loop is:
 - `curator`
 - `librarian`
 
-Learning is opt-in through `learning_codex`, `efficient_learning_mixed`,
-`learning_pi`, `learning_codex_integrated`, or `blueprint_learning_codex`.
+Learning is opt-in through `learning_lad_codex`, `efficient_learning_lad_mixed`,
+`learning_lad_pi`, `learning_lad_codex_integrated`, or `blueprint_learning_lad_codex`.
 Its normal path is Analyst evidence analysis, Professor synthesis, then Curator
 acceptance and skill-update curation. Librarian is a targeted one-off Learning
 stage that runs after Planner in learning-enabled modes, checks Planner output
@@ -554,16 +555,16 @@ Millrace currently ships two first-class built-in runner adapters:
 - `pi_rpc`
 
 Codex remains the canonical bootstrap posture. New workspaces default to
-`runtime.default_mode = "default_codex"` and `runners.default_runner = "codex_cli"`.
+`runtime.default_mode = "lad_codex"` and `runners.default_runner = "codex_cli"`.
 
 When output quality matters more than stage count, operators can select
-`default_codex_integrated` or `learning_codex_integrated` after refreshing
+`lad_codex_integrated` or `learning_lad_codex_integrated` after refreshing
 managed workspace assets with `millrace upgrade --apply`. A running daemon can
 pick up a config-driven `runtime.default_mode` change through
 `millrace config reload` unless it was started with an explicit `--mode`
 override.
 
-Pi is opt-in through `default_pi` or direct runner selection. The Pi adapter
+Pi is opt-in through `lad_pi` or direct runner selection. The Pi adapter
 uses RPC mode and disables Pi-native context-file and skill discovery by
 default so the baseline stays governed by Millrace entrypoints rather than
 ambient Pi project state.

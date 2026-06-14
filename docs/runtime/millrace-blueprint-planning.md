@@ -1,7 +1,7 @@
 # Millrace Blueprint Planning
 
-Blueprint Planning is an opt-in Planning loop selected by `blueprint_codex`
-or `blueprint_learning_codex`. It is designed for implementation work where a
+Blueprint Planning is an opt-in Planning loop selected by `blueprint_lad_codex`
+or `blueprint_learning_lad_codex`. It is designed for implementation work where a
 normal Planner-to-Manager handoff is too coarse: the Planning plane decomposes
 a spec into strict draft packets, critiques one proposed implementation plan at
 a time, and promotes only approved packets into Execution tasks.
@@ -12,17 +12,17 @@ Evaluator Blueprint approves a generated task.
 
 ## Mode And Graph
 
-`blueprint_codex` selects:
+`blueprint_lad_codex` selects:
 
-- `execution.standard`
+- `execution.lad`
 - `planning.blueprint`
 
-`blueprint_learning_codex` selects the same Execution and Planning graph plus:
+`blueprint_learning_lad_codex` selects the same Execution and Planning graph plus:
 
 - `learning.standard`
 
 Both Blueprint modes omit the Integrator execution loop. The Blueprint graph
-replaces the standard Planner-to-Manager path with:
+replaces the LAD Planner-to-Manager path with:
 
 ```text
 planner -> manager_blueprint -> contractor_blueprint -> evaluator_blueprint
@@ -31,7 +31,7 @@ planner -> manager_blueprint -> contractor_blueprint -> evaluator_blueprint
 The graph also includes `mechanic_blueprint` as the Planning recovery role for
 blocked Blueprint work.
 
-When `blueprint_learning_codex` is active, Learning still triggers after
+When `blueprint_learning_lad_codex` is active, Learning still triggers after
 Planner completes. The Planner-complete trigger enqueues Librarian on the
 Learning plane before Planning continues into Manager Blueprint.
 
@@ -266,10 +266,10 @@ millrace status --workspace <workspace>
 millrace runs ls --workspace <workspace>
 millrace runs show <run_id> --workspace <workspace>
 millrace runs trace <run_id> --workspace <workspace>
-millrace compile show --mode blueprint_codex --workspace <workspace>
-millrace compile show --mode blueprint_learning_codex --workspace <workspace>
-millrace compile graph --mode blueprint_codex --workspace <workspace>
-millrace compile graph --mode blueprint_learning_codex --workspace <workspace>
+millrace compile show --mode blueprint_lad_codex --workspace <workspace>
+millrace compile show --mode blueprint_learning_lad_codex --workspace <workspace>
+millrace compile graph --mode blueprint_lad_codex --workspace <workspace>
+millrace compile graph --mode blueprint_learning_lad_codex --workspace <workspace>
 ```
 
 Important operator expectations:

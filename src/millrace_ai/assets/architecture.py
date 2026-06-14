@@ -18,6 +18,22 @@ BUILTIN_STAGE_KIND_PATHS: dict[str, Path] = {}
 
 SHIPPED_STAGE_KIND_IDS: tuple[str, ...] = ()
 
+BUILTIN_STAGE_KIND_ALIASES: dict[str, str] = {
+    "builder": "lad_builder",
+    "fixer": "lad_fixer",
+    "checker": "lad_checker",
+    "doublechecker": "lad_doublechecker",
+    "updater": "lad_updater",
+    "troubleshooter": "lad_troubleshooter",
+    "consultant": "lad_consultant",
+    "integrator": "lad_integrator",
+    "planner": "lad_planner",
+    "manager": "lad_manager",
+    "mechanic": "lad_mechanic",
+    "auditor": "lad_auditor",
+    "arbiter": "lad_arbiter",
+}
+
 
 class ArchitectureAssetError(AssetValidationError):
     """Raised when built-in architecture assets cannot be resolved or validated."""
@@ -29,7 +45,8 @@ def load_builtin_stage_kind_definition(
     assets_root: Path | None = None,
 ) -> RegisteredStageKindDefinition:
     root = _resolve_assets_root(assets_root)
-    asset_path = _resolve_stage_kind_path(stage_kind_id, root)
+    canonical_stage_kind_id = resolve_stage_kind_id(stage_kind_id)
+    asset_path = _resolve_stage_kind_path(canonical_stage_kind_id, root)
     payload = _load_json_asset(asset_path, asset_kind="stage kind")
 
     try:
@@ -40,9 +57,10 @@ def load_builtin_stage_kind_definition(
             f"Invalid stage kind definition in asset: {asset_path} ({first_error})"
         ) from exc
 
-    if stage_kind.stage_kind_id != stage_kind_id:
+    if stage_kind.stage_kind_id != canonical_stage_kind_id:
         raise ArchitectureAssetError(
-            f"Stage kind asset id mismatch: expected {stage_kind_id}, found {stage_kind.stage_kind_id}"
+            "Stage kind asset id mismatch: "
+            f"expected {canonical_stage_kind_id}, found {stage_kind.stage_kind_id}"
         )
 
     return stage_kind
@@ -64,19 +82,24 @@ def load_stage_kind_definition(
     assets_root: Path | None = None,
 ) -> RegisteredStageKindDefinition:
     root = _resolve_assets_root(assets_root)
+    canonical_stage_kind_id = resolve_stage_kind_id(stage_kind_id)
     discovered = {
         stage_kind.stage_kind_id: stage_kind
         for stage_kind in discover_stage_kind_definitions(assets_root=root)
     }
-    stage_kind = discovered.get(stage_kind_id)
+    stage_kind = discovered.get(canonical_stage_kind_id)
     if stage_kind is None:
-        raise ArchitectureAssetError(f"Unknown discovered stage kind id: {stage_kind_id}")
+        raise ArchitectureAssetError(f"Unknown discovered stage kind id: {canonical_stage_kind_id}")
     return stage_kind
 
 
 def stage_kind_asset_relative_path(stage_kind_id: str, *, assets_root: Path | None = None) -> Path:
     root = _resolve_assets_root(assets_root)
-    return _resolve_stage_kind_path(stage_kind_id, root).relative_to(root)
+    return _resolve_stage_kind_path(resolve_stage_kind_id(stage_kind_id), root).relative_to(root)
+
+
+def resolve_stage_kind_id(stage_kind_id: str) -> str:
+    return BUILTIN_STAGE_KIND_ALIASES.get(stage_kind_id, stage_kind_id)
 
 
 def discover_stage_kind_definitions(
@@ -184,16 +207,25 @@ def _init_builtin_stage_kind_paths() -> None:
     from millrace_ai.contracts.enums import ExecutionStageName, LearningStageName, PlanningStageName
 
     _known_stage_ids: set[str] = {
-        *(s.value for s in ExecutionStageName),
-        *(s.value for s in PlanningStageName),
+        *(BUILTIN_STAGE_KIND_ALIASES.get(s.value, s.value) for s in ExecutionStageName),
+        *(BUILTIN_STAGE_KIND_ALIASES.get(s.value, s.value) for s in PlanningStageName),
         *(s.value for s in LearningStageName),
+        "basic_worker",
+        "basic_planner",
+        "basic_learner",
+        "manager_blueprint",
+        "contractor_blueprint",
+        "evaluator_blueprint",
+        "mechanic_blueprint",
+        "recon",
     }
 
     # Maintain the shipped ordering: execution enum order, then planning,
     # then learning (same order as the old hard-coded SHIPPED_STAGE_KIND_IDS).
     _shipped_order: list[str] = [
-        *(s.value for s in ExecutionStageName),
-        *(s.value for s in PlanningStageName),
+        *(BUILTIN_STAGE_KIND_ALIASES.get(s.value, s.value) for s in ExecutionStageName),
+        "recon",
+        *(BUILTIN_STAGE_KIND_ALIASES.get(s.value, s.value) for s in PlanningStageName if s.value != "recon"),
         *(s.value for s in LearningStageName),
     ]
 
@@ -214,6 +246,7 @@ _init_builtin_stage_kind_paths()
 __all__ = [
     "ASSETS_ROOT",
     "ArchitectureAssetError",
+    "BUILTIN_STAGE_KIND_ALIASES",
     "BUILTIN_STAGE_KIND_PATHS",
     "STAGE_KIND_REGISTRY_ROOT",
     "SHIPPED_STAGE_KIND_IDS",
@@ -221,5 +254,6 @@ __all__ = [
     "load_stage_kind_definition",
     "load_builtin_stage_kind_definition",
     "load_builtin_stage_kind_definitions",
+    "resolve_stage_kind_id",
     "stage_kind_asset_relative_path",
 ]

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "kind": "loop_config",
-  "loop_id": "planning.standard",
+  "loop_id": "planning.lad",
   "plane": "planning",
   "stages": [
     "planner",

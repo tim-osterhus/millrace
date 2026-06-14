@@ -30,8 +30,8 @@ def test_runtime_startup_uses_single_compiled_plan_object(tmp_path: Path) -> Non
     engine.startup()
 
     assert engine.compiled_plan is not None
-    assert engine.compiled_plan.execution_graph.loop_id == "execution.standard"
-    assert engine.compiled_plan.planning_graph.loop_id == "planning.standard"
+    assert engine.compiled_plan.execution_graph.loop_id == "execution.lad"
+    assert engine.compiled_plan.planning_graph.loop_id == "planning.lad"
     assert not hasattr(engine, "compiled_graph_plan")
 
 
@@ -69,7 +69,7 @@ def test_runtime_startup_refuses_stale_last_known_good_plan_when_inputs_drift(tm
     )
     assert outcome.active_plan is not None
 
-    mode_path = paths.runtime_root / "modes" / "default_codex.json"
+    mode_path = paths.runtime_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["loop_ids_by_plane"]["planning"] = "planning.unknown"
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

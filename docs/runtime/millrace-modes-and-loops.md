@@ -32,35 +32,48 @@ the runtime's live routing authority.
 
 Today the shipped loop ids are:
 
-- `execution.standard`
-- `execution.with_integrator`
-- `planning.standard`
+- `execution.lad`
+- `execution.lad_integrator`
+- `planning.lad`
 - `planning.blueprint`
 - `learning.standard`
 
 The shipped canonical mode ids are:
 
-- `default_codex`
-- `default_pi`
-- `learning_codex`
-- `efficient_learning_mixed`
-- `learning_pi`
-- `default_codex_integrated`
-- `learning_codex_integrated`
-- `blueprint_codex`
-- `blueprint_learning_codex`
+- `lad_codex`
+- `lad_pi`
+- `learning_lad_codex`
+- `efficient_learning_lad_mixed`
+- `learning_lad_pi`
+- `lad_codex_integrated`
+- `learning_lad_codex_integrated`
+- `blueprint_lad_codex`
+- `blueprint_learning_lad_codex`
 
-Compatibility alias:
+Compatibility aliases:
 
-- `standard_plain -> default_codex`
-- `standard_millrace -> default_pi`
-- `learning_enabled_millrace -> learning_pi`
+- `standard_plain -> lad_codex`
+- `standard_millrace -> lad_pi`
+- `learning_enabled_millrace -> learning_lad_pi`
+- `default_codex -> lad_codex`
+- `default_pi -> lad_pi`
+- `learning_codex -> learning_lad_codex`
+- `efficient_learning_mixed -> efficient_learning_lad_mixed`
+- `learning_pi -> learning_lad_pi`
+- `default_codex_integrated -> lad_codex_integrated`
+- `learning_codex_integrated -> learning_lad_codex_integrated`
+- `blueprint_codex -> blueprint_lad_codex`
+- `blueprint_learning_codex -> blueprint_learning_lad_codex`
+
+Use the LAD names for new config and documentation. The old `default_*`,
+unqualified `learning_*`, `efficient_learning_mixed`, and `*.standard` names
+are compatibility names from the earlier code-development loop naming model.
 
 ## Discoverable Non-Shipped Fixtures
 
 Millrace also ships discovery-only fixture mode assets that are discoverable
-through asset discovery but are **not** shipped default modes. They are not
-present in `SHIPPED_MODE_IDS` and do not change the default product surface.
+through asset discovery but are **not** shipped product modes. They are not
+present in `SHIPPED_MODE_IDS` and do not change the product mode surface.
 
 ### `minimal_three_plane`
 
@@ -95,8 +108,8 @@ ADR-0013.
 ### `recovery_heavy_millrace`
 
 `recovery_heavy_millrace` is a two-plane fixture that selects
-`execution.standard` and `planning.standard`, binds standard execution and
-planning stages to `pi_rpc`, and requires `millrace.generic`, `millrace.recon`,
+`execution.lad` and `planning.lad`, binds LAD execution and planning stages to
+`pi_rpc`, and requires `millrace.generic`, `millrace.recon`,
 and `millrace.closure`.
 
 The recovery-heavy behavior is represented by registry asset data in
@@ -105,7 +118,7 @@ That asset defines execution and planning blocked-recovery policies with
 threshold `1`, lower than the default execution/planning blocked-recovery
 thresholds. The mode asset declares `recovery_policy_ids` selecting those
 registry policies, and compilation applies the selected lower thresholds to the
-standard graph loops before runtime threshold resolution. Config-swap coverage
+LAD graph loops before runtime threshold resolution. Config-swap coverage
 loads this fixture with `RuntimeConfig()` to prove the mode itself governs the
 recovery-policy difference.
 
@@ -217,7 +230,7 @@ Compile with the active workspace asset root to use custom assets.
 
 The discovery-only fixtures (see "Discoverable Non-Shipped Fixtures" above)
 are examples of package-shipped mode assets used for testing and config-swap
-proofs while remaining outside the default product surface.
+proofs while remaining outside the product mode surface.
 
 ## Shipped Plane Graphs
 
@@ -225,9 +238,9 @@ Detailed topology for each shipped plane graph now lives under `docs/graphs/`.
 Use those documents when you need node-by-node edges, terminal states, recovery
 policies, selected modes, or runner-neutral graph behavior:
 
-- `docs/graphs/execution-standard.md`: `execution.standard`
-- `docs/graphs/execution-with-integrator.md`: `execution.with_integrator`
-- `docs/graphs/planning-standard.md`: `planning.standard`
+- `docs/graphs/execution-lad.md`: `execution.lad`
+- `docs/graphs/execution-lad-integrator.md`: `execution.lad_integrator`
+- `docs/graphs/planning-lad.md`: `planning.lad`
 - `docs/graphs/planning-blueprint.md`: `planning.blueprint`
 - `docs/graphs/learning-standard.md`: `learning.standard`
 - `docs/graphs/graphs-index.md`: full shipped mode-to-plane graph
@@ -242,9 +255,9 @@ the compiler freezes into the runtime plan.
 The shipped Execution and Planning graphs also declare their default
 runtime-failure repair node in the compiled graph authority:
 
-- `execution.standard` and `execution.with_integrator` route unclassified
+- `execution.lad` and `execution.lad_integrator` route unclassified
   runtime-owned Execution blockers to `troubleshooter` when attempts remain.
-- `planning.standard` routes unclassified runtime-owned Planning blockers to
+- `planning.lad` routes unclassified runtime-owned Planning blockers to
   `mechanic` when attempts remain.
 - `planning.blueprint` routes unclassified runtime-owned Planning blockers to
   `mechanic_blueprint` when attempts remain.
@@ -277,40 +290,40 @@ matches the selected plane set.
 
 Baseline modes point at:
 
-- `loop_ids_by_plane.execution = execution.standard`
-- `loop_ids_by_plane.planning = planning.standard`
+- `loop_ids_by_plane.execution = execution.lad`
+- `loop_ids_by_plane.planning = planning.lad`
 
 Integrated Codex modes point execution at:
 
-- `loop_ids_by_plane.execution = execution.with_integrator`
+- `loop_ids_by_plane.execution = execution.lad_integrator`
 
 Blueprint Codex modes point Planning at:
 
 - `loop_ids_by_plane.planning = planning.blueprint`
 
-The learning-enabled modes, including `blueprint_learning_codex`, also point
+The learning-enabled modes, including `blueprint_learning_lad_codex`, also point
 at:
 
 - `loop_ids_by_plane.learning = learning.standard`
 
 The mode families differ primarily in `stage_runner_bindings`:
 
-- `default_codex` binds every shipped stage to `codex_cli`
-- `default_pi` binds every shipped stage to `pi_rpc`
-- `learning_codex` binds execution, planning, and learning stages to
+- `lad_codex` binds every shipped stage to `codex_cli`
+- `lad_pi` binds every shipped stage to `pi_rpc`
+- `learning_lad_codex` binds execution, planning, and learning stages to
   `codex_cli`
-- `efficient_learning_mixed` binds the same standard learning topology to a
+- `efficient_learning_lad_mixed` binds the same LAD plus Learning topology to a
   mixed Codex/Pi runner profile, leaves Integrator out of the active execution
   loop, and carries mode-local model/depth alias assignments for each shipped
-  standard stage
-- `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
-- `default_codex_integrated` binds execution with Integrator plus planning to
+  LAD stage
+- `learning_lad_pi` binds execution, planning, and learning stages to `pi_rpc`
+- `lad_codex_integrated` binds execution with Integrator plus planning to
   `codex_cli`
-- `learning_codex_integrated` binds execution with Integrator, planning, and
+- `learning_lad_codex_integrated` binds execution with Integrator, planning, and
   learning to `codex_cli`
-- `blueprint_codex` binds execution and Blueprint Planning stages to
+- `blueprint_lad_codex` binds execution and Blueprint Planning stages to
   `codex_cli`
-- `blueprint_learning_codex` binds execution, Blueprint Planning, and learning
+- `blueprint_learning_lad_codex` binds execution, Blueprint Planning, and learning
   stages to `codex_cli`
 
 Entrypoint, skill-addition, and direct model maps otherwise remain empty in the
@@ -318,7 +331,7 @@ baseline. Harness-only presets keep topology identical; integrated presets
 intentionally select a more expensive execution topology. Learning modes add a
 compiled scheduler policy, concurrency policy, and learning trigger rules;
 those are explicit mode data, not prompt-only instructions.
-`efficient_learning_mixed` is the one shipped mode that uses `model_aliases`,
+`efficient_learning_lad_mixed` is the one shipped mode that uses `model_aliases`,
 `model_assignment`, and `stage_runner_bindings` inside the mode asset so its
 mixed Codex/Pi stage-cost profile can travel with the mode instead of
 depending on workspace-local alias defaults.
@@ -328,14 +341,14 @@ depending on workspace-local alias defaults.
 Mode assets declare the built-in extension packages required by their selected
 graph vocabulary before compilation freezes the plan:
 
-- `default_codex`, `default_pi`, and `default_codex_integrated` require
+- `lad_codex`, `lad_pi`, and `lad_codex_integrated` require
   `millrace.generic`, `millrace.recon`, and `millrace.closure`.
-- `learning_codex`, `learning_pi`, `learning_codex_integrated`, and
-  `efficient_learning_mixed` require those same packages plus
+- `learning_lad_codex`, `learning_lad_pi`, `learning_lad_codex_integrated`, and
+  `efficient_learning_lad_mixed` require those same packages plus
   `millrace.learning`.
-- `blueprint_codex` requires `millrace.generic`, `millrace.recon`,
+- `blueprint_lad_codex` requires `millrace.generic`, `millrace.recon`,
   `millrace.closure`, and `millrace.blueprint`.
-- `blueprint_learning_codex` requires the Blueprint set plus
+- `blueprint_learning_lad_codex` requires the Blueprint set plus
   `millrace.learning`.
 
 Discovery-only fixtures declare the extensions required by their selected
@@ -343,7 +356,7 @@ graph vocabulary:
 
 - `minimal_three_plane` declares only `millrace.generic`.
 - `generic_two_plane_fixture` declares only `millrace.generic`.
-- `recovery_heavy_millrace` declares the standard two-plane set:
+- `recovery_heavy_millrace` declares the LAD two-plane set:
   `millrace.generic`, `millrace.recon`, and `millrace.closure`.
 
 The custom minimal stage kinds used by the generic-only fixtures use generic
@@ -422,11 +435,11 @@ assignment.
 When the selected assignment comes from a mode map, the compiler resolves the
 alias against mode-local aliases first, then workspace aliases. When the
 selected assignment comes from workspace config, the compiler resolves workspace
-aliases first. This lets `efficient_learning_mixed` define aliases such as
+aliases first. This lets `efficient_learning_lad_mixed` define aliases such as
 `codex_max` and `deepseek_fast` with different meanings from workspace
 defaults while still allowing explicit operator config to override the preset.
 
-`efficient_learning_mixed` ships these mode-local aliases:
+`efficient_learning_lad_mixed` ships these mode-local aliases:
 
 | Alias | Runner Family | Model | Thinking Level |
 | --- | --- | --- | --- |
@@ -437,7 +450,7 @@ defaults while still allowing explicit operator config to override the preset.
 | `deepseek_med` | Pi | `deepseek-v4-pro` | `high` |
 | `deepseek_fast` | Pi | `deepseek-v4-flash` | `max` |
 
-Its active standard-topology stage assignments are:
+Its active LAD-topology stage assignments are:
 
 | Alias | Stages |
 | --- | --- |
@@ -448,7 +461,7 @@ Its active standard-topology stage assignments are:
 | `deepseek_med` | `builder`, `analyst` |
 | `deepseek_fast` | `fixer` |
 
-Integrator remains inactive because the mode selects `execution.standard`.
+Integrator remains inactive because the mode selects `execution.lad`.
 The compiler rejects stage maps for nodes outside the selected loop, so
 Integrator does not receive an active assignment in this mode.
 
@@ -547,19 +560,19 @@ Relevant examples:
 - `model_assignment.by_loop.<loop_id>`
 - `model_assignment.by_stage.<stage>`
 
-New workspaces now bootstrap with `runtime.default_mode = "default_codex"`.
+New workspaces now bootstrap with `runtime.default_mode = "lad_codex"`.
 Existing configs that still use `standard_plain` continue to resolve to the
 same canonical Codex-backed plan. The conceptual config aliases
-`standard_millrace` and `learning_enabled_millrace` resolve to `default_pi` and
-`learning_pi`, respectively.
+`standard_millrace` and `learning_enabled_millrace` resolve to `lad_pi` and
+`learning_lad_pi`, respectively.
 
 Those are the fields that change the compiled runtime plan.
 
 Fields such as `usage_governance.*` are next-tick runtime settings and do not
 change selected modes, loops, or compiled node bindings.
 
-Use `learning_codex`, `efficient_learning_mixed`, `learning_pi`,
-`learning_codex_integrated`, or `blueprint_learning_codex` only when the
+Use `learning_lad_codex`, `efficient_learning_lad_mixed`, `learning_lad_pi`,
+`learning_lad_codex_integrated`, or `blueprint_learning_lad_codex` only when the
 workspace should opt into runtime learning requests, the
 Analyst/Professor/Curator flow, and Planner-triggered Librarian optional-skill
 preparation.
@@ -597,8 +610,8 @@ stage that is not selected by the chosen loops. Model-assignment presets are
 non-topological: an inactive stage assignment is ignored unless a selected
 graph later includes that stage.
 
-The important operator consequence is that changing from `default_codex` to
-`default_pi` does not change the loop graph. It changes only the compiled
+The important operator consequence is that changing from `lad_codex` to
+`lad_pi` does not change the loop graph. It changes only the compiled
 runner binding attached to each shipped stage. Changing to a `learning_*` mode
 does change the selected plane set by adding `learning.standard`.
 

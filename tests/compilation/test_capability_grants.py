@@ -39,7 +39,7 @@ def test_config_policy_can_make_capability_approval_required(tmp_path: Path) -> 
     workspace_root = tmp_path / "workspace"
     assets_root = _copy_builtin_assets(tmp_path)
     bootstrap_workspace(workspace_root, assets_root=assets_root)
-    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     payload = json.loads(builder_path.read_text(encoding="utf-8"))
     payload["execution_capability_requests"] = [
         {
@@ -95,7 +95,7 @@ def test_mode_policy_cannot_override_runtime_config_denial(tmp_path: Path) -> No
     workspace_root = tmp_path / "workspace"
     assets_root = _copy_builtin_assets(tmp_path)
     bootstrap_workspace(workspace_root, assets_root=assets_root)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["execution_capability_policies"] = [
         {
@@ -105,7 +105,7 @@ def test_mode_policy_cannot_override_runtime_config_denial(tmp_path: Path) -> No
         }
     ]
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     builder_payload = json.loads(builder_path.read_text(encoding="utf-8"))
     builder_payload["execution_capability_requests"] = [
         {

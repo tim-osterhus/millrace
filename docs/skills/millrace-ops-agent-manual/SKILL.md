@@ -121,35 +121,37 @@ workspaces before running the daemon.
 
 Know which shipped harness posture you are validating:
 
-- `default_codex` is the canonical bootstrap baseline
-- `default_pi` keeps the same loops and stage semantics, but swaps every stage
+- `lad_codex` is the canonical bootstrap baseline
+- `lad_pi` keeps the same loops and stage semantics, but swaps every stage
   to the Pi RPC adapter
-- `learning_codex` and `learning_pi` add the
+- `learning_lad_codex` and `learning_lad_pi` add the
   Analyst/Professor/Curator/Librarian learning plane for runtime learning
   requests, skill-improvement workflows, and post-Planner optional-skill
   preparation
-- `efficient_learning_mixed` uses the same standard learning topology as
-  `learning_codex`, keeps Integrator inactive by default, and carries
+- `efficient_learning_lad_mixed` uses the same LAD plus Learning topology as
+  `learning_lad_codex`, keeps Integrator inactive by default, and carries
   mode-local stage model/depth aliases plus runner bindings for mixed Codex/Pi
   execution
-- `default_codex_integrated` and `learning_codex_integrated` are opt-in
-  quality loops. They use Codex and select `execution.with_integrator`, so a
+- `lad_codex_integrated` and `learning_lad_codex_integrated` are opt-in
+  quality loops. They use Codex and select `execution.lad_integrator`, so a
   successful Builder result always runs through Integrator before Checker.
-- `blueprint_codex` is an opt-in Blueprint Planning posture. It keeps standard
+- `blueprint_lad_codex` is an opt-in Blueprint Planning posture. It keeps LAD
   execution, but routes Planner output through Manager Blueprint, Contractor
   Blueprint, and Evaluator Blueprint before generated tasks enter Execution.
   Contractor proposes plans only; it must not implement source changes.
-- `blueprint_learning_codex` keeps that same Blueprint Planning posture and
+- `blueprint_learning_lad_codex` keeps that same Blueprint Planning posture and
   adds the Learning plane. Planner-complete still triggers Librarian before
   Blueprint Planning continues into Manager Blueprint.
 - probes enter Planning through Recon before becoming generated tasks,
   generated specs, no-ops, or blocked probe artifacts
 - learning requests may close as no-op/done when evidence was reviewed and no
   skill update is warranted; this is not the same as a blocked learning request
-- `standard_plain` remains accepted only as a compatibility alias for
-  `default_codex`
+- `standard_plain`, `standard_millrace`, `learning_enabled_millrace`, old
+  `default_*` IDs, old unqualified `learning_*` IDs, and
+  `efficient_learning_mixed` remain accepted only as compatibility aliases for
+  canonical LAD mode IDs.
 
-Daemon mode uses a compiled lane scheduler. Default modes remain one active
+Daemon mode uses a compiled lane scheduler. LAD modes remain one active
 lane per plane, and shipped policies keep Planning and Execution mutually
 exclusive. Runtime-owned mutation remains single-writer and serialized by the
 daemon supervisor.
@@ -386,17 +388,17 @@ millrace model-aliases set <alias> --model <model> --thinking-level <level> --wo
 millrace model-aliases assign-global <alias> --workspace <workspace>
 millrace model-aliases assign-loop <loop_id> <alias> --workspace <workspace>
 millrace model-aliases assign-stage <stage> <alias> --workspace <workspace>
-millrace compile validate --mode efficient_learning_mixed --workspace <workspace>
-millrace compile validate --mode default_codex_integrated --workspace <workspace>
-millrace compile validate --mode blueprint_codex --workspace <workspace>
-millrace compile validate --mode blueprint_learning_codex --workspace <workspace>
+millrace compile validate --mode efficient_learning_lad_mixed --workspace <workspace>
+millrace compile validate --mode lad_codex_integrated --workspace <workspace>
+millrace compile validate --mode blueprint_lad_codex --workspace <workspace>
+millrace compile validate --mode blueprint_learning_lad_codex --workspace <workspace>
 millrace skills ls --workspace <workspace>
 millrace skills show <skill_id> --workspace <workspace>
 millrace skills search <query> --workspace <workspace>
 millrace skills install <skill_ref> --workspace <workspace>
 millrace skills refresh-remote-index --workspace <workspace>
-millrace skills create "<prompt>" --mode learning_codex --workspace <workspace>
-millrace skills improve <skill_id> --mode learning_codex --workspace <workspace>
+millrace skills create "<prompt>" --mode learning_lad_codex --workspace <workspace>
+millrace skills improve <skill_id> --mode learning_lad_codex --workspace <workspace>
 millrace skills promote <skill_id> --workspace <workspace>
 millrace skills export <skill_id> --workspace <workspace>
 millrace queue add-task <task.md|task.json> --workspace <workspace>
@@ -639,8 +641,8 @@ Blueprint monitoring checklist:
   closure target; the supported fix is to repair the incident lineage, not to
   bypass the root.
 - `millrace skills create` and `millrace skills improve` require a
-  learning-enabled mode such as `learning_codex`, `efficient_learning_mixed`,
-  `learning_pi`, `learning_codex_integrated`, or `blueprint_learning_codex`
+  learning-enabled mode such as `learning_lad_codex`, `efficient_learning_lad_mixed`,
+  `learning_lad_pi`, `learning_lad_codex_integrated`, or `blueprint_learning_lad_codex`
 
 ## Monitoring And Intervention
 
@@ -770,11 +772,11 @@ Use intervention commands only when the runtime state actually justifies them:
   `deep`, with `standard` selected globally. Use `millrace model-aliases ...`
   commands instead of hand-editing when possible; they preserve TOML comments
   where possible and request daemon-safe reload by default. Shipped modes can
-  also carry mode-local aliases; `efficient_learning_mixed` uses that surface
+  also carry mode-local aliases; `efficient_learning_lad_mixed` uses that surface
   so its stage profile does not depend on workspace-local alias defaults. Its
   Codex aliases are `codex_max`, `codex_med`, and `codex_fast`; its Pi/DeepSeek
   aliases are `deepseek_max`, `deepseek_med`, and `deepseek_fast`. Integrator
-  remains inactive because the mode selects `execution.standard`.
+  remains inactive because the mode selects `execution.lad`.
 - Config reload recompiles changes such as `runtime.default_mode` and
   `stages.<stage>.*`, `model_aliases.*`, and `model_assignment.*` on the
   daemon's next tick when a daemon owns the workspace. If the daemon was
@@ -784,18 +786,18 @@ Use intervention commands only when the runtime state actually justifies them:
 - Stage config supports learning stages such as `professor` and `librarian`,
   including `model`, runner-neutral `thinking_level`, legacy Codex
   `model_reasoning_effort`, and `timeout_seconds`.
-- New workspaces bootstrap with `runtime.default_mode = "default_codex"` and
+- New workspaces bootstrap with `runtime.default_mode = "lad_codex"` and
   `runners.default_runner = "codex_cli"`.
 - To switch a managed workspace into the quality loop after a package update,
   run `millrace upgrade --apply --workspace <workspace>`, set
-  `runtime.default_mode = "default_codex_integrated"` or
-  `"learning_codex_integrated"`, then run
+  `runtime.default_mode = "lad_codex_integrated"` or
+  `"learning_lad_codex_integrated"`, then run
   `millrace config reload --workspace <workspace>`. If the daemon was started
   with an explicit `--mode`, restart it without that override or with the
   intended integrated mode.
 - New workspaces bootstrap with Codex `permission_default = "maximum"`.
 - Pi defaults to disabling Pi-native context-file and skill discovery so the
-  shipped `default_pi` posture remains deterministic.
+  shipped `lad_pi` posture remains deterministic.
 - Permission resolution order for Codex is:
   1. `runners.codex.permission_by_stage`
   2. `runners.codex.permission_by_model`

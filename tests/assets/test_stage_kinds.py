@@ -11,6 +11,7 @@ from millrace_ai.architecture import RecoveryRole, StageIdempotencePolicy
 from millrace_ai.contracts import ExecutionStageName, LearningStageName, Plane, PlanningStageName, ResultClass
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.stage_kinds import (
+    BUILTIN_STAGE_KIND_ALIASES,
     SHIPPED_STAGE_KIND_IDS,
     ArchitectureAssetError,
     discover_stage_kind_definitions,
@@ -38,7 +39,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "runtime_stage": "builder",
         "plane": "execution",
         "display_name": "Synthetic Worker",
-        "default_entrypoint_path": "entrypoints/execution/builder.md",
+        "default_entrypoint_path": "entrypoints/execution/lad_builder.md",
         "required_skill_paths": ["skills/stage/execution/builder-core/SKILL.md"],
         "suggested_skill_paths": [],
         "running_status_marker": "SYNTHETIC_RUNNING",
@@ -113,20 +114,20 @@ def test_builtin_stage_kinds_load_and_validate() -> None:
 
 def test_shipped_stage_kind_ids_are_stable() -> None:
     assert SHIPPED_STAGE_KIND_IDS == (
-        "builder",
-        "integrator",
-        "checker",
-        "fixer",
-        "doublechecker",
-        "updater",
-        "troubleshooter",
-        "consultant",
+        "lad_builder",
+        "lad_integrator",
+        "lad_checker",
+        "lad_fixer",
+        "lad_doublechecker",
+        "lad_updater",
+        "lad_troubleshooter",
+        "lad_consultant",
         "recon",
-        "planner",
-        "manager",
-        "mechanic",
-        "auditor",
-        "arbiter",
+        "lad_planner",
+        "lad_manager",
+        "lad_mechanic",
+        "lad_auditor",
+        "lad_arbiter",
         "analyst",
         "professor",
         "curator",
@@ -141,7 +142,14 @@ def test_builtin_stage_kinds_cover_current_shipped_stage_enums() -> None:
         *(stage.value for stage in LearningStageName),
     }
 
-    assert set(SHIPPED_STAGE_KIND_IDS) == expected_stage_ids
+    shipped_stage_kinds = load_builtin_stage_kind_definitions()
+
+    assert {stage_kind.runtime_stage.value for stage_kind in shipped_stage_kinds} == expected_stage_ids
+
+
+def test_legacy_stage_kind_ids_alias_to_lad_canonical_assets() -> None:
+    for legacy_stage_kind_id, canonical_stage_kind_id in BUILTIN_STAGE_KIND_ALIASES.items():
+        assert load_builtin_stage_kind_definition(legacy_stage_kind_id).stage_kind_id == canonical_stage_kind_id
 
 
 def test_specific_builtin_stage_kind_fields_are_expected() -> None:
@@ -152,7 +160,9 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     analyst = load_builtin_stage_kind_definition("analyst")
 
     assert builder.plane is Plane.EXECUTION
-    assert builder.default_entrypoint_path == "entrypoints/execution/builder.md"
+    assert builder.stage_kind_id == "lad_builder"
+    assert builder.runtime_stage is ExecutionStageName.BUILDER
+    assert builder.default_entrypoint_path == "entrypoints/execution/lad_builder.md"
     assert builder.required_skill_paths == ("skills/stage/execution/builder-core/SKILL.md",)
     assert builder.allowed_result_classes_by_outcome == {
         "BUILDER_COMPLETE": (ResultClass.SUCCESS,),
@@ -163,7 +173,9 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     assert builder.idempotence_policy is StageIdempotencePolicy.RETRY_SAFE_WITH_KEY
 
     assert integrator.plane is Plane.EXECUTION
-    assert integrator.default_entrypoint_path == "entrypoints/execution/integrator.md"
+    assert integrator.stage_kind_id == "lad_integrator"
+    assert integrator.runtime_stage is ExecutionStageName.INTEGRATOR
+    assert integrator.default_entrypoint_path == "entrypoints/execution/lad_integrator.md"
     assert integrator.required_skill_paths == (
         "skills/stage/execution/integrator-core/SKILL.md",
     )
@@ -195,6 +207,8 @@ def test_specific_builtin_stage_kind_fields_are_expected() -> None:
     )
 
     assert arbiter.plane is Plane.PLANNING
+    assert arbiter.stage_kind_id == "lad_arbiter"
+    assert arbiter.runtime_stage is PlanningStageName.ARBITER
     assert arbiter.closure_role is True
     assert arbiter.allowed_work_item_families == ()
     assert arbiter.failure_outcomes == ("REMEDIATION_NEEDED", "BLOCKED")
@@ -317,7 +331,7 @@ def test_unknown_stage_kind_fails_deterministically() -> None:
 
 def test_invalid_stage_kind_json_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     stage_kind_path.write_text("{not-valid-json", encoding="utf-8")
 
     with pytest.raises(ArchitectureAssetError, match="Invalid JSON in stage kind asset"):
@@ -326,7 +340,7 @@ def test_invalid_stage_kind_json_fails_deterministically(tmp_path: Path) -> None
 
 def test_stage_kind_requires_allowed_result_classes_by_outcome(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     payload = json.loads(stage_kind_path.read_text(encoding="utf-8"))
     payload.pop("allowed_result_classes_by_outcome", None)
     stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -337,7 +351,7 @@ def test_stage_kind_requires_allowed_result_classes_by_outcome(tmp_path: Path) -
 
 def test_stage_kind_requires_runtime_stage_declaration(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     payload = json.loads(stage_kind_path.read_text(encoding="utf-8"))
     payload.pop("runtime_stage", None)
     stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -348,7 +362,7 @@ def test_stage_kind_requires_runtime_stage_declaration(tmp_path: Path) -> None:
 
 def test_stage_kind_id_mismatch_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     payload = json.loads(stage_kind_path.read_text(encoding="utf-8"))
     payload["stage_kind_id"] = "wrong_id"
     payload["runtime_stage"] = "builder"

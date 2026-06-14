@@ -94,8 +94,8 @@ Learning-enabled modes ship these trigger rules:
 
 ## Selected By
 
-- `learning_codex`
-- `efficient_learning_mixed`
-- `learning_pi`
-- `learning_codex_integrated`
-- `blueprint_learning_codex`
+- `learning_lad_codex`
+- `efficient_learning_lad_mixed`
+- `learning_lad_pi`
+- `learning_lad_codex_integrated`
+- `blueprint_learning_lad_codex`

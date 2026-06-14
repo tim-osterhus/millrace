@@ -100,22 +100,24 @@ satisfied grant set and runner support decisions through `StageRunRequest`.
 
 The shipped canonical modes make that explicit:
 
-- `default_codex` binds every shipped stage to `codex_cli`
-- `default_pi` binds every shipped stage to `pi_rpc`
-- `learning_codex` binds execution, planning, and learning stages to
+- `lad_codex` binds every shipped stage to `codex_cli`
+- `lad_pi` binds every shipped stage to `pi_rpc`
+- `learning_lad_codex` binds execution, planning, and learning stages to
   `codex_cli`
-- `efficient_learning_mixed` binds the same standard learning topology to a
+- `efficient_learning_lad_mixed` binds the same LAD plus Learning topology to a
   mixed Codex/Pi runner profile and applies a mode-local model/depth alias
   profile. DeepSeek stages use `pi_rpc`; Codex stages use `codex_cli`.
-- `learning_pi` binds execution, planning, and learning stages to `pi_rpc`
-- `default_codex_integrated` and `learning_codex_integrated` bind Codex stages
-  while selecting the quality-first `execution.with_integrator` loop
-- `blueprint_codex` binds Codex stages while selecting the Blueprint Planning
-  loop and standard execution
-- `blueprint_learning_codex` binds Codex stages while selecting the Blueprint
-  Planning loop, standard execution, and the Learning plane
-- `standard_plain` remains accepted only as a compatibility alias for
-  `default_codex`
+- `learning_lad_pi` binds execution, planning, and learning stages to `pi_rpc`
+- `lad_codex_integrated` and `learning_lad_codex_integrated` bind Codex stages
+  while selecting the quality-first `execution.lad_integrator` loop
+- `blueprint_lad_codex` binds Codex stages while selecting the Blueprint Planning
+  loop and LAD execution
+- `blueprint_learning_lad_codex` binds Codex stages while selecting the Blueprint
+  Planning loop, LAD execution, and the Learning plane
+- `standard_plain`, `standard_millrace`, `learning_enabled_millrace`, old
+  `default_*` IDs, old unqualified `learning_*` IDs, and
+  `efficient_learning_mixed` remain accepted only as compatibility aliases for
+  canonical LAD mode IDs.
 
 ## Compiled Identity In Requests And Inspection
 
@@ -317,8 +319,8 @@ event_log_policy = "failure_full"
 
 Pi can auto-discover `AGENTS.md` / `CLAUDE.md` context files and Pi-native
 skills on its own. Millrace disables both by default in the built-in Pi posture
-so `default_pi` stays deterministic against the same stage-entrypoint contract
-as `default_codex`.
+so `lad_pi` stays deterministic against the same stage-entrypoint contract
+as `lad_codex`.
 
 The default `failure_full` policy keeps successful runs closer to the Codex
 artifact footprint while still preserving the raw RPC trace for timeouts,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .architecture import (
+    BUILTIN_STAGE_KIND_ALIASES,
     BUILTIN_STAGE_KIND_PATHS,
     SHIPPED_STAGE_KIND_IDS,
     ArchitectureAssetError,
@@ -10,6 +11,7 @@ from .architecture import (
     load_builtin_stage_kind_definition,
     load_builtin_stage_kind_definitions,
     load_stage_kind_definition,
+    resolve_stage_kind_id,
     stage_kind_asset_relative_path,
 )
 from .effect_operations import (
@@ -33,6 +35,7 @@ from .extensions import (
     load_extension_package_manifest,
 )
 from .loop_graphs import (
+    BUILTIN_GRAPH_LOOP_ALIASES,
     BUILTIN_GRAPH_LOOP_PATHS,
     SHIPPED_GRAPH_LOOP_IDS,
     GraphLoopAssetError,
@@ -41,9 +44,11 @@ from .loop_graphs import (
     load_builtin_graph_loop_definition,
     load_builtin_graph_loop_definitions,
     load_graph_loop_definition,
+    resolve_builtin_graph_loop_id,
 )
 from .modes import (
     ASSETS_ROOT,
+    BUILTIN_LOOP_ALIASES,
     BUILTIN_LOOP_PATHS,
     BUILTIN_MODE_ALIASES,
     BUILTIN_MODE_PATHS,
@@ -56,6 +61,7 @@ from .modes import (
     load_builtin_mode_definition,
     loop_config_relative_path,
     mode_asset_relative_path,
+    resolve_builtin_loop_id,
     resolve_builtin_mode_id,
     validate_shipped_mode_same_graph,
 )
@@ -105,11 +111,14 @@ __all__ = [
     "ASSETS_ROOT",
     "ArchitectureAssetError",
     "ARTIFACT_CONTRACT_REGISTRY_ROOT",
+    "BUILTIN_GRAPH_LOOP_ALIASES",
     "BUILTIN_GRAPH_LOOP_PATHS",
+    "BUILTIN_LOOP_ALIASES",
     "BUILTIN_LOOP_PATHS",
     "BUILTIN_MODE_ALIASES",
     "BUILTIN_MODE_PATHS",
     "BUILTIN_STAGE_KIND_PATHS",
+    "BUILTIN_STAGE_KIND_ALIASES",
     "BUILTIN_WORK_ITEM_FAMILY_PATHS",
     "DOCUMENT_ADAPTER_REGISTRY_ROOT",
     "EFFECT_STORE_REGISTRY_ROOT",
@@ -169,7 +178,9 @@ __all__ = [
     "graph_loop_asset_relative_path",
     "lint_asset_manifests",
     "load_graph_loop_definition",
+    "resolve_builtin_graph_loop_id",
     "load_stage_kind_definition",
+    "resolve_stage_kind_id",
     "load_builtin_work_item_family_definition",
     "load_builtin_work_item_family_definitions",
     "load_builtin_workflow_primitives",
@@ -186,6 +197,7 @@ __all__ = [
     "load_workspace_schema_epoch_definition",
     "loop_config_relative_path",
     "mode_asset_relative_path",
+    "resolve_builtin_loop_id",
     "parse_markdown_asset",
     "resolve_builtin_mode_id",
     "stage_kind_asset_relative_path",

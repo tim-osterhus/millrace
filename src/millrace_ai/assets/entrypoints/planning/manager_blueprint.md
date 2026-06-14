@@ -22,7 +22,7 @@ Not allowed:
 - implement product changes
 - create execution tasks directly
 - mutate Blueprint queue directories directly
-- alter standard Manager assets or standard planning queue state
+- alter LAD Manager assets or LAD planning queue state
 
 Runtime-owned, not stage-owned:
 - queue selection

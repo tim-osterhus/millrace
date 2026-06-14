@@ -1,11 +1,10 @@
 {
   "schema_version": "1.0",
   "kind": "loop_config",
-  "loop_id": "execution.with_integrator",
+  "loop_id": "execution.lad",
   "plane": "execution",
   "stages": [
     "builder",
-    "integrator",
     "checker",
     "fixer",
     "doublechecker",
@@ -18,20 +17,10 @@
     {
       "source_stage": "builder",
       "on_terminal_result": "BUILDER_COMPLETE",
-      "target_stage": "integrator"
-    },
-    {
-      "source_stage": "builder",
-      "on_terminal_result": "BLOCKED",
-      "target_stage": "troubleshooter"
-    },
-    {
-      "source_stage": "integrator",
-      "on_terminal_result": "INTEGRATION_COMPLETE",
       "target_stage": "checker"
     },
     {
-      "source_stage": "integrator",
+      "source_stage": "builder",
       "on_terminal_result": "BLOCKED",
       "target_stage": "troubleshooter"
     },
@@ -89,7 +78,7 @@
     {
       "source_stage": "troubleshooter",
       "on_terminal_result": "TROUBLESHOOT_COMPLETE",
-      "target_stage": "builder"
+      "target_stage": "checker"
     },
     {
       "source_stage": "troubleshooter",

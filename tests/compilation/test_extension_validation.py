@@ -1112,7 +1112,7 @@ class TestFullCompilationIntegration:
         assets_root = _copy_builtin_assets(tmp_path)
 
         # Path to the default_codex mode asset
-        mode_path = assets_root / "modes" / "default_codex.json"
+        mode_path = assets_root / "modes" / "lad_codex.json"
         mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
         # Keep base required extensions and add a missing one
         mode_data["required_extensions"] = [
@@ -1133,7 +1133,7 @@ class TestFullCompilationIntegration:
 
         # The example extension is already shipped; just reference it
         # alongside the base required extensions for this mode
-        mode_path = assets_root / "modes" / "default_codex.json"
+        mode_path = assets_root / "modes" / "lad_codex.json"
         mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
         mode_data["required_extensions"] = [
             {"extension_package_id": "millrace.generic"},
@@ -1150,7 +1150,7 @@ class TestFullCompilationIntegration:
     def test_blueprint_mode_rejects_missing_blueprint_extension(self, tmp_path: Path):
         """Blueprint-owned vocabulary requires millrace.blueprint."""
         assets_root = _copy_builtin_assets(tmp_path)
-        mode_path = assets_root / "modes" / "blueprint_codex.json"
+        mode_path = assets_root / "modes" / "blueprint_lad_codex.json"
         mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
         mode_data["required_extensions"] = [
             entry
@@ -1177,9 +1177,9 @@ class TestFullCompilationIntegration:
     @pytest.mark.parametrize(
         ("mode_id", "removed_extension", "expected_item_id"),
         (
-            ("default_codex", "millrace.recon", "recon"),
-            ("default_codex", "millrace.closure", "arbiter"),
-            ("learning_codex", "millrace.learning", "analyst"),
+            ("lad_codex", "millrace.recon", "recon"),
+            ("lad_codex", "millrace.closure", "lad_arbiter"),
+            ("learning_lad_codex", "millrace.learning", "analyst"),
         ),
     )
     def test_domain_modes_reject_missing_declared_owner(
@@ -1217,7 +1217,7 @@ class TestFullCompilationIntegration:
 
     @pytest.mark.parametrize(
         "mode_id",
-        ("default_codex", "default_pi", "generic_two_plane_fixture"),
+        ("lad_codex", "lad_pi", "generic_two_plane_fixture"),
     )
     def test_non_blueprint_modes_do_not_require_blueprint_extension(
         self, tmp_path: Path, mode_id: str
@@ -1255,7 +1255,7 @@ class TestConfigDrivenExtensionValidation:
     edits.
 
     Config dependency:
-    - assets/modes/default_codex.json — mode with base required extensions
+    - assets/modes/lad_codex.json — mode with base required extensions
     - assets/registry/extensions/example_blueprint_enhanced.json — shipped extension
     """
 
@@ -1266,7 +1266,7 @@ class TestConfigDrivenExtensionValidation:
         required extensions (millrace.generic, millrace.recon, millrace.closure)
         are all available.
 
-        Config asset: assets/modes/default_codex.json
+        Config asset: assets/modes/lad_codex.json
         """
         assets_root = _copy_builtin_assets(tmp_path)
         outcome = _compile_with_assets(tmp_path, assets_root)
@@ -1279,11 +1279,11 @@ class TestConfigDrivenExtensionValidation:
         """Adding a non-existent required extension to the mode config
         causes compile validation to reject the configuration.
 
-        Config asset: assets/modes/default_codex.json (modified)
+        Config asset: assets/modes/lad_codex.json (modified)
         """
         assets_root = _copy_builtin_assets(tmp_path)
 
-        mode_path = assets_root / "modes" / "default_codex.json"
+        mode_path = assets_root / "modes" / "lad_codex.json"
         mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
         # Add a required extension that does not exist
         mode_data["required_extensions"] = [
@@ -1304,11 +1304,11 @@ class TestConfigDrivenExtensionValidation:
         """Removing a non-existent required extension from mode config
         restores successful compilation.
 
-        Config asset: assets/modes/default_codex.json (modified)
+        Config asset: assets/modes/lad_codex.json (modified)
         """
         assets_root = _copy_builtin_assets(tmp_path)
 
-        mode_path = assets_root / "modes" / "default_codex.json"
+        mode_path = assets_root / "modes" / "lad_codex.json"
         mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
         # Use only the base extensions (which all exist)
         mode_data["required_extensions"] = [
@@ -1333,7 +1333,7 @@ class TestConfigDrivenExtensionValidation:
         """
         assets_root = _copy_builtin_assets(tmp_path)
 
-        mode_path = assets_root / "modes" / "default_codex.json"
+        mode_path = assets_root / "modes" / "lad_codex.json"
         mode_data = json.loads(mode_path.read_text(encoding="utf-8"))
         mode_data["required_extensions"] = [
             {"extension_package_id": "millrace.generic"},
@@ -1355,7 +1355,7 @@ class TestConfigDrivenExtensionValidation:
         proves the behavior is config-data-driven, not code-dependent.
 
         Config assets:
-        - assets/modes/default_codex.json (with/without missing extension)
+        - assets/modes/lad_codex.json (with/without missing extension)
         """
         # Config A: only existing extensions → succeeds
         assets_a = _copy_builtin_assets(tmp_path / "cfg_a")
@@ -1373,7 +1373,7 @@ class TestConfigDrivenExtensionValidation:
 
         assets_b = tmp_path / "cfg_b"
         _shutil.copytree(assets_a, assets_b)
-        mode_path_b = assets_b / "modes" / "default_codex.json"
+        mode_path_b = assets_b / "modes" / "lad_codex.json"
         mode_data_b = json.loads(mode_path_b.read_text(encoding="utf-8"))
         mode_data_b["required_extensions"] = [
             {"extension_package_id": "millrace.generic"},

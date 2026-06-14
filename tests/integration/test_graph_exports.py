@@ -16,7 +16,7 @@ def test_export_compiled_stage_graphs_projects_default_mode_graphs(tmp_path: Pat
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex",
+        requested_mode_id="lad_codex",
     )
     assert outcome.active_plan is not None
 
@@ -26,8 +26,8 @@ def test_export_compiled_stage_graphs_projects_default_mode_graphs(tmp_path: Pat
     execution = next(export for export in exports if export.plane is Plane.EXECUTION)
     assert execution.kind == "compiled_stage_graph"
     assert execution.compiled_plan_id == outcome.active_plan.compiled_plan_id
-    assert execution.mode_id == "default_codex"
-    assert execution.loop_id == "execution.standard"
+    assert execution.mode_id == "lad_codex"
+    assert execution.loop_id == "execution.lad"
     assert execution.runtime_failure_recovery is not None
     assert execution.runtime_failure_recovery.default_repair_node_id == "troubleshooter"
     assert execution.runtime_failure_recovery.counter_name == "troubleshoot_attempt_count"
@@ -59,7 +59,7 @@ def test_export_compiled_stage_graphs_includes_learning_graph_for_learning_mode(
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="learning_codex",
+        requested_mode_id="learning_lad_codex",
     )
     assert outcome.active_plan is not None
 

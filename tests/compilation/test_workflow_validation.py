@@ -89,6 +89,21 @@ def _request_context_render_plans_path(assets_root: Path) -> Path:
 
 
 def _stage_kind_path(assets_root: Path, plane: str, stage_kind_id: str) -> Path:
+    stage_kind_id = {
+        "builder": "lad_builder",
+        "integrator": "lad_integrator",
+        "checker": "lad_checker",
+        "fixer": "lad_fixer",
+        "doublechecker": "lad_doublechecker",
+        "updater": "lad_updater",
+        "troubleshooter": "lad_troubleshooter",
+        "consultant": "lad_consultant",
+        "planner": "lad_planner",
+        "manager": "lad_manager",
+        "mechanic": "lad_mechanic",
+        "auditor": "lad_auditor",
+        "arbiter": "lad_arbiter",
+    }.get(stage_kind_id, stage_kind_id)
     return assets_root / "registry" / "stage_kinds" / plane / f"{stage_kind_id}.json"
 
 
@@ -151,7 +166,7 @@ def _blueprint_graph_path(assets_root: Path) -> Path:
 
 
 def _planning_standard_graph_path(assets_root: Path) -> Path:
-    return assets_root / "graphs" / "planning" / "standard.json"
+    return assets_root / "graphs" / "planning" / "lad.json"
 
 
 def _fixture_runtime_effect_rules_path(assets_root: Path) -> Path:
@@ -620,7 +635,7 @@ def test_compile_backfills_builtin_queue_lifecycle_adapter_for_legacy_family_ass
 
 def test_compile_rejects_mode_stage_map_outside_selected_loops(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = _load_json(mode_path)
     payload["stage_runner_bindings"]["professor"] = "codex_cli"
     _write_json(mode_path, payload)
@@ -639,7 +654,7 @@ def test_compile_rejects_mode_stage_model_binding_outside_selected_loops(
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     payload = _load_json(mode_path)
     payload["stage_model_bindings"]["professor"] = "gpt-5.5"
     _write_json(mode_path, payload)
@@ -831,7 +846,7 @@ def test_compile_rejects_effect_rule_with_unknown_operation(tmp_path: Path) -> N
 
 def test_compile_rejects_stage_kind_with_unknown_output_artifact(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     payload = _load_json(builder_path)
     payload["declared_output_artifacts"].append("ghost_artifact")
     _write_json(builder_path, payload)
@@ -840,12 +855,12 @@ def test_compile_rejects_stage_kind_with_unknown_output_artifact(tmp_path: Path)
 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
-    assert "stage kind builder declares unknown output artifact ghost_artifact" in _diagnostic_text(outcome)
+    assert "stage kind lad_builder declares unknown output artifact ghost_artifact" in _diagnostic_text(outcome)
 
 
 def test_compile_rejects_stage_kind_with_unknown_input_artifact(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    integrator_path = assets_root / "registry" / "stage_kinds" / "execution" / "integrator.json"
+    integrator_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_integrator.json"
     payload = _load_json(integrator_path)
     payload["allowed_input_artifacts"].append("ghost_artifact")
     _write_json(integrator_path, payload)
@@ -854,14 +869,14 @@ def test_compile_rejects_stage_kind_with_unknown_input_artifact(tmp_path: Path) 
 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
-    assert "stage kind integrator allows unknown input artifact ghost_artifact" in _diagnostic_text(outcome)
+    assert "stage kind lad_integrator allows unknown input artifact ghost_artifact" in _diagnostic_text(outcome)
 
 
 def test_compile_rejects_stage_kind_output_artifact_without_contract_producer_match(
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     payload = _load_json(builder_path)
     payload["declared_output_artifacts"].append("blueprint_packet")
     _write_json(builder_path, payload)
@@ -871,14 +886,14 @@ def test_compile_rejects_stage_kind_output_artifact_without_contract_producer_ma
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "stage kind builder declares output artifact blueprint_packet, but artifact contract "
+            "stage kind lad_builder declares output artifact blueprint_packet, but artifact contract "
         "blueprint_packet does not list that stage kind as a producer"
     ) in _diagnostic_text(outcome)
 
 
 def test_compile_rejects_terminal_state_with_unknown_artifact(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["terminal_states"][0]["emits_artifacts"].append("ghost_artifact")
     _write_json(graph_path, payload)
@@ -888,7 +903,7 @@ def test_compile_rejects_terminal_state_with_unknown_artifact(tmp_path: Path) ->
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "graph execution.standard terminal update_complete emits unknown artifact ghost_artifact"
+        "graph execution.lad terminal update_complete emits unknown artifact ghost_artifact"
         in _diagnostic_text(outcome)
     )
 
@@ -1995,7 +2010,7 @@ def test_compile_materializes_stage_kind_request_context_authority_when_graph_om
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["nodes"][0].pop("request_context_profile_id", None)
     payload["nodes"][0].pop("context_render_plan_id", None)
@@ -2016,7 +2031,7 @@ def test_compile_rejects_missing_request_context_authority_from_graph_and_stage_
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     graph_payload = _load_json(graph_path)
     graph_payload["nodes"][0].pop("request_context_profile_id", None)
     graph_payload["nodes"][0].pop("context_render_plan_id", None)
@@ -2107,7 +2122,7 @@ def test_compile_rejects_request_context_render_plan_missing_provider_capability
 
 def test_compile_rejects_disallowed_node_context_render_plan_override(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["nodes"][0]["context_render_plan_id"] = "closure_target.default.v1"
     _write_json(graph_path, payload)
@@ -2181,7 +2196,7 @@ def test_compile_rejects_duplicate_effect_rule_binding(tmp_path: Path) -> None:
 
 def test_compile_rejects_entry_stage_without_family_ownership(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     payload = _load_json(graph_path)
     for entry in payload["entry_nodes"]:
         if entry["entry_key"] == "incident":
@@ -2197,7 +2212,7 @@ def test_compile_rejects_entry_stage_without_family_ownership(tmp_path: Path) ->
 
 def test_compile_rejects_graph_with_unrouted_legal_outcome(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["edges"] = [
         edge
@@ -2210,12 +2225,12 @@ def test_compile_rejects_graph_with_unrouted_legal_outcome(tmp_path: Path) -> No
 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
-    assert "graph execution.standard node builder has no route for legal outcome BUILDER_COMPLETE" in _diagnostic_text(outcome)
+    assert "graph execution.lad node builder has no route for legal outcome BUILDER_COMPLETE" in _diagnostic_text(outcome)
 
 
 def test_compile_rejects_graph_with_duplicate_outcome_routes(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     duplicate = next(
         edge
@@ -2231,7 +2246,7 @@ def test_compile_rejects_graph_with_duplicate_outcome_routes(tmp_path: Path) -> 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "graph execution.standard node builder has multiple routes for outcome "
+        "graph execution.lad node builder has multiple routes for outcome "
         "BUILDER_COMPLETE"
     ) in _diagnostic_text(outcome)
 
@@ -2271,7 +2286,7 @@ def test_graph_validator_rejects_entry_walk_with_unknown_target_node(tmp_path: P
 
 def test_compile_rejects_graph_route_with_illegal_source_outcome(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = _load_json(graph_path)
     payload["edges"][0]["on_outcomes"] = ["NOT_LEGAL"]
     _write_json(graph_path, payload)
@@ -2280,14 +2295,14 @@ def test_compile_rejects_graph_route_with_illegal_source_outcome(tmp_path: Path)
 
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
-    assert "declares illegal outcome NOT_LEGAL for stage kind builder" in _diagnostic_text(outcome)
+    assert "declares illegal outcome NOT_LEGAL for stage kind lad_builder" in _diagnostic_text(outcome)
 
 
 def test_compile_rejects_custom_stage_kind_without_runtime_stage(
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    stage_kind_path = assets_root / "registry" / "stage_kinds" / "planning" / "mechanic.json"
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "planning" / "lad_mechanic.json"
     stage_kind_payload = _load_json(stage_kind_path)
     stage_kind_payload.update(
         {
@@ -2300,14 +2315,14 @@ def test_compile_rejects_custom_stage_kind_without_runtime_stage(
     diagnostician_path = stage_kind_path.with_name("diagnostician.json")
     _write_json(diagnostician_path, stage_kind_payload)
 
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     graph_payload = _load_json(graph_path)
     for node in graph_payload["nodes"]:
         if node["node_id"] == "mechanic":
             node["stage_kind_id"] = "diagnostician"
             break
     _write_json(graph_path, graph_payload)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     mode_payload = _load_json(mode_path)
     mode_payload["stage_runner_bindings"]["diagnostician"] = mode_payload[
         "stage_runner_bindings"
@@ -2326,7 +2341,7 @@ def test_compile_rejects_stage_kind_runtime_stage_outside_plane(
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    builder_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     builder_payload = _load_json(builder_path)
     builder_payload["runtime_stage"] = "manager"
     _write_json(builder_path, builder_payload)
@@ -2336,7 +2351,7 @@ def test_compile_rejects_stage_kind_runtime_stage_outside_plane(
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert "Invalid stage kind definition in asset" in _diagnostic_text(outcome)
-    assert "builder.json" in _diagnostic_text(outcome)
+    assert "lad_builder.json" in _diagnostic_text(outcome)
 
 
 def test_compile_rejects_runtime_failure_recovery_node_without_local_repair_role(
@@ -2353,7 +2368,7 @@ def test_compile_rejects_runtime_failure_recovery_node_without_local_repair_role
     assert outcome.diagnostics.ok is False
     assert outcome.active_plan is None
     assert (
-        "graph planning.standard runtime failure recovery node manager must declare "
+        "graph planning.lad runtime failure recovery node manager must declare "
         "recovery_role=local_repair"
     ) in _diagnostic_text(outcome)
 
@@ -2362,7 +2377,7 @@ def test_compile_accepts_runtime_failure_recovery_node_with_noncanonical_runtime
     tmp_path: Path,
 ) -> None:
     assets_root = _copy_builtin_assets(tmp_path / "assets")
-    stage_kind_path = assets_root / "registry" / "stage_kinds" / "planning" / "mechanic.json"
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "planning" / "lad_mechanic.json"
     stage_kind_payload = _load_json(stage_kind_path)
     stage_kind_payload.update(
         {
@@ -2375,7 +2390,7 @@ def test_compile_accepts_runtime_failure_recovery_node_with_noncanonical_runtime
     diagnostician_path = stage_kind_path.with_name("diagnostician.json")
     _write_json(diagnostician_path, stage_kind_payload)
 
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     graph_payload = _load_json(graph_path)
     for node in graph_payload["nodes"]:
         if node["node_id"] == "mechanic":
@@ -2383,7 +2398,7 @@ def test_compile_accepts_runtime_failure_recovery_node_with_noncanonical_runtime
             break
     _write_json(graph_path, graph_payload)
 
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     mode_payload = _load_json(mode_path)
     for map_name in (
         "stage_runner_bindings",
@@ -2420,8 +2435,8 @@ class TestConfigDrivenGraphRouting:
     runtime dispatch without runtime code edits.
 
     Config dependency:
-    - assets/graphs/execution/standard.json — builder→checker
-    - assets/graphs/execution/with_integrator.json — builder→integrator
+    - assets/graphs/execution/lad.json — builder→checker
+    - assets/graphs/execution/lad_integrator.json — builder→integrator
     """
 
     def test_standard_graph_routes_builder_complete_to_checker(
@@ -2430,7 +2445,7 @@ class TestConfigDrivenGraphRouting:
         """With the standard execution graph, BUILDER_COMPLETE routes to
         checker.
 
-        Config asset: assets/graphs/execution/standard.json
+        Config asset: assets/graphs/execution/lad.json
         """
         assets_root = _copy_builtin_assets(tmp_path)
         outcome = _compile_with_assets(tmp_path, assets_root)
@@ -2454,7 +2469,7 @@ class TestConfigDrivenGraphRouting:
         """With the with_integrator execution graph, BUILDER_COMPLETE routes
         to integrator instead of checker.
 
-        Config asset: assets/graphs/execution/with_integrator.json
+        Config asset: assets/graphs/execution/lad_integrator.json
         """
         assets_root = _copy_builtin_assets(tmp_path)
 
@@ -2489,8 +2504,8 @@ class TestConfigDrivenGraphRouting:
         No runtime code edits are needed.
 
         Config assets:
-        - assets/graphs/execution/standard.json
-        - assets/graphs/execution/with_integrator.json
+        - assets/graphs/execution/lad.json
+        - assets/graphs/execution/lad_integrator.json
         """
         assets_root = _copy_builtin_assets(tmp_path)
 

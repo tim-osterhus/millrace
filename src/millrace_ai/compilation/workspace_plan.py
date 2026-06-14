@@ -222,6 +222,9 @@ def compile_compiled_run_plan(
         mode=mode,
         workflow_primitives=workflow_primitives,
     )
+    canonical_loop_ids_by_plane = {
+        plane: graph_loop.loop_id for plane, graph_loop in graph_loops.items()
+    }
     graphs_by_plane = {
         plane: materialize_graph_plane_plan(
             graph_loop=graph_loop,
@@ -282,7 +285,7 @@ def compile_compiled_run_plan(
     return CompiledRunPlan(
         compiled_plan_id=build_compiled_plan_id(
             mode_id=mode.mode_id,
-            loop_ids_by_plane=mode.loop_ids_by_plane,
+            loop_ids_by_plane=canonical_loop_ids_by_plane,
             graphs_by_plane=graphs_by_plane,
             concurrency_policy=mode.concurrency_policy,
             learning_trigger_rules=mode.learning_trigger_rules,
@@ -367,7 +370,7 @@ def compile_compiled_run_plan(
         ),
         compile_input_fingerprint=compile_input_fingerprint,
         mode_id=mode.mode_id,
-        loop_ids_by_plane=mode.loop_ids_by_plane,
+        loop_ids_by_plane=canonical_loop_ids_by_plane,
         execution_loop_id=execution_graph.loop_id,
         planning_loop_id=planning_graph.loop_id,
         learning_loop_id=learning_graph.loop_id if learning_graph is not None else None,

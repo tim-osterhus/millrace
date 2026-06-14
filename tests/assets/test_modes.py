@@ -14,11 +14,13 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import ExecutionStageName, LearningStageName, ModeDefinition, Plane, PlanningStageName
 from millrace_ai.errors import AssetValidationError, MillraceError
 from millrace_ai.modes import (
+    BUILTIN_MODE_ALIASES,
     SHIPPED_MODE_IDS,
     ModeAssetError,
     load_builtin_loop_definition,
     load_builtin_mode_bundle,
     load_builtin_mode_definition,
+    mode_asset_relative_path,
     resolve_builtin_mode_id,
     validate_shipped_mode_same_graph,
 )
@@ -35,14 +37,14 @@ def _copy_builtin_assets(tmp_path: Path) -> Path:
 def _write_workspace_local_mode_assets(assets_root: Path) -> None:
     execution_loop_path = assets_root / "loops" / "execution" / "local_review.json"
     execution_loop = json.loads(
-        (assets_root / "loops" / "execution" / "default.json").read_text(encoding="utf-8")
+        (assets_root / "loops" / "execution" / "lad.json").read_text(encoding="utf-8")
     )
     execution_loop["loop_id"] = "execution.local_review"
     execution_loop_path.write_text(json.dumps(execution_loop, indent=2) + "\n", encoding="utf-8")
 
     planning_loop_path = assets_root / "loops" / "planning" / "local_review.json"
     planning_loop = json.loads(
-        (assets_root / "loops" / "planning" / "default.json").read_text(encoding="utf-8")
+        (assets_root / "loops" / "planning" / "lad.json").read_text(encoding="utf-8")
     )
     planning_loop["loop_id"] = "planning.local_review"
     planning_loop_path.write_text(json.dumps(planning_loop, indent=2) + "\n", encoding="utf-8")
@@ -94,8 +96,8 @@ def test_modes_module_is_assets_facade() -> None:
 
 
 def test_builtin_loops_load_and_validate() -> None:
-    execution = load_builtin_loop_definition("execution.standard")
-    planning = load_builtin_loop_definition("planning.standard")
+    execution = load_builtin_loop_definition("execution.lad")
+    planning = load_builtin_loop_definition("planning.lad")
 
     assert execution.plane is Plane.EXECUTION
     assert planning.plane is Plane.PLANNING
@@ -111,28 +113,47 @@ def test_builtin_loops_load_and_validate() -> None:
 def test_builtin_modes_load_and_validate() -> None:
     bundle = load_builtin_mode_bundle("standard_plain")
 
-    assert bundle.mode.mode_id == "default_codex"
-    assert bundle.execution_loop.loop_id == "execution.standard"
-    assert bundle.planning_loop.loop_id == "planning.standard"
+    assert bundle.mode.mode_id == "lad_codex"
+    assert bundle.execution_loop.loop_id == "execution.lad"
+    assert bundle.planning_loop.loop_id == "planning.lad"
     assert bundle.planning_loop.completion_behavior is not None
 
 
 def test_shipped_modes_same_graph_rule_returns_plain_baseline_graph() -> None:
-    assert validate_shipped_mode_same_graph() == ("execution.standard", "planning.standard")
+    assert validate_shipped_mode_same_graph() == ("execution.lad", "planning.lad")
 
 
-def test_builtin_mode_alias_resolves_to_canonical_default_codex() -> None:
-    assert resolve_builtin_mode_id("standard_plain") == "default_codex"
-    assert resolve_builtin_mode_id("default_codex") == "default_codex"
-    assert load_builtin_mode_definition("standard_plain").mode_id == "default_codex"
+def test_builtin_mode_aliases_resolve_to_lad_canonical_ids() -> None:
+    expected_aliases = {
+        "default_codex": "lad_codex",
+        "default_pi": "lad_pi",
+        "learning_codex": "learning_lad_codex",
+        "efficient_learning_mixed": "efficient_learning_lad_mixed",
+        "learning_pi": "learning_lad_pi",
+        "default_codex_integrated": "lad_codex_integrated",
+        "learning_codex_integrated": "learning_lad_codex_integrated",
+        "blueprint_codex": "blueprint_lad_codex",
+        "blueprint_learning_codex": "blueprint_learning_lad_codex",
+        "standard_plain": "lad_codex",
+        "standard_millrace": "lad_pi",
+        "learning_enabled_millrace": "learning_lad_pi",
+    }
+
+    for alias, canonical in expected_aliases.items():
+        assert BUILTIN_MODE_ALIASES[alias] == canonical
+        assert resolve_builtin_mode_id(alias) == canonical
+        assert load_builtin_mode_definition(alias).mode_id == canonical
+
+    assert resolve_builtin_mode_id("lad_codex") == "lad_codex"
+    assert mode_asset_relative_path("lad_codex").as_posix() == "modes/lad_codex.json"
 
 
 def test_builtin_modes_load_new_canonical_codex_and_pi_presets() -> None:
-    codex_bundle = load_builtin_mode_bundle("default_codex")
-    pi_bundle = load_builtin_mode_bundle("default_pi")
+    codex_bundle = load_builtin_mode_bundle("lad_codex")
+    pi_bundle = load_builtin_mode_bundle("lad_pi")
 
-    assert codex_bundle.mode.mode_id == "default_codex"
-    assert pi_bundle.mode.mode_id == "default_pi"
+    assert codex_bundle.mode.mode_id == "lad_codex"
+    assert pi_bundle.mode.mode_id == "lad_pi"
     assert codex_bundle.execution_loop.loop_id == pi_bundle.execution_loop.loop_id
     assert codex_bundle.planning_loop.loop_id == pi_bundle.planning_loop.loop_id
     assert codex_bundle.mode.stage_runner_bindings
@@ -142,8 +163,8 @@ def test_builtin_modes_load_new_canonical_codex_and_pi_presets() -> None:
 
 
 def test_learning_modes_load_learning_plane_without_changing_default_modes() -> None:
-    default_bundle = load_builtin_mode_bundle("default_codex")
-    learning_bundle = load_builtin_mode_bundle("learning_codex")
+    default_bundle = load_builtin_mode_bundle("lad_codex")
+    learning_bundle = load_builtin_mode_bundle("learning_lad_codex")
 
     assert default_bundle.mode.learning_enabled is False
     assert set(default_bundle.mode.loop_ids_by_plane) == {Plane.EXECUTION, Plane.PLANNING}
@@ -166,12 +187,12 @@ def test_learning_modes_load_learning_plane_without_changing_default_modes() -> 
 
 
 def test_efficient_learning_mixed_mode_loads_alias_plan_with_integrator_off() -> None:
-    bundle = load_builtin_mode_bundle("efficient_learning_mixed")
+    bundle = load_builtin_mode_bundle("efficient_learning_lad_mixed")
     mode = bundle.mode
 
-    assert mode.mode_id == "efficient_learning_mixed"
-    assert bundle.execution_loop.loop_id == "execution.standard"
-    assert bundle.planning_loop.loop_id == "planning.standard"
+    assert mode.mode_id == "efficient_learning_lad_mixed"
+    assert bundle.execution_loop.loop_id == "execution.lad"
+    assert bundle.planning_loop.loop_id == "planning.lad"
     assert bundle.learning_loop is not None
     assert bundle.learning_loop.loop_id == "learning.standard"
     assert ExecutionStageName.INTEGRATOR not in bundle.execution_loop.stages
@@ -206,12 +227,12 @@ def test_efficient_learning_mixed_mode_loads_alias_plan_with_integrator_off() ->
 
 
 def test_graph_driven_learning_codex_mode_selects_blueprint_planning_with_learning() -> None:
-    mode = load_builtin_mode_definition("blueprint_" "learning_codex")
-    blueprint_mode = load_builtin_mode_definition("blueprint_" "codex")
+    mode = load_builtin_mode_definition("blueprint_" "learning_lad_codex")
+    blueprint_mode = load_builtin_mode_definition("blueprint_" "lad_codex")
 
     assert blueprint_mode.learning_enabled is False
-    assert mode.mode_id == "blueprint_" "learning_codex"
-    assert mode.execution_loop_id == "execution.standard"
+    assert mode.mode_id == "blueprint_" "learning_lad_codex"
+    assert mode.execution_loop_id == "execution.lad"
     assert mode.planning_loop_id == "planning.blueprint"
     assert mode.learning_loop_id == "learning.standard"
     assert mode.learning_enabled is True
@@ -222,18 +243,18 @@ def test_graph_driven_learning_codex_mode_selects_blueprint_planning_with_learni
 
 
 def test_integrated_codex_modes_load_quality_execution_loop() -> None:
-    default_bundle = load_builtin_mode_bundle("default_codex_integrated")
-    learning_bundle = load_builtin_mode_bundle("learning_codex_integrated")
+    default_bundle = load_builtin_mode_bundle("lad_codex_integrated")
+    learning_bundle = load_builtin_mode_bundle("learning_lad_codex_integrated")
 
-    assert default_bundle.mode.mode_id == "default_codex_integrated"
-    assert default_bundle.execution_loop.loop_id == "execution.with_integrator"
-    assert default_bundle.planning_loop.loop_id == "planning.standard"
+    assert default_bundle.mode.mode_id == "lad_codex_integrated"
+    assert default_bundle.execution_loop.loop_id == "execution.lad_integrator"
+    assert default_bundle.planning_loop.loop_id == "planning.lad"
     assert default_bundle.mode.learning_enabled is False
     assert default_bundle.mode.stage_runner_bindings[ExecutionStageName.INTEGRATOR] == "codex_cli"
 
-    assert learning_bundle.mode.mode_id == "learning_codex_integrated"
-    assert learning_bundle.execution_loop.loop_id == "execution.with_integrator"
-    assert learning_bundle.planning_loop.loop_id == "planning.standard"
+    assert learning_bundle.mode.mode_id == "learning_lad_codex_integrated"
+    assert learning_bundle.execution_loop.loop_id == "execution.lad_integrator"
+    assert learning_bundle.planning_loop.loop_id == "planning.lad"
     assert learning_bundle.learning_loop is not None
     assert learning_bundle.learning_loop.loop_id == "learning.standard"
     assert learning_bundle.mode.learning_enabled is True
@@ -242,11 +263,11 @@ def test_integrated_codex_modes_load_quality_execution_loop() -> None:
 
 def test_learning_enabled_modes_trigger_librarian_after_planner_complete() -> None:
     for mode_id in (
-        "learning_codex",
-        "efficient_learning_mixed",
-        "learning_pi",
-        "learning_codex_integrated",
-        "blueprint_" "learning_codex",
+        "learning_lad_codex",
+        "efficient_learning_lad_mixed",
+        "learning_lad_pi",
+        "learning_lad_codex_integrated",
+        "blueprint_" "learning_lad_codex",
     ):
         mode = load_builtin_mode_definition(mode_id)
         rule_by_id = {rule.rule_id: rule for rule in mode.learning_trigger_rules}
@@ -261,10 +282,10 @@ def test_learning_enabled_modes_trigger_librarian_after_planner_complete() -> No
 
 def test_default_modes_do_not_trigger_librarian() -> None:
     for mode_id in (
-        "default_codex",
-        "default_pi",
-        "default_codex_integrated",
-        "blueprint_" "codex",
+        "lad_codex",
+        "lad_pi",
+        "lad_codex_integrated",
+        "blueprint_" "lad_codex",
     ):
         mode = load_builtin_mode_definition(mode_id)
         assert all(
@@ -274,14 +295,14 @@ def test_default_modes_do_not_trigger_librarian() -> None:
 
 
 def test_graph_driven_codex_mode_selects_blueprint_planning_graph_without_changing_defaults() -> None:
-    mode = load_builtin_mode_definition("blueprint_" "codex")
-    default_mode = load_builtin_mode_definition("default_codex")
+    mode = load_builtin_mode_definition("blueprint_" "lad_codex")
+    default_mode = load_builtin_mode_definition("lad_codex")
 
-    assert mode.mode_id == "blueprint_" "codex"
-    assert mode.execution_loop_id == "execution.standard"
+    assert mode.mode_id == "blueprint_" "lad_codex"
+    assert mode.execution_loop_id == "execution.lad"
     assert mode.planning_loop_id == "planning.blueprint"
     assert mode.learning_enabled is False
-    assert default_mode.planning_loop_id == "planning.standard"
+    assert default_mode.planning_loop_id == "planning.lad"
     assert mode.stage_runner_bindings["manager_blueprint"] == "codex_cli"
     assert mode.stage_runner_bindings["contractor_blueprint"] == "codex_cli"
     assert mode.stage_runner_bindings["evaluator_blueprint"] == "codex_cli"
@@ -308,8 +329,8 @@ def test_mode_definition_accepts_stage_thinking_bindings_with_null_defaults() ->
     mode = ModeDefinition(
         mode_id="custom_mode",
         loop_ids_by_plane={
-            "execution": "execution.standard",
-            "planning": "planning.standard",
+            "execution": "execution.lad",
+            "planning": "planning.lad",
         },
         stage_thinking_bindings={
             "checker": "high",
@@ -326,8 +347,8 @@ def test_mode_definition_rejects_empty_stage_thinking_binding() -> None:
         ModeDefinition(
             mode_id="custom_mode",
             loop_ids_by_plane={
-                "execution": "execution.standard",
-                "planning": "planning.standard",
+                "execution": "execution.lad",
+                "planning": "planning.lad",
             },
             stage_thinking_bindings={"checker": " "},
         )
@@ -345,7 +366,7 @@ def test_unknown_mode_fails_deterministically() -> None:
 
 def test_invalid_mode_json_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
     mode_path.write_text("{not-valid-json", encoding="utf-8")
 
     with pytest.raises(ModeAssetError, match="Invalid JSON in mode asset"):
@@ -354,7 +375,7 @@ def test_invalid_mode_json_fails_deterministically(tmp_path: Path) -> None:
 
 def test_unknown_loop_reference_in_mode_bundle_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    mode_path = assets_root / "modes" / "default_codex.json"
+    mode_path = assets_root / "modes" / "lad_codex.json"
 
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["planning_loop_id"] = "planning.unknown"
@@ -366,15 +387,15 @@ def test_unknown_loop_reference_in_mode_bundle_fails_deterministically(tmp_path:
 
 def test_shipped_mode_ids_are_stable() -> None:
     assert SHIPPED_MODE_IDS == (
-        "default_codex",
-        "default_pi",
-        "learning_codex",
-        "efficient_learning_mixed",
-        "learning_pi",
-        "default_codex_integrated",
-        "learning_codex_integrated",
-        "blueprint_" "codex",
-        "blueprint_" "learning_codex",
+        "lad_codex",
+        "lad_pi",
+        "learning_lad_codex",
+        "efficient_learning_lad_mixed",
+        "learning_lad_pi",
+        "lad_codex_integrated",
+        "learning_lad_codex_integrated",
+        "blueprint_" "lad_codex",
+        "blueprint_" "learning_lad_codex",
     )
 
 
@@ -397,9 +418,9 @@ def test_standard_plain_compiles_for_bootstrapped_workspace_without_role_overlay
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "default_codex"
-    assert outcome.active_plan.execution_loop_id == "execution.standard"
-    assert outcome.active_plan.planning_loop_id == "planning.standard"
+    assert outcome.active_plan.mode_id == "lad_codex"
+    assert outcome.active_plan.execution_loop_id == "execution.lad"
+    assert outcome.active_plan.planning_loop_id == "planning.lad"
     assert all(
         "role_overlays" not in stage_plan.model_dump(mode="json")
         for stage_plan in (
@@ -416,18 +437,18 @@ def test_default_codex_integrated_compiles_for_bootstrapped_workspace(tmp_path: 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="default_codex_integrated",
+        requested_mode_id="lad_codex_integrated",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "default_codex_integrated"
-    assert outcome.active_plan.execution_loop_id == "execution.with_integrator"
-    assert outcome.active_plan.planning_loop_id == "planning.standard"
+    assert outcome.active_plan.mode_id == "lad_codex_integrated"
+    assert outcome.active_plan.execution_loop_id == "execution.lad_integrator"
+    assert outcome.active_plan.planning_loop_id == "planning.lad"
     assert [node.stage_kind_id for node in outcome.active_plan.execution_graph.nodes][:3] == [
-        "builder",
-        "integrator",
-        "checker",
+        "lad_builder",
+        "lad_integrator",
+        "lad_checker",
     ]
     assert all(
         "blueprint" not in node.stage_kind_id
@@ -442,13 +463,13 @@ def test_graph_driven_codex_compiles_for_bootstrapped_workspace(tmp_path: Path) 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_" "codex",
+        requested_mode_id="blueprint_" "lad_codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "blueprint_" "codex"
-    assert outcome.active_plan.execution_loop_id == "execution.standard"
+    assert outcome.active_plan.mode_id == "blueprint_" "lad_codex"
+    assert outcome.active_plan.execution_loop_id == "execution.lad"
     assert outcome.active_plan.planning_loop_id == "planning.blueprint"
     assert {entry.entry_key.value: entry.node_id for entry in outcome.active_plan.planning_graph.compiled_entries} == {
         "probe": "recon",
@@ -473,13 +494,13 @@ def test_graph_driven_learning_codex_compiles_for_bootstrapped_workspace(tmp_pat
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="blueprint_" "learning_codex",
+        requested_mode_id="blueprint_" "learning_lad_codex",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "blueprint_" "learning_codex"
-    assert outcome.active_plan.execution_loop_id == "execution.standard"
+    assert outcome.active_plan.mode_id == "blueprint_" "learning_lad_codex"
+    assert outcome.active_plan.execution_loop_id == "execution.lad"
     assert outcome.active_plan.planning_loop_id == "planning.blueprint"
     assert outcome.active_plan.learning_loop_id == "learning.standard"
     assert outcome.active_plan.learning_graph is not None
@@ -498,13 +519,13 @@ def test_efficient_learning_mixed_compiles_with_mode_stage_aliases(tmp_path: Pat
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="efficient_learning_mixed",
+        requested_mode_id="efficient_learning_lad_mixed",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "efficient_learning_mixed"
-    assert outcome.active_plan.execution_loop_id == "execution.standard"
+    assert outcome.active_plan.mode_id == "efficient_learning_lad_mixed"
+    assert outcome.active_plan.execution_loop_id == "execution.lad"
     assert outcome.active_plan.learning_loop_id == "learning.standard"
 
     nodes = {
@@ -515,19 +536,19 @@ def test_efficient_learning_mixed_compiles_with_mode_stage_aliases(tmp_path: Pat
     assert "integrator" not in nodes
 
     expected = {
-        "builder": ("deepseek_med", "pi_rpc", "deepseek-v4-pro", "high"),
-        "checker": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
-        "fixer": ("deepseek_fast", "pi_rpc", "deepseek-v4-flash", "max"),
-        "doublechecker": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
-        "troubleshooter": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
-        "updater": ("codex_fast", "codex_cli", "gpt-5.4-mini", "xhigh"),
-        "consultant": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "lad_builder": ("deepseek_med", "pi_rpc", "deepseek-v4-pro", "high"),
+        "lad_checker": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
+        "lad_fixer": ("deepseek_fast", "pi_rpc", "deepseek-v4-flash", "max"),
+        "lad_doublechecker": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
+        "lad_troubleshooter": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "lad_updater": ("codex_fast", "codex_cli", "gpt-5.4-mini", "xhigh"),
+        "lad_consultant": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
         "recon": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
-        "planner": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
-        "manager": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
-        "mechanic": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
-        "auditor": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
-        "arbiter": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "lad_planner": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "lad_manager": ("deepseek_max", "pi_rpc", "deepseek-v4-pro", "max"),
+        "lad_mechanic": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "lad_auditor": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
+        "lad_arbiter": ("codex_max", "codex_cli", "gpt-5.5", "xhigh"),
         "analyst": ("deepseek_med", "pi_rpc", "deepseek-v4-pro", "high"),
         "professor": ("codex_med", "codex_cli", "gpt-5.5", "medium"),
         "curator": ("codex_med", "codex_cli", "gpt-5.5", "medium"),
@@ -535,8 +556,9 @@ def test_efficient_learning_mixed_compiles_with_mode_stage_aliases(tmp_path: Pat
     }
     for stage_kind_id, (alias_id, runner_name, model_name, thinking_level) in expected.items():
         node = nodes[stage_kind_id]
+        assignment_stage = stage_kind_id.removeprefix("lad_")
         assert node.model_assignment_alias_id == alias_id
-        assert node.model_assignment_source == f"mode:stage:{stage_kind_id}"
+        assert node.model_assignment_source == f"mode:stage:{assignment_stage}"
         assert node.runner_name == runner_name
         assert node.model_name == model_name
         assert node.thinking_level == thinking_level
@@ -577,13 +599,13 @@ def test_learning_codex_integrated_compiles_with_learning_plane(tmp_path: Path) 
     outcome = compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="learning_codex_integrated",
+        requested_mode_id="learning_lad_codex_integrated",
     )
 
     assert outcome.diagnostics.ok is True
     assert outcome.active_plan is not None
-    assert outcome.active_plan.mode_id == "learning_codex_integrated"
-    assert outcome.active_plan.execution_loop_id == "execution.with_integrator"
+    assert outcome.active_plan.mode_id == "learning_lad_codex_integrated"
+    assert outcome.active_plan.execution_loop_id == "execution.lad_integrator"
     assert outcome.active_plan.learning_loop_id == "learning.standard"
     assert outcome.active_plan.learning_graph is not None
 
@@ -622,7 +644,7 @@ def test_shipped_closure_modes_assign_arbiter_explicit_high_reasoning_alias(
     tmp_path: Path,
 ) -> None:
     expected_alias_by_mode = {
-        "efficient_learning_mixed": "codex_max",
+        "efficient_learning_lad_mixed": "codex_max",
     }
 
     for mode_id in (*SHIPPED_MODE_IDS, "recovery_heavy_millrace"):
@@ -637,7 +659,7 @@ def test_shipped_closure_modes_assign_arbiter_explicit_high_reasoning_alias(
             node
             for graph in plan.graphs_by_plane.values()
             for node in graph.nodes
-            if node.stage_kind_id == "arbiter"
+            if node.stage_kind_id == "lad_arbiter"
         ]
         assert len(arbiter_nodes) == 1
         arbiter = arbiter_nodes[0]
@@ -711,22 +733,22 @@ def test_config_swap_standard_millrace_compiles_with_generic_recon_closure(
     closure extensions."""
     plan = _compile_mode(tmp_path, "standard_millrace")
 
-    assert plan.mode_id == "default_pi"
+    assert plan.mode_id == "lad_pi"
     assert plan.learning_graph is None
     assert Plane.LEARNING not in plan.loop_ids_by_plane
 
     stage_ids = _stage_kind_ids(plan)
 
     # Standard execution stages
-    assert "builder" in stage_ids
-    assert "checker" in stage_ids
-    assert "fixer" in stage_ids
-    assert "troubleshooter" in stage_ids
+    assert "lad_builder" in stage_ids
+    assert "lad_checker" in stage_ids
+    assert "lad_fixer" in stage_ids
+    assert "lad_troubleshooter" in stage_ids
 
     # Recon and closure are reflected in planning stages
     assert "recon" in stage_ids
-    assert "auditor" in stage_ids
-    assert "arbiter" in stage_ids
+    assert "lad_auditor" in stage_ids
+    assert "lad_arbiter" in stage_ids
 
     # pi_rpc runner bound everywhere
     assert all(
@@ -743,7 +765,7 @@ def test_config_swap_learning_enabled_millrace_has_learning_triggers(
     extension enabled and Learning triggers defined."""
     plan = _compile_mode(tmp_path, "learning_enabled_millrace")
 
-    assert plan.mode_id == "learning_pi"
+    assert plan.mode_id == "learning_lad_pi"
     assert plan.learning_graph is not None
     assert Plane.LEARNING in plan.loop_ids_by_plane
 
@@ -901,7 +923,7 @@ def test_config_swap_all_five_configs_compile_from_same_kernel(
             )
 
     # standard_millrace has full domain stages
-    assert "builder" in stage_ids_by_config["standard_millrace"]
+    assert "lad_builder" in stage_ids_by_config["standard_millrace"]
     assert "recon" in stage_ids_by_config["standard_millrace"]
 
     # learning_enabled_millrace has learning triggers

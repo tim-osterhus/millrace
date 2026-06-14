@@ -4,7 +4,7 @@
   "stage_kind_id": "basic_worker",
   "plane": "execution",
   "display_name": "Basic Worker",
-  "default_entrypoint_path": "entrypoints/execution/builder.md",
+  "default_entrypoint_path": "entrypoints/execution/lad_builder.md",
   "request_context_profile_id": "builder.default",
   "context_render_plan_id": "stage_request.default.v1",
   "required_skill_paths": [

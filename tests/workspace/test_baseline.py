@@ -44,9 +44,9 @@ def test_manifest_records_original_hashes_for_managed_assets(tmp_path: Path) -> 
     paths = initialize_workspace(tmp_path / "workspace")
     manifest = load_baseline_manifest(paths)
 
-    entry = manifest.entry_for("entrypoints/execution/builder.md")
+    entry = manifest.entry_for("entrypoints/execution/lad_builder.md")
     expected_hash = hashlib.sha256(
-        (paths.runtime_root / "entrypoints" / "execution" / "builder.md").read_bytes()
+        (paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md").read_bytes()
     ).hexdigest()
 
     assert entry.asset_family == "entrypoints"
@@ -70,19 +70,19 @@ def test_manifest_ignores_runtime_cache_artifacts(tmp_path: Path) -> None:
 
 def test_rerun_rebuilds_missing_manifest_from_seed_asset_hashes(tmp_path: Path) -> None:
     assets_root = _copy_assets(tmp_path)
-    source_builder_path = assets_root / "entrypoints" / "execution" / "builder.md"
+    source_builder_path = assets_root / "entrypoints" / "execution" / "lad_builder.md"
     source_builder_path.write_text("seeded builder from custom assets\n", encoding="utf-8")
     seeded_hash = hashlib.sha256(source_builder_path.read_bytes()).hexdigest()
 
     paths = initialize_workspace(tmp_path / "workspace", assets_root=assets_root)
-    builder_path = paths.runtime_root / "entrypoints" / "execution" / "builder.md"
+    builder_path = paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md"
 
     paths.baseline_manifest_file.unlink()
     builder_path.write_text("locally edited builder\n", encoding="utf-8")
 
     initialize_workspace(paths, assets_root=assets_root)
     manifest = load_baseline_manifest(paths)
-    manifest_entry = manifest.entry_for("entrypoints/execution/builder.md")
+    manifest_entry = manifest.entry_for("entrypoints/execution/lad_builder.md")
     edited_hash = hashlib.sha256(builder_path.read_bytes()).hexdigest()
 
     assert manifest_entry.original_sha256 == seeded_hash
@@ -93,51 +93,51 @@ def test_upgrade_preview_distinguishes_three_way_dispositions(tmp_path: Path) ->
     paths = initialize_workspace(tmp_path / "workspace")
     assets_root = _copy_assets(tmp_path)
 
-    (assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+    (assets_root / "entrypoints" / "execution" / "lad_builder.md").write_text(
         "candidate builder update\n",
         encoding="utf-8",
     )
-    (paths.runtime_root / "entrypoints" / "planning" / "planner.md").write_text(
+    (paths.runtime_root / "entrypoints" / "planning" / "lad_planner.md").write_text(
         "local planner edit\n",
         encoding="utf-8",
     )
     shared_checker = "shared checker update\n"
-    (assets_root / "entrypoints" / "execution" / "checker.md").write_text(shared_checker, encoding="utf-8")
-    (paths.runtime_root / "entrypoints" / "execution" / "checker.md").write_text(
+    (assets_root / "entrypoints" / "execution" / "lad_checker.md").write_text(shared_checker, encoding="utf-8")
+    (paths.runtime_root / "entrypoints" / "execution" / "lad_checker.md").write_text(
         shared_checker,
         encoding="utf-8",
     )
-    (assets_root / "entrypoints" / "planning" / "auditor.md").write_text(
+    (assets_root / "entrypoints" / "planning" / "lad_auditor.md").write_text(
         "candidate auditor update\n",
         encoding="utf-8",
     )
-    (paths.runtime_root / "entrypoints" / "planning" / "auditor.md").write_text(
+    (paths.runtime_root / "entrypoints" / "planning" / "lad_auditor.md").write_text(
         "local auditor edit\n",
         encoding="utf-8",
     )
-    (paths.runtime_root / "entrypoints" / "planning" / "arbiter.md").unlink()
+    (paths.runtime_root / "entrypoints" / "planning" / "lad_arbiter.md").unlink()
 
     preview = preview_baseline_upgrade(paths, candidate_assets_root=assets_root)
 
-    assert preview.classifications_by_path["graphs/planning/standard.json"] is UpgradeDisposition.UNCHANGED
+    assert preview.classifications_by_path["graphs/planning/lad.json"] is UpgradeDisposition.UNCHANGED
     assert (
-        preview.classifications_by_path["entrypoints/execution/builder.md"]
+        preview.classifications_by_path["entrypoints/execution/lad_builder.md"]
         is UpgradeDisposition.SAFE_PACKAGE_UPDATE
     )
     assert (
-        preview.classifications_by_path["entrypoints/planning/planner.md"]
+        preview.classifications_by_path["entrypoints/planning/lad_planner.md"]
         is UpgradeDisposition.LOCAL_ONLY_MODIFICATION
     )
     assert (
-        preview.classifications_by_path["entrypoints/execution/checker.md"]
+        preview.classifications_by_path["entrypoints/execution/lad_checker.md"]
         is UpgradeDisposition.ALREADY_CONVERGED
     )
     assert (
-        preview.classifications_by_path["entrypoints/planning/auditor.md"]
+        preview.classifications_by_path["entrypoints/planning/lad_auditor.md"]
         is UpgradeDisposition.CONFLICT
     )
     assert (
-        preview.classifications_by_path["entrypoints/planning/arbiter.md"]
+        preview.classifications_by_path["entrypoints/planning/lad_arbiter.md"]
         is UpgradeDisposition.MISSING
     )
 
@@ -149,23 +149,23 @@ def test_upgrade_apply_preserves_runtime_state_and_operator_docs(tmp_path: Path)
     notes_path = paths.runtime_root / "notes.md"
     notes_path.write_text("keep operator notes\n", encoding="utf-8")
 
-    source_builder_path = assets_root / "entrypoints" / "execution" / "builder.md"
+    source_builder_path = assets_root / "entrypoints" / "execution" / "lad_builder.md"
     source_builder_path.write_text("candidate builder apply\n", encoding="utf-8")
-    missing_path = paths.runtime_root / "entrypoints" / "execution" / "checker.md"
+    missing_path = paths.runtime_root / "entrypoints" / "execution" / "lad_checker.md"
     missing_path.unlink()
 
     outcome = apply_baseline_upgrade(paths, candidate_assets_root=assets_root)
     manifest = load_baseline_manifest(paths)
 
     assert outcome.applied is True
-    assert (paths.runtime_root / "entrypoints" / "execution" / "builder.md").read_text(
+    assert (paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md").read_text(
         encoding="utf-8"
     ) == "candidate builder apply\n"
     assert missing_path.is_file()
     assert paths.runtime_snapshot_file.read_text(encoding="utf-8") == runtime_snapshot_before
     assert notes_path.read_text(encoding="utf-8") == "keep operator notes\n"
     assert (
-        manifest.entry_for("entrypoints/execution/builder.md").original_sha256
+        manifest.entry_for("entrypoints/execution/lad_builder.md").original_sha256
         == hashlib.sha256(source_builder_path.read_bytes()).hexdigest()
     )
 
@@ -173,7 +173,7 @@ def test_upgrade_apply_preserves_runtime_state_and_operator_docs(tmp_path: Path)
 def test_upgrade_can_localize_removed_managed_asset(tmp_path: Path) -> None:
     paths = initialize_workspace(tmp_path / "workspace")
     assets_root = _copy_assets(tmp_path)
-    removed_relative_path = "entrypoints/execution/builder.md"
+    removed_relative_path = "entrypoints/execution/lad_builder.md"
     localized_path = paths.runtime_root / removed_relative_path
     localized_path.write_text("local replacement kept outside package ownership\n", encoding="utf-8")
     (assets_root / removed_relative_path).unlink()
@@ -201,18 +201,18 @@ def test_upgrade_can_localize_removed_managed_asset(tmp_path: Path) -> None:
 def test_upgrade_apply_aborts_before_mutation_on_conflict(tmp_path: Path) -> None:
     paths = initialize_workspace(tmp_path / "workspace")
     assets_root = _copy_assets(tmp_path)
-    builder_path = paths.runtime_root / "entrypoints" / "execution" / "builder.md"
+    builder_path = paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md"
     builder_before = builder_path.read_text(encoding="utf-8")
 
-    (assets_root / "entrypoints" / "execution" / "builder.md").write_text(
+    (assets_root / "entrypoints" / "execution" / "lad_builder.md").write_text(
         "candidate builder update\n",
         encoding="utf-8",
     )
-    (assets_root / "entrypoints" / "planning" / "auditor.md").write_text(
+    (assets_root / "entrypoints" / "planning" / "lad_auditor.md").write_text(
         "candidate auditor update\n",
         encoding="utf-8",
     )
-    (paths.runtime_root / "entrypoints" / "planning" / "auditor.md").write_text(
+    (paths.runtime_root / "entrypoints" / "planning" / "lad_auditor.md").write_text(
         "local auditor edit\n",
         encoding="utf-8",
     )

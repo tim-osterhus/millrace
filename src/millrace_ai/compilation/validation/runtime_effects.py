@@ -17,6 +17,7 @@ from millrace_ai.architecture import (
     RuntimeEffectValidatorDefinition,
     WorkItemFamilyDefinition,
 )
+from millrace_ai.assets import resolve_stage_kind_id
 
 from ..outcomes import CompilerValidationError
 from .operation_runners import (
@@ -574,7 +575,11 @@ def _stage_kind_for_node_or_kind(
     stage_kinds: dict[str, RegisteredStageKindDefinition],
     source_label: str,
 ) -> RegisteredStageKindDefinition:
-    stage_kind = stage_kinds_by_node_id.get(node_or_kind_id) or stage_kinds.get(node_or_kind_id)
+    stage_kind = (
+        stage_kinds_by_node_id.get(node_or_kind_id)
+        or stage_kinds.get(node_or_kind_id)
+        or stage_kinds.get(resolve_stage_kind_id(node_or_kind_id))
+    )
     if stage_kind is None:
         raise CompilerValidationError(f"{source_label} references unknown node {node_or_kind_id}")
     return stage_kind

@@ -26,7 +26,7 @@ modules listed below.
 |-----------|-------------|-------------|-----------------|------------|
 | `runtime/result_application.py` | `recon_transition_handler` | `runtime/recon_transitions.py` | Kernel post-stage result routing | All modes declaring `millrace.recon` |
 | `runtime/result_application.py` | `closure_transition_handler` | `runtime/closure_transitions.py` | Kernel post-stage result routing | All modes declaring `millrace.closure` |
-| `runtime/tick_cycle.py` | `learning_trigger_handler` | `runtime/learning_triggers.py` | Tick-cycle stage completion | Learning-enabled modes only (`learning_codex`, `learning_pi`, `efficient_learning_mixed`, `learning_codex_integrated`, `blueprint_learning_codex`) |
+| `runtime/tick_cycle.py` | `learning_trigger_handler` | `runtime/learning_triggers.py` | Tick-cycle stage completion | Learning-enabled modes only (`learning_lad_codex`, `learning_lad_pi`, `efficient_learning_lad_mixed`, `learning_lad_codex_integrated`, `blueprint_learning_lad_codex`) |
 | `runtime/tick_cycle.py` | `learning_promotion_handler` | `runtime/learning_promotions.py` | Tick-cycle stage completion | Learning-enabled modes only |
 | `runtime/supervisor.py` | `learning_trigger_handler` | `runtime/learning_triggers.py` | Supervisor stage-worker outcomes | Learning-enabled modes only |
 | `runtime/supervisor.py` | `learning_promotion_handler` | `runtime/learning_promotions.py` | Supervisor stage-worker outcomes | Learning-enabled modes only |

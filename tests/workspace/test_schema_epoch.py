@@ -68,7 +68,7 @@ def test_schema_epoch_reset_writes_marker_during_initialize(tmp_path: Path) -> N
 
 def test_schema_epoch_reset_compile_failure_is_reported_after_clean_state(tmp_path: Path) -> None:
     paths = initialize_workspace(tmp_path / "workspace")
-    mode_path = paths.runtime_root / "modes" / "default_codex.json"
+    mode_path = paths.runtime_root / "modes" / "lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["loop_ids_by_plane"]["planning"] = "planning.unknown"
     mode_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

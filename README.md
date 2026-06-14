@@ -10,12 +10,21 @@
     width="180"
   />
   <h1>Millrace</h1>
-  <p><strong>Millrace is a local runtime for governed, long-running agentic workflows.</strong></p>
+  <p><strong>Millrace is a local loop engineering/runtime framework for governed, long-running agentic workflows.</strong></p>
 </div>
 
-Millrace is defined primarily by two core ideas. The first is that sequential orchestration is superior to parallelization in terms of long-running autonomy, reliability, efficiency, and simplicity. Since every additional agent decreases efficiency and increases overhead, why not focus on maximizing the capabilities of that first one?
+Millrace is for operators and engineers who want agent work to run from an
+explicit loop contract instead of an open-ended chat transcript. It turns a
+specified workflow into compiled graph assets, durable queues, bounded stage
+requests, recovery rules, operator controls, and closure evidence that can be
+inspected after any one harness session ends.
 
-The second core idea is that the runtime owns the project state, not the agent. Millrace compiles workflow graphs, runner bindings, stage contracts, recovery rules, approvals, and closure behavior into one inspectable plan. A small daemon dispatches coding agents through that plan, applies their results through runtime-owned rules, and persists the evidence needed to resume, repair, inspect, or close the work later.
+The runtime owns the project state, not the agent. Millrace compiles workflow
+graphs, runner bindings, stage contracts, recovery rules, approvals, and
+closure behavior into one inspectable plan. A small daemon dispatches coding
+agents through that plan, applies their results through runtime-owned rules,
+and persists the evidence needed to resume, repair, inspect, or close the work
+later.
 
 That makes Millrace a runtime layer, not a replacement for a coding harness.
 Tools such as Claude Code, Codex, and Pi can already edit repositories, run
@@ -90,9 +99,17 @@ Millrace runs three kinds of work planes:
 - **Execution:** builds, checks, fixes, double-checks, escalates, and updates task work.
 - **Learning:** optionally reviews runtime evidence, prepares remote optional skills after Planner, and curates accepted skill improvements.
 
-The default modes keep Planning and Execution serial. Learning-enabled modes can run one Learning stage alongside one foreground Planning or Execution stage. Runtime-owned mutation remains serialized by the daemon.
+The shipped LAD modes keep Planning and Execution serial. Learning-enabled LAD
+modes can run one Learning stage alongside one foreground Planning or Execution
+stage. Runtime-owned mutation remains serialized by the daemon.
 
-Current shipped modes include standard Codex and Pi modes, learning-enabled modes, opt-in Integrator quality modes, Blueprint Planning modes, and `efficient_learning_mixed`, which uses standard Learning topology with a mode-local mixed Codex/Pi model profile. See `docs/runtime/millrace-modes-and-loops.md` and `docs/graphs/graphs-index.md` for the exact mode and graph matrix.
+Current shipped code-development modes are LAD loop-family implementations:
+`lad_codex`, `lad_pi`, learning-enabled LAD modes, opt-in Integrator quality
+modes, Blueprint Planning modes that keep LAD Execution, and
+`efficient_learning_lad_mixed`, which uses `learning.standard` with a
+mode-local mixed Codex/Pi model profile. See
+`docs/runtime/millrace-modes-and-loops.md` and `docs/graphs/graphs-index.md`
+for the exact mode and graph matrix.
 
 Millrace supports custom graph nodes and custom stage kinds over canonical
 runtime stages. Workspace-local assets for modes, graphs, stage kinds, and
@@ -115,7 +132,10 @@ Compatibility surface:
   `loop_graphs.py`) remain importable as compatibility facades but derive
   active runtime authority from the compiled plan.
 - `standard_plain`, `standard_millrace`, and `learning_enabled_millrace` are
-  compatibility aliases for `default_codex`, `default_pi`, and `learning_pi`.
+  compatibility aliases for `lad_codex`, `lad_pi`, and `learning_lad_pi`.
+  Legacy `default_*`, old unqualified `learning_*`, and old
+  `efficient_learning_mixed` mode names are compatibility names for the LAD
+  mode family, not recommended names for new configs.
 
 Unsupported topologies:
 
@@ -195,7 +215,7 @@ The full CLI reference is `docs/runtime/millrace-cli-reference.md`.
 
 Millrace's strongest early public proof is self-referential: Python `millrace-ai` drove the first released Rust parity implementation of Millrace.
 
-That campaign used Python `millrace-ai` in `learning_codex` mode to move from seeded parity ideas through planning, execution, QA, Arbiter closure, remediation, and release-ready state. After the operator started the daemon, there were no pause/resume cycles, continuation prompts, or external code interventions. Publication to GitHub and crates.io happened after the completed workspace state was produced.
+That campaign used Python `millrace-ai` in `learning_lad_codex` mode to move from seeded parity ideas through planning, execution, QA, Arbiter closure, remediation, and release-ready state. After the operator started the daemon, there were no pause/resume cycles, continuation prompts, or external code interventions. Publication to GitHub and crates.io happened after the completed workspace state was produced.
 
 Headline evidence from the run:
 

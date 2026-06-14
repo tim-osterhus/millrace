@@ -283,6 +283,12 @@ families:
 - `src/millrace_ai/assets/registry/workspace_schema_epochs/` ships active
   schema epoch compatibility data
 - `src/millrace_ai/assets/graphs/` ships the graph-loop JSON
+- `src/millrace_ai/assets/loops/execution/lad.json` and
+  `src/millrace_ai/assets/graphs/execution/lad.json` ship the LAD Execution
+  loop
+- `src/millrace_ai/assets/loops/planning/lad.json` and
+  `src/millrace_ai/assets/graphs/planning/lad.json` ship the LAD Planning
+  loop
 - `src/millrace_ai/assets/graphs/planning/blueprint.json` ships the opt-in
   Blueprint Planning loop
 - `src/millrace_ai/assets/loops/learning/default.json` and
@@ -290,19 +296,19 @@ families:
   loop alongside execution and planning, including the
   Analyst/Professor/Curator chain and the targeted Librarian stage for
   post-Planner remote optional-skill preparation
-- `src/millrace_ai/assets/loops/execution/with_integrator.json` and
-  `src/millrace_ai/assets/graphs/execution/with_integrator.json` ship the
+- `src/millrace_ai/assets/loops/execution/lad_integrator.json` and
+  `src/millrace_ai/assets/graphs/execution/lad_integrator.json` ship the
   opt-in high-assurance execution loop
-- `src/millrace_ai/assets/modes/blueprint_codex.json` selects
-  `planning.blueprint` with standard execution
-- `src/millrace_ai/assets/modes/blueprint_learning_codex.json` selects
-  `planning.blueprint`, `learning.standard`, and standard execution
-- `src/millrace_ai/assets/modes/learning_codex.json` and
-  `src/millrace_ai/assets/modes/learning_pi.json` select execution, planning,
+- `src/millrace_ai/assets/modes/blueprint_lad_codex.json` selects
+  `planning.blueprint` with LAD execution
+- `src/millrace_ai/assets/modes/blueprint_learning_lad_codex.json` selects
+  `planning.blueprint`, `learning.standard`, and LAD execution
+- `src/millrace_ai/assets/modes/learning_lad_codex.json` and
+  `src/millrace_ai/assets/modes/learning_lad_pi.json` select execution, planning,
   and learning loops with compiler-frozen learning trigger rules, including
   Planner-to-Librarian optional-skill preparation
-- `src/millrace_ai/assets/modes/efficient_learning_mixed.json` selects the
-  same standard learning topology as `learning_codex` while carrying a
+- `src/millrace_ai/assets/modes/efficient_learning_lad_mixed.json` selects the
+  same LAD plus Learning topology as `learning_lad_codex` while carrying a
   mode-local mixed Codex/Pi model/depth alias profile and leaving Integrator inactive
 
 This asset set now owns runtime control-flow and workflow mutation authority
@@ -620,18 +626,20 @@ Shared runner-owned helpers live alongside them:
 Mode assets in `src/millrace_ai/assets/modes/` freeze those built-in harness
 presets through canonical mode ids:
 
-- `default_codex`
-- `default_pi`
-- `learning_codex`
-- `efficient_learning_mixed`
-- `learning_pi`
-- `default_codex_integrated`
-- `learning_codex_integrated`
-- `blueprint_codex`
-- `blueprint_learning_codex`
+- `lad_codex`
+- `lad_pi`
+- `learning_lad_codex`
+- `efficient_learning_lad_mixed`
+- `learning_lad_pi`
+- `lad_codex_integrated`
+- `learning_lad_codex_integrated`
+- `blueprint_lad_codex`
+- `blueprint_learning_lad_codex`
 
-`standard_plain` is preserved only as a compatibility alias in the asset-loading
-layer, not as a third duplicated mode asset file.
+`standard_plain`, `standard_millrace`, `learning_enabled_millrace`, old
+`default_*` IDs, old unqualified `learning_*` IDs, and
+`efficient_learning_mixed` are preserved only as compatibility aliases in the
+asset-loading layer, not as duplicated mode asset files.
 
 ## Pure Graph-Authority Retired Facades and Retained Shims
 

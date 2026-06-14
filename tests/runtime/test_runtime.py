@@ -574,14 +574,14 @@ def test_runtime_tick_claim_activation_uses_compiled_plan_authority(
     assert captured_request is not None
     assert captured_request.stage is ExecutionStageName.CHECKER
     assert captured_request.node_id == "checker"
-    assert captured_request.stage_kind_id == "checker"
+    assert captured_request.stage_kind_id == "lad_checker"
     assert outcome.stage is ExecutionStageName.CHECKER
     assert outcome.router_decision.next_stage is ExecutionStageName.UPDATER
     assert outcome.router_decision.next_node_id == "updater"
-    assert outcome.router_decision.next_stage_kind_id == "updater"
+    assert outcome.router_decision.next_stage_kind_id == "lad_updater"
     assert snapshot.active_stage is ExecutionStageName.UPDATER
     assert snapshot.active_node_id == "updater"
-    assert snapshot.active_stage_kind_id == "updater"
+    assert snapshot.active_stage_kind_id == "lad_updater"
 
 
 def test_runtime_tick_routes_missing_compiled_planning_queue_claim_policy_to_recovery(
@@ -641,7 +641,7 @@ def test_learning_mode_stage_requests_persist_skill_revision_evidence(tmp_path: 
             now=NOW,
         )
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_lad_codex")
     engine.startup()
     engine.tick()
 
@@ -651,7 +651,7 @@ def test_learning_mode_stage_requests_persist_skill_revision_evidence(tmp_path: 
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
 
     assert evidence["kind"] == "skill_revision_evidence"
-    assert evidence["mode_id"] == "learning_codex"
+    assert evidence["mode_id"] == "learning_lad_codex"
     assert evidence["request_id"] == captured_request.request_id
     assert evidence["skills"]
     assert {skill["path"] for skill in evidence["skills"]} >= set(
@@ -689,7 +689,7 @@ def test_learning_stage_request_uses_learning_request_kind_and_per_request_evide
             now=NOW,
         )
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_lad_codex")
     engine.startup()
     first = engine.tick()
     second = engine.tick()
@@ -731,7 +731,7 @@ def test_learning_mode_execution_trigger_enqueues_analyst_first_learning_request
             now=NOW,
         )
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_lad_codex")
     engine.startup()
 
     for _ in range(4):
@@ -801,7 +801,7 @@ def test_learning_mode_planner_complete_triggers_librarian_request_with_planner_
             ended_at=NOW + timedelta(seconds=1),
         )
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_lad_codex")
     engine.startup()
     outcome = engine.tick()
 
@@ -828,7 +828,7 @@ def test_runtime_generated_learning_request_copies_trigger_destination_metadata(
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)
     queue.enqueue_task(_task_doc("task-001", created_at=NOW))
-    mode_path = paths.runtime_root / "modes" / "learning_codex.json"
+    mode_path = paths.runtime_root / "modes" / "learning_lad_codex.json"
     payload = json.loads(mode_path.read_text(encoding="utf-8"))
     payload["learning_trigger_rules"] = [
         {
@@ -859,7 +859,7 @@ def test_runtime_generated_learning_request_copies_trigger_destination_metadata(
             now=NOW,
         )
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_lad_codex")
     engine.startup()
 
     for _ in range(4):
@@ -900,7 +900,7 @@ def test_targeted_learning_request_activates_requested_stage(tmp_path: Path) -> 
             now=NOW,
         )
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_lad_codex")
     engine.startup()
     outcome = engine.tick()
 
@@ -936,7 +936,7 @@ def test_targeted_librarian_request_activates_librarian_stage(tmp_path: Path) ->
             now=NOW,
         )
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_lad_codex")
     engine.startup()
     outcome = engine.tick()
 
@@ -968,7 +968,7 @@ def test_learning_noop_terminal_marks_request_done(tmp_path: Path) -> None:
             now=NOW,
         )
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="learning_lad_codex")
     engine.startup()
     outcome = engine.tick()
 
@@ -1638,7 +1638,7 @@ def test_runtime_mailbox_retry_scope_rejects_invalid_scope_payloads() -> None:
         )
 
 
-@pytest.mark.parametrize("mode_id", [None, "default_codex_integrated"])
+@pytest.mark.parametrize("mode_id", [None, "lad_codex_integrated"])
 def test_runtime_routes_malformed_stage_exit_into_recovery(
     tmp_path: Path,
     mode_id: str | None,
@@ -1739,8 +1739,8 @@ def test_runtime_routes_post_stage_planning_completion_conflict_into_mechanic(
 @pytest.mark.parametrize(
     ("mode_id", "expected_node_id", "expected_stage_kind_id"),
     [
-        (None, "mechanic", "mechanic"),
-        ("blueprint_" "codex", "mechanic_blueprint", "mechanic_blueprint"),
+        (None, "mechanic", "lad_mechanic"),
+        ("blueprint_" "lad_codex", "mechanic_blueprint", "mechanic_blueprint"),
     ],
 )
 def test_runtime_routes_malformed_recon_handoff_to_mechanic(
@@ -2061,7 +2061,7 @@ def test_runtime_routes_post_stage_execution_completion_conflict_into_troublesho
     snapshot = load_snapshot(paths)
     assert snapshot.active_stage is ExecutionStageName.TROUBLESHOOTER
     assert snapshot.active_node_id == custom_troubleshooter_node_id
-    assert snapshot.active_stage_kind_id == ExecutionStageName.TROUBLESHOOTER.value
+    assert snapshot.active_stage_kind_id == "lad_troubleshooter"
     assert snapshot.current_failure_class == "execution_work_item_completion_conflict"
     assert load_execution_status(paths) == "### BLOCKED"
     assert (paths.tasks_done_dir / "task-001.md").is_file()
@@ -2072,7 +2072,7 @@ def test_runtime_routes_post_stage_execution_completion_conflict_into_troublesho
     assert fourth.stage is ExecutionStageName.TROUBLESHOOTER
     assert captured_troubleshooter_request is not None
     assert captured_troubleshooter_request.node_id == custom_troubleshooter_node_id
-    assert captured_troubleshooter_request.stage_kind_id == ExecutionStageName.TROUBLESHOOTER.value
+    assert captured_troubleshooter_request.stage_kind_id == "lad_troubleshooter"
     assert captured_troubleshooter_request.runtime_error_code == "execution_work_item_completion_conflict"
     assert captured_troubleshooter_request.runtime_error_catalog_path == str(catalog_path)
     assert captured_troubleshooter_request.runtime_error_report_path is not None
@@ -2435,7 +2435,7 @@ def test_runtime_tick_reconciles_execution_anomaly_before_stage_execution(
     assert seen_stages == [ExecutionStageName.TROUBLESHOOTER]
     assert captured_request is not None
     assert captured_request.node_id == custom_troubleshooter_node_id
-    assert captured_request.stage_kind_id == ExecutionStageName.TROUBLESHOOTER.value
+    assert captured_request.stage_kind_id == "lad_troubleshooter"
     counters = load_recovery_counters(paths)
     assert len(counters.entries) == 1
     assert counters.entries[0].failure_class == "stale_active_ownership"
@@ -4104,7 +4104,7 @@ def test_runtime_mailbox_reload_config_rejects_stale_previous_plan_on_compile_fa
 
     reloaded_snapshot = load_snapshot(paths)
     assert reloaded_snapshot.compiled_plan_id == original_compiled_plan_id
-    assert reloaded_snapshot.active_mode_id == "default_codex"
+    assert reloaded_snapshot.active_mode_id == "lad_codex"
     assert reloaded_snapshot.process_running is True
     assert reloaded_snapshot.stop_requested is False
     assert reloaded_snapshot.last_reload_outcome == "failed_retained_previous_plan"
@@ -4820,7 +4820,7 @@ def test_runtime_tick_and_supervisor_share_compiled_policy(tmp_path: Path) -> No
         )
         return _runner_result(request, terminal=terminal, now=NOW)
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="lad_codex")
     engine.startup()
 
     # bounded tick dispatches planning first (per compiled foreground order)
@@ -4881,7 +4881,7 @@ def test_runtime_asset_driven_scheduler_policy_changes_claim_order(tmp_path: Pat
         )
         return _runner_result(request, terminal=terminal, now=NOW)
 
-    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="default_codex")
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, mode_id="lad_codex")
     engine.startup()
 
     first = engine.tick()
@@ -5372,21 +5372,21 @@ class TestConfigDrivenLearningRequestCreation:
     mode config data alone.
 
     Config dependency:
-    - assets/modes/default_codex.json — no learning plane, no learning triggers
-    - assets/modes/learning_codex.json — learning plane with trigger rules
+    - assets/modes/lad_codex.json — no learning plane, no learning triggers
+    - assets/modes/learning_lad_codex.json — learning plane with trigger rules
     """
 
     def test_learning_disabled_mode_compiles_without_learning_plane(self, tmp_path: Path) -> None:
-        """The default_codex mode compiles without a learning graph and without
+        """The lad_codex mode compiles without a learning graph and without
         learning trigger rules.  No Learning requests can be created.
 
-        Config asset: assets/modes/default_codex.json
+        Config asset: assets/modes/lad_codex.json
         """
         paths = _workspace(tmp_path)
         outcome = compile_and_persist_workspace_plan(
             paths,
             config=RuntimeConfig(),
-            requested_mode_id="default_codex",
+            requested_mode_id="lad_codex",
         )
         assert outcome.diagnostics.ok
         assert outcome.active_plan is not None
@@ -5397,17 +5397,17 @@ class TestConfigDrivenLearningRequestCreation:
         assert len(plan.learning_trigger_rules) == 0
 
     def test_learning_enabled_mode_compiles_with_learning_triggers(self, tmp_path: Path) -> None:
-        """The learning_codex mode compiles with a learning graph and
+        """The learning_lad_codex mode compiles with a learning graph and
         learning trigger rules.  Learning requests can be created when
         trigger conditions are met.
 
-        Config asset: assets/modes/learning_codex.json
+        Config asset: assets/modes/learning_lad_codex.json
         """
         paths = _workspace(tmp_path)
         outcome = compile_and_persist_workspace_plan(
             paths,
             config=RuntimeConfig(),
-            requested_mode_id="learning_codex",
+            requested_mode_id="learning_lad_codex",
         )
         assert outcome.diagnostics.ok
         assert outcome.active_plan is not None
@@ -5426,7 +5426,7 @@ class TestConfigDrivenLearningRequestCreation:
             and "DOUBLECHECK_PASS" in rule.on_terminal_results
         ]
         assert len(doublecheck_rules) > 0, (
-            "learning_codex must have a learning trigger from doublechecker DOUBLECHECK_PASS"
+            "learning_lad_codex must have a learning trigger from doublechecker DOUBLECHECK_PASS"
         )
 
     def test_learning_disabled_mode_engine_creates_no_learning_request(
@@ -5435,13 +5435,13 @@ class TestConfigDrivenLearningRequestCreation:
         """With learning_disabled config, running a stage that would normally
         trigger a Learning request produces no such request.
 
-        Config asset: assets/modes/default_codex.json
+        Config asset: assets/modes/lad_codex.json
         """
         paths = _workspace(tmp_path)
         outcome = compile_and_persist_workspace_plan(
             paths,
             config=RuntimeConfig(),
-            requested_mode_id="default_codex",
+            requested_mode_id="lad_codex",
         )
         assert outcome.active_plan is not None
 
@@ -5469,7 +5469,7 @@ class TestConfigDrivenLearningRequestCreation:
             started_at=NOW,
             completed_at=NOW,
             node_id="doublechecker",
-            stage_kind_id="doublechecker",
+            stage_kind_id="lad_doublechecker",
             metadata={},
         )
 
@@ -5491,13 +5491,13 @@ class TestConfigDrivenLearningRequestCreation:
         """With learning_enabled config, running a stage that matches a
         learning trigger rule creates a Learning request.
 
-        Config asset: assets/modes/learning_codex.json
+        Config asset: assets/modes/learning_lad_codex.json
         """
         paths = _workspace(tmp_path)
         outcome = compile_and_persist_workspace_plan(
             paths,
             config=RuntimeConfig(),
-            requested_mode_id="learning_codex",
+            requested_mode_id="learning_lad_codex",
         )
         assert outcome.active_plan is not None
 

@@ -919,7 +919,7 @@ def test_doctor_flags_invalid_mode_assets_deterministically(tmp_path: Path) -> N
     paths = _bootstrap(tmp_path)
     assets_root = _copy_assets(tmp_path)
 
-    broken_mode_path = assets_root / "modes" / "default_codex.json"
+    broken_mode_path = assets_root / "modes" / "lad_codex.json"
     broken_mode_path.write_text("{not-valid-json", encoding="utf-8")
 
     report = run_workspace_doctor(paths, assets_root=assets_root)
@@ -956,7 +956,7 @@ def test_doctor_warns_when_resolved_runner_binary_is_unavailable(
 def test_doctor_validates_resolved_learning_stage_runner_posture(tmp_path: Path) -> None:
     assets_root = _copy_assets(tmp_path)
     local_mode_path = assets_root / "modes" / "learning_local.json"
-    payload = json.loads((assets_root / "modes" / "learning_codex.json").read_text(encoding="utf-8"))
+    payload = json.loads((assets_root / "modes" / "learning_lad_codex.json").read_text(encoding="utf-8"))
     payload["mode_id"] = "learning_local"
     for learning_stage in ("analyst", "professor", "curator"):
         payload["stage_runner_bindings"].pop(learning_stage)
@@ -1058,7 +1058,7 @@ def test_doctor_flags_invalid_baseline_manifest_schema(tmp_path: Path) -> None:
 
 def test_doctor_flags_missing_manifest_tracked_managed_file(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
-    (paths.runtime_root / "entrypoints" / "execution" / "builder.md").unlink()
+    (paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md").unlink()
 
     report = run_workspace_doctor(paths)
 

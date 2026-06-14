@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0",
   "kind": "mode",
-  "mode_id": "blueprint_learning_codex",
+  "mode_id": "blueprint_learning_lad_codex",
   "loop_ids_by_plane": {
-    "execution": "execution.standard",
+    "execution": "execution.lad",
     "planning": "planning.blueprint",
     "learning": "learning.standard"
   },
@@ -37,8 +37,22 @@
     }
   },
   "concurrency_policy": {
-    "mutually_exclusive_planes": [["execution", "planning"]],
-    "may_run_concurrently": [["learning", "execution"], ["learning", "planning"]]
+    "mutually_exclusive_planes": [
+      [
+        "execution",
+        "planning"
+      ]
+    ],
+    "may_run_concurrently": [
+      [
+        "learning",
+        "execution"
+      ],
+      [
+        "learning",
+        "planning"
+      ]
+    ]
   },
   "scheduler_policy_id": "default.three_plane.blueprint",
   "learning_trigger_rules": [
@@ -46,7 +60,9 @@
       "rule_id": "execution.doublechecker.success-to-analyst",
       "source_plane": "execution",
       "source_stage": "doublechecker",
-      "on_terminal_results": ["DOUBLECHECK_PASS"],
+      "on_terminal_results": [
+        "DOUBLECHECK_PASS"
+      ],
       "target_stage": "analyst",
       "requested_action": "improve"
     },
@@ -54,7 +70,10 @@
       "rule_id": "execution.troubleshooter.recovery-to-analyst",
       "source_plane": "execution",
       "source_stage": "troubleshooter",
-      "on_terminal_results": ["TROUBLESHOOT_COMPLETE", "BLOCKED"],
+      "on_terminal_results": [
+        "TROUBLESHOOT_COMPLETE",
+        "BLOCKED"
+      ],
       "target_stage": "analyst",
       "requested_action": "improve"
     },
@@ -62,7 +81,11 @@
       "rule_id": "execution.consultant.recovery-to-analyst",
       "source_plane": "execution",
       "source_stage": "consultant",
-      "on_terminal_results": ["CONSULT_COMPLETE", "NEEDS_PLANNING", "BLOCKED"],
+      "on_terminal_results": [
+        "CONSULT_COMPLETE",
+        "NEEDS_PLANNING",
+        "BLOCKED"
+      ],
       "target_stage": "analyst",
       "requested_action": "improve"
     },
@@ -70,16 +93,28 @@
       "rule_id": "planning.planner.complete-to-librarian",
       "source_plane": "planning",
       "source_stage": "planner",
-      "on_terminal_results": ["PLANNER_COMPLETE"],
+      "on_terminal_results": [
+        "PLANNER_COMPLETE"
+      ],
       "target_stage": "librarian",
       "requested_action": "install"
     }
   ],
   "required_extensions": [
-    {"extension_package_id": "millrace.generic"},
-    {"extension_package_id": "millrace.recon"},
-    {"extension_package_id": "millrace.closure"},
-    {"extension_package_id": "millrace.blueprint"},
-    {"extension_package_id": "millrace.learning"}
+    {
+      "extension_package_id": "millrace.generic"
+    },
+    {
+      "extension_package_id": "millrace.recon"
+    },
+    {
+      "extension_package_id": "millrace.closure"
+    },
+    {
+      "extension_package_id": "millrace.blueprint"
+    },
+    {
+      "extension_package_id": "millrace.learning"
+    }
   ]
 }

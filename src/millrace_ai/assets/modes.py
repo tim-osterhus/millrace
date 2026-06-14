@@ -17,43 +17,58 @@ LOOPS_ROOT = Path("loops")
 MODES_ROOT = Path("modes")
 
 BUILTIN_LOOP_PATHS: dict[str, Path] = {
-    "execution.standard": Path("loops/execution/default.json"),
-    "execution.with_integrator": Path("loops/execution/with_integrator.json"),
+    "execution.lad": Path("loops/execution/lad.json"),
+    "execution.lad_integrator": Path("loops/execution/lad_integrator.json"),
     "learning.standard": Path("loops/learning/default.json"),
-    "planning.standard": Path("loops/planning/default.json"),
+    "planning.lad": Path("loops/planning/lad.json"),
 }
 
 BUILTIN_MODE_PATHS: dict[str, Path] = {
-    "default_codex": Path("modes/default_codex.json"),
-    "default_pi": Path("modes/default_pi.json"),
-    "learning_codex": Path("modes/learning_codex.json"),
-    "efficient_learning_mixed": Path("modes/efficient_learning_mixed.json"),
-    "learning_pi": Path("modes/learning_pi.json"),
-    "default_codex_integrated": Path("modes/default_codex_integrated.json"),
-    "learning_codex_integrated": Path("modes/learning_codex_integrated.json"),
-    "blueprint_codex": Path("modes/blueprint_codex.json"),
-    "blueprint_learning_codex": Path("modes/blueprint_learning_codex.json"),
+    "lad_codex": Path("modes/lad_codex.json"),
+    "lad_pi": Path("modes/lad_pi.json"),
+    "learning_lad_codex": Path("modes/learning_lad_codex.json"),
+    "efficient_learning_lad_mixed": Path("modes/efficient_learning_lad_mixed.json"),
+    "learning_lad_pi": Path("modes/learning_lad_pi.json"),
+    "lad_codex_integrated": Path("modes/lad_codex_integrated.json"),
+    "learning_lad_codex_integrated": Path("modes/learning_lad_codex_integrated.json"),
+    "blueprint_lad_codex": Path("modes/blueprint_lad_codex.json"),
+    "blueprint_learning_lad_codex": Path("modes/blueprint_learning_lad_codex.json"),
 }
 
 BUILTIN_MODE_ALIASES: dict[str, str] = {
-    "standard_plain": "default_codex",
-    "standard_millrace": "default_pi",
-    "learning_enabled_millrace": "learning_pi",
+    "default_codex": "lad_codex",
+    "default_pi": "lad_pi",
+    "learning_codex": "learning_lad_codex",
+    "efficient_learning_mixed": "efficient_learning_lad_mixed",
+    "learning_pi": "learning_lad_pi",
+    "default_codex_integrated": "lad_codex_integrated",
+    "learning_codex_integrated": "learning_lad_codex_integrated",
+    "blueprint_codex": "blueprint_lad_codex",
+    "blueprint_learning_codex": "blueprint_learning_lad_codex",
+    "standard_plain": "lad_codex",
+    "standard_millrace": "lad_pi",
+    "learning_enabled_millrace": "learning_lad_pi",
     "minimal_three_plane_fixture": "minimal_three_plane",
 }
 
+BUILTIN_LOOP_ALIASES: dict[str, str] = {
+    "execution.standard": "execution.lad",
+    "execution.with_integrator": "execution.lad_integrator",
+    "planning.standard": "planning.lad",
+}
+
 SHIPPED_MODE_IDS: tuple[str, ...] = (
-    "default_codex",
-    "default_pi",
-    "learning_codex",
-    "efficient_learning_mixed",
-    "learning_pi",
-    "default_codex_integrated",
-    "learning_codex_integrated",
-    "blueprint_codex",
-    "blueprint_learning_codex",
+    "lad_codex",
+    "lad_pi",
+    "learning_lad_codex",
+    "efficient_learning_lad_mixed",
+    "learning_lad_pi",
+    "lad_codex_integrated",
+    "learning_lad_codex_integrated",
+    "blueprint_lad_codex",
+    "blueprint_learning_lad_codex",
 )
-_DEFAULT_MODE_IDS: tuple[str, ...] = ("default_codex", "default_pi")
+_DEFAULT_MODE_IDS: tuple[str, ...] = ("lad_codex", "lad_pi")
 
 
 class ModeAssetError(AssetValidationError):
@@ -127,6 +142,10 @@ def resolve_builtin_mode_id(mode_id: str) -> str:
     return BUILTIN_MODE_ALIASES.get(mode_id, mode_id)
 
 
+def resolve_builtin_loop_id(loop_id: str) -> str:
+    return BUILTIN_LOOP_ALIASES.get(loop_id, loop_id)
+
+
 def builtin_mode_alias_target(mode_id: str) -> str | None:
     return BUILTIN_MODE_ALIASES.get(mode_id)
 
@@ -137,7 +156,8 @@ def load_builtin_loop_definition(
     assets_root: Path | None = None,
 ) -> LoopConfigDefinition:
     root = _resolve_assets_root(assets_root)
-    loop_path = _resolve_loop_path(loop_id, root)
+    canonical_loop_id = resolve_builtin_loop_id(loop_id)
+    loop_path = _resolve_loop_path(canonical_loop_id, root)
     payload = _load_json_asset(loop_path, asset_kind="loop")
 
     try:
@@ -145,8 +165,10 @@ def load_builtin_loop_definition(
     except ValidationError as exc:
         raise ModeAssetError(f"Invalid loop definition in asset: {loop_path}") from exc
 
-    if loop.loop_id != loop_id:
-        raise ModeAssetError(f"Loop asset id mismatch: expected {loop_id}, found {loop.loop_id}")
+    if loop.loop_id != canonical_loop_id:
+        raise ModeAssetError(
+            f"Loop asset id mismatch: expected {canonical_loop_id}, found {loop.loop_id}"
+        )
 
     return loop
 
@@ -158,7 +180,7 @@ def mode_asset_relative_path(mode_id: str, *, assets_root: Path | None = None) -
 
 def loop_config_relative_path(loop_id: str, *, assets_root: Path | None = None) -> Path:
     root = _resolve_assets_root(assets_root)
-    return _resolve_loop_path(loop_id, root).relative_to(root)
+    return _resolve_loop_path(resolve_builtin_loop_id(loop_id), root).relative_to(root)
 
 
 def validate_shipped_mode_same_graph(*, assets_root: Path | None = None) -> tuple[str, str]:
@@ -273,6 +295,7 @@ def _load_json_asset(path: Path, *, asset_kind: str) -> dict[str, Any]:
 
 __all__ = [
     "ASSETS_ROOT",
+    "BUILTIN_LOOP_ALIASES",
     "BUILTIN_MODE_ALIASES",
     "BUILTIN_LOOP_PATHS",
     "BUILTIN_MODE_PATHS",
@@ -285,6 +308,7 @@ __all__ = [
     "load_builtin_mode_definition",
     "loop_config_relative_path",
     "mode_asset_relative_path",
+    "resolve_builtin_loop_id",
     "resolve_builtin_mode_id",
     "validate_shipped_mode_same_graph",
 ]

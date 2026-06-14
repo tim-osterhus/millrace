@@ -83,6 +83,19 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Documentation
 
+- Reframed public documentation around Millrace as a loop
+  engineering/runtime framework. LAD is now described as one shipped
+  code-development loop family, with `lad_codex`, `lad_pi`,
+  `learning_lad_codex`, `efficient_learning_lad_mixed`,
+  `learning_lad_pi`, `lad_codex_integrated`,
+  `learning_lad_codex_integrated`, `blueprint_lad_codex`, and
+  `blueprint_learning_lad_codex` as the recommended mode names.
+- Updated graph and mode documentation to use `execution.lad`,
+  `execution.lad_integrator`, and `planning.lad` as canonical loop IDs while
+  documenting the former `execution.standard`, `execution.with_integrator`,
+  `planning.standard`, `default_*`, old unqualified `learning_*`,
+  `efficient_learning_mixed`, and conceptual `standard_*` names as
+  compatibility aliases.
 - Documented closure freshness windows, historical versus current Arbiter
   evidence, runtime-owned remediation incidents, repeated-remediation guard
   interpretation, and operator diagnosis for `closure_repeated_remediation_blocked`.
@@ -107,16 +120,16 @@ This file starts at `0.13.0`, the current documented public baseline.
   `queue_store.py`, `runner.py`, `paths.py`, `state_store.py`,
   `stage_kinds.py`, `loop_graphs.py`) remain importable; active runtime
   authority derives from the compiled plan and compiled workflow primitives.
-- Blueprint remains available through `blueprint_codex` and
-  `blueprint_learning_codex`, but it is extension-backed graph configuration.
+- Blueprint remains available through `blueprint_lad_codex` and
+  `blueprint_learning_lad_codex`, but it is extension-backed graph configuration.
   Generic packages do not export Blueprint compatibility APIs; old Python
   imports of retired Blueprint facades such as
   `millrace_ai.contracts.blueprint`, `millrace_ai.cli.status.blueprint`,
   `millrace_ai.runtime.context.blueprint`, and
   `millrace_ai.workspace.blueprint_state` may now raise `ImportError`.
 - `standard_plain`, `standard_millrace`, and `learning_enabled_millrace` remain
-  compatibility aliases that resolve to `default_codex`, `default_pi`, and
-  `learning_pi` respectively.
+  compatibility aliases that resolve to `lad_codex`, `lad_pi`, and
+  `learning_lad_pi` respectively.
 
 ## [0.20.3] - 2026-05-28
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from millrace_ai.assets.modes import (
     ASSETS_ROOT,
+    BUILTIN_LOOP_ALIASES,
     BUILTIN_LOOP_PATHS,
     BUILTIN_MODE_ALIASES,
     BUILTIN_MODE_PATHS,
@@ -16,12 +17,14 @@ from millrace_ai.assets.modes import (
     load_builtin_mode_definition,
     loop_config_relative_path,
     mode_asset_relative_path,
+    resolve_builtin_loop_id,
     resolve_builtin_mode_id,
     validate_shipped_mode_same_graph,
 )
 
 __all__ = [
     "ASSETS_ROOT",
+    "BUILTIN_LOOP_ALIASES",
     "BUILTIN_MODE_ALIASES",
     "BUILTIN_LOOP_PATHS",
     "BUILTIN_MODE_PATHS",
@@ -34,6 +37,7 @@ __all__ = [
     "load_builtin_mode_definition",
     "loop_config_relative_path",
     "mode_asset_relative_path",
+    "resolve_builtin_loop_id",
     "resolve_builtin_mode_id",
     "validate_shipped_mode_same_graph",
 ]

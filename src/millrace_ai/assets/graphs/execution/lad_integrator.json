@@ -1,54 +1,54 @@
 {
   "schema_version": "1.0",
   "kind": "graph_loop",
-  "loop_id": "execution.with_integrator",
+  "loop_id": "execution.lad_integrator",
   "plane": "execution",
   "nodes": [
     {
       "node_id": "builder",
-      "stage_kind_id": "builder",
+      "stage_kind_id": "lad_builder",
       "request_context_profile_id": "builder.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "integrator",
-      "stage_kind_id": "integrator",
+      "stage_kind_id": "lad_integrator",
       "request_context_profile_id": "integrator.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "checker",
-      "stage_kind_id": "checker",
+      "stage_kind_id": "lad_checker",
       "request_context_profile_id": "checker.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "fixer",
-      "stage_kind_id": "fixer",
+      "stage_kind_id": "lad_fixer",
       "request_context_profile_id": "fixer.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "doublechecker",
-      "stage_kind_id": "doublechecker",
+      "stage_kind_id": "lad_doublechecker",
       "request_context_profile_id": "doublechecker.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "updater",
-      "stage_kind_id": "updater",
+      "stage_kind_id": "lad_updater",
       "request_context_profile_id": "updater.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "troubleshooter",
-      "stage_kind_id": "troubleshooter",
+      "stage_kind_id": "lad_troubleshooter",
       "request_context_profile_id": "troubleshooter.default",
       "context_render_plan_id": "stage_request.default.v1"
     },
     {
       "node_id": "consultant",
-      "stage_kind_id": "consultant",
+      "stage_kind_id": "lad_consultant",
       "request_context_profile_id": "consultant.default",
       "context_render_plan_id": "stage_request.default.v1"
     }

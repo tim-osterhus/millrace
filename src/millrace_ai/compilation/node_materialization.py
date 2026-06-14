@@ -41,9 +41,20 @@ def materialize_graph_node_plan(
 ) -> MaterializedGraphNodePlan:
     stage_kind = stage_kinds[node.stage_kind_id]
     runtime_stage = stage_kind.runtime_stage
-    stage_name = stage_name_for_identifier(node.stage_kind_id)
-    stage_key = stage_name or node.stage_kind_id
-    stage_config = config.stages.get(node.stage_kind_id)
+    stage_name = stage_name_for_identifier(node.stage_kind_id) or runtime_stage
+    if (
+        node.stage_kind_id in mode.stage_entrypoint_overrides
+        or node.stage_kind_id in mode.stage_skill_additions
+        or node.stage_kind_id in mode.stage_model_bindings
+        or node.stage_kind_id in mode.stage_runner_bindings
+        or node.stage_kind_id in mode.stage_thinking_bindings
+        or node.stage_kind_id in mode.model_assignment.by_stage
+        or node.stage_kind_id in config.model_assignment.by_stage
+    ):
+        stage_key = node.stage_kind_id
+    else:
+        stage_key = stage_name or node.stage_kind_id
+    stage_config = config.stages.get(node.stage_kind_id) or config.stages.get(runtime_stage.value)
 
     entrypoint_path = stage_kind.default_entrypoint_path
     if node.entrypoint_path is not None:

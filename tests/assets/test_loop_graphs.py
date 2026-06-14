@@ -18,6 +18,7 @@ from millrace_ai.loop_graphs import (
     SHIPPED_GRAPH_LOOP_IDS,
     GraphLoopAssetError,
     discover_graph_loop_definitions,
+    graph_loop_asset_relative_path,
     load_builtin_graph_loop_definition,
     load_builtin_graph_loop_definitions,
     load_graph_loop_definition,
@@ -42,7 +43,7 @@ def _write_synthetic_stage_kind_asset(assets_root: Path) -> None:
         "runtime_stage": "builder",
         "plane": "execution",
         "display_name": "Synthetic Worker",
-        "default_entrypoint_path": "entrypoints/execution/builder.md",
+        "default_entrypoint_path": "entrypoints/execution/lad_builder.md",
         "required_skill_paths": ["skills/stage/execution/builder-core/SKILL.md"],
         "suggested_skill_paths": [],
         "running_status_marker": "SYNTHETIC_RUNNING",
@@ -166,17 +167,28 @@ def test_builtin_graph_nodes_declare_request_context_authority() -> None:
 
 def test_shipped_graph_loop_ids_are_stable() -> None:
     assert SHIPPED_GRAPH_LOOP_IDS == (
-        "execution.standard",
-        "execution.with_integrator",
+        "execution.lad",
+        "execution.lad_integrator",
         "learning.standard",
-        "planning.standard",
+        "planning.lad",
         "planning.blueprint",
     )
 
 
+def test_old_graph_loop_ids_resolve_to_lad_canonical_assets() -> None:
+    assert load_builtin_graph_loop_definition("execution.standard").loop_id == "execution.lad"
+    assert load_builtin_graph_loop_definition("execution.with_integrator").loop_id == (
+        "execution.lad_integrator"
+    )
+    assert load_builtin_graph_loop_definition("planning.standard").loop_id == "planning.lad"
+    assert graph_loop_asset_relative_path("execution.standard").as_posix() == (
+        "graphs/execution/lad.json"
+    )
+
+
 def test_specific_builtin_graph_loop_fields_are_expected() -> None:
-    execution = load_builtin_graph_loop_definition("execution.standard")
-    planning = load_builtin_graph_loop_definition("planning.standard")
+    execution = load_builtin_graph_loop_definition("execution.lad")
+    planning = load_builtin_graph_loop_definition("planning.lad")
     execution_entry_nodes = {entry.entry_key.value: entry.node_id for entry in execution.entry_nodes}
     planning_entry_nodes = {entry.entry_key.value: entry.node_id for entry in planning.entry_nodes}
     execution_edges = {edge.edge_id: edge for edge in execution.edges}
@@ -185,7 +197,11 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
 
     assert execution.plane is Plane.EXECUTION
     assert execution_entry_nodes == {"task": "builder"}
-    assert [node.stage_kind_id for node in execution.nodes][:3] == ["builder", "checker", "fixer"]
+    assert [node.stage_kind_id for node in execution.nodes][:3] == [
+        "lad_builder",
+        "lad_checker",
+        "lad_fixer",
+    ]
     assert execution_edges["troubleshooter-complete-to-builder"].to_node_id == "builder"
     assert execution_edges["troubleshooter-blocked-to-consultant"].to_node_id == "consultant"
     assert execution_dynamic is not None
@@ -215,6 +231,14 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
 
     assert planning.plane is Plane.PLANNING
     assert planning_entry_nodes == {"incident": "auditor", "probe": "recon", "spec": "planner"}
+    assert [node.stage_kind_id for node in planning.nodes] == [
+        "recon",
+        "lad_planner",
+        "lad_manager",
+        "lad_mechanic",
+        "lad_auditor",
+        "lad_arbiter",
+    ]
     assert planning_dynamic is not None
     assert {policy.policy_id for policy in planning_dynamic.resume_policies} == {
         "planning.mechanic.resume"
@@ -242,7 +266,7 @@ def test_specific_builtin_graph_loop_fields_are_expected() -> None:
 
 
 def test_integrated_execution_graph_runs_integrator_after_builder() -> None:
-    execution = load_builtin_graph_loop_definition("execution.with_integrator")
+    execution = load_builtin_graph_loop_definition("execution.lad_integrator")
     entry_nodes = {entry.entry_key.value: entry.node_id for entry in execution.entry_nodes}
     edges = {edge.edge_id: edge for edge in execution.edges}
     blocked_policy = next(
@@ -254,9 +278,9 @@ def test_integrated_execution_graph_runs_integrator_after_builder() -> None:
     assert execution.plane is Plane.EXECUTION
     assert entry_nodes == {"task": "builder"}
     assert [node.stage_kind_id for node in execution.nodes][:3] == [
-        "builder",
-        "integrator",
-        "checker",
+        "lad_builder",
+        "lad_integrator",
+        "lad_checker",
     ]
     assert edges["builder-complete-to-integrator"].to_node_id == "integrator"
     assert edges["integrator-complete-to-checker"].to_node_id == "checker"
@@ -383,7 +407,7 @@ def test_builtin_graph_loop_loader_accepts_workspace_local_graph(tmp_path: Path)
 
 def test_invalid_graph_loop_json_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     graph_path.write_text("{not-valid-json", encoding="utf-8")
 
     with pytest.raises(GraphLoopAssetError, match="Invalid JSON in graph loop asset"):
@@ -392,7 +416,7 @@ def test_invalid_graph_loop_json_fails_deterministically(tmp_path: Path) -> None
 
 def test_unknown_stage_kind_reference_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = json.loads(graph_path.read_text(encoding="utf-8"))
     payload["nodes"][0]["stage_kind_id"] = "no_such_stage"
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -403,7 +427,7 @@ def test_unknown_stage_kind_reference_fails_deterministically(tmp_path: Path) ->
 
 def test_graph_loop_surfaces_invalid_stage_kind_result_class_policy(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "builder.json"
+    stage_kind_path = assets_root / "registry" / "stage_kinds" / "execution" / "lad_builder.json"
     payload = json.loads(stage_kind_path.read_text(encoding="utf-8"))
     payload.pop("allowed_result_classes_by_outcome", None)
     stage_kind_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -414,7 +438,7 @@ def test_graph_loop_surfaces_invalid_stage_kind_result_class_policy(tmp_path: Pa
 
 def test_illegal_edge_outcome_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = json.loads(graph_path.read_text(encoding="utf-8"))
     payload["edges"][0]["on_outcomes"] = ["PLANNER_COMPLETE"]
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -425,7 +449,7 @@ def test_illegal_edge_outcome_fails_deterministically(tmp_path: Path) -> None:
 
 def test_broken_edge_target_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     payload = json.loads(graph_path.read_text(encoding="utf-8"))
     payload["edges"][0]["to_node_id"] = "missing_node"
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -436,7 +460,7 @@ def test_broken_edge_target_fails_deterministically(tmp_path: Path) -> None:
 
 def test_recon_handoff_edge_to_planner_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     payload = json.loads(graph_path.read_text(encoding="utf-8"))
     for edge in payload["edges"]:
         if edge["edge_id"] == "recon-to-planning-to-terminal-recon-to-planning":
@@ -455,7 +479,7 @@ def test_recon_handoff_edge_to_planner_fails_deterministically(tmp_path: Path) -
 
 def test_missing_terminal_action_id_fails_asset_validation(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = json.loads(graph_path.read_text(encoding="utf-8"))
     payload["terminal_states"][0].pop("terminal_action_id", None)
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -466,7 +490,7 @@ def test_missing_terminal_action_id_fails_asset_validation(tmp_path: Path) -> No
 
 def test_missing_completion_root_source_policy_fails_asset_validation(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    graph_path = assets_root / "graphs" / "planning" / "standard.json"
+    graph_path = assets_root / "graphs" / "planning" / "lad.json"
     payload = json.loads(graph_path.read_text(encoding="utf-8"))
     payload["completion_behavior"].pop("root_source_policy", None)
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -477,7 +501,7 @@ def test_missing_completion_root_source_policy_fails_asset_validation(tmp_path: 
 
 def test_invalid_resume_policy_target_fails_deterministically(tmp_path: Path) -> None:
     assets_root = _copy_builtin_assets(tmp_path)
-    graph_path = assets_root / "graphs" / "execution" / "standard.json"
+    graph_path = assets_root / "graphs" / "execution" / "lad.json"
     payload = json.loads(graph_path.read_text(encoding="utf-8"))
     payload["dynamic_policies"]["resume_policies"][0]["default_target_node_id"] = "missing_node"
     graph_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

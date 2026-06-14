@@ -16,6 +16,8 @@
     "basic_learner": "pi_rpc"
   },
   "required_extensions": [
-    {"extension_package_id": "millrace.generic"}
+    {
+      "extension_package_id": "millrace.generic"
+    }
   ]
 }

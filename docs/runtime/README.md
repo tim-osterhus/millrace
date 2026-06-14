@@ -50,12 +50,12 @@ mappings, use `../graphs/config-mapping.md`.
   `minimal_three_plane`, `recovery_heavy_millrace`, or
   `generic_two_plane_fixture`.
 - Use `millrace-blueprint-planning.md` before selecting or troubleshooting
-  `blueprint_codex` or `blueprint_learning_codex`.
-- Use `millrace-modes-and-loops.md` before selecting `default_codex_integrated`
-  or `learning_codex_integrated`; those modes intentionally add an Integrator
+  `blueprint_lad_codex` or `blueprint_learning_lad_codex`.
+- Use `millrace-modes-and-loops.md` before selecting `lad_codex_integrated`
+  or `learning_lad_codex_integrated`; those modes intentionally add an Integrator
   pass after Builder for higher assurance.
 - Use `millrace-modes-and-loops.md` before selecting
-  `efficient_learning_mixed`; it keeps standard topology but carries a
+  `efficient_learning_lad_mixed`; it keeps LAD topology but carries a
   mode-local mixed Codex/Pi model/depth profile.
 - Use `millrace-workspace-baselines-and-upgrades.md` when you need the explicit `init` / `upgrade` workflow for managed workspace assets.
 - Use `millrace-cli-reference.md` when you need `millrace skills`, daemon
