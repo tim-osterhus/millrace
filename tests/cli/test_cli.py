@@ -20,6 +20,7 @@ from millrace_ai.cli.status import (
     render_status_lines,
     status_payload,
 )
+from millrace_ai.cli.status import collection as status_collection
 from millrace_ai.compiler import CompileOutcome, compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
@@ -52,6 +53,7 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.control import ControlActionResult
+from millrace_ai.events import write_runtime_event
 from millrace_ai.extensions.builtin.blueprint.contracts import (
     BlueprintCritiqueDocument,
     BlueprintDraftDocument,
@@ -1395,6 +1397,35 @@ def test_status_surfaces_latest_operator_intervention(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "latest_operator_intervention: event=work_item_cancelled" in result.output
     assert "work_item_id=task-status-cancel" in result.output
+
+
+def test_status_latest_operator_intervention_uses_bounded_event_lookup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    write_runtime_event(
+        paths,
+        event_type="runtime_started",
+        data={"run_id": "run-start"},
+        occurred_at=NOW,
+    )
+    write_runtime_event(
+        paths,
+        event_type="work_item_cancelled",
+        data={"work_item_id": "task-status-cancel"},
+        occurred_at=NOW.replace(minute=1),
+    )
+
+    def fail_full_history_read(paths):
+        raise AssertionError("status hot path must not call read_runtime_events")
+
+    monkeypatch.setattr(status_collection, "read_runtime_events", fail_full_history_read, raising=False)
+
+    view_model = collect_status_view_model(paths)
+
+    assert view_model.latest_operator_intervention is not None
+    assert view_model.latest_operator_intervention.event_type == "work_item_cancelled"
 
 
 def test_status_surfaces_multiple_active_runs_by_plane(tmp_path: Path) -> None:

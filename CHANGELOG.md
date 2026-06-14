@@ -39,6 +39,12 @@ This file starts at `0.13.0`, the current documented public baseline.
   are now compatibility-only facades, route-time max-cycle recovery knobs are
   removed, and fallback route reasons/classes derive from compiled `node_id`
   rather than `source_stage.value`.
+- Bounded routine runtime-event reads and idle-event growth: status, closure,
+  and web views now use streaming/recent/latest event helpers for normal
+  operation, while durable no-work idle events are transition and heartbeat
+  records instead of one append per idle tick. The default durable idle-event
+  heartbeat is 6 hours, with explicit shorter operator configuration still
+  supported.
 - Removed the fixed Recon terminal-operation whitelist; Recon routing now
   resolves through compiled terminal-action `runtime_operation_id` metadata.
 - Reworked `stage_metadata.py` to derive shipped stage legality from JSON
@@ -65,6 +71,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Fixed runtime recovery-counter reads so generic `counter_id` records are
   authoritative (including explicit `0` values) with no legacy fixed-field
   compatibility projection.
+- Bounded basic terminal monitor run/display state so long daemon monitor
+  sessions do not retain unbounded completed-run handles while active run
+  handles remain stable.
 
 ### Documentation
 
@@ -78,6 +87,10 @@ This file starts at `0.13.0`, the current documented public baseline.
   skills, subagents, memory, or workflow helpers; the distinction is that
   Millrace owns the external compiled-plan, queue, daemon, recovery, and
   closure layer around bounded harness invocations.
+- Documented the runtime idle/event-log memory-bounds contract: durable idle
+  suppression is in-memory only and separate from live terminal monitor idle
+  output throttling; `read_runtime_events()` is reserved for explicit
+  full-history audit/debug use.
 
 ### Compatibility Notes
 

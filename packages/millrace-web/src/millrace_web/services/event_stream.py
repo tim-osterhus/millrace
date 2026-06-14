@@ -6,16 +6,19 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from millrace_ai.events import read_runtime_events
+from millrace_ai.events import read_recent_runtime_events
 from pydantic import TypeAdapter
 
 from millrace_web.models import EventSummary, WorkspaceRef
 
 _EVENT_ADAPTER = TypeAdapter(EventSummary)
+_RECENT_EVENT_READ_FLOOR = 200
 
 
 def list_event_summaries(workspace: WorkspaceRef, *, limit: int = 50) -> tuple[EventSummary, ...]:
-    events = [_event_summary(workspace, event) for event in read_runtime_events(workspace.path)]
+    read_limit = max(_RECENT_EVENT_READ_FLOOR, limit * 4)
+    events = [_event_summary(workspace, event) for event in read_recent_runtime_events(workspace.path, limit=read_limit)]
+    events.sort(key=lambda event: (event.workspace_id, event.occurred_at))
     deduped = _suppress_repeated_idle_noise(events)
     return tuple(deduped[-limit:])
 
@@ -26,7 +29,8 @@ async def sse_events(workspaces: tuple[WorkspaceRef, ...], *, poll_interval_seco
         events: list[EventSummary] = []
         for workspace in workspaces:
             events.extend(list_event_summaries(workspace, limit=20))
-        events.sort(key=lambda event: event.occurred_at)
+        events.sort(key=lambda event: (event.workspace_id, event.occurred_at))
+        events = _suppress_repeated_idle_noise(events)
         payload = json.dumps([event.model_dump(mode="json") for event in events])
         if payload != previous_payload:
             previous_payload = payload
@@ -58,7 +62,7 @@ def _suppress_repeated_idle_noise(events: list[EventSummary]) -> list[EventSumma
             event.event_type,
             event.details,
         )
-        if event.event_type == "idle" and event.details == "reason=no_work":
+        if event.event_type in {"idle", "runtime_tick_idle"} and event.details == "reason=no_work":
             if idle_signature == last_idle_signature:
                 continue
             last_idle_signature = idle_signature

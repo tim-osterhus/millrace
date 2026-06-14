@@ -273,6 +273,40 @@ def test_supervisor_does_not_auto_requeue_non_retryable_blocked_dependency(
     asyncio.run(scenario())
 
 
+def test_supervisor_idle_cycles_share_runtime_idle_suppression_policy(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nidle_event_heartbeat_seconds = 3600.0\n", encoding="utf-8")
+    clock = [NOW]
+    monkeypatch.setattr("millrace_ai.runtime.stage_requests.now", lambda: clock[0])
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage runner should not be called")
+
+    async def scenario() -> None:
+        engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+        engine.startup()
+        supervisor = RuntimeDaemonSupervisor(engine)
+
+        for _ in range(10):
+            completions = await supervisor.run_cycle()
+            assert completions == ()
+            clock[0] += timedelta(seconds=1)
+
+        idle_events = [
+            event for event in read_runtime_events(paths) if event.event_type == "runtime_tick_idle"
+        ]
+        assert len(idle_events) == 1
+        assert idle_events[0].data["reason"] == "no_work"
+        assert idle_events[0].data["idle_tick_count"] == 1
+        engine.close()
+
+    asyncio.run(scenario())
+
+
 def test_supervisor_does_not_dispatch_execution_with_planning(tmp_path: Path) -> None:
     paths = _workspace(tmp_path)
     queue = QueueStore(paths)

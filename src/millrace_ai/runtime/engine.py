@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
@@ -13,6 +14,7 @@ import millrace_ai.runtime.usage_governance as usage_governance
 import millrace_ai.runtime.watcher_intake as watcher_intake
 from millrace_ai.architecture import CompiledRunPlan, MaterializedGraphNodePlan, WorkItemFamilyDefinition
 from millrace_ai.config import RuntimeConfig
+from millrace_ai.config.models import DEFAULT_IDLE_EVENT_HEARTBEAT_SECONDS
 from millrace_ai.contracts import (
     ActiveRunState,
     ClosureTargetState,
@@ -79,6 +81,16 @@ tick_cycle = _LazyModule("millrace_ai.runtime.tick_cycle")
 StageRunner = Callable[[StageRunRequest], RunnerRawResult]
 
 
+@dataclass(slots=True)
+class _IdleEventSuppressionState:
+    reason: str
+    idle_since: datetime
+    last_activity_at: datetime | None
+    last_emitted_at: datetime | None = None
+    idle_tick_count: int = 0
+    suppressed_idle_tick_count: int = 0
+
+
 class RuntimeEngine:
     """Orchestrates startup, reconciliation, queue intake, and one stage per tick."""
 
@@ -112,6 +124,7 @@ class RuntimeEngine:
         self.counters: RecoveryCounters | None = None
         self._daemon_lock_session_id: str | None = None
         self._watcher_session: WatcherSession | None = None
+        self._idle_event_suppression: _IdleEventSuppressionState | None = None
 
     def __del__(self) -> None:  # pragma: no cover - GC timing is non-deterministic
         try:
@@ -387,6 +400,61 @@ class RuntimeEngine:
     def _idle_tick_outcome(self, *, reason: str) -> RuntimeTickOutcome:
         return stage_requests.idle_tick_outcome(self, reason=reason)
 
+    def _record_idle_cycle(self, *, reason: str) -> None:
+        """Emit durable idle events on transitions and bounded heartbeats only."""
+
+        assert self.snapshot is not None
+        now = self._now()
+        state = self._idle_event_suppression
+        if state is None or state.reason != reason:
+            state = _IdleEventSuppressionState(
+                reason=reason,
+                idle_since=now,
+                last_activity_at=self.snapshot.updated_at,
+            )
+            self._idle_event_suppression = state
+
+        state.idle_tick_count += 1
+        heartbeat_interval = (
+            self.config.runtime.idle_event_heartbeat_seconds
+            if self.config is not None
+            else DEFAULT_IDLE_EVENT_HEARTBEAT_SECONDS
+        )
+        heartbeat_expired = (
+            state.last_emitted_at is not None
+            and (now - state.last_emitted_at).total_seconds() >= heartbeat_interval
+        )
+        should_emit = state.last_emitted_at is None or heartbeat_expired
+
+        if should_emit:
+            write_runtime_event(
+                self.paths,
+                event_type="runtime_tick_idle",
+                occurred_at=now,
+                data={
+                    "reason": state.reason,
+                    "idle_since": state.idle_since.isoformat(),
+                    "idle_tick_count": state.idle_tick_count,
+                    "suppressed_idle_tick_count": state.suppressed_idle_tick_count,
+                    "heartbeat_interval_seconds": heartbeat_interval,
+                    "last_activity_at": (
+                        state.last_activity_at.isoformat()
+                        if state.last_activity_at is not None
+                        else None
+                    ),
+                },
+            )
+            save_snapshot(self.paths, self.snapshot)
+            state.last_emitted_at = now
+            state.suppressed_idle_tick_count = 0
+        else:
+            state.suppressed_idle_tick_count += 1
+
+        self._emit_monitor_event("runtime_idle", reason=reason)
+
+    def _reset_idle_event_suppression(self) -> None:
+        self._idle_event_suppression = None
+
     def _active_work_item_path(
         self,
         work_item_kind: WorkItemKind | None,
@@ -572,6 +640,7 @@ class RuntimeEngine:
     ) -> None:
         assert self.snapshot is not None
         del stage
+        self._reset_idle_event_suppression()
         marker = (
             running_status_marker
             if running_status_marker.startswith("### ")

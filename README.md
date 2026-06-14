@@ -157,7 +157,7 @@ Run a visible daemon session:
 millrace run daemon --monitor basic --workspace "$WORKSPACE"
 ```
 
-The default daemon is quiet. `--monitor basic` prints a compact human-facing stream and throttles repeated `idle reason=no_work` lines to a long heartbeat so idle daemons do not flood logs.
+The default daemon is quiet. `--monitor basic` prints a compact human-facing stream and throttles repeated `idle reason=no_work` lines to a long heartbeat so idle daemons do not flood logs. Durable `runtime_tick_idle` records are throttled separately and default to a 6-hour heartbeat.
 
 ## Optional Dashboard
 

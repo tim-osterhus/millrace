@@ -46,13 +46,13 @@ from millrace_ai.contracts import (
 from millrace_ai.contracts.router import RouterAction
 from millrace_ai.control import RuntimeControl
 from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError
-from millrace_ai.events import read_runtime_events
+from millrace_ai.events import read_runtime_events, write_runtime_event
 from millrace_ai.mailbox import read_pending_mailbox_commands, write_mailbox_command
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.recon_packets import render_recon_packet
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
-from millrace_ai.runtime import RuntimeEngine
+from millrace_ai.runtime import RuntimeEngine, closure_transitions
 from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor
 from millrace_ai.runtime.watcher_intake import safe_spec_id_from_idea_path
 from millrace_ai.runtime_lock import (
@@ -3068,6 +3068,158 @@ def test_runtime_tick_with_no_work_reports_non_blocked_idle_result(tmp_path: Pat
     assert outcome.stage_result is None
 
 
+def test_runtime_tick_suppresses_repeated_no_work_idle_events_and_snapshot_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nidle_event_heartbeat_seconds = 3600.0\n", encoding="utf-8")
+    clock = [NOW]
+    monkeypatch.setattr("millrace_ai.runtime.stage_requests.now", lambda: clock[0])
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+
+    import millrace_ai.runtime.engine as engine_module
+
+    save_calls: list[datetime] = []
+    original_save_snapshot = engine_module.save_snapshot
+
+    def counted_save_snapshot(target, snapshot) -> None:
+        save_calls.append(clock[0])
+        original_save_snapshot(target, snapshot)
+
+    monkeypatch.setattr(engine_module, "save_snapshot", counted_save_snapshot)
+
+    for _ in range(10):
+        engine.tick()
+        clock[0] += timedelta(seconds=1)
+
+    idle_events = [
+        event for event in read_runtime_events(paths) if event.event_type == "runtime_tick_idle"
+    ]
+    assert len(idle_events) == 1
+    assert len(save_calls) == 1
+    assert idle_events[0].data["reason"] == "no_work"
+    assert idle_events[0].data["idle_tick_count"] == 1
+    assert idle_events[0].data["suppressed_idle_tick_count"] == 0
+    engine.close()
+
+
+def test_runtime_idle_heartbeat_emits_bounded_aggregate_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text("[runtime]\nidle_event_heartbeat_seconds = 5.0\n", encoding="utf-8")
+    clock = [NOW]
+    monkeypatch.setattr("millrace_ai.runtime.stage_requests.now", lambda: clock[0])
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+
+    for _ in range(6):
+        engine.tick()
+        clock[0] += timedelta(seconds=1)
+
+    idle_events = [
+        event for event in read_runtime_events(paths) if event.event_type == "runtime_tick_idle"
+    ]
+    assert len(idle_events) == 2
+    heartbeat = idle_events[-1].data
+    assert heartbeat["reason"] == "no_work"
+    assert heartbeat["idle_since"] == NOW.isoformat()
+    assert heartbeat["idle_tick_count"] == 6
+    assert heartbeat["suppressed_idle_tick_count"] == 4
+    assert heartbeat["heartbeat_interval_seconds"] == 5.0
+    assert isinstance(heartbeat["last_activity_at"], str)
+    engine.close()
+
+
+def test_runtime_default_idle_payload_reports_six_hour_or_greater_heartbeat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    clock = [NOW]
+    monkeypatch.setattr("millrace_ai.runtime.stage_requests.now", lambda: clock[0])
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    engine.tick()
+
+    idle_events = [
+        event for event in read_runtime_events(paths) if event.event_type == "runtime_tick_idle"
+    ]
+    assert len(idle_events) == 1
+    assert idle_events[0].data["heartbeat_interval_seconds"] >= 21600.0
+    engine.close()
+
+
+def test_runtime_no_config_idle_fallback_uses_six_hour_or_greater_heartbeat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    clock = [NOW]
+    monkeypatch.setattr("millrace_ai.runtime.stage_requests.now", lambda: clock[0])
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    engine.config = None
+
+    engine._record_idle_cycle(reason="no_work")
+
+    idle_events = [
+        event for event in read_runtime_events(paths) if event.event_type == "runtime_tick_idle"
+    ]
+    assert len(idle_events) == 1
+    assert idle_events[0].data["heartbeat_interval_seconds"] >= 21600.0
+    engine.close()
+
+
+def test_runtime_idle_reason_change_emits_fresh_idle_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    clock = [NOW]
+    monkeypatch.setattr("millrace_ai.runtime.stage_requests.now", lambda: clock[0])
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    engine._record_idle_cycle(reason="no_work")
+    clock[0] += timedelta(seconds=1)
+    engine._record_idle_cycle(reason="no_work")
+    clock[0] += timedelta(seconds=1)
+    engine._record_idle_cycle(reason="dependency_blocked")
+
+    idle_events = [
+        event for event in read_runtime_events(paths) if event.event_type == "runtime_tick_idle"
+    ]
+    assert [event.data["reason"] for event in idle_events] == ["no_work", "dependency_blocked"]
+    engine.close()
+
+
 def test_runtime_tick_with_no_work_suppresses_completion_when_lineage_work_remains(
     tmp_path: Path,
 ) -> None:
@@ -3266,6 +3418,36 @@ def test_runtime_tick_blocks_repeated_arbiter_remediation_without_execution(
         and event.data.get("root_spec_id") == "spec-root-001"
         for event in read_runtime_events(paths)
     )
+
+
+def test_repeated_arbiter_remediation_check_streams_events_without_full_history_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _workspace(tmp_path)
+    write_runtime_event(
+        paths,
+        event_type="stage_completed",
+        data={"run_id": "run-previous-arbiter", "plane": Plane.PLANNING.value},
+        occurred_at=NOW,
+    )
+    write_runtime_event(
+        paths,
+        event_type="stage_completed",
+        data={"run_id": "run-builder", "plane": Plane.EXECUTION.value},
+        occurred_at=NOW.replace(minute=1),
+    )
+    target = _closure_target_state().model_copy(
+        update={"last_arbiter_run_id": "run-previous-arbiter"}
+    )
+
+    def fail_full_history_read(paths):
+        raise AssertionError("closure transition hot path must not call read_runtime_events")
+
+    monkeypatch.setattr(closure_transitions, "read_runtime_events", fail_full_history_read, raising=False)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+
+    assert closure_transitions._is_repeated_remediation_without_execution(engine, target) is False
 
 
 def test_runtime_mailbox_retry_active_requeues_active_item_and_resets_counters(tmp_path: Path) -> None:

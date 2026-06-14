@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from millrace_ai.contracts import ClosureTargetState, Plane, StageResultEnvelope
 from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.errors import QueueStateError
-from millrace_ai.events import read_runtime_events, write_runtime_event
+from millrace_ai.events import iter_runtime_events, write_runtime_event
 from millrace_ai.state_store import (
     load_recovery_counters,
     save_snapshot,
@@ -126,7 +126,7 @@ def _is_repeated_remediation_without_execution(
         return False
 
     seen_previous_arbiter = False
-    for event in read_runtime_events(engine.paths):
+    for event in iter_runtime_events(engine.paths):
         run_id = event.data.get("run_id")
         if run_id == target.last_arbiter_run_id:
             seen_previous_arbiter = True

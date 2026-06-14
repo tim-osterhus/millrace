@@ -155,6 +155,11 @@ first idle line immediately and then treats repeated `no_work` idles as a
 heartbeat. It emits that heartbeat at most once every 6 hours while the
 same idle condition continues. Any non-idle monitor event, or an idle event
 with a different reason, resets the heartbeat.
+This is live terminal-output throttling only. Durable `runtime_tick_idle`
+events are throttled separately by the runtime event log policy: the daemon
+records idle transitions, idle reason changes, and configured heartbeat
+markers instead of appending one durable event for every idle tick. The
+durable idle-event heartbeat defaults to 6 hours unless explicitly configured.
 
 `--monitor-log PATH` writes the same basic monitor format to a file. It can be
 used with `--monitor none` for a quiet foreground daemon that still leaves a
@@ -228,6 +233,9 @@ Status also prints `blocked_idle`, `latest_runtime_error_report_path`,
 `latest_runtime_failure_origin`, and `latest_operator_intervention`. The
 intervention line shows the latest audited operator cleanup event, timestamp,
 work item id, and archive destination when one exists.
+Status uses bounded latest-event lookup for this runtime-event context; it does
+not load the full runtime event log for normal status rendering. Reserve
+full-history event reads for explicit audit/debug workflows.
 For repairable Blueprint Evaluator approval generated-task failures, status
 also prints the latest runtime-effect metadata plus the structured repair
 contract, replay conflict classes, inert-artifact guard, and runtime ownership

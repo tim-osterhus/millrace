@@ -226,6 +226,9 @@ Expected user impact:
   dispatch, pause/resume/stop handling, and shutdown
 - fewer mismatches between live monitor output and persisted run/runtime
   artifacts
+- stable long-running daemon observation: live monitor output, durable idle
+  event writes, and web/status event reads should remain bounded during long
+  idle stretches
 
 ### Closure-Safe Handoff Reliability
 

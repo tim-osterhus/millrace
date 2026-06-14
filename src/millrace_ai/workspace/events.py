@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator
 
 from pydantic import JsonValue
 
@@ -55,7 +55,41 @@ def write_runtime_event(
 
 
 def read_runtime_events(target: WorkspacePaths | Path | str) -> tuple[RuntimeEventRecord, ...]:
-    """Read runtime events in file order."""
+    """Read all runtime events in file order.
+
+    This compatibility API intentionally materializes the full event history for
+    audit callers. Use the bounded helpers for runtime hot paths.
+    """
+
+    return tuple(iter_runtime_events(target))
+
+
+def iter_runtime_events(target: WorkspacePaths | Path | str) -> Iterator[RuntimeEventRecord]:
+    """Stream runtime events in file order."""
+
+    paths = _resolve_paths(target)
+    log_path = paths.logs_dir / EVENT_LOG_FILENAME
+    if not log_path.exists():
+        return
+
+    with log_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            yield _parse_event_line(line)
+
+
+def read_recent_runtime_events(
+    target: WorkspacePaths | Path | str,
+    *,
+    limit: int,
+) -> tuple[RuntimeEventRecord, ...]:
+    """Read at most the latest ``limit`` runtime events without full-history allocation."""
+
+    if limit < 0:
+        raise ValueError("runtime event limit must be non-negative")
+    if limit == 0:
+        return ()
 
     paths = _resolve_paths(target)
     log_path = paths.logs_dir / EVENT_LOG_FILENAME
@@ -63,17 +97,61 @@ def read_runtime_events(target: WorkspacePaths | Path | str) -> tuple[RuntimeEve
         return ()
 
     records: list[RuntimeEventRecord] = []
-    for line in log_path.read_text(encoding="utf-8").splitlines():
+    for line in _iter_log_lines_reverse(log_path):
         if not line.strip():
             continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError("runtime event log contains malformed JSON") from exc
-        if not isinstance(payload, dict):
-            raise ValueError("runtime event payload must be an object")
-        records.append(_parse_event_record(payload))
+        records.append(_parse_event_line(line))
+        if len(records) == limit:
+            break
+    records.reverse()
     return tuple(records)
+
+
+def find_latest_runtime_event(
+    target: WorkspacePaths | Path | str,
+    predicate: Callable[[RuntimeEventRecord], bool],
+) -> RuntimeEventRecord | None:
+    """Find the latest runtime event matching ``predicate`` without full-history allocation."""
+
+    paths = _resolve_paths(target)
+    log_path = paths.logs_dir / EVENT_LOG_FILENAME
+    if not log_path.exists():
+        return None
+
+    for line in _iter_log_lines_reverse(log_path):
+        if not line.strip():
+            continue
+        record = _parse_event_line(line)
+        if predicate(record):
+            return record
+    return None
+
+
+def _parse_event_line(line: str) -> RuntimeEventRecord:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ValueError("runtime event log contains malformed JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("runtime event payload must be an object")
+    return _parse_event_record(payload)
+
+
+def _iter_log_lines_reverse(log_path: Path, *, chunk_size: int = 8192) -> Iterator[str]:
+    with log_path.open("rb") as handle:
+        position = handle.seek(0, 2)
+        buffer = b""
+        while position > 0:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            handle.seek(position)
+            buffer = handle.read(read_size) + buffer
+            lines = buffer.split(b"\n")
+            buffer = lines[0]
+            for line in reversed(lines[1:]):
+                yield line.decode("utf-8")
+        if buffer:
+            yield buffer.decode("utf-8")
 
 
 def _resolve_paths(target: WorkspacePaths | Path | str) -> WorkspacePaths:
@@ -112,4 +190,12 @@ def _parse_event_record(payload: dict[str, Any]) -> RuntimeEventRecord:
     )
 
 
-__all__ = ["EVENT_LOG_FILENAME", "RuntimeEventRecord", "read_runtime_events", "write_runtime_event"]
+__all__ = [
+    "EVENT_LOG_FILENAME",
+    "RuntimeEventRecord",
+    "find_latest_runtime_event",
+    "iter_runtime_events",
+    "read_recent_runtime_events",
+    "read_runtime_events",
+    "write_runtime_event",
+]

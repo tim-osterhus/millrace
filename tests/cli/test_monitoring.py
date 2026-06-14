@@ -541,3 +541,179 @@ def test_basic_terminal_monitor_keys_aggregates_by_plane_and_run() -> None:
         "run learning run=run-shared elapsed=5.0s "
         "tokens=in=7 cached=0 out=3 think=2 total=12"
     ) in output
+
+
+def test_basic_terminal_monitor_evicts_completed_run_state_after_cap() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream, max_completed_runs=1)
+
+    for run_id, offset_seconds, total_tokens in (
+        ("run-old", 0, 10),
+        ("run-new", 10, 20),
+    ):
+        monitor.emit(
+            RuntimeMonitorEvent(
+                event_type="stage_completed",
+                occurred_at=NOW + timedelta(seconds=offset_seconds),
+                payload={
+                    "plane": "execution",
+                    "stage": "builder",
+                    "node_id": "builder",
+                    "stage_kind_id": "builder",
+                    "run_id": run_id,
+                    "terminal_result": "BUILDER_COMPLETE",
+                    "summary_status_marker": "### BUILDER_COMPLETE",
+                    "started_at": (NOW + timedelta(seconds=offset_seconds)).isoformat(),
+                    "completed_at": (NOW + timedelta(seconds=offset_seconds + 1)).isoformat(),
+                    "duration_seconds": 1.0,
+                    "token_usage": {
+                        "input_tokens": total_tokens,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 0,
+                        "thinking_tokens": 0,
+                        "total_tokens": total_tokens,
+                    },
+                },
+            )
+        )
+
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_completed",
+            occurred_at=NOW + timedelta(seconds=20),
+            payload={
+                "plane": "execution",
+                "stage": "builder",
+                "node_id": "builder",
+                "stage_kind_id": "builder",
+                "run_id": "run-old",
+                "terminal_result": "BUILDER_COMPLETE",
+                "summary_status_marker": "### BUILDER_COMPLETE",
+                "started_at": (NOW + timedelta(seconds=20)).isoformat(),
+                "completed_at": (NOW + timedelta(seconds=21)).isoformat(),
+                "duration_seconds": 1.0,
+                "token_usage": {
+                    "input_tokens": 5,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 0,
+                    "thinking_tokens": 0,
+                    "total_tokens": 5,
+                },
+            },
+        )
+    )
+
+    assert stream.getvalue().splitlines()[-1] == (
+        "[12:14:23] run execution run=run-old elapsed=1.0s "
+        "tokens=in=5 cached=0 out=0 think=0 total=5"
+    )
+
+
+def test_basic_terminal_monitor_releases_completed_run_handle_after_eviction() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream, max_completed_runs=0)
+    completed_run_id = "run-abcdef00123456789000000000000000"
+    next_run_id = "run-abcdef00ffff56789000000000000000"
+
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_completed",
+            occurred_at=NOW,
+            payload={
+                "plane": "execution",
+                "stage": "builder",
+                "node_id": "builder",
+                "stage_kind_id": "builder",
+                "run_id": completed_run_id,
+                "terminal_result": "BUILDER_COMPLETE",
+                "summary_status_marker": "### BUILDER_COMPLETE",
+                "started_at": NOW.isoformat(),
+                "completed_at": (NOW + timedelta(seconds=1)).isoformat(),
+                "duration_seconds": 1.0,
+            },
+        )
+    )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_started",
+            occurred_at=NOW + timedelta(seconds=1),
+            payload={
+                "plane": "execution",
+                "stage": "builder",
+                "node_id": "builder",
+                "stage_kind_id": "builder",
+                "run_id": next_run_id,
+                "status_marker": "### BUILDER_RUNNING",
+            },
+        )
+    )
+
+    assert stream.getvalue().splitlines() == [
+        "[12:14:03] stage done execution/builder run=abcdef00 result=BUILDER_COMPLETE dur=1.0s",
+        "[12:14:03] run execution run=abcdef00 elapsed=1.0s",
+        "[12:14:04] stage start execution/builder run=abcdef00",
+    ]
+
+
+def test_basic_terminal_monitor_keeps_active_run_handles_when_completed_runs_are_evicted() -> None:
+    stream = StringIO()
+    monitor = BasicTerminalMonitor(stream=stream, max_completed_runs=1)
+    active_run_id = "run-abcdef00123456789000000000000000"
+    completed_run_id = "run-abcdef00ffff56789000000000000000"
+    next_run_id = "run-abcdef00eeee56789000000000000000"
+
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="stage_started",
+            occurred_at=NOW,
+            payload={
+                "plane": "execution",
+                "stage": "builder",
+                "node_id": "builder",
+                "stage_kind_id": "builder",
+                "run_id": active_run_id,
+                "work_item_kind": "task",
+                "work_item_id": "task-active",
+                "status_marker": "### BUILDER_RUNNING",
+            },
+        )
+    )
+    for run_id, offset_seconds in ((completed_run_id, 1), (next_run_id, 2)):
+        monitor.emit(
+            RuntimeMonitorEvent(
+                event_type="stage_completed",
+                occurred_at=NOW + timedelta(seconds=offset_seconds),
+                payload={
+                    "plane": "execution",
+                    "stage": "builder",
+                    "node_id": "builder",
+                    "stage_kind_id": "builder",
+                    "run_id": run_id,
+                    "terminal_result": "BUILDER_COMPLETE",
+                    "summary_status_marker": "### BUILDER_COMPLETE",
+                    "duration_seconds": 1.0,
+                },
+            )
+        )
+    monitor.emit(
+        RuntimeMonitorEvent(
+            event_type="status_marker_changed",
+            occurred_at=NOW + timedelta(seconds=3),
+            payload={
+                "plane": "execution",
+                "run_id": active_run_id,
+                "previous_marker": "### BUILDER_RUNNING",
+                "current_marker": "### BUILDER_COMPLETE",
+                "source": "result_application",
+            },
+        )
+    )
+
+    assert stream.getvalue().splitlines() == [
+        "[12:14:03] stage start execution/builder run=abcdef00 work=task:task-active",
+        "[12:14:04] stage done execution/builder run=abcdef00ffff result=BUILDER_COMPLETE dur=1.0s",
+        "[12:14:04] run execution run=abcdef00ffff elapsed=1.0s",
+        "[12:14:05] stage done execution/builder run=abcdef00eeee result=BUILDER_COMPLETE dur=1.0s",
+        "[12:14:05] run execution run=abcdef00eeee elapsed=1.0s",
+        "[12:14:06] status execution run=abcdef00 from=BUILDER_RUNNING to=BUILDER_COMPLETE",
+    ]

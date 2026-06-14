@@ -180,6 +180,11 @@ non-blocking Learning work; Planning and Execution do not wait on Librarian.
    The basic monitor prints the first `idle reason=no_work` line immediately,
    then treats repeated `no_work` idles as a 6-hour heartbeat until runtime
    activity or a different idle reason appears.
+   This terminal-output heartbeat is separate from durable runtime idle-event
+   throttling. The event log records idle transitions, idle reason changes,
+   and configured heartbeat markers instead of one durable event per idle tick;
+   the durable idle-event heartbeat defaults to 6 hours unless explicitly
+   configured.
    Use `--monitor-log <path>` when you need the same clean monitor stream
    persisted to a file without necessarily printing it to stdout.
    If you need the daemon to persist beyond the current harness process, spawn
@@ -471,6 +476,9 @@ Important monitoring note:
 - `millrace run daemon --monitor basic` is live-only output; repeated
   `idle reason=no_work` lines are throttled to one heartbeat every 6 hours
   until runtime activity or a different idle reason resets the heartbeat
+- durable `runtime_tick_idle` events are separately throttled as transition and
+  heartbeat records with a default 6-hour heartbeat; idle suppression state is
+  process memory only and is not a `RuntimeSnapshot` field
 - the basic monitor is intentionally human-facing: stage labels are compact,
   long run ids are shortened for display, unknown token usage is omitted, and
   full details remain available through `millrace runs ...` commands and

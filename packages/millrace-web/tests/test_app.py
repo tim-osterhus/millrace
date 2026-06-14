@@ -12,15 +12,15 @@ from fastapi.testclient import TestClient
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.contracts import (
-    BlueprintDraftDocument,
     ExecutionStageName,
     ExecutionTerminalResult,
     ResultClass,
     StageResultEnvelope,
     WorkItemKind,
 )
+from millrace_ai.extensions.builtin.blueprint.contracts import BlueprintDraftDocument
+from millrace_ai.extensions.builtin.blueprint.state import enqueue_blueprint_draft
 from millrace_ai.paths import initialize_workspace
-from millrace_ai.workspace.blueprint_state import enqueue_blueprint_draft
 from typer.testing import CliRunner
 
 from millrace_web.app import create_app

@@ -13,6 +13,7 @@ from millrace_ai.config import (
     PiEventLogPolicy,
     PiRunnerSection,
     RuntimeConfig,
+    RuntimeSection,
     StageConfig,
     UsageGovernanceDegradedPolicy,
     UsageGovernanceSubscriptionProvider,
@@ -87,6 +88,10 @@ def test_runtime_config_defaults_canonical_mode_and_pi_determinism_flags() -> No
     assert config.runners.pi.disable_context_files is True
     assert config.runners.pi.disable_skills is True
     assert config.runners.pi.event_log_policy is PiEventLogPolicy.FAILURE_FULL
+
+
+def test_runtime_section_defaults_idle_event_heartbeat_to_at_least_six_hours() -> None:
+    assert RuntimeSection().idle_event_heartbeat_seconds >= 21600.0
 
 
 def test_runtime_config_accepts_explicit_full_pi_event_log_policy() -> None:

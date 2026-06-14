@@ -8,7 +8,7 @@ from millrace_ai.compilation.persistence import load_existing_plan
 from millrace_ai.compiler import CompiledPlanCurrentness, inspect_workspace_plan_currentness
 from millrace_ai.config import load_runtime_config
 from millrace_ai.contracts import ClosureTargetState, Plane, RuntimeErrorContext
-from millrace_ai.events import RuntimeEventRecord, read_runtime_events
+from millrace_ai.events import RuntimeEventRecord, find_latest_runtime_event
 from millrace_ai.paths import WorkspacePaths
 from millrace_ai.runtime.error_recovery import load_runtime_error_context
 from millrace_ai.runtime.runtime_effect_status import (
@@ -113,11 +113,10 @@ def collect_status_view_model(paths: WorkspacePaths) -> StatusViewModel:
 
 
 def _latest_operator_intervention(paths: WorkspacePaths) -> RuntimeEventRecord | None:
-    events = read_runtime_events(paths)
-    for event in reversed(events):
-        if event.event_type in _OPERATOR_INTERVENTION_EVENT_TYPES:
-            return event
-    return None
+    return find_latest_runtime_event(
+        paths,
+        lambda event: event.event_type in _OPERATOR_INTERVENTION_EVENT_TYPES,
+    )
 
 
 def _latest_runtime_effect_metadata(

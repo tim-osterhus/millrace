@@ -125,9 +125,7 @@ def run_tick(engine: RuntimeEngine) -> RuntimeTickOutcome:
         return engine._idle_tick_outcome(reason="missing_active_work_item_identity")
 
     if engine.snapshot.active_stage is None or engine.snapshot.active_plane is None:
-        save_snapshot(engine.paths, engine.snapshot)
-        write_runtime_event(engine.paths, event_type="runtime_tick_idle")
-        engine._emit_monitor_event("runtime_idle", reason="no_work")
+        engine._record_idle_cycle(reason="no_work")
         return engine._idle_tick_outcome(reason="no_work")
 
     engine._evaluate_usage_governance()

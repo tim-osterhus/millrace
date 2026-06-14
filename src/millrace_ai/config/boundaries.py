@@ -39,6 +39,7 @@ _FIELD_BOUNDARIES: dict[str, ApplyBoundary] = {
     "runtime.default_mode": ApplyBoundary.RECOMPILE,
     "runtime.run_style": ApplyBoundary.NEXT_TICK,
     "runtime.idle_sleep_seconds": ApplyBoundary.NEXT_TICK,
+    "runtime.idle_event_heartbeat_seconds": ApplyBoundary.NEXT_TICK,
     "runners.default_runner": ApplyBoundary.NEXT_TICK,
     "runners.codex": ApplyBoundary.NEXT_TICK,
     "runners.pi": ApplyBoundary.NEXT_TICK,

@@ -11,6 +11,7 @@ from millrace_ai.contracts import ExecutionStageName, LearningStageName, Plannin
 from millrace_ai.contracts.capabilities import CapabilityPolicyDecision, normalize_capability_id
 
 DEFAULT_CONFIG_PATH = Path("millrace-agents") / "millrace.toml"
+DEFAULT_IDLE_EVENT_HEARTBEAT_SECONDS = 21600.0
 
 KNOWN_STAGE_NAMES = {
     *(stage.value for stage in ExecutionStageName),
@@ -27,6 +28,7 @@ class RuntimeSection(ConfigModel):
     default_mode: str = "default_codex"
     run_style: RuntimeMode = RuntimeMode.DAEMON
     idle_sleep_seconds: float = Field(default=1.0, gt=0)
+    idle_event_heartbeat_seconds: float = Field(default=DEFAULT_IDLE_EVENT_HEARTBEAT_SECONDS, gt=0)
 
     @field_validator("run_style", mode="before")
     @classmethod

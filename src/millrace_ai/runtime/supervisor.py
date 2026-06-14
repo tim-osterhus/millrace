@@ -399,9 +399,7 @@ class RuntimeDaemonSupervisor:
         assert self.engine.snapshot is not None
         if attempt_stranded_dependency_auto_recovery(self.engine) is not None:
             return
-        save_snapshot(self.engine.paths, self.engine.snapshot)
-        write_runtime_event(self.engine.paths, event_type="runtime_tick_idle")
-        self.engine._emit_monitor_event("runtime_idle", reason="no_work")
+        self.engine._record_idle_cycle(reason="no_work")
 
     def _can_dispatch_lane(self, lane_id: str) -> bool:
         assert self.engine.compiled_plan is not None

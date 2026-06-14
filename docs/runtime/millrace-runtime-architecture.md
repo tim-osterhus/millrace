@@ -83,6 +83,13 @@ runtime events.
 - `millrace-agents/state/workspace_schema_epoch.json`
 - `millrace-agents/state/execution_status.md`
 - `millrace-agents/state/planning_status.md`
+
+Runtime events are stored in append-only JSONL for auditability. Normal
+status, closure, and web-dashboard views should use the streaming, recent-tail,
+or latest-event helpers in `src/millrace_ai/workspace/events.py` so routine
+operator views stay bounded as the log grows. `read_runtime_events()` remains
+available for explicit audit/debug workflows that intentionally load the full
+history.
 - `millrace-agents/state/learning_status.md`
 - `millrace-agents/state/usage_governance_state.json`
 - `millrace-agents/state/usage_governance_ledger.jsonl`
@@ -195,7 +202,7 @@ the generic interpreter or its declared adapter.
 - `src/millrace_ai/runners/`: stage runner contracts, normalization, adapter registry/dispatcher, and Codex/Pi adapters.
 - `src/millrace_ai/cli/monitoring.py`: formatting for opt-in daemon monitor output.
 - `src/millrace_ai/runtime/__init__.py`: stable `RuntimeEngine`, daemon supervisor, and runtime outcome import surface.
-- `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface.
+- `src/millrace_ai/runtime/engine.py`: stable stateful façade that keeps `RuntimeEngine.startup()`, `tick()`, and `close()` as the public runtime surface and owns shared idle durable-event suppression plus bounded heartbeat emission.
 - `src/millrace_ai/runtime/outcomes.py`: runtime tick outcome contract shared by the engine and tick/request helpers without creating an engine import cycle.
 - `src/millrace_ai/runtime/lifecycle.py`: startup/shutdown flow, config/compile bootstrap, watcher rebuild, and daemon-lock lifecycle.
 - `src/millrace_ai/runtime/effects/`: runtime effect result contracts,
@@ -307,7 +314,7 @@ the generic interpreter or its declared adapter.
 - `src/millrace_ai/runtime/learning_triggers.py`: compiler-frozen learning-trigger evaluation and learning-request enqueueing.
 - `src/millrace_ai/runtime/skill_evidence.py`: per-request skill revision evidence snapshots for learning-enabled runs.
 - `src/millrace_ai/runtime/snapshot_state.py`: shared snapshot reset/update helpers.
-- `src/millrace_ai/runtime/closure_transitions.py`: closure-target state mutation, arbiter report canonicalization, and arbiter-specific handoff/block/close paths.
+- `src/millrace_ai/runtime/closure_transitions.py`: closure-target state mutation, arbiter report canonicalization, arbiter-specific handoff/block/close paths, and repeated-remediation checks that stream chronological runtime events instead of materializing full history.
 - `src/millrace_ai/extensions/boundaries.py`: active extension boundary
   registry used by `runtime/result_application.py` for Recon/closure behavior
   and by `runtime/tick_cycle.py` and `runtime/supervisor.py` for Learning
@@ -330,7 +337,12 @@ the generic interpreter or its declared adapter.
   output.
 - `src/millrace_ai/cli/status/`: status data collection, view-model assembly,
   registered extension status projections, text rendering, and JSON payload
-  rendering.
+  rendering. `collection.py` now uses bounded latest-event lookup for latest
+  operator-intervention tracking.
+- `packages/millrace-web/src/millrace_web/services/event_stream.py`: bounded
+  recent-tail event summaries and SSE polling, with workspace/time sorting
+  before idle-noise suppression and deduping of repeated `idle` /
+  `runtime_tick_idle reason=no_work` records on normal polls.
 - `src/millrace_ai/cli/runs_view.py`: persisted run-list loading and line rendering.
 - `src/millrace_ai/cli/config_view.py`: config-show state loading and line rendering.
 - `src/millrace_ai/cli/compile_view.py`: compile diagnostics and compile-show line rendering.
@@ -667,11 +679,11 @@ Per daemon scheduler cycle:
     dispatch more than one lane in the same plane.
 14. Worker tasks execute blocking runner adapters from immutable
     `StageRunRequest` inputs and return typed outcomes only.
-15. Before reporting plain no-work idle, inspect stranded queued execution
-    tasks whose dependencies are blocked. If a same-lineage blocked predecessor
-    is classified as a transient environment/provider failure and cooldown plus
-    retry-budget gates pass, requeue it through the audited blocked work-item
-    retry transition while preserving the task compatibility event.
+15. Before reporting idle, inspect stranded queued execution tasks whose
+   dependencies are blocked. If a same-lineage blocked predecessor is
+   classified as a transient environment/provider failure and cooldown plus
+   retry-budget gates pass, requeue it through the audited blocked work-item
+   retry transition while preserving the task compatibility event.
 16. The supervisor applies completed outcomes serially: normalize, persist,
     update `run_trace.json`, route, update queue/snapshot/status/counters, emit
     monitor/runtime events, and evaluate post-stage usage governance.
@@ -694,7 +706,20 @@ The implementation mirrors that ordering directly:
 
 Idle:
 
-- If no claimable work exists and no eligible completion audit exists, runtime emits `no_work` and keeps the daemon loop alive unless stop requested.
+- If no claimable work exists and no eligible completion audit exists,
+  `RuntimeEngine.tick()` and the daemon supervisor route through
+  `RuntimeEngine._record_idle_cycle(...)` instead of emitting a record on
+  every idle tick. Durable `runtime_tick_idle` records are transition and
+  heartbeat records: one for the first idle transition, one when the idle
+  reason changes, and bounded aggregate records when heartbeat expiry requires
+  a fresh audit marker. The suppression state is in-memory on `RuntimeEngine`
+  only; it is not persisted on `RuntimeSnapshot` and a daemon restart may emit
+  a fresh idle transition marker. `runtime.idle_event_heartbeat_seconds` bounds
+  repeated durable idle stretches and keeps idle-only snapshot writes attached
+  to durable idle emission points. The default durable idle-event heartbeat is
+  6 hours, and operators may still configure shorter intervals explicitly.
+  This durable event-log throttling is independent from the human-facing basic
+  terminal monitor's own repeated idle-output heartbeat.
 - If queued execution work is stranded behind a same-lineage blocked
   dependency, runtime distinguishes transient runner/provider blockers from
   semantic blockers. Transient classes (`network_unavailable`,

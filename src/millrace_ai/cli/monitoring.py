@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
@@ -12,15 +13,21 @@ from millrace_ai.runtime.monitoring import RuntimeMonitorEvent, RuntimeMonitorSi
 
 _IDLE_HEARTBEAT_SECONDS = 21_600.0
 _RUN_HANDLE_LENGTHS = (8, 12, 16)
+_MAX_COMPLETED_RUNS = 256
 
 
 class BasicTerminalMonitor(RuntimeMonitorSink):
     """Concise line-oriented terminal renderer for daemon progress."""
 
-    def __init__(self, *, stream: TextIO) -> None:
+    def __init__(self, *, stream: TextIO, max_completed_runs: int = _MAX_COMPLETED_RUNS) -> None:
+        if max_completed_runs < 0:
+            raise ValueError("max_completed_runs must be non-negative")
         self._stream = stream
         self._lock = Lock()
+        self._max_completed_runs = max_completed_runs
         self._run_state: dict[tuple[str, str], _RunAggregate] = {}
+        self._active_run_keys: set[tuple[str, str]] = set()
+        self._completed_run_order: OrderedDict[tuple[str, str], None] = OrderedDict()
         self._idle_state = _IdleRenderState()
         self._display_ids = _DisplayIdRegistry()
 
@@ -29,6 +36,9 @@ class BasicTerminalMonitor(RuntimeMonitorSink):
             for line in _render_event_lines(
                 event,
                 self._run_state,
+                self._active_run_keys,
+                self._completed_run_order,
+                self._max_completed_runs,
                 self._idle_state,
                 self._display_ids,
             ):
@@ -82,10 +92,18 @@ class _DisplayIdRegistry:
         self._run_id_by_handle[raw] = raw
         return raw
 
+    def discard(self, run_id: str) -> None:
+        handle = self._handles_by_run_id.pop(run_id, None)
+        if handle is not None and self._run_id_by_handle.get(handle) == run_id:
+            del self._run_id_by_handle[handle]
+
 
 def _render_event_lines(
     event: RuntimeMonitorEvent,
     run_state: dict[tuple[str, str], _RunAggregate],
+    active_run_keys: set[tuple[str, str]],
+    completed_run_order: OrderedDict[tuple[str, str], None],
+    max_completed_runs: int,
     idle_state: _IdleRenderState,
     display_ids: _DisplayIdRegistry,
 ) -> tuple[str, ...]:
@@ -97,12 +115,20 @@ def _render_event_lines(
     if event.event_type == "runtime_resumed_active_run":
         return (prefix + _render_resumed_active_run(event.payload, display_ids),)
     if event.event_type == "stage_started":
-        _seed_stage_started(event.payload, event.occurred_at, run_state)
+        _seed_stage_started(event.payload, event.occurred_at, run_state, active_run_keys)
         return (prefix + _render_stage_started(event.payload, display_ids),)
     if event.event_type == "stage_completed":
-        run_update = _record_stage_completed(event.payload, run_state, display_ids)
+        stage_line = _render_stage_completed(event.payload, display_ids)
+        run_update = _record_stage_completed(
+            event.payload,
+            run_state,
+            active_run_keys,
+            completed_run_order,
+            max_completed_runs,
+            display_ids,
+        )
         return (
-            prefix + _render_stage_completed(event.payload, display_ids),
+            prefix + stage_line,
             prefix + run_update,
         )
     if event.event_type == "router_decision":
@@ -363,10 +389,13 @@ def _seed_stage_started(
     payload: Mapping[str, object],
     occurred_at: datetime,
     run_state: dict[tuple[str, str], _RunAggregate],
+    active_run_keys: set[tuple[str, str]],
 ) -> None:
     plane = _string(payload.get("plane"))
     run_id = _string(payload.get("run_id"))
-    aggregate = run_state.setdefault((plane, run_id), _RunAggregate())
+    run_key = (plane, run_id)
+    active_run_keys.add(run_key)
+    aggregate = run_state.setdefault(run_key, _RunAggregate())
     if aggregate.first_started_at is None or occurred_at < aggregate.first_started_at:
         aggregate.first_started_at = occurred_at
 
@@ -374,11 +403,16 @@ def _seed_stage_started(
 def _record_stage_completed(
     payload: Mapping[str, object],
     run_state: dict[tuple[str, str], _RunAggregate],
+    active_run_keys: set[tuple[str, str]],
+    completed_run_order: OrderedDict[tuple[str, str], None],
+    max_completed_runs: int,
     display_ids: _DisplayIdRegistry,
 ) -> str:
     plane = _string(payload.get("plane"))
     run_id = _string(payload.get("run_id"))
-    aggregate = run_state.setdefault((plane, run_id), _RunAggregate())
+    run_key = (plane, run_id)
+    active_run_keys.discard(run_key)
+    aggregate = run_state.setdefault(run_key, _RunAggregate())
     started_at = _datetime_value(payload.get("started_at"))
     completed_at = _datetime_value(payload.get("completed_at"))
     if started_at is not None and (
@@ -403,7 +437,43 @@ def _record_stage_completed(
     tokens = _format_aggregate_tokens(aggregate)
     if tokens is not None:
         parts.append(f"tokens={tokens}")
+    _mark_completed_run(
+        run_key,
+        run_state,
+        active_run_keys,
+        completed_run_order,
+        max_completed_runs,
+        display_ids,
+    )
     return " ".join(parts)
+
+
+def _mark_completed_run(
+    run_key: tuple[str, str],
+    run_state: dict[tuple[str, str], _RunAggregate],
+    active_run_keys: set[tuple[str, str]],
+    completed_run_order: OrderedDict[tuple[str, str], None],
+    max_completed_runs: int,
+    display_ids: _DisplayIdRegistry,
+) -> None:
+    completed_run_order.pop(run_key, None)
+    completed_run_order[run_key] = None
+    while len(completed_run_order) > max_completed_runs:
+        evicted_key, _ = completed_run_order.popitem(last=False)
+        run_state.pop(evicted_key, None)
+        evicted_run_id = evicted_key[1]
+        if not _run_id_is_retained(evicted_run_id, run_state, active_run_keys):
+            display_ids.discard(evicted_run_id)
+
+
+def _run_id_is_retained(
+    run_id: str,
+    run_state: Mapping[tuple[str, str], _RunAggregate],
+    active_run_keys: set[tuple[str, str]],
+) -> bool:
+    return any(key[1] == run_id for key in run_state) or any(
+        key[1] == run_id for key in active_run_keys
+    )
 
 
 def _add_token_usage(aggregate: _RunAggregate, token_usage: object) -> None:
