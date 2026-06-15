@@ -13,18 +13,17 @@
   <p><strong>Millrace is a local loop engineering/runtime framework for governed, long-running agentic workflows.</strong></p>
 </div>
 
-Millrace is for operators and engineers who want agent work to run from an
-explicit loop contract instead of an open-ended chat transcript. It turns a
-specified workflow into compiled graph assets, durable queues, bounded stage
-requests, recovery rules, operator controls, and closure evidence that can be
-inspected after any one harness session ends.
+Millrace is for operators and engineers who want agent work to run from a
+clear loop contract instead of an open-ended chat transcript. It turns a folder
+into a managed workspace with durable queues, bounded stage requests, recovery
+rules, operator controls, and inspectable evidence that survives any one
+harness session.
 
 The runtime owns the project state, not the agent. Millrace compiles workflow
 graphs, runner bindings, stage contracts, recovery rules, approvals, and
-closure behavior into one inspectable plan. A small daemon dispatches coding
-agents through that plan, applies their results through runtime-owned rules,
-and persists the evidence needed to resume, repair, inspect, or close the work
-later.
+completion behavior into one inspectable plan. A small daemon dispatches agents
+through that plan, applies their results through runtime-owned rules, and keeps
+the evidence needed to resume, repair, inspect, or finish the loop later.
 
 That makes Millrace a runtime layer, not a replacement for a coding harness.
 Tools such as Claude Code, Codex, and Pi can already edit repositories, run
@@ -33,16 +32,12 @@ side work. Millrace's job is different: it decides which bounded stage is
 allowed to run next, gives that stage a compiled contract, records the result,
 and keeps durable workspace state outside any one chat or terminal session.
 
-Status: Millrace is pre-1.0 and maintained. The current `0.20.x` line is still stabilizing, so pin patch versions when behavior matters.
+Status: Millrace is pre-1.0 and maintained. The current `0.20.x` line is still
+stabilizing, so pin patch versions when behavior matters.
 
-Breaking authority note: current `0.20.x` builds require compiled graph,
-registry, extension, policy, lifecycle, runtime-effect, queue-family, and
-artifact-contract metadata for runtime decisions. Missing compiled-plan policy
-is an error, not a signal to fall back to hard-coded shipped behavior. Custom
-graph behavior is selected by metadata, and Blueprint is extension-backed graph
-configuration rather than kernel behavior. Workspaces initialized before this
-cleanup may need `millrace upgrade --apply`, a fresh `millrace init`, or
-reinitialization before daemon startup will validate.
+Compatibility note: current `0.20.x` builds expect modern compiled-plan
+metadata. Older workspaces may need `millrace upgrade --apply`, a fresh
+`millrace init`, or reinitialization before daemon startup will validate.
 
 ```bash
 pip install millrace-ai
@@ -53,41 +48,44 @@ millrace status --workspace /path/to/workspace
 ```
 
 For the full system explanation, read `docs/millrace-technical-overview.md`.
+For the human operating model, read `QUICKSTART.md`.
 
 ## How Millrace Is Different
 
 Millrace is not another chat UI, coding harness, or graph library. It is the
 local runtime layer that decides what agent work is allowed to run, what state
-is durable, how recovery happens, and when the work can honestly close.
+is durable, how recovery happens, and how a workflow records that it is done.
 
 The comparison is about layers, not whether another tool has useful agent
 features. A direct coding agent can run tests, react to failure messages,
 invoke hooks, spawn subagents, and remember project instructions. Millrace adds
 an external runtime owner: the compiled plan, queue lineage, daemon scheduler,
-operator controls, and closure evidence live in the workspace and remain
+operator controls, and workflow evidence live in the workspace and remain
 inspectable after a single agent context ends.
 
 | Compared with | What that tool is good at | What Millrace adds or changes |
 | --- | --- | --- |
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) | A full coding harness: repo editing, shell/tool use, IDE and terminal surfaces, hooks, skills, subagents, memory, and conversation history. | Millrace is not the coding model or chat surface. It sits above harness runs with durable queues, compiled plans, a restartable daemon, runtime-owned mutation, operator controls, and Arbiter closure. The compiled plan, not the model's next self-directed step, owns stage routing. |
-| [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) | A low-level framework and runtime for building long-running, stateful agents and custom orchestration graphs. | Millrace ships an opinionated software-work runtime: Planning, Execution, optional Learning, queue intake, CLI operations, run artifacts, approval gates, and Arbiter closure are already part of the product. |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) | A full coding harness: repo editing, shell/tool use, IDE and terminal surfaces, hooks, skills, subagents, memory, and conversation history. | Millrace is not the coding model or chat surface. It sits above harness runs with durable queues, compiled plans, a restartable daemon, runtime-owned mutation, operator controls, and evidence-backed workflow state. The compiled plan, not the model's next self-directed step, owns stage routing. |
+| [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) | A low-level framework and runtime for building long-running, stateful agents and custom orchestration graphs. | Millrace ships a local workspace runtime with included workflow configurations, queue intake, CLI operations, run artifacts, approval gates, and recovery rules. LAD is the best-tested shipped workflow family, but it is not the whole runtime. |
 | [Archon](https://archon.diy/) | A workflow engine for packaging AI coding workflows as YAML and running them across tools and channels. | Millrace is less about portable workflow recipes and more about runtime truth inside a managed workspace: one compiled plan, one daemon-owned mutation path, durable recovery, and inspectable completion state. |
 
 Use a direct coding agent when one session and its built-in workflow features
 are enough. Use Millrace when the work needs an external runtime around it: a
 durable queue, predeclared stage contracts, graph-selected recovery, visible
-operator intervention, and completion claims with receipts.
+operator intervention, and workflow state with receipts.
 
 ## What Millrace Does
 
-Millrace turns large AI-assisted software work into explicit runtime state:
+Millrace turns a governed agentic workflow into explicit runtime state:
 
 - **Queue intake:** tasks, specs, probes, incidents, ideas, learning requests, approvals, and operator commands enter through supported files or CLI commands.
-- **Compiled plans:** the selected mode, graph assets, runtime config, stage bindings, recovery policy, and completion behavior compile into a persisted plan before work runs.
+- **Compiled plans:** the selected mode, graph assets, runtime config, stage
+  bindings, scheduler authority, selected recovery policies, and completion
+  behavior compile into a persisted plan before work runs.
 - **Stage execution:** a daemon claims one eligible stage at a time, hands the stage a contract, records artifacts, and routes the result through runtime-owned logic.
 - **Recovery:** retryable environmental failures can requeue through audited paths; real blocked states stay visible until an operator or recovery stage handles them.
-- **Closure:** work does not close because an agent says it is done. Arbiter closure runs only when the relevant lineage has no queued, active, or blocked work left.
-- **Inspection:** status, monitor output, run artifacts, traces, compile diagnostics, and CLI commands make the runtime state visible after each handoff.
+- **Completion rules:** each workflow can define how finished work is checked and recorded. LAD uses Arbiter-style completion because software tasks benefit from a final evidence check, but other loops can use different rules.
+- **Inspection:** status, monitor output, run artifacts, traces, compile diagnostics, and CLI commands make runtime state visible after each handoff.
 
 The base package is intentionally local and lightweight. Runtime observation is
 kept in CLI/status/run/trace surfaces rather than a bundled web dashboard.
@@ -104,13 +102,34 @@ The shipped LAD modes keep Planning and Execution serial. Learning-enabled LAD
 modes can run one Learning stage alongside one foreground Planning or Execution
 stage. Runtime-owned mutation remains serialized by the daemon.
 
-Current shipped code-development modes are LAD loop-family implementations:
-`lad_codex`, `lad_pi`, learning-enabled LAD modes, opt-in Integrator quality
-modes, Blueprint Planning modes that keep LAD Execution, and
-`efficient_learning_lad_mixed`, which uses `learning.standard` with a
-mode-local mixed Codex/Pi model profile. See
-`docs/runtime/millrace-modes-and-loops.md` and `docs/graphs/graphs-index.md`
-for the exact mode and graph matrix.
+## Included Workflow Configurations
+
+Millrace ships with LAD as a first-class supported workflow, but LAD is
+separate from Millrace itself. Millrace is the runtime; LAD is one workflow
+family that runs on it.
+
+The current shipped workflow configurations are:
+
+- **LAD:** the main and most tested software-development workflow family. It
+  uses Planning and Execution planes, with Arbiter-style completion for final
+  evidence checks.
+- **LAD variants:** Codex and Pi runner profiles, Learning-enabled modes,
+  Integrator modes for higher-assurance execution, and
+  `efficient_learning_lad_mixed` for a mixed Codex/Pi profile.
+- **Blueprint-style Planning:** a structured Planning variant for longer agent
+  and harness work. It was inspired by a conversation with an Anthropic
+  engineer about long-running agents and agent harnesses. Current Blueprint
+  modes keep LAD Execution and replace the Planning graph.
+
+Planned shipped-by-default work:
+
+- **Auto-Lab:** a future configuration for more automated experiment and
+  evaluation loops. It is planned work, not current stable runtime behavior.
+
+See `docs/runtime/millrace-modes-and-loops.md` and
+`docs/graphs/graphs-index.md` for the exact mode and graph matrix. See
+`docs/runtime/millrace-runtime-architecture.md` for the runtime model behind
+those configurations.
 
 Millrace supports custom graph nodes and custom stage kinds over canonical
 runtime stages. Workspace-local assets for modes, graphs, stage kinds, and
@@ -201,6 +220,23 @@ Common commands:
 
 The full CLI reference is `docs/runtime/millrace-cli-reference.md`.
 
+## If You Are An AI Agent
+
+Many users will ask an AI agent to operate Millrace for them. If that is your
+role, treat Millrace as an operator-controlled runtime, not as a background
+detail.
+
+Start with:
+
+- `docs/skills/millrace-ops-agent-manual/SKILL.md`
+- `docs/skills/millrace-autonomous-delegation/SKILL.md`
+- `docs/runtime/README.md`
+- `docs/runtime/millrace-cli-reference.md`
+
+Keep the daemon in a durable terminal session when the run should outlast the
+current chat. Report workspace state, approvals, blockers, and evidence instead
+of only summarizing your own actions.
+
 ## Early Proof
 
 Millrace's strongest early public proof is self-referential: Python `millrace-ai` drove the first released Rust parity implementation of Millrace.
@@ -234,7 +270,7 @@ Use Millrace when:
 - you need explicit stage gates, not informal chat conclusions;
 - recovery, restartability, and queue state matter;
 - you want run artifacts under `<workspace>/millrace-agents/`;
-- completion needs a closure pass with evidence;
+- the workflow needs an explicit completion check with evidence;
 - an operator or ops agent is managing intake and runtime control.
 
 Do not use Millrace when:
@@ -248,6 +284,7 @@ Do not use Millrace when:
 
 Start here:
 
+- `QUICKSTART.md`: the high-level human operator guide.
 - `docs/millrace-technical-overview.md`: the dense system explainer.
 - `docs/doc-index.md`: the documentation map.
 - `docs/runtime/README.md`: runtime docs by topic.
