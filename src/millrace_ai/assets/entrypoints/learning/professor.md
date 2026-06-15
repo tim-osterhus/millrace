@@ -57,6 +57,7 @@ The Professor output must include:
 
 ## Inputs (read in order)
 
+- shared instructions listed in this request
 1. request-provided `active_work_item_path`
 2. request-provided `run_dir/analyst_research_packet.md` when present
 3. paths named by the learning request's `artifact_paths`
@@ -64,6 +65,12 @@ The Professor output must include:
 5. `millrace-agents/skills/skills_index.md`
 6. `millrace-skill-creator` guidance and scripts
 7. request-provided `skill_revision_evidence_path` when present
+
+## Run-Local Memory Artifacts
+
+- Read the shared instructions listed in this request before broader workspace context when they exist.
+- Write a run-local `history_entry.json` proposal summarizing the stage decision, changed paths, evidence paths, and warnings.
+- Runtime-owned history accepts JSON proposals only.
 
 ## Skills Index Selection
 

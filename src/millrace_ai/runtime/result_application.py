@@ -18,7 +18,9 @@ from millrace_ai.contracts import (
 )
 from millrace_ai.contracts.router import RouterAction, RouterDecision
 from millrace_ai.contracts.stage_metadata import stage_plane
+from millrace_ai.events import write_runtime_event
 from millrace_ai.extensions import builtin_extension_boundary_registry
+from millrace_ai.workspace.history_log import HistoryAppendResult, append_history_entry_for_stage_result
 
 from .active_runs import (
     active_run_for_plane,
@@ -128,6 +130,9 @@ def apply_router_decision(
     assert engine.snapshot is not None
     assert engine.counters is not None
 
+    if stage_result_path is not None:
+        _apply_history_entry_artifact(engine, stage_result, stage_result_path)
+
     if engine.snapshot.current_failure_class is not None and stage_result.success:
         clear_runtime_error_context(engine.paths)
 
@@ -188,6 +193,62 @@ def apply_router_decision(
         return ()
 
     raise ValueError(f"Unsupported router action: {decision.action.value}")
+
+
+def _apply_history_entry_artifact(
+    engine: RuntimeEngine,
+    stage_result: StageResultEnvelope,
+    stage_result_path: Path,
+) -> None:
+    result = append_history_entry_for_stage_result(
+        engine.paths,
+        stage_result=stage_result,
+        stage_result_path=stage_result_path,
+    )
+    if result.status == "missing":
+        return
+    _emit_history_entry_event(engine, stage_result, result)
+
+
+def _emit_history_entry_event(
+    engine: RuntimeEngine,
+    stage_result: StageResultEnvelope,
+    result: HistoryAppendResult,
+) -> None:
+    event_type_by_status = {
+        "appended": "history_entry_appended",
+        "duplicate_skipped": "history_entry_duplicate_skipped",
+        "conflict_skipped": "history_entry_conflict",
+        "invalid_skipped": "history_entry_invalid_skipped",
+    }
+    event_type = event_type_by_status.get(result.status)
+    if event_type is None:
+        return
+    write_runtime_event(
+        engine.paths,
+        event_type=event_type,
+        data={
+            "run_id": stage_result.run_id,
+            "plane": stage_result.plane.value,
+            "stage": stage_result.stage.value,
+            "node_id": stage_result.node_id,
+            "work_item_kind": stage_result.work_item_kind.value if stage_result.work_item_kind is not None else None,
+            "work_item_id": stage_result.work_item_id,
+            "history_entry_id": result.history_entry_id,
+            "history_entry_path": _relative_path(engine, result.entry_path),
+            "artifact_path": _relative_path(engine, result.artifact_path),
+            "diagnostic": result.diagnostic,
+        },
+    )
+
+
+def _relative_path(engine: RuntimeEngine, path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return path.resolve().relative_to(engine.paths.root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _is_closure_target_result(stage_result: StageResultEnvelope) -> bool:

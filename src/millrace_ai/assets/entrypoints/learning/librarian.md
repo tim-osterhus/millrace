@@ -66,6 +66,7 @@ The selection report must include:
 
 ## Inputs (read in order)
 
+- shared instructions listed in this request
 1. request-provided `active_work_item_path`
 2. learning request fields from the active work item
 3. source Planner stage result paths from `artifact_paths`
@@ -75,6 +76,12 @@ The selection report must include:
 6. `millrace-agents/skills/skills_index.md`
 7. `millrace-agents/skills/remote_skills_index.md` after refresh when useful
 8. `preferred_output_paths` when present as supplemental context
+
+## Run-Local Memory Artifacts
+
+- Read the shared instructions listed in this request before broader workspace context when they exist.
+- Write a run-local `history_entry.json` proposal summarizing the stage decision, changed paths, evidence paths, and warnings.
+- Runtime-owned history accepts JSON proposals only.
 
 ## Skills Index Selection
 

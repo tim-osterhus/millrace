@@ -48,7 +48,17 @@ class WorkspacePaths:
 
     intake_dir: Path
     intake_sources_dir: Path
+    intake_sources_idea_dir: Path
+    intake_sources_probe_dir: Path
+    intake_sources_manual_dir: Path
+    intake_sources_spec_dir: Path
+    intake_sources_incident_dir: Path
     intake_ideas_dir: Path
+    intake_ideas_inbox_dir: Path
+    intake_ideas_normalized_dir: Path
+    intake_ideas_archived_dir: Path
+    intake_ideas_archived_legacy_dir: Path
+    intake_ideas_invalid_dir: Path
 
     recon_dir: Path
     recon_packets_dir: Path
@@ -93,6 +103,44 @@ class WorkspacePaths:
     logs_dir: Path
     entrypoints_dir: Path
     skills_dir: Path
+    templates_dir: Path
+
+    shared_instruction_file: Path
+    shared_instruction_candidate_file: Path
+
+    workspace_map_dir: Path
+    workspace_map_index_file: Path
+    workspace_map_manifest_file: Path
+    workspace_map_generated_dir: Path
+    workspace_map_generated_file_tree_file: Path
+    workspace_map_generated_repo_map_file: Path
+    workspace_map_generated_symbols_file: Path
+    workspace_map_generated_imports_file: Path
+    workspace_map_generated_reverse_imports_file: Path
+    workspace_map_generated_public_api_file: Path
+    workspace_map_generated_tests_map_file: Path
+    workspace_map_generated_docs_references_file: Path
+    workspace_map_generated_freshness_file: Path
+    workspace_map_wiki_dir: Path
+    workspace_map_wiki_index_file: Path
+    workspace_map_wiki_domains_dir: Path
+    workspace_map_wiki_runtime_file: Path
+    workspace_map_wiki_compiler_file: Path
+    workspace_map_wiki_workspace_file: Path
+    workspace_map_wiki_runners_file: Path
+    workspace_map_wiki_assets_file: Path
+    workspace_map_wiki_cli_file: Path
+    workspace_map_wiki_contracts_file: Path
+    workspace_map_wiki_invariants_file: Path
+    workspace_map_wiki_glossary_file: Path
+    workspace_map_wiki_maintenance_notes_file: Path
+    workspace_map_snapshots_dir: Path
+
+    history_log_dir: Path
+    history_log_index_file: Path
+    history_log_latest_file: Path
+    history_log_daily_dir: Path
+    history_log_entries_dir: Path
 
     outline_file: Path
     historylog_file: Path
@@ -142,7 +190,17 @@ class WorkspacePaths:
             self.probes_blocked_dir,
             self.intake_dir,
             self.intake_sources_dir,
+            self.intake_sources_idea_dir,
+            self.intake_sources_probe_dir,
+            self.intake_sources_manual_dir,
+            self.intake_sources_spec_dir,
+            self.intake_sources_incident_dir,
             self.intake_ideas_dir,
+            self.intake_ideas_inbox_dir,
+            self.intake_ideas_normalized_dir,
+            self.intake_ideas_archived_dir,
+            self.intake_ideas_archived_legacy_dir,
+            self.intake_ideas_invalid_dir,
             self.recon_dir,
             self.recon_packets_dir,
             self.recon_reports_dir,
@@ -181,6 +239,15 @@ class WorkspacePaths:
             self.logs_dir,
             self.entrypoints_dir,
             self.skills_dir,
+            self.templates_dir,
+            self.workspace_map_dir,
+            self.workspace_map_generated_dir,
+            self.workspace_map_wiki_dir,
+            self.workspace_map_wiki_domains_dir,
+            self.workspace_map_snapshots_dir,
+            self.history_log_dir,
+            self.history_log_daily_dir,
+            self.history_log_entries_dir,
             self.runtime_effect_journal_dir,
         )
 
@@ -238,7 +305,17 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         probes_blocked_dir=probes_dir / "blocked",
         intake_dir=intake_dir,
         intake_sources_dir=intake_dir / "sources",
+        intake_sources_idea_dir=intake_dir / "sources" / "idea",
+        intake_sources_probe_dir=intake_dir / "sources" / "probe",
+        intake_sources_manual_dir=intake_dir / "sources" / "manual",
+        intake_sources_spec_dir=intake_dir / "sources" / "spec",
+        intake_sources_incident_dir=intake_dir / "sources" / "incident",
         intake_ideas_dir=intake_dir / "ideas",
+        intake_ideas_inbox_dir=intake_dir / "ideas" / "inbox",
+        intake_ideas_normalized_dir=intake_dir / "ideas" / "normalized",
+        intake_ideas_archived_dir=intake_dir / "ideas" / "archived",
+        intake_ideas_archived_legacy_dir=intake_dir / "ideas" / "archived" / "legacy",
+        intake_ideas_invalid_dir=intake_dir / "ideas" / "invalid",
         recon_dir=recon_dir,
         recon_packets_dir=recon_dir / "packets",
         recon_reports_dir=recon_dir / "reports",
@@ -278,6 +355,41 @@ def workspace_paths(root: Union[str, Path]) -> WorkspacePaths:
         logs_dir=runtime_root / "logs",
         entrypoints_dir=runtime_root / "entrypoints",
         skills_dir=runtime_root / "skills",
+        templates_dir=runtime_root / "templates",
+        shared_instruction_file=runtime_root / "MILLRACE.md",
+        shared_instruction_candidate_file=runtime_root / "templates" / "MILLRACE.md.candidate",
+        workspace_map_dir=runtime_root / "workspace-map",
+        workspace_map_index_file=runtime_root / "workspace-map" / "index.md",
+        workspace_map_manifest_file=runtime_root / "workspace-map" / "manifest.json",
+        workspace_map_generated_dir=runtime_root / "workspace-map" / "generated",
+        workspace_map_generated_file_tree_file=runtime_root / "workspace-map" / "generated" / "file-tree.md",
+        workspace_map_generated_repo_map_file=runtime_root / "workspace-map" / "generated" / "repo-map.compact.md",
+        workspace_map_generated_symbols_file=runtime_root / "workspace-map" / "generated" / "symbols.jsonl",
+        workspace_map_generated_imports_file=runtime_root / "workspace-map" / "generated" / "imports.json",
+        workspace_map_generated_reverse_imports_file=runtime_root / "workspace-map" / "generated" / "reverse-imports.json",
+        workspace_map_generated_public_api_file=runtime_root / "workspace-map" / "generated" / "public-api.jsonl",
+        workspace_map_generated_tests_map_file=runtime_root / "workspace-map" / "generated" / "tests-map.jsonl",
+        workspace_map_generated_docs_references_file=runtime_root / "workspace-map" / "generated" / "docs-references.jsonl",
+        workspace_map_generated_freshness_file=runtime_root / "workspace-map" / "generated" / "freshness.json",
+        workspace_map_wiki_dir=runtime_root / "workspace-map" / "wiki",
+        workspace_map_wiki_index_file=runtime_root / "workspace-map" / "wiki" / "index.md",
+        workspace_map_wiki_domains_dir=runtime_root / "workspace-map" / "wiki" / "domains",
+        workspace_map_wiki_runtime_file=runtime_root / "workspace-map" / "wiki" / "domains" / "runtime.md",
+        workspace_map_wiki_compiler_file=runtime_root / "workspace-map" / "wiki" / "domains" / "compiler.md",
+        workspace_map_wiki_workspace_file=runtime_root / "workspace-map" / "wiki" / "domains" / "workspace.md",
+        workspace_map_wiki_runners_file=runtime_root / "workspace-map" / "wiki" / "domains" / "runners.md",
+        workspace_map_wiki_assets_file=runtime_root / "workspace-map" / "wiki" / "domains" / "assets.md",
+        workspace_map_wiki_cli_file=runtime_root / "workspace-map" / "wiki" / "domains" / "cli.md",
+        workspace_map_wiki_contracts_file=runtime_root / "workspace-map" / "wiki" / "domains" / "contracts.md",
+        workspace_map_wiki_invariants_file=runtime_root / "workspace-map" / "wiki" / "invariants.md",
+        workspace_map_wiki_glossary_file=runtime_root / "workspace-map" / "wiki" / "glossary.md",
+        workspace_map_wiki_maintenance_notes_file=runtime_root / "workspace-map" / "wiki" / "maintenance-notes.md",
+        workspace_map_snapshots_dir=runtime_root / "workspace-map" / "snapshots",
+        history_log_dir=runtime_root / "history-log",
+        history_log_index_file=runtime_root / "history-log" / "index.md",
+        history_log_latest_file=runtime_root / "history-log" / "latest.md",
+        history_log_daily_dir=runtime_root / "history-log" / "daily",
+        history_log_entries_dir=runtime_root / "history-log" / "entries",
         outline_file=runtime_root / "outline.md",
         historylog_file=runtime_root / "historylog.md",
         execution_status_file=state_dir / "execution_status.md",

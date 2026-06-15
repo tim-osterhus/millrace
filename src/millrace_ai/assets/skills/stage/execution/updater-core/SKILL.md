@@ -21,46 +21,55 @@ forbidden_claims:
 
 ## Purpose
 
-Keep informational surfaces aligned with the implemented repo state after execution work. Treat `outline.md` as the first place to check, then reconcile only the stale facts that the evidence actually supports.
+Keep curated informational surfaces aligned with the implemented repo state after execution work. Treat the shared instructions already opened by the wrapper prompt, `workspace-map/index.md`, generated workspace-map freshness, impacted wiki pages, completed-task evidence, and relevant history entries as the standard reconciliation inputs.
 
 ## Quick Start
 
-1. Read `outline.md` first.
-2. Compare it against completed-task evidence and the current repo structure.
+1. Read the shared instructions already opened by the wrapper prompt, then `workspace-map/index.md` and generated freshness.
+2. Compare impacted curated wiki pages and relevant docs/source against completed-task evidence and the current repo structure.
 3. Triage stale surfaces before changing any file.
 4. Update only factual statements you can back with evidence.
-5. If nothing is stale, say so explicitly and stop.
+5. Emit `workspace_map_update_request.json` as an advisory M1 refresh request instead of editing generated map files when generated data is stale; the runtime does not automatically consume this artifact.
+6. If nothing is stale, say so explicitly and stop.
 
 ## Operating Constraints
 
 - Stay in documentation reconciliation, not implementation.
 - Prefer no-op honesty over speculative cleanup.
 - Update only surfaces that are demonstrably stale.
+- Edit only impacted curated wiki pages under `workspace-map/wiki/`; do not hand-edit generated workspace-map outputs.
+- Treat `MILLRACE.md` as operator-owned shared instructions: read it for context only unless the active task explicitly requests shared-instruction changes.
+- Completed evidence that shared instructions are stale is not enough by itself to authorize an edit; without an explicit shared-instruction update request, record the issue in the summary instead.
 - Keep changes narrow, factual, and easy to trace back to repo evidence.
 
 ## Inputs This Skill Expects
 
-- `outline.md`
+- shared instructions already opened by the wrapper prompt
+- `workspace-map/index.md`
+- `workspace-map/generated/freshness.json`
+- impacted curated wiki pages under `workspace-map/wiki/`
 - completed-task evidence for the active pass
 - current repo structure or nearby docs that prove the stale surface
-- `historylog.md` when it helps anchor what already changed
+- relevant rendered history entries under `history-log/` when they help anchor what already changed
 - any request-provided summary or snapshot paths that explain the current run
 
 ## Output Contract
 
 - A minimal set of factual doc edits when stale surfaces exist.
+- A run-local advisory `workspace_map_update_request.json` when generated workspace-map output needs refresh.
 - An explicit no-op statement when no update is needed.
 - Clear evidence of why each changed surface was stale.
 - No invented progress, scope, or architecture.
 
 ## Procedure
 
-1. Read `outline.md` before any other informational surface.
-2. Compare the outline and adjacent docs with the execution evidence.
+1. Read the shared instructions already opened by the wrapper prompt, then `workspace-map/index.md`, generated freshness, and the narrowest completed-task evidence.
+2. Compare impacted curated wiki pages and adjacent docs/source with the execution evidence.
 3. Mark only the surfaces that are actually stale.
-4. Edit the smallest set of statements needed to restore factual alignment.
-5. If no stale surface exists, record that as an explicit no-op.
-6. Keep any summary artifact short and evidence-backed.
+4. Edit the smallest set of curated or source documentation statements needed to restore factual alignment.
+5. If generated workspace-map output is stale, write a refresh request artifact instead of editing generated files.
+6. If no stale surface exists, record that as an explicit no-op.
+7. Keep any summary artifact short and evidence-backed.
 
 ## Pitfalls And Gotchas
 
@@ -71,7 +80,7 @@ Keep informational surfaces aligned with the implemented repo state after execut
 
 ## Progressive Disclosure
 
-Start with `outline.md` and the narrowest completed-task evidence that could make it stale. Expand only if the first pass shows that other informational surfaces share the same drift.
+Start with shared instructions, workspace-map index/freshness, and the narrowest completed-task evidence that could make a curated surface stale. Expand only to impacted wiki pages, relevant history entries, and overlapping docs/source.
 
 ## Verification Pattern
 

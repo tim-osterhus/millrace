@@ -34,6 +34,7 @@ RunnerExitKind = Literal[
 ]
 RequestKind = Literal["active_work_item", "closure_target", "learning_request"]
 
+
 class StageRunRequest(BaseModel):
     """Machine-readable request payload for one stage run."""
 
@@ -57,6 +58,7 @@ class StageRunRequest(BaseModel):
 
     required_skill_paths: tuple[str, ...] = ()
     attached_skill_paths: tuple[str, ...] = ()
+    shared_instruction_paths: tuple[str, ...] = ()
 
     active_work_item_family_id: str | None = None
     active_work_item_kind: WorkItemKind | None = None
@@ -114,13 +116,9 @@ class StageRunRequest(BaseModel):
             self.allowed_result_classes_by_outcome = allowed_result_classes_by_outcome(self.stage)
         if not self.legal_terminal_markers:
             self.legal_terminal_markers = legal_terminal_markers(self.stage)
-        expected_markers = _legal_terminal_markers_from_outcomes(
-            tuple(self.allowed_result_classes_by_outcome)
-        )
+        expected_markers = _legal_terminal_markers_from_outcomes(tuple(self.allowed_result_classes_by_outcome))
         if self.legal_terminal_markers != expected_markers:
-            raise ValueError(
-                "legal_terminal_markers must match allowed_result_classes_by_outcome keys"
-            )
+            raise ValueError("legal_terminal_markers must match allowed_result_classes_by_outcome keys")
         if not self.node_id.strip():
             raise ValueError("node_id is required")
         if not self.stage_kind_id.strip():
@@ -138,9 +136,7 @@ class StageRunRequest(BaseModel):
         has_family = self.active_work_item_family_id is not None
         has_id = self.active_work_item_id is not None
         if has_family != has_id:
-            raise ValueError(
-                "active_work_item_family_id and active_work_item_id must be set together"
-            )
+            raise ValueError("active_work_item_family_id and active_work_item_id must be set together")
 
         closure_fields = (
             self.closure_target_path,
@@ -193,14 +189,10 @@ class StageRunRequest(BaseModel):
         )
         if self.request_kind == "active_work_item":
             if any(field is not None for field in closure_fields):
-                raise ValueError(
-                    "active_work_item requests cannot declare closure target fields"
-                )
+                raise ValueError("active_work_item requests cannot declare closure target fields")
         elif self.request_kind == "closure_target":
             if has_family or self.active_work_item_path is not None:
-                raise ValueError(
-                    "closure_target requests cannot declare active work item fields"
-                )
+                raise ValueError("closure_target requests cannot declare active work item fields")
             if any(field is None for field in required_closure_fields):
                 raise ValueError("closure_target requests require closure target fields")
         else:
@@ -221,9 +213,7 @@ class StageRunRequest(BaseModel):
             self.context_render_plan_id,
             self.rendered_prompt_context_path,
         )
-        has_context = any(field is not None for field in context_required_fields) or bool(
-            self.context_artifact_refs
-        )
+        has_context = any(field is not None for field in context_required_fields) or bool(self.context_artifact_refs)
         if has_context and any(field is None for field in context_required_fields):
             raise ValueError("request context fields must be set together")
         if not has_context and self.context_artifact_refs:
@@ -248,11 +238,7 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
         f"Running Status Marker: {request.running_status_marker}",
         f"Entrypoint Path: {request.entrypoint_path}",
         f"Entrypoint Contract ID: {request.entrypoint_contract_id or 'none'}",
-        (
-            "Active Work Item: "
-            f"{_active_work_item_family_label(request)} "
-            f"{request.active_work_item_id or 'none'}"
-        ),
+        (f"Active Work Item: {_active_work_item_family_label(request)} {request.active_work_item_id or 'none'}"),
         f"Active Work Item Path: {request.active_work_item_path or 'none'}",
         f"Closure Target Path: {request.closure_target_path or 'none'}",
         f"Closure Target Root Spec ID: {request.closure_target_root_spec_id or 'none'}",
@@ -283,6 +269,7 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
     )
     lines.extend(_render_path_list("Required Skill Paths", request.required_skill_paths))
     lines.extend(_render_path_list("Attached Skill Paths", request.attached_skill_paths))
+    lines.extend(_render_path_list("Shared Instruction Paths", request.shared_instruction_paths))
     lines.extend(_render_capability_grants(request.execution_capability_grants))
     lines.extend(_render_capability_support_decisions(request.capability_support_decisions))
     lines.extend(
@@ -291,10 +278,7 @@ def render_stage_request_context_lines(request: StageRunRequest) -> tuple[str, .
             f"Runtime Snapshot Path: {request.runtime_snapshot_path}",
             f"Recovery Counters Path: {request.recovery_counters_path}",
             f"Summary Status Path: {request.summary_status_path}",
-            (
-                "Preferred Troubleshoot Report Path: "
-                f"{request.preferred_troubleshoot_report_path or 'none'}"
-            ),
+            (f"Preferred Troubleshoot Report Path: {request.preferred_troubleshoot_report_path or 'none'}"),
             f"Runtime Error Code: {request.runtime_error_code or 'none'}",
             f"Runtime Error Report Path: {request.runtime_error_report_path or 'none'}",
             f"Runtime Error Catalog Path: {request.runtime_error_catalog_path or 'none'}",
@@ -367,11 +351,7 @@ class _TerminalExtraction:
 
     @property
     def ok(self) -> bool:
-        return (
-            self.failure_class is None
-            and self.terminal_result is not None
-            and self.result_class is not None
-        )
+        return self.failure_class is None and self.terminal_result is not None and self.result_class is not None
 
 
 def _render_path_list(label: str, paths: tuple[str, ...]) -> tuple[str, ...]:
@@ -416,11 +396,7 @@ def _render_capability_grants(
         return ("Execution Capability Grants: none",)
     lines = ["Execution Capability Grants:"]
     for grant in grants:
-        approval = (
-            f" approval={grant.approval_policy_ref.policy_id}"
-            if grant.approval_policy_ref is not None
-            else ""
-        )
+        approval = f" approval={grant.approval_policy_ref.policy_id}" if grant.approval_policy_ref is not None else ""
         lines.append(
             f"- {grant.grant_id} {grant.capability_id} "
             f"decision={grant.decision_state.value} "

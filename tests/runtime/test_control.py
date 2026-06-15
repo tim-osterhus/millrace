@@ -933,11 +933,11 @@ def test_add_task_spec_and_idea_are_direct_without_daemon_owner(tmp_path: Path) 
     assert add_spec.mode == "direct"
     assert add_spec.artifact_path == paths.specs_queue_dir / "spec-add-direct.md"
     assert add_idea.mode == "direct"
-    assert add_idea.artifact_path == paths.root / "ideas" / "inbox" / "idea-direct.md"
+    assert add_idea.artifact_path == paths.intake_ideas_inbox_dir / "idea-direct.md"
 
     assert (paths.tasks_queue_dir / "task-add-direct.md").is_file()
     assert (paths.specs_queue_dir / "spec-add-direct.md").is_file()
-    assert (paths.root / "ideas" / "inbox" / "idea-direct.md").is_file()
+    assert (paths.intake_ideas_inbox_dir / "idea-direct.md").is_file()
 
 
 def test_add_task_spec_idea_and_reload_use_mailbox_when_daemon_owns_workspace(tmp_path: Path) -> None:
@@ -977,7 +977,7 @@ def test_add_task_spec_idea_and_reload_use_mailbox_when_daemon_owns_workspace(tm
 
     assert not (paths.tasks_queue_dir / "task-add-mailbox.md").exists()
     assert not (paths.specs_queue_dir / "spec-add-mailbox.md").exists()
-    assert not (paths.root / "ideas" / "inbox" / "idea-mailbox.md").exists()
+    assert not (paths.intake_ideas_inbox_dir / "idea-mailbox.md").exists()
 
 
 def test_direct_reload_applies_new_plan_when_no_work_is_active(tmp_path: Path) -> None:

@@ -26,7 +26,12 @@ from millrace_ai.state_store import (
     load_snapshot,
 )
 from millrace_ai.workspace.arbiter_state import list_open_closure_target_states
-from millrace_ai.workspace.baseline import BaselineManifest, load_baseline_manifest
+from millrace_ai.workspace.baseline import (
+    BaselineManifest,
+    WorkspaceFileOwnership,
+    classify_workspace_relative_path,
+    load_baseline_manifest,
+)
 from millrace_ai.workspace.lineage_integrity import scan_closure_lineage_drift
 from millrace_ai.workspace.task_lifecycle_integrity import find_duplicate_task_lifecycle_ids
 from millrace_ai.workspace.work_inventory import build_work_inventory
@@ -111,15 +116,25 @@ def _validate_workspace_layout(paths: WorkspacePaths, errors: list[DoctorIssue])
     for directory in paths.directories():
         if directory.is_dir():
             continue
-        errors.append(
-            DoctorIssue(
-                code="missing_directory",
-                message="required workspace directory is missing",
-                path=directory,
-            )
-        )
+        ownership = _workspace_ownership_for_path(paths, directory)
+        errors.append(_missing_workspace_issue(directory, ownership=ownership, is_directory=True))
 
     required_files = (
+        paths.shared_instruction_file,
+        paths.workspace_map_index_file,
+        paths.workspace_map_manifest_file,
+        paths.workspace_map_generated_file_tree_file,
+        paths.workspace_map_generated_repo_map_file,
+        paths.workspace_map_generated_symbols_file,
+        paths.workspace_map_generated_imports_file,
+        paths.workspace_map_generated_reverse_imports_file,
+        paths.workspace_map_generated_public_api_file,
+        paths.workspace_map_generated_tests_map_file,
+        paths.workspace_map_generated_docs_references_file,
+        paths.workspace_map_generated_freshness_file,
+        paths.workspace_map_wiki_index_file,
+        paths.history_log_index_file,
+        paths.history_log_latest_file,
         paths.outline_file,
         paths.historylog_file,
         paths.execution_status_file,
@@ -130,13 +145,8 @@ def _validate_workspace_layout(paths: WorkspacePaths, errors: list[DoctorIssue])
     for file_path in required_files:
         if file_path.is_file():
             continue
-        errors.append(
-            DoctorIssue(
-                code="missing_file",
-                message="required workspace file is missing",
-                path=file_path,
-            )
-        )
+        ownership = _workspace_ownership_for_path(paths, file_path)
+        errors.append(_missing_workspace_issue(file_path, ownership=ownership))
 
 
 def _validate_baseline_manifest(
@@ -173,15 +183,53 @@ def _validate_manifest_tracked_managed_files(
 ) -> None:
     for entry in manifest.entries:
         candidate = paths.runtime_root / entry.relative_path
+        ownership = classify_workspace_relative_path(entry.relative_path)
+        if ownership is WorkspaceFileOwnership.OPERATOR_OWNED_SEED:
+            if candidate.is_file():
+                continue
+            errors.append(_missing_workspace_issue(candidate, ownership=ownership))
+            continue
         if candidate.is_file():
             continue
-        errors.append(
-            DoctorIssue(
-                code="baseline_manifest_managed_file_missing",
-                message="manifest-tracked managed file is missing",
-                path=candidate,
-            )
+        errors.append(_missing_workspace_issue(candidate, ownership=ownership))
+
+
+def _workspace_ownership_for_path(paths: WorkspacePaths, path: Path) -> WorkspaceFileOwnership | None:
+    try:
+        relative_path = path.relative_to(paths.runtime_root)
+    except ValueError:
+        return None
+    if not relative_path.parts:
+        return None
+    return classify_workspace_relative_path(relative_path)
+
+
+def _missing_workspace_issue(
+    path: Path,
+    *,
+    ownership: WorkspaceFileOwnership | None,
+    is_directory: bool = False,
+) -> DoctorIssue:
+    if ownership is None:
+        return DoctorIssue(
+            code="missing_directory" if is_directory else "missing_file",
+            message="required workspace directory is missing" if is_directory else "required workspace file is missing",
+            path=path,
         )
+
+    if ownership is WorkspaceFileOwnership.OPERATOR_OWNED_SEED:
+        return DoctorIssue(
+            code="shared_instruction_missing",
+            message="operator-owned shared instruction file is missing",
+            path=path,
+        )
+
+    suffix = "directory" if is_directory else "file"
+    return DoctorIssue(
+        code=f"{ownership.value}_missing_{suffix}",
+        message=f"{ownership.value.replace('_', ' ')} {suffix} is missing",
+        path=path,
+    )
 
 
 def _validate_closure_lineage_integrity(
@@ -293,10 +341,7 @@ def _validate_closure_target_contracts(
         errors.append(
             DoctorIssue(
                 code="closure_root_source_unresolved",
-                message=(
-                    "closure root source contract is missing: "
-                    f"{target.root_source.kind}/{target.root_source.id}"
-                ),
+                message=(f"closure root source contract is missing: {target.root_source.kind}/{target.root_source.id}"),
                 path=root_source_path,
             )
         )
@@ -309,11 +354,7 @@ def _validate_closure_target_contracts(
                 path=root_spec_path,
             )
         )
-    if (
-        target.root_source.kind == "idea"
-        and target.root_idea_id is not None
-        and target.root_idea_id != target.root_source.id
-    ):
+    if target.root_source.kind == "idea" and target.root_idea_id is not None and target.root_idea_id != target.root_source.id:
         errors.append(
             DoctorIssue(
                 code="closure_root_source_legacy_mismatch",
@@ -321,9 +362,7 @@ def _validate_closure_target_contracts(
                 path=paths.arbiter_targets_dir / f"{target.root_spec_id}.json",
             )
         )
-    if target.root_source.kind != "idea" and (
-        target.root_idea_id is not None or target.root_idea_path is not None
-    ):
+    if target.root_source.kind != "idea" and (target.root_idea_id is not None or target.root_idea_path is not None):
         errors.append(
             DoctorIssue(
                 code="closure_root_source_legacy_mismatch",
@@ -496,18 +535,12 @@ def _validate_stopped_daemon_with_open_graph_work(
 
 
 def _format_inventory_refs(refs: tuple[object, ...]) -> str:
-    return ",".join(
-        f"{getattr(ref, 'family_id')}:{getattr(ref, 'work_item_id')}"
-        f"({getattr(ref, 'state')})"
-        for ref in refs
-    )
+    return ",".join(f"{getattr(ref, 'family_id')}:{getattr(ref, 'work_item_id')}({getattr(ref, 'state')})" for ref in refs)
 
 
 def _validate_task_lifecycle_uniqueness(paths: WorkspacePaths, errors: list[DoctorIssue]) -> None:
     for duplicate in find_duplicate_task_lifecycle_ids(paths):
-        state_summary = ", ".join(
-            f"{state}:{_workspace_relative_path(paths, path)}" for state, path in duplicate.state_paths
-        )
+        state_summary = ", ".join(f"{state}:{_workspace_relative_path(paths, path)}" for state, path in duplicate.state_paths)
         primary_path = duplicate.paths[0] if duplicate.paths else None
         errors.append(
             DoctorIssue(

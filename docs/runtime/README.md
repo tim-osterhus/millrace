@@ -19,8 +19,9 @@ mappings, use `../graphs/config-mapping.md`.
 
 - `millrace-runtime-architecture.md`: workspace ownership model, artifact model, module topology, and tick lifecycle.
 - `millrace-runtime-authority-map.md`: trace-by-trace ownership for intake,
-  queue selection, runner requests, artifacts, result normalization, and
-  durable runtime mutation.
+  including idea-intake normalization and legacy compatibility, queue
+  selection, runner requests, artifacts, result normalization, and durable
+  runtime mutation.
 - `millrace-arbiter-and-completion-behavior.md`: closure-target lineage model, Arbiter artifacts, compiler-driven backlog-drain behavior, and the shipped broad-audit posture used when narrow evidence is not enough.
 - `millrace-cli-reference.md`: current CLI command surface, aliases, and operator-facing command groups.
 - `millrace-usage-governance.md`: shipped v1 default-off runtime-owned usage accounting, automatic pause/resume behavior, subscription telemetry, config-reload next-tick behavior, and operator visibility.
@@ -34,6 +35,39 @@ mappings, use `../graphs/config-mapping.md`.
 - `millrace-workspace-baselines-and-upgrades.md`: explicit workspace initialization, baseline manifest identity, schema epoch archive/reset behavior, upgrade preview/apply classifications, and the managed workspace baseline lifecycle.
 - `millrace-entrypoint-mapping.md`: packaged-source-to-deployed-workspace entrypoint mapping and skill-only advisory expectations.
 - `millrace-runtime-error-codes.md`: runtime-owned post-stage failure codes and failure-origin diagnostics consumed by repair-oriented stages.
+
+## Workspace Memory Boundaries
+
+Runtime artifacts live under `millrace-agents/` in each initialized
+workspace. Source edits live in the repository source tree and should not be
+treated as runtime state just because a stage produced them. Generated
+workspace-map files under `millrace-agents/workspace-map/generated/` plus
+`millrace-agents/workspace-map/manifest.json` are runtime refresh artifacts;
+`millrace-agents/workspace-map/index.md` is seeded starter/index guidance; and
+curated wiki pages under `millrace-agents/workspace-map/wiki/` are
+operator-maintained workspace memory that upgrades must preserve unless an
+operator chooses otherwise.
+
+Stages may propose history updates by writing run-local artifacts such as
+`history_entry.json`. The runtime owns the durable history log append and
+rendering path, so stages should not rewrite the canonical history log
+directly. `millrace-agents/MILLRACE.md` is shared operator guidance: Millrace
+seeds and preserves it, the runtime wrapper includes it when stages run, and
+the operator owns its content after seeding as workspace-local instructions.
+Stage entrypoints do not carry a local duplicate of those shared instructions.
+
+Updater may emit `workspace_map_update_request.json` when generated
+workspace-map output looks stale, but in M1 that artifact is advisory only and
+the runtime does not consume it automatically. Explicit
+`millrace workspace-map refresh` remains the refresh mechanism.
+
+New idea intake is staged under `millrace-agents/intake/ideas/inbox/`.
+Normalization writes durable source markdown under
+`millrace-agents/intake/sources/idea/`, normalized metadata under
+`millrace-agents/intake/ideas/normalized/`, and archives consumed inputs.
+Legacy idea-file compatibility remains available so older watcher-style intake
+can still be normalized, archived, or diagnosed without becoming the preferred
+write location.
 
 ## Suggested Reading Order
 

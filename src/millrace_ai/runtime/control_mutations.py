@@ -64,6 +64,7 @@ from millrace_ai.state_store import (
     set_learning_status,
     set_planning_status,
 )
+from millrace_ai.workspace.idea_sources import write_idea_inbox_artifact
 from millrace_ai.workspace.operator_interventions import OperatorInterventionResult
 from millrace_ai.workspace.queue_lifecycle import requeue_active_work_item, requeue_all_active_work_items
 from millrace_ai.workspace.work_inventory import queue_depths_by_plane
@@ -119,12 +120,16 @@ class DirectControlMutations(Generic[ResultT]):
         )
 
     def add_idea(self, snapshot: RuntimeSnapshot, *, payload: MailboxAddIdeaPayload) -> ResultT:
-        destination_dir = self.paths.root / "ideas" / "inbox"
-        destination_dir.mkdir(parents=True, exist_ok=True)
-        destination = destination_dir / payload.source_name
-        if destination.exists():
-            raise WorkspaceStateError(f"idea document already exists: {destination}")
-        destination.write_text(payload.markdown, encoding="utf-8")
+        try:
+            destination = write_idea_inbox_artifact(
+                self.paths,
+                source_name=payload.source_name,
+                markdown=payload.markdown,
+            )
+        except FileExistsError as exc:
+            raise WorkspaceStateError(
+                f"idea document already exists: {self.paths.intake_ideas_inbox_dir / payload.source_name}"
+            ) from exc
         self._save_queue_depth_snapshot(snapshot)
         return self._result_factory(
             action=MailboxCommand.ADD_IDEA,

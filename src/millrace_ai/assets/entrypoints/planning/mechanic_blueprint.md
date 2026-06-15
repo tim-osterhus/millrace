@@ -73,7 +73,7 @@ For Manager Blueprint recovery requests:
 - when a clean Manager Blueprint rerun is unsafe, emit `### BLOCKED`
 
 History requirements:
-- prepend a concise Mechanic Blueprint summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise Mechanic Blueprint summary
 
 ## Legal Terminal Results
 
@@ -89,6 +89,7 @@ After emitting a legal terminal result:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - runtime-assigned Blueprint failure evidence
 - request-provided `runtime_error_code` when present
 - request-provided `runtime_error_report_path` when present

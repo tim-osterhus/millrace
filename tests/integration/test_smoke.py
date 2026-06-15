@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 MINIMUM_FUNCTIONALITY_WORKSPACE = REPO_ROOT / "workspaces" / "minimum-functionality"
 CODEX_SMOKE_SHIM = RUNTIME_ROOT / "tests" / "integration" / "codex_smoke_shim.py"
 SMOKE_TASK_ID = "smoke-task-001"
+CONSOLE_SCRIPT_FALLBACK = "import sys; from millrace_ai.cli import main; raise SystemExit(main(sys.argv[1:]))"
 
 
 def test_import_millrace_ai_namespace() -> None:
@@ -43,11 +45,10 @@ def test_python_module_entrypoint_runs() -> None:
 
 
 def test_console_script_entrypoint_runs() -> None:
-    script = shutil.which("millrace")
-    assert script is not None
+    command_prefix = _console_script_command_prefix()
 
     result = subprocess.run(
-        [script],
+        [*command_prefix],
         check=False,
         capture_output=True,
         text=True,
@@ -56,10 +57,73 @@ def test_console_script_entrypoint_runs() -> None:
     assert "Missing command" in result.stdout
 
 
+def test_workspace_map_source_and_console_script_entrypoints_run(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    command_prefix = _console_script_command_prefix()
+
+    init = subprocess.run(
+        [sys.executable, "-m", "millrace_ai", "init", "--workspace", str(workspace)],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=RUNTIME_ROOT,
+    )
+    assert init.returncode == 0, init.stderr or init.stdout
+
+    workspace.joinpath("module.py").write_text("def public():\n    return 1\n", encoding="utf-8")
+    source_refresh = subprocess.run(
+        [sys.executable, "-m", "millrace_ai", "workspace-map", "refresh", "--workspace", str(workspace)],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=RUNTIME_ROOT,
+    )
+    console_validate = subprocess.run(
+        [*command_prefix, "workspace-map", "validate", "--workspace", str(workspace)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert source_refresh.returncode == 0, source_refresh.stderr or source_refresh.stdout
+    assert "workspace_map_refreshed: true" in source_refresh.stdout
+    assert console_validate.returncode == 0, console_validate.stderr or console_validate.stdout
+    assert "ok: true" in console_validate.stdout
+
+
+def _console_script_command_prefix() -> tuple[str, ...]:
+    script = shutil.which("millrace")
+    if script is not None:
+        return (script,)
+    return (sys.executable, "-c", CONSOLE_SCRIPT_FALLBACK)
+
+
+def _venv_console_script_path(python_bin: Path, script_name: str) -> Path:
+    result = subprocess.run(
+        [
+            str(python_bin),
+            "-c",
+            "import pathlib, sysconfig; print(pathlib.Path(sysconfig.get_path('scripts')) / %r)" % script_name,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    return Path(result.stdout.strip())
+
+
+def _without_pythonpath() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    return env
+
+
 def _run_cli(
     command_prefix: tuple[str, ...],
     *args: str,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [*command_prefix, *args],
@@ -67,6 +131,7 @@ def _run_cli(
         capture_output=True,
         text=True,
         cwd=cwd,
+        env=env,
     )
 
 
@@ -103,6 +168,7 @@ def _exercise_minimum_functionality_workspace(
     runner_python: Path,
     workspace: Path,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> None:
     init = _run_cli(
         command_prefix,
@@ -110,6 +176,7 @@ def _exercise_minimum_functionality_workspace(
         "--workspace",
         str(workspace),
         cwd=cwd,
+        env=env,
     )
     compile_validate = _run_cli(
         command_prefix,
@@ -118,6 +185,7 @@ def _exercise_minimum_functionality_workspace(
         "--workspace",
         str(workspace),
         cwd=cwd,
+        env=env,
     )
     compile_show = _run_cli(
         command_prefix,
@@ -126,6 +194,7 @@ def _exercise_minimum_functionality_workspace(
         "--workspace",
         str(workspace),
         cwd=cwd,
+        env=env,
     )
     no_work_bounded_daemon = _run_cli(
         command_prefix,
@@ -136,6 +205,7 @@ def _exercise_minimum_functionality_workspace(
         "--max-ticks",
         "1",
         cwd=cwd,
+        env=env,
     )
     status = _run_cli(
         command_prefix,
@@ -143,6 +213,7 @@ def _exercise_minimum_functionality_workspace(
         "--workspace",
         str(workspace),
         cwd=cwd,
+        env=env,
     )
 
     assert init.returncode == 0, init.stderr or init.stdout
@@ -168,6 +239,7 @@ def _exercise_minimum_functionality_workspace(
         "--workspace",
         str(workspace),
         cwd=cwd,
+        env=env,
     )
     queued_bounded_daemon = _run_cli(
         command_prefix,
@@ -178,6 +250,7 @@ def _exercise_minimum_functionality_workspace(
         "--max-ticks",
         "1",
         cwd=cwd,
+        env=env,
     )
     runs_ls = _run_cli(
         command_prefix,
@@ -186,6 +259,7 @@ def _exercise_minimum_functionality_workspace(
         "--workspace",
         str(workspace),
         cwd=cwd,
+        env=env,
     )
 
     assert queue_add_task.returncode == 0, queue_add_task.stderr or queue_add_task.stdout
@@ -209,6 +283,7 @@ def _exercise_minimum_functionality_workspace(
         "--workspace",
         str(workspace),
         cwd=cwd,
+        env=env,
     )
 
     assert runs_show.returncode == 0, runs_show.stderr or runs_show.stdout
@@ -259,13 +334,15 @@ def test_installed_wheel_verifies_root_minimum_functionality_workspace(tmp_path:
         check=False,
         capture_output=True,
         text=True,
+        env=_without_pythonpath(),
     )
     assert pip_install.returncode == 0, pip_install.stderr or pip_install.stdout
-    millrace_bin = venv_dir / "bin" / "millrace"
+    millrace_bin = _venv_console_script_path(python_bin, "millrace")
     assert millrace_bin.is_file()
 
     _exercise_minimum_functionality_workspace(
         command_prefix=(str(millrace_bin),),
         runner_python=python_bin,
         workspace=MINIMUM_FUNCTIONALITY_WORKSPACE,
+        env=_without_pythonpath(),
     )

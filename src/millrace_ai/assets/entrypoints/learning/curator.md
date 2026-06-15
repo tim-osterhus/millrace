@@ -62,6 +62,7 @@ The curation decision must include:
 
 ## Inputs (read in order)
 
+- shared instructions listed in this request
 1. request-provided `active_work_item_path`
 2. `run_dir/professor_skill_candidate/` or `run_dir/professor_skill_patch.md` when present
 3. `run_dir/analyst_research_packet.md` when present
@@ -70,6 +71,12 @@ The curation decision must include:
 6. `preferred_output_paths` when the request names explicit destinations
 7. `millrace-agents/skills/skills_index.md`
 8. request-provided `skill_revision_evidence_path` when present
+
+## Run-Local Memory Artifacts
+
+- Read the shared instructions listed in this request before broader workspace context when they exist.
+- Write a run-local `history_entry.json` proposal summarizing the stage decision, changed paths, evidence paths, and warnings.
+- Runtime-owned history accepts JSON proposals only.
 
 ## Skills Index Selection
 

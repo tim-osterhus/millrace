@@ -388,14 +388,10 @@ def test_runner_artifacts_surface_request_kind_and_closure_target_identity(tmp_p
 
     assert invocation.request_kind == "closure_target"
     assert invocation.closure_target_root_spec_id == "spec-root-001"
-    assert invocation.closure_evidence_window_path == str(
-        tmp_path / "closure_evidence_window.json"
-    )
+    assert invocation.closure_evidence_window_path == str(tmp_path / "closure_evidence_window.json")
     assert completion.request_kind == "closure_target"
     assert completion.closure_target_root_spec_id == "spec-root-001"
-    assert completion.closure_evidence_window_path == str(
-        tmp_path / "closure_evidence_window.json"
-    )
+    assert completion.closure_evidence_window_path == str(tmp_path / "closure_evidence_window.json")
 
 
 def test_normalize_classifies_conflicting_terminal_results(tmp_path: Path) -> None:
@@ -592,6 +588,7 @@ def test_render_stage_request_context_lines_includes_live_envelope_fields(
         update={
             "required_skill_paths": ("millrace-agents/skills/requesting-code-review/SKILL.md",),
             "attached_skill_paths": ("millrace-agents/skills/test-driven-development/SKILL.md",),
+            "shared_instruction_paths": ("millrace-agents/MILLRACE.md",),
         }
     )
 
@@ -611,6 +608,19 @@ def test_render_stage_request_context_lines_includes_live_envelope_fields(
     assert "- millrace-agents/skills/requesting-code-review/SKILL.md" in context
     assert "Attached Skill Paths:" in context
     assert "- millrace-agents/skills/test-driven-development/SKILL.md" in context
+    assert "Shared Instruction Paths:" in context
+    assert "- millrace-agents/MILLRACE.md" in context
+
+
+def test_stage_run_request_accepts_legacy_payload_without_shared_instruction_paths(
+    tmp_path: Path,
+) -> None:
+    payload = _request(tmp_path).model_dump(mode="python")
+    payload.pop("shared_instruction_paths")
+
+    request = StageRunRequest(**payload)
+
+    assert request.shared_instruction_paths == ()
 
 
 def test_render_stage_request_context_lines_includes_skill_revision_evidence_path(
@@ -726,6 +736,7 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "active_work_item_family_id": "Active Work Item:",
         "required_skill_paths": "Required Skill Paths",
         "attached_skill_paths": "Attached Skill Paths",
+        "shared_instruction_paths": "Shared Instruction Paths",
         "active_work_item_kind": "Active Work Item:",
         "active_work_item_id": "Active Work Item:",
         "active_work_item_path": "Active Work Item Path:",
@@ -749,22 +760,22 @@ def test_render_stage_request_context_lines_covers_all_stage_run_request_fields(
         "runtime_error_code": "Runtime Error Code:",
         "runtime_error_report_path": "Runtime Error Report Path:",
         "runtime_error_catalog_path": "Runtime Error Catalog Path:",
-            "skill_revision_evidence_path": "Skill Revision Evidence Path:",
-            "request_context_profile_id": "Request Context Profile ID:",
-            "context_bundle_path": "Context Bundle Path:",
-            "context_artifact_refs": "Context Artifact Refs",
-            "context_render_plan_id": "Context Render Plan ID:",
-            "rendered_prompt_context_path": "Rendered Prompt Context Path:",
-            "runner_name": "Runner Name:",
+        "skill_revision_evidence_path": "Skill Revision Evidence Path:",
+        "request_context_profile_id": "Request Context Profile ID:",
+        "context_bundle_path": "Context Bundle Path:",
+        "context_artifact_refs": "Context Artifact Refs",
+        "context_render_plan_id": "Context Render Plan ID:",
+        "rendered_prompt_context_path": "Rendered Prompt Context Path:",
+        "runner_name": "Runner Name:",
         "model_name": "Model Name:",
         "thinking_level": "Thinking Level:",
-            "model_reasoning_effort": "Model Reasoning Effort:",
-            "model_assignment_alias_id": "Model Assignment Alias:",
-            "model_assignment_source": "Model Assignment Source:",
-            "timeout_seconds": "Timeout Seconds:",
-            "execution_capability_grants": "Execution Capability Grants",
-            "capability_support_decisions": "Capability Support Decisions",
-        }
+        "model_reasoning_effort": "Model Reasoning Effort:",
+        "model_assignment_alias_id": "Model Assignment Alias:",
+        "model_assignment_source": "Model Assignment Source:",
+        "timeout_seconds": "Timeout Seconds:",
+        "execution_capability_grants": "Execution Capability Grants",
+        "capability_support_decisions": "Capability Support Decisions",
+    }
 
     assert set(field_label_map) == set(StageRunRequest.model_fields)
     for label in field_label_map.values():
@@ -803,6 +814,24 @@ def test_stage_prompt_includes_rendered_request_context(tmp_path: Path) -> None:
 
     assert "Rendered Request Context:" in prompt
     assert "blueprint-001" in prompt
+
+
+def test_stage_prompt_includes_shared_instruction_open_order_and_precedence(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path).model_copy(update={"shared_instruction_paths": ("millrace-agents/MILLRACE.md",)})
+
+    from millrace_ai.runners.adapters._prompting import build_stage_prompt
+
+    prompt = build_stage_prompt(request)
+
+    assert "Open these files in this order:" in prompt
+    assert "1. `millrace-agents/MILLRACE.md`" in prompt
+    assert "2. `assets/entrypoints/builder.md`" in prompt
+    assert "If instructions conflict, apply this precedence:" in prompt
+    assert "4. stage entrypoint" in prompt
+    assert "5. required stage-core skill" in prompt
+    assert "6. shared instructions listed in this request" in prompt
 
 
 def test_normalize_classifies_provider_and_runner_errors(tmp_path: Path) -> None:
@@ -846,9 +875,7 @@ def test_normalize_persists_request_context_and_failure_origin_metadata(
     assert envelope.metadata["request_context_profile_id"] == "builder.default"
     assert envelope.metadata["context_bundle_path"] == str(tmp_path / "context" / "context.json")
     assert envelope.metadata["context_render_plan_id"] == "stage_request.default.v1"
-    assert envelope.metadata["rendered_prompt_context_path"] == str(
-        tmp_path / "context" / "prompt_context.md"
-    )
+    assert envelope.metadata["rendered_prompt_context_path"] == str(tmp_path / "context" / "prompt_context.md")
     assert envelope.metadata["context_artifact_refs"] == [
         "task:task-001",
         "draft:blueprint-001",
@@ -883,9 +910,7 @@ def test_normalize_persists_request_context_metadata_on_success(
     assert envelope.metadata["request_context_profile_id"] == "builder.default"
     assert envelope.metadata["context_bundle_path"] == str(tmp_path / "context" / "context.json")
     assert envelope.metadata["context_render_plan_id"] == "stage_request.default.v1"
-    assert envelope.metadata["rendered_prompt_context_path"] == str(
-        tmp_path / "context" / "prompt_context.md"
-    )
+    assert envelope.metadata["rendered_prompt_context_path"] == str(tmp_path / "context" / "prompt_context.md")
     assert envelope.metadata["context_artifact_refs"] == [
         "task:task-001",
         "spec:spec-001",

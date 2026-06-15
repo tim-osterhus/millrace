@@ -167,6 +167,12 @@ After emitting a legal terminal result:
 - stop immediately
 - do not mutate queues or runtime state directly
 
+## Run-Local Memory Artifacts
+
+- Read the shared instructions listed in this request before broader workspace context when they exist.
+- Write a run-local `history_entry.json` proposal summarizing the stage decision, changed paths, evidence paths, and warnings.
+- Runtime-owned history accepts JSON proposals only.
+
 ## Skills Index Selection
 
 - open `millrace-agents/skills/skills_index.md`

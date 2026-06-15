@@ -15,7 +15,7 @@ Allowed:
 - read the current fix contract, task contract, and repaired repo state
 - write expectations and doublecheck artifacts
 - update the fix contract when issues remain unresolved
-- update `millrace-agents/historylog.md` with deterministic findings
+- write a run-local `history_entry.json` proposal with deterministic findings
 
 Not allowed:
 - perform implementation work except minimal evidence artifacts
@@ -25,16 +25,17 @@ Not allowed:
 
 ## Inputs (read in order)
 
-1. `millrace-agents/outline.md`
+- shared instructions listed in this request
+1. `millrace-agents/workspace-map/index.md`
 2. request-provided `active_work_item_path` (typically `millrace-agents/tasks/active/<TASK_ID>.md`)
 3. request-provided `run_dir/fix_contract.md` when present, otherwise `millrace-agents/runs/latest/fix_contract.md`
 4. `README.md` when present at repo root
 5. request-provided `summary_status_path` (typically `millrace-agents/state/execution_status.md`)
 6. request-provided `run_dir/fixer_summary.md` when present, otherwise `millrace-agents/runs/latest/fixer_summary.md`, but only after expectations are written
-7. `millrace-agents/historylog.md`, but only after expectations are written
+7. `millrace-agents/history-log/latest.md`, but only after expectations are written
 
 Before expectations are written:
-- do not read `millrace-agents/historylog.md`
+- do not read `millrace-agents/history-log/latest.md`
 - do not inspect diffs or prior test output
 - do not read fixer notes yet
 
@@ -113,7 +114,7 @@ Fallback artifacts:
 - `millrace-agents/runs/latest/fix_contract.md`
 
 History / summary requirements:
-- prepend a newest-first doublecheck summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a doublecheck summary
 - if the fix contract remains active, reference it explicitly
 - say whether the repair passed, still needs fixes, or is blocked
 

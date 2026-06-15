@@ -109,7 +109,7 @@ Fallback paths:
 - `millrace-agents/runs/latest/manager_summary.md`
 
 History requirements:
-- prepend a concise manager summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise manager summary
 
 ## Legal Terminal Results
 
@@ -138,13 +138,14 @@ Do not stop merely because:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - the active spec assigned by the runtime
 - enough repo context to produce grounded task paths and checks
 - current queued and completed task context when duplicate or conflicting work is a risk
 
 ## Useful Context If Helpful
 
-- `millrace-agents/outline.md`
+- `millrace-agents/workspace-map/index.md`
 - `README.md` when present at repo root
 - existing task inventory under `millrace-agents/tasks/queue/` and `millrace-agents/tasks/done/`
 - request-provided `runtime_snapshot_path` when active context matters

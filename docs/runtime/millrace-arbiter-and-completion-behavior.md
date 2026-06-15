@@ -29,9 +29,14 @@ and Planner/Manager are expected to preserve them when refining specs or
 emitting tasks.
 
 Watcher-seeded idea specs also preserve the original idea markdown under
-`millrace-agents/intake/ideas/<root_idea_id>.md`. Generated specs reference
-that runtime-owned copy before the transient `ideas/inbox/` source so closure
-target creation does not depend on an inbox file remaining in place.
+`millrace-agents/intake/sources/idea/<root_idea_id>.md` and normalized metadata
+under `millrace-agents/intake/ideas/normalized/`. Generated specs reference
+that runtime-owned copy before the transient inbox source so closure target
+creation does not depend on an inbox file remaining in place. During the
+compatibility window, consumed legacy `ideas/inbox/` files are archived under
+`millrace-agents/intake/ideas/archived/legacy/`, and malformed legacy inbox
+files are captured under `millrace-agents/intake/ideas/invalid/` with
+diagnostic metadata.
 
 ## Canonical Contract Sources
 

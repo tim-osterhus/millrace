@@ -58,6 +58,7 @@ The research packet must include:
 
 ## Inputs (read in order)
 
+- shared instructions listed in this request
 1. request-provided `active_work_item_path`
 2. paths named by the learning request's `artifact_paths`
 3. paths or ids named by `source_refs`, `originating_run_ids`, and `references`
@@ -67,6 +68,12 @@ The research packet must include:
 6. the current `target_skill_id` package when the request names one
 7. request-provided `skill_revision_evidence_path` when present
 8. only the smallest broader reference set needed to make the recommendation honest
+
+## Run-Local Memory Artifacts
+
+- Read the shared instructions listed in this request before broader workspace context when they exist.
+- Write a run-local `history_entry.json` proposal summarizing the stage decision, changed paths, evidence paths, and warnings.
+- Runtime-owned history accepts JSON proposals only.
 
 ## Skills Index Selection
 

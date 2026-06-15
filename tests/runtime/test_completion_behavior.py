@@ -406,7 +406,7 @@ def test_activate_claim_uses_durable_idea_source_when_inbox_source_is_missing(
     paths = _workspace(tmp_path)
     root_id = "idea-runtime-persistence-and-reconciliation-foundation"
     idea_markdown = "# Runtime persistence\n\nDurable copy remains available.\n"
-    durable_source = paths.runtime_root / "intake" / "ideas" / f"{root_id}.md"
+    durable_source = paths.intake_sources_idea_dir / f"{root_id}.md"
     durable_source.parent.mkdir(parents=True, exist_ok=True)
     durable_source.write_text(idea_markdown, encoding="utf-8")
 

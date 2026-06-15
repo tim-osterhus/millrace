@@ -186,7 +186,15 @@ def build_watch_targets(
         targets.append(
             WatchTarget(
                 target="ideas_inbox",
-                root=(paths.root / "ideas" / "inbox"),
+                root=paths.intake_ideas_inbox_dir,
+                pattern="*.md",
+                emit_existing_on_startup=True,
+            )
+        )
+        targets.append(
+            WatchTarget(
+                target="legacy_ideas_inbox",
+                root=paths.root / "ideas" / "inbox",
                 pattern="*.md",
                 emit_existing_on_startup=True,
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from millrace_ai.workspace.baseline import WorkspaceFileOwnership, classify_workspace_relative_path
 from millrace_ai.workspace.initialization import (
     bootstrap_workspace,
     ensure_runtime_state_surfaces,
@@ -15,6 +16,8 @@ __all__ = [
     "bootstrap_workspace",
     "ensure_runtime_state_surfaces",
     "initialize_workspace",
+    "WorkspaceFileOwnership",
+    "classify_workspace_relative_path",
     "require_initialized_workspace",
     "workspace_paths",
 ]

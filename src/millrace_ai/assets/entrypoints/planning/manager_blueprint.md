@@ -22,7 +22,7 @@ Not allowed:
 - implement product changes
 - create execution tasks directly
 - mutate Blueprint queue directories directly
-- alter LAD Manager assets or LAD planning queue state
+- alter standard Manager assets or standard planning queue state
 
 Runtime-owned, not stage-owned:
 - queue selection
@@ -50,7 +50,7 @@ Manifest and draft requirements:
 - `created_by` must be `manager_blueprint`
 
 History requirements:
-- prepend a concise manager Blueprint summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise manager Blueprint summary
 
 ## Legal Terminal Results
 
@@ -66,6 +66,7 @@ After emitting a legal terminal result:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - request-provided `active_work_item_path`
 - request-provided `run_dir`
 - request-provided `required_skill_paths`

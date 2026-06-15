@@ -41,6 +41,7 @@ from millrace_ai.runtime.pause_state import (
     remove_pause_source,
 )
 from millrace_ai.state_store import save_snapshot
+from millrace_ai.workspace.idea_sources import write_idea_inbox_artifact
 from millrace_ai.workspace.operator_interventions import (
     OperatorInterventionResult,
     archive_blocked_task,
@@ -359,12 +360,16 @@ def enqueue_spec_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnv
 def enqueue_idea_from_mailbox(engine: RuntimeEngine, envelope: MailboxCommandEnvelope) -> None:
     assert engine.snapshot is not None
     payload = MailboxAddIdeaPayload.model_validate(envelope.payload)
-    destination_dir = engine.paths.root / "ideas" / "inbox"
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    destination = destination_dir / payload.source_name
-    if destination.exists():
-        raise WorkspaceStateError(f"idea document already exists: {destination}")
-    destination.write_text(payload.markdown, encoding="utf-8")
+    try:
+        destination = write_idea_inbox_artifact(
+            engine.paths,
+            source_name=payload.source_name,
+            markdown=payload.markdown,
+        )
+    except FileExistsError as exc:
+        raise WorkspaceStateError(
+            f"idea document already exists: {engine.paths.intake_ideas_inbox_dir / payload.source_name}"
+        ) from exc
     engine._refresh_runtime_queue_depths()
     save_snapshot(engine.paths, engine.snapshot)
     write_runtime_event(

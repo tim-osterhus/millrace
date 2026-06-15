@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -758,7 +759,7 @@ def _root_idea_source_candidate_groups(
     durable: list[Path] = []
     if root_idea_id is not None:
         durable.append(idea_source_artifact_path(engine.paths, root_idea_id=root_idea_id))
-        durable.append(engine.paths.intake_sources_dir / "idea" / f"{root_idea_id}.md")
+        durable.append(engine.paths.intake_ideas_dir / f"{root_idea_id}.md")
 
     references = tuple(
         candidate
@@ -769,13 +770,69 @@ def _root_idea_source_candidate_groups(
     legacy: list[Path] = []
     if spec.source_id is not None:
         legacy.append(engine.paths.root / "ideas" / "inbox" / f"{spec.source_id}.md")
+        legacy.append(engine.paths.intake_ideas_archived_legacy_dir / f"{spec.source_id}.md")
     if root_idea_id is not None:
         legacy.append(engine.paths.root / "ideas" / "inbox" / f"{root_idea_id}.md")
+        legacy.append(engine.paths.intake_ideas_archived_legacy_dir / f"{root_idea_id}.md")
+    normalized = _normalized_idea_source_candidates(engine, spec)
     return (
         tuple(_existing_ordered_paths(tuple(durable))),
+        normalized,
         tuple(_existing_ordered_paths(tuple(legacy))),
         references,
     )
+
+
+def _normalized_idea_source_candidates(
+    engine: RuntimeEngine,
+    spec: SpecDocument,
+) -> tuple[Path, ...]:
+    source_references = {
+        reference
+        for reference in spec.references
+        if reference
+    }
+    if spec.source_id is not None:
+        source_references.add(f"ideas/inbox/{spec.source_id}.md")
+        source_references.add(
+            f"millrace-agents/intake/ideas/archived/legacy/{spec.source_id}.md"
+        )
+    if spec.root_idea_id is not None:
+        source_references.add(f"ideas/inbox/{spec.root_idea_id}.md")
+        source_references.add(
+            f"millrace-agents/intake/ideas/archived/legacy/{spec.root_idea_id}.md"
+        )
+
+    candidates: list[Path] = []
+    for metadata_path in sorted(engine.paths.intake_ideas_normalized_dir.glob("*.json")):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        metadata_references = {
+            value
+            for value in (
+                metadata.get("source_path"),
+                metadata.get("archived_source"),
+            )
+            if isinstance(value, str)
+        }
+        raw_references = metadata.get("references")
+        if isinstance(raw_references, list):
+            metadata_references.update(
+                value for value in raw_references if isinstance(value, str)
+            )
+        if source_references.isdisjoint(metadata_references):
+            continue
+        source_artifact = metadata.get("source_artifact")
+        if not isinstance(source_artifact, str):
+            continue
+        candidate = _resolve_workspace_reference_path(engine, source_artifact)
+        if candidate is not None:
+            candidates.append(candidate)
+    return tuple(_existing_ordered_paths(tuple(candidates)))
 
 
 def _root_source_reference_candidates(

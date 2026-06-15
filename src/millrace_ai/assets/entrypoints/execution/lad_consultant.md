@@ -70,7 +70,7 @@ When writing an incident markdown artifact:
   source work item provides `Root-Spec-ID` or `Spec-ID`
 
 History requirements:
-- prepend a concise consultant summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise consultant summary
 
 ## Legal Terminal Results
 
@@ -98,6 +98,7 @@ Do not stop merely because:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - the request-provided `active_work_item_path` when present
 - the latest troubleshoot report
 - the current run evidence and diagnostics
@@ -107,7 +108,7 @@ Do not stop merely because:
 
 - checker expectations when present
 - fix contract when present
-- `millrace-agents/historylog.md`
+- `millrace-agents/history-log/latest.md`
 - related prior run artifacts when the failure pattern spans more than one attempt
 
 ## Skills Index Selection

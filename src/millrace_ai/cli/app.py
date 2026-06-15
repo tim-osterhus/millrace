@@ -29,6 +29,7 @@ from millrace_ai.cli.commands.runs import runs_app
 from millrace_ai.cli.commands.skills import skills_app
 from millrace_ai.cli.commands.status import status_app
 from millrace_ai.cli.commands.upgrade import upgrade
+from millrace_ai.cli.commands.workspace_map import workspace_map_app
 
 app = typer.Typer(add_completion=False, no_args_is_help=False)
 
@@ -62,6 +63,7 @@ app.add_typer(modes_app, name="modes")
 app.add_typer(compile_app, name="compile")
 app.add_typer(skills_app, name="skills")
 app.add_typer(incident_app, name="incident")
+app.add_typer(workspace_map_app, name="workspace-map")
 
 app.command("add-task")(add_task)
 app.command("add-probe")(add_probe)

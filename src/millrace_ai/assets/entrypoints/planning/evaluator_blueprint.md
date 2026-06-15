@@ -60,7 +60,7 @@ Generated task requirements:
 - be ready for runtime-owned promotion into the execution queue
 
 History requirements:
-- prepend a concise Evaluator Blueprint summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise Evaluator Blueprint summary
 
 ## Legal Terminal Results
 
@@ -77,6 +77,7 @@ After emitting a legal terminal result:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - request-provided `active_work_item_path`
 - candidate packet path supplied by the runtime context
 - request-provided `run_dir`

@@ -16,7 +16,7 @@ Allowed:
 - inspect the implementation diff and Builder artifacts
 - run explicit task checks and repo-standard gates when discoverable
 - write integration evidence under request-provided `run_dir`
-- update `millrace-agents/historylog.md` with integration findings
+- write a run-local `history_entry.json` proposal with integration findings
 
 Not allowed:
 - implement new requested behavior
@@ -28,12 +28,13 @@ Not allowed:
 
 ## Inputs (read in order)
 
-1. `millrace-agents/outline.md`
+- shared instructions listed in this request
+1. `millrace-agents/workspace-map/index.md`
 2. request-provided `active_work_item_path` (typically `millrace-agents/tasks/active/<TASK_ID>.md`)
 3. request-provided `run_dir` and `run_dir/builder_summary.md` when present
 4. current repository diff and changed files
 5. project metadata, scripts, docs, and task-declared required checks
-6. `millrace-agents/historylog.md`
+6. `millrace-agents/history-log/latest.md`
 
 ## Skills Index Selection
 
@@ -109,7 +110,7 @@ Fallback artifacts:
 - `millrace-agents/runs/latest/integrator_summary.md`
 
 History / summary requirements:
-- prepend a newest-first Integrator summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing an integrator summary
 - reference `integration_report.md` explicitly
 - state whether the result is integration-complete or blocked
 

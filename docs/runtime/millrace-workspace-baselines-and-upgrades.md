@@ -30,9 +30,36 @@ It also seeds:
 
 - managed runtime asset families such as `entrypoints/`, `skills/`, `modes/`,
   `graphs/`, `registry/`, and compatibility `loops/`
+- `millrace-agents/MILLRACE.md`
+- `millrace-agents/workspace-map/index.md` as seeded starter/index guidance
+- curated starter wiki pages under `millrace-agents/workspace-map/wiki/`,
+  including domain notes, invariants, glossary, and maintenance notes
+- idea intake staging under `millrace-agents/intake/ideas/inbox/`, with
+  runtime normalization later writing durable source markdown under
+  `millrace-agents/intake/sources/idea/`, normalized metadata under
+  `millrace-agents/intake/ideas/normalized/`, and legacy archive/invalid
+  records under `millrace-agents/intake/ideas/archived/legacy/` and
+  `millrace-agents/intake/ideas/invalid/`
 - baseline config in `millrace-agents/millrace.toml`
 - queue/runtime state surfaces
 - `millrace-agents/state/baseline_manifest.json`
+
+These seeded files are not all owned the same way. `MILLRACE.md` and
+`workspace-map/index.md` are seeded operator-preserved guidance. Runtime
+artifacts such as state files, run evidence, queues, generated workspace-map
+outputs under `workspace-map/generated/`, and
+`workspace-map/manifest.json` are runtime-managed. Source edits made by
+Builder or later stages are ordinary repository edits outside this runtime
+artifact surface. Curated wiki pages under `workspace-map/wiki/` are
+operator-maintained workspace memory that bootstrap and upgrade should seed
+when missing and preserve when edited. Stage-written `history_entry.json`
+files are proposals; the runtime owns the durable history log and applies
+valid stage proposals after stage completion. `millrace-agents/MILLRACE.md` is
+seeded as shared instructions and then operator-owned local guidance. New
+ideas enter through
+`millrace-agents/intake/ideas/inbox/`; legacy watcher-style idea files remain
+compatible inputs, but normalization archives or diagnoses them through the
+legacy compatibility paths.
 
 Most non-`init` operator commands now require an initialized workspace and fail
 clearly if the baseline is missing.
@@ -168,6 +195,10 @@ Current apply behavior:
 
 - applies `safe_package_update`
 - restores `missing` managed files from the candidate baseline
+- backfills missing starter surfaces such as `MILLRACE.md` and the curated
+  wiki starter pages
+- preserves seeded `workspace-map/index.md` guidance because it is starter
+  guidance, not generated refresh output
 - preserves `local_only_modification`
 - preserves `already_converged`
 - preserves `localized_removed` files in place while removing them from the
@@ -176,6 +207,12 @@ Current apply behavior:
 
 On success, Millrace writes a refreshed baseline manifest for the new deployed
 baseline.
+
+`workspace_map_update_request.json` is an advisory M1 artifact only. Updater
+may write it as evidence that generated workspace-map output should be
+refreshed, but the runtime does not consume it automatically; use
+`millrace workspace-map refresh` explicitly when the generated output should
+be rebuilt.
 
 ## Relationship To Compile Currentness
 

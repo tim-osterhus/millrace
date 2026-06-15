@@ -28,6 +28,7 @@ Module entrypoint: `python -m millrace_ai`
 - `millrace compile ...`
 - `millrace modes ...`
 - `millrace skills ...`
+- `millrace workspace-map ...`
 - `millrace doctor`
 - `millrace version`
 
@@ -51,6 +52,10 @@ Initialization also writes the current workspace schema epoch marker under
 `millrace-agents/state/`. Runtime startup refuses an initialized workspace
 whose mutable runtime state is missing that marker or carries an incompatible
 epoch.
+Initialization also seeds `millrace-agents/MILLRACE.md`,
+`millrace-agents/workspace-map/index.md` as starter/index guidance, and the
+curated starter wiki pages under `millrace-agents/workspace-map/wiki/` when
+they are missing.
 
 Options:
 
@@ -90,6 +95,8 @@ package release removes a managed asset that you intentionally want to keep as
 workspace-local content, preview and apply with `--localize-removed PATH`.
 For multiple paths, repeat the flag or use `--localize-removed-from FILE` with
 one workspace-relative managed asset path per line.
+Missing starter wiki surfaces are backfilled during apply, while existing
+`MILLRACE.md` content and curated wiki edits are preserved.
 
 Options:
 
@@ -97,6 +104,56 @@ Options:
 - `--apply`
 - `--localize-removed PATH`
 - `--localize-removed-from FILE`
+
+## Workspace Map Commands
+
+### `millrace workspace-map refresh`
+
+Performs a full deterministic rebuild of the generated workspace map under
+`millrace-agents/workspace-map/`. M1 does not support changed-only refresh.
+Generated output is runtime/CLI-owned and includes the files under
+`generated/` plus `manifest.json`:
+
+- `generated/file-tree.md`
+- `generated/repo-map.compact.md`
+- `generated/symbols.jsonl`
+- `generated/imports.json`
+- `generated/reverse-imports.json`
+- `generated/public-api.jsonl`
+- `generated/tests-map.jsonl`
+- `generated/docs-references.jsonl`
+- `generated/freshness.json`
+- `manifest.json`
+
+The scanner writes workspace-relative POSIX paths, skips runtime state,
+generated workspace-map output, caches, directory symlinks, binary files, and
+oversized files, and records warnings in `freshness.json`. The seeded
+`workspace-map/index.md` starter guidance is not part of the generated
+refresh output.
+
+Options:
+
+- `--workspace PATH`
+
+### `millrace workspace-map validate`
+
+Checks generated workspace-map outputs without rewriting files. Validation
+detects missing files, stale outputs, malformed JSON/JSONL, schema-invalid
+payloads, and non-workspace-confined record paths.
+
+Options:
+
+- `--workspace PATH`
+
+### `millrace workspace-map show`
+
+Prints a compact deterministic summary from generated map files. This is a
+lightweight operator view and does not depend on external code-intelligence
+systems.
+
+Options:
+
+- `--workspace PATH`
 
 ## Run Commands
 
@@ -455,7 +512,9 @@ Imports `SpecDocument`. Canonical queue artifacts are markdown (`.md`); JSON is 
 
 ### `millrace queue add-idea <idea.md>`
 
-Drops idea-shaped markdown into planning intake.
+Drops idea-shaped markdown into `millrace-agents/intake/ideas/inbox/`.
+During the compatibility window, the runtime also reads legacy
+`ideas/inbox/` files as warning-emitting compatibility input.
 
 Typed queue commands are not generic markdown ingestion commands. Supporting
 local material should be embedded in the typed document or copied into the

@@ -44,7 +44,7 @@ Fallback paths:
 - `millrace-agents/runs/latest/fixer_summary.md`
 
 History requirements:
-- prepend a concise fixer summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise fixer summary
 
 ## Legal Terminal Results
 
@@ -74,13 +74,14 @@ Do not stop merely because:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - the active fix contract
 - the active task artifact
 - enough repo context to implement the requested repair safely
 
 ## Useful Context If Helpful
 
-- `millrace-agents/outline.md`
+- `millrace-agents/workspace-map/index.md`
 - `README.md` when present at repo root
 - checker expectations when present
 - request-provided `runtime_snapshot_path` when active run context matters

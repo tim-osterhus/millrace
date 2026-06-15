@@ -13,7 +13,55 @@ from pydantic import BaseModel, ConfigDict
 import millrace_ai
 import millrace_ai.workspace.asset_deployment as asset_deployment
 
+from .bootstrap_files import MILLRACE_SHARED_INSTRUCTIONS_TEMPLATE, default_file_payloads
 from .paths import WorkspacePaths, workspace_paths
+
+SHARED_INSTRUCTION_RELATIVE_PATH = "MILLRACE.md"
+SHARED_INSTRUCTION_ASSET_FAMILY = "shared_instruction"
+SHARED_INSTRUCTION_CANDIDATE_RELATIVE_PATH = "templates/MILLRACE.md.candidate"
+WORKSPACE_MAP_INDEX_RELATIVE_PATH = "workspace-map/index.md"
+CURATED_WIKI_STARTER_ASSET_FAMILY = "workspace_map_wiki_starter"
+
+
+class WorkspaceFileOwnership(str, Enum):
+    """Canonical ownership classes used by workspace baseline diagnostics."""
+
+    OPERATOR_OWNED_SEED = "operator_owned_seed"
+    PACKAGED_CANDIDATE = "packaged_candidate"
+    GENERATED_RUNTIME_OWNED = "generated_runtime_owned"
+    CURATED_LOCAL = "curated_local"
+    RUNTIME_HISTORY = "runtime_history"
+    DEPRECATED_COMPATIBILITY = "deprecated_compatibility"
+    PACKAGED_MANAGED = "packaged_managed"
+
+
+def classify_workspace_relative_path(relative_path: Path | str) -> WorkspaceFileOwnership | None:
+    """Classify a workspace-relative path into an ownership class when known."""
+
+    normalized = Path(relative_path).as_posix().lstrip("./")
+    if normalized == SHARED_INSTRUCTION_RELATIVE_PATH:
+        return WorkspaceFileOwnership.OPERATOR_OWNED_SEED
+    if normalized == WORKSPACE_MAP_INDEX_RELATIVE_PATH:
+        return WorkspaceFileOwnership.OPERATOR_OWNED_SEED
+    if normalized == SHARED_INSTRUCTION_CANDIDATE_RELATIVE_PATH or (
+        normalized.startswith("templates/") and normalized.endswith(".candidate")
+    ):
+        return WorkspaceFileOwnership.PACKAGED_CANDIDATE
+    if normalized == "workspace-map" or normalized.startswith("workspace-map/"):
+        if normalized == "workspace-map/wiki" or normalized.startswith("workspace-map/wiki/"):
+            return WorkspaceFileOwnership.CURATED_LOCAL
+        return WorkspaceFileOwnership.GENERATED_RUNTIME_OWNED
+    if normalized == "history-log" or normalized.startswith("history-log/"):
+        return WorkspaceFileOwnership.RUNTIME_HISTORY
+    if normalized in {"outline.md", "historylog.md"}:
+        return WorkspaceFileOwnership.DEPRECATED_COMPATIBILITY
+    if normalized == "templates" or normalized.startswith("templates/"):
+        return WorkspaceFileOwnership.PACKAGED_MANAGED
+    if normalized in {"entrypoints", "skills", "graphs", "loops", "registry", "modes"}:
+        return WorkspaceFileOwnership.PACKAGED_MANAGED
+    if normalized.startswith(("entrypoints/", "skills/", "graphs/", "loops/", "registry/", "modes/")):
+        return WorkspaceFileOwnership.PACKAGED_MANAGED
+    return None
 
 
 class _BaselineModel(BaseModel):
@@ -47,6 +95,7 @@ class UpgradeDisposition(str, Enum):
     LOCALIZED_REMOVED = "localized_removed"
     CONFLICT = "conflict"
     MISSING = "missing"
+    SHARED_INSTRUCTION_TEMPLATE_UPDATE_AVAILABLE = "shared_instruction_template_update_available"
 
 
 class BaselineUpgradeEntry(_BaselineModel):
@@ -86,7 +135,18 @@ def build_baseline_manifest(
     # Keep the target parameter for symmetry with other workspace helpers.
     _ = target if isinstance(target, WorkspacePaths) else workspace_paths(target)
     source_root = asset_deployment.resolve_asset_source_root(assets_root)
-    entries = tuple(_iter_manifest_entries(source_root))
+    entries = tuple(
+        sorted(
+            (
+                *_iter_manifest_entries(source_root),
+                _shared_instruction_manifest_entry(),
+                *_curated_wiki_starter_manifest_entries(
+                    target if isinstance(target, WorkspacePaths) else workspace_paths(target)
+                ),
+            ),
+            key=lambda entry: entry.relative_path,
+        )
+    )
     manifest_id = _manifest_id_for_entries(
         schema_version="1.0",
         seed_package_version=millrace_ai.__version__,
@@ -134,8 +194,54 @@ def preview_baseline_upgrade(
         candidate_entry = candidate_by_path.get(relative_path)
         current_path = paths.runtime_root / relative_path
         current_sha256 = _current_file_sha256(current_path)
+        ownership = classify_workspace_relative_path(relative_path)
 
-        if current_path.exists() and not current_path.is_file():
+        if ownership is WorkspaceFileOwnership.OPERATOR_OWNED_SEED:
+            if current_path.exists() and not current_path.is_file():
+                disposition = UpgradeDisposition.CONFLICT
+            elif current_sha256 is None:
+                disposition = UpgradeDisposition.MISSING
+            elif (
+                original_entry is not None
+                and candidate_entry is not None
+                and original_entry.original_sha256 != candidate_entry.original_sha256
+            ):
+                disposition = UpgradeDisposition.SHARED_INSTRUCTION_TEMPLATE_UPDATE_AVAILABLE
+            elif original_entry is not None and current_sha256 != original_entry.original_sha256:
+                disposition = UpgradeDisposition.LOCAL_ONLY_MODIFICATION
+            else:
+                disposition = UpgradeDisposition.UNCHANGED
+        elif ownership is WorkspaceFileOwnership.CURATED_LOCAL:
+            if current_path.exists() and not current_path.is_file():
+                disposition = UpgradeDisposition.CONFLICT
+            elif original_entry is None:
+                assert candidate_entry is not None
+                if current_sha256 is None:
+                    disposition = UpgradeDisposition.MISSING
+                elif current_sha256 == candidate_entry.original_sha256:
+                    disposition = UpgradeDisposition.ALREADY_CONVERGED
+                else:
+                    disposition = UpgradeDisposition.LOCAL_ONLY_MODIFICATION
+            elif candidate_entry is None:
+                removed_original_paths.add(relative_path)
+                if relative_path in localize_removed_set:
+                    disposition = UpgradeDisposition.LOCALIZED_REMOVED
+                else:
+                    disposition = UpgradeDisposition.LOCAL_ONLY_MODIFICATION
+            elif current_sha256 is None:
+                disposition = UpgradeDisposition.MISSING
+            else:
+                original_sha256 = original_entry.original_sha256
+                candidate_sha256 = candidate_entry.original_sha256
+                if current_sha256 == original_sha256 == candidate_sha256:
+                    disposition = UpgradeDisposition.UNCHANGED
+                elif current_sha256 == original_sha256 and candidate_sha256 != original_sha256:
+                    disposition = UpgradeDisposition.SAFE_PACKAGE_UPDATE
+                elif current_sha256 == candidate_sha256 and candidate_sha256 != original_sha256:
+                    disposition = UpgradeDisposition.ALREADY_CONVERGED
+                else:
+                    disposition = UpgradeDisposition.LOCAL_ONLY_MODIFICATION
+        elif current_path.exists() and not current_path.is_file():
             disposition = UpgradeDisposition.CONFLICT
         elif original_entry is None:
             assert candidate_entry is not None
@@ -170,7 +276,9 @@ def preview_baseline_upgrade(
         asset_family = (
             candidate_entry.asset_family
             if candidate_entry is not None
-            else original_entry.asset_family if original_entry is not None else relative_path.split("/", 1)[0]
+            else original_entry.asset_family
+            if original_entry is not None
+            else relative_path.split("/", 1)[0]
         )
         entries.append(
             BaselineUpgradeEntry(
@@ -213,8 +321,29 @@ def apply_baseline_upgrade(
         raise ValueError(f"upgrade conflict(s) detected: {joined}")
 
     source_root = asset_deployment.resolve_asset_source_root(candidate_assets_root)
+    default_payloads_by_relative_path = _baseline_managed_default_payloads(paths)
     for entry in preview.entries:
+        ownership = classify_workspace_relative_path(entry.relative_path)
+        if ownership is WorkspaceFileOwnership.OPERATOR_OWNED_SEED:
+            if entry.disposition is UpgradeDisposition.MISSING:
+                paths.shared_instruction_file.parent.mkdir(parents=True, exist_ok=True)
+                paths.shared_instruction_file.write_text(
+                    MILLRACE_SHARED_INSTRUCTIONS_TEMPLATE,
+                    encoding="utf-8",
+                )
+            elif entry.disposition is UpgradeDisposition.SHARED_INSTRUCTION_TEMPLATE_UPDATE_AVAILABLE:
+                paths.shared_instruction_candidate_file.parent.mkdir(parents=True, exist_ok=True)
+                paths.shared_instruction_candidate_file.write_text(
+                    MILLRACE_SHARED_INSTRUCTIONS_TEMPLATE,
+                    encoding="utf-8",
+                )
+            continue
         if entry.disposition not in {UpgradeDisposition.SAFE_PACKAGE_UPDATE, UpgradeDisposition.MISSING}:
+            continue
+        if entry.relative_path in default_payloads_by_relative_path:
+            destination = paths.runtime_root / entry.relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(default_payloads_by_relative_path[entry.relative_path], encoding="utf-8")
             continue
         source_file = source_root / entry.relative_path
         if not source_file.is_file():
@@ -251,6 +380,42 @@ def _iter_manifest_entries(source_root: Path) -> tuple[BaselineManifestEntry, ..
                 )
             )
     return tuple(sorted(entries, key=lambda entry: entry.relative_path))
+
+
+def _shared_instruction_manifest_entry() -> BaselineManifestEntry:
+    return BaselineManifestEntry(
+        relative_path=SHARED_INSTRUCTION_RELATIVE_PATH,
+        asset_family=SHARED_INSTRUCTION_ASSET_FAMILY,
+        original_sha256=hashlib.sha256(MILLRACE_SHARED_INSTRUCTIONS_TEMPLATE.encode("utf-8")).hexdigest(),
+    )
+
+
+def _curated_wiki_starter_manifest_entries(paths: WorkspacePaths) -> tuple[BaselineManifestEntry, ...]:
+    return tuple(
+        BaselineManifestEntry(
+            relative_path=relative_path,
+            asset_family=CURATED_WIKI_STARTER_ASSET_FAMILY,
+            original_sha256=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        )
+        for relative_path, payload in sorted(_baseline_managed_default_payloads(paths).items())
+    )
+
+
+def _baseline_managed_default_payloads(paths: WorkspacePaths) -> dict[str, str]:
+    starter_paths = {
+        paths.workspace_map_wiki_runtime_file,
+        paths.workspace_map_wiki_compiler_file,
+        paths.workspace_map_wiki_workspace_file,
+        paths.workspace_map_wiki_runners_file,
+        paths.workspace_map_wiki_assets_file,
+        paths.workspace_map_wiki_cli_file,
+        paths.workspace_map_wiki_contracts_file,
+        paths.workspace_map_wiki_invariants_file,
+        paths.workspace_map_wiki_glossary_file,
+        paths.workspace_map_wiki_maintenance_notes_file,
+    }
+    defaults = default_file_payloads(paths)
+    return {path.relative_to(paths.runtime_root).as_posix(): defaults[path] for path in starter_paths}
 
 
 def _manifest_id_for_entries(
@@ -296,6 +461,11 @@ __all__ = [
     "BaselineManifestEntry",
     "BaselineUpgradeEntry",
     "BaselineUpgradePreview",
+    "SHARED_INSTRUCTION_ASSET_FAMILY",
+    "SHARED_INSTRUCTION_CANDIDATE_RELATIVE_PATH",
+    "SHARED_INSTRUCTION_RELATIVE_PATH",
+    "WorkspaceFileOwnership",
+    "classify_workspace_relative_path",
     "UpgradeDisposition",
     "apply_baseline_upgrade",
     "build_baseline_manifest",

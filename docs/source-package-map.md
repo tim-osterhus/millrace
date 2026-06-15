@@ -82,7 +82,8 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   Arbiter verdict contracts, closure freshness contracts, stage results,
   terminal outcome contracts, router contracts, stage metadata, graph
   exports, runtime snapshots, mailbox payloads, Recon contracts,
-  required-extension contracts, recovery counters, and token usage.
+  required-extension contracts, recovery counters, history-entry contracts,
+  and token usage.
   `contracts/router.py` owns the neutral `RouterAction`/
   `RouterDecision` contracts shared by runtime routing surfaces.
   `contracts/recovery.py` exposes the generic recovery-counter contract whose
@@ -146,10 +147,17 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   paths, initialization, baselines, schema epochs, queue storage/selection/
   lifecycle/reconciliation, task integrity, work inventory, work documents,
   state reconciliation, mailbox/events, remote skills, operator interventions,
-  lineage integrity, Arbiter state, Blueprint state, runtime locks, and
-  packaged asset deployment. Blueprint family and state helpers now delegate to
+  lineage integrity, Arbiter state, Blueprint state, runtime-owned history-log
+  append/render helpers, runtime locks, and packaged asset deployment.
+  Blueprint family and state helpers now delegate to
   `extensions/builtin/blueprint/`; the legacy `workspace/blueprint_state.py`
   and `workspace/families/blueprint.py` modules are deliberate removal stubs.
+- `workspace_map/` owns the stdlib-only workspace map surface behind
+  `millrace workspace-map refresh`, `validate`, and `show`. It performs full
+  deterministic M1 rebuilds, writes generated/runtime-owned files under
+  `millrace-agents/workspace-map/generated/` plus `manifest.json`, keeps
+  seeded starter guidance in `workspace-map/index.md`, and keeps curated local
+  knowledge in `workspace-map/wiki/` outside the generator's write set.
 
 ## Old-To-New Module Map
 
@@ -170,7 +178,9 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
 | `millrace_ai/run_inspection.py` | `src/millrace_ai/runtime/inspection.py` | Root `run_inspection.py` remains a thin compatibility facade. |
 | `millrace_ai/paths.py` | `src/millrace_ai/workspace/paths.py`, `src/millrace_ai/workspace/initialization.py` | Root `paths.py` remains a thin compatibility facade for `WorkspacePaths`, `workspace_paths`, and workspace initialization helpers. |
 | workspace initialization/baseline/schema epoch | `src/millrace_ai/workspace/initialization.py`, `src/millrace_ai/workspace/bootstrap_files.py`, `src/millrace_ai/workspace/asset_deployment.py`, `src/millrace_ai/workspace/baseline.py`, `schema_epoch.py`, `schema_epoch_marker.py` | Explicit `millrace init`, default runtime file payloads, runtime asset deployment, managed baseline upgrade classification, schema epoch markers, and archive/reset helpers live in workspace-owned modules with path modeling kept separate from bootstrap behavior. |
-| workspace idea source artifacts | `src/millrace_ai/workspace/idea_sources.py` | Runtime-owned durable source markdown for watcher-seeded idea specs lives under `millrace-agents/intake/ideas/`, separate from transient operator inbox files. |
+| workspace idea source artifacts | `src/millrace_ai/workspace/idea_sources.py` | Runtime-owned idea intake helpers stage operator input under `millrace-agents/intake/ideas/inbox/`, preserve durable source markdown under `millrace-agents/intake/sources/idea/`, write normalized metadata under `millrace-agents/intake/ideas/normalized/`, archive consumed legacy inbox files under `millrace-agents/intake/ideas/archived/legacy/`, and capture invalid legacy markdown under `millrace-agents/intake/ideas/invalid/` with diagnostic metadata. |
+| runtime-owned history log artifacts | `src/millrace_ai/contracts/history_log.py`, `src/millrace_ai/runtime/result_application.py`, `src/millrace_ai/workspace/history_log.py` | Runtime-owned `history_entry.json` proposals are normalized by runtime-authoritative identity, appended once into `millrace-agents/history-log/entries/`, and rendered to `daily/`, `latest.md`, and `index.md`; `historylog.md` remains deprecated compatibility. |
+| workspace map surfaces | `src/millrace_ai/workspace_map/`, `src/millrace_ai/cli/commands/workspace_map.py` | `millrace workspace-map refresh` owns `workspace-map/generated/*` and `workspace-map/manifest.json`; `workspace-map/index.md` is seeded starter/index guidance; `validate` checks missing/stale/malformed/schema/path issues without writes; `show` renders a compact summary. Curated wiki pages under `workspace-map/wiki/` are operator/Updater-maintained and are not generator output. |
 | `millrace_ai/runtime_lock.py` | `src/millrace_ai/workspace/runtime_lock.py` | Root `runtime_lock.py` remains a thin compatibility facade. |
 | `millrace_ai/mailbox.py` | `src/millrace_ai/workspace/mailbox.py` | Root `mailbox.py` remains a thin compatibility facade. |
 | `millrace_ai/events.py` | `src/millrace_ai/workspace/events.py` | Root `events.py` remains a thin compatibility facade. `iter_runtime_events()`, `read_recent_runtime_events()`, and `find_latest_runtime_event()` are the normal bounded/streaming helpers for status, closure, and web views; `read_runtime_events()` is the explicit full-history audit/debug API. |
@@ -353,11 +363,14 @@ cycles:
   including the `runtime_effect_journal_dir` property that resolves to
   `millrace-agents/state/runtime-effect-journal/`.
 - `workspace/bootstrap_files.py` owns default state/status/config payload
-  construction for newly initialized workspaces.
+  construction for newly initialized workspaces, including the shared
+  `MILLRACE.md` starter, the seeded `workspace-map/index.md` starter guidance,
+  and curated `workspace-map/wiki/` seed pages.
 - `workspace/asset_deployment.py` owns packaged runtime asset source resolution
   and deployment.
 - `workspace/idea_sources.py` owns durable runtime copies of idea source
-  markdown used by closure-target creation.
+  markdown used by closure-target creation, plus normalized metadata and
+  legacy archive/invalid handling for idea intake.
 - `workspace/work_item_adapters.py` owns family-aware loading/rendering for
   built-in queue documents.
 - `workspace/family_adapters.py` owns work-family queue adapter contracts and

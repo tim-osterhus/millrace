@@ -59,7 +59,9 @@ Scout briefly, classify only enough to size the seam correctly, then implement a
 2. Classify the work shape to calibrate seam size, abstraction budget, and proof surface.
 3. Identify the smallest architecturally coherent seam that can satisfy the contract honestly.
 4. Implement directly against that seam and keep boundary crossings explicit.
-5. Verify the result at the proof surface that matches the work shape.
+5. Verify the result at the proof surface that matches the work shape. When the
+   task contract lists required checks, run each command in its full stated
+   scope rather than narrowing it to only the files you touched.
 6. Stop when the contract is satisfied; do not widen into speculative cleanup.
 
 ## Pitfalls And Gotchas
@@ -69,6 +71,8 @@ Scout briefly, classify only enough to size the seam correctly, then implement a
 - Letting taxonomy replace seam-finding.
 - Crossing target-path boundaries because the first idea was convenient.
 - Leaving verification expensive for the next stage.
+- Running file-scoped checks on only the files you changed when the task
+  contract names broader required commands such as `ruff check src tests`.
 
 ## Progressive Disclosure
 

@@ -24,7 +24,7 @@ from millrace_ai.runtime.stage_requests import planning_queue_depth
 from millrace_ai.workspace.work_inventory import family_counts, queue_depths_by_plane
 
 NOW = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
-_BLUEPRINT_MODE_ID = "blueprint_" "codex"
+_BLUEPRINT_MODE_ID = "blueprint_codex"
 
 
 def _task_doc(task_id: str) -> TaskDocument:
@@ -137,6 +137,37 @@ def test_active_work_item_path_uses_custom_family_adapter_id_from_compiled_plan(
     assert requested_adapter_ids == ["tests.custom.review.adapter"]
 
 
+def test_active_work_item_stage_request_uses_workspace_relative_shared_instruction_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-shared-instructions-001"))
+    claim = queue.claim_next_execution_task()
+    assert claim is not None
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage runner should not be invoked")
+
+    monkeypatch.setattr(
+        stage_requests_module,
+        "attach_default_request_context",
+        lambda *, workspace_root, request, compiled_plan: request,
+    )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+    activate_claim_for_plane(engine, claim, Plane.EXECUTION)
+    assert engine.compiled_plan is not None
+    stage_plan = engine._stage_plan_for(Plane.EXECUTION, ExecutionStageName.BUILDER)
+
+    request = engine._build_stage_run_request(stage_plan)
+
+    assert request.request_kind == "active_work_item"
+    assert request.shared_instruction_paths == ("millrace-agents/MILLRACE.md",)
+
+
 def test_graph_driven_stage_request_carries_model_alias_provenance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -201,6 +232,7 @@ def test_graph_driven_stage_request_carries_model_alias_provenance(
     assert request.model_reasoning_effort == "xhigh"
     assert request.model_assignment_alias_id == "deep"
     assert request.model_assignment_source == "loop:planning.blueprint"
+    assert request.shared_instruction_paths == ("millrace-agents/MILLRACE.md",)
 
 
 def test_stage_request_rejects_unregistered_context_provider_implementation(

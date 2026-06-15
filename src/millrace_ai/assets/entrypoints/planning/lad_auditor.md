@@ -16,7 +16,7 @@ Allowed:
 - inspect evidence referenced by that incident
 - enrich and normalize the incident artifact
 - write an auditor summary artifact
-- update `millrace-agents/historylog.md` with a concise incident-intake summary
+- write a run-local `history_entry.json` proposal with a concise incident-intake summary
 
 Not allowed:
 - decompose work into tasks
@@ -26,7 +26,8 @@ Not allowed:
 
 ## Inputs (read in order)
 
-1. `millrace-agents/outline.md`
+- shared instructions listed in this request
+1. `millrace-agents/workspace-map/index.md`
 2. the incident artifact assigned by the runtime at request-provided `active_work_item_path` (typically `millrace-agents/incidents/active/<INCIDENT_ID>.md`)
 3. evidence paths referenced by the incident
 4. `README.md` when present at repo root
@@ -77,7 +78,7 @@ Process only the incident artifact assigned for this run.
 
 5. Write intake evidence.
 - Produce an auditor summary artifact.
-- Prepend a concise incident-intake summary to `millrace-agents/historylog.md`.
+- Write a concise run-local `history_entry.json` proposal for runtime-owned history.
 
 ## Artifact and reporting contract
 
@@ -89,7 +90,7 @@ Fallback artifacts:
 - `millrace-agents/runs/latest/auditor_summary.md`
 
 History / summary requirements:
-- prepend a newest-first auditor summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing an auditor summary
 - include the source incident path and normalized incident path
 - state key assumptions that remain unresolved
 

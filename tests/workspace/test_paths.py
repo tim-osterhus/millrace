@@ -70,6 +70,20 @@ def _expected_directories(root: Path) -> list[Path]:
         runtime_root / "logs",
         runtime_root / "entrypoints",
         runtime_root / "skills",
+        runtime_root / "templates",
+        runtime_root / "workspace-map",
+        runtime_root / "workspace-map" / "generated",
+        runtime_root / "workspace-map" / "wiki",
+        runtime_root / "workspace-map" / "wiki" / "domains",
+        runtime_root / "workspace-map" / "snapshots",
+        runtime_root / "history-log",
+        runtime_root / "history-log" / "daily",
+        runtime_root / "history-log" / "entries",
+        runtime_root / "intake" / "ideas" / "inbox",
+        runtime_root / "intake" / "ideas" / "normalized",
+        runtime_root / "intake" / "ideas" / "archived",
+        runtime_root / "intake" / "ideas" / "archived" / "legacy",
+        runtime_root / "intake" / "ideas" / "invalid",
         runtime_root / "arbiter",
         runtime_root / "arbiter" / "contracts",
         runtime_root / "arbiter" / "contracts" / "ideas",
@@ -118,14 +132,8 @@ def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
     assert paths.execution_graphs_dir == root / "millrace-agents" / "graphs" / "execution"
     assert paths.planning_graphs_dir == root / "millrace-agents" / "graphs" / "planning"
     assert paths.learning_graphs_dir == root / "millrace-agents" / "graphs" / "learning"
-    assert (
-        paths.execution_stage_kind_registry_dir
-        == root / "millrace-agents" / "registry" / "stage_kinds" / "execution"
-    )
-    assert (
-        paths.planning_stage_kind_registry_dir
-        == root / "millrace-agents" / "registry" / "stage_kinds" / "planning"
-    )
+    assert paths.execution_stage_kind_registry_dir == root / "millrace-agents" / "registry" / "stage_kinds" / "execution"
+    assert paths.planning_stage_kind_registry_dir == root / "millrace-agents" / "registry" / "stage_kinds" / "planning"
     assert paths.arbiter_dir == root / "millrace-agents" / "arbiter"
     assert paths.arbiter_idea_contracts_dir == root / "millrace-agents" / "arbiter" / "contracts" / "ideas"
     assert paths.arbiter_root_spec_contracts_dir == root / "millrace-agents" / "arbiter" / "contracts" / "root-specs"
@@ -133,6 +141,33 @@ def test_workspace_paths_resolves_canonical_model(tmp_path: Path) -> None:
     assert paths.arbiter_rubrics_dir == root / "millrace-agents" / "arbiter" / "rubrics"
     assert paths.arbiter_verdicts_dir == root / "millrace-agents" / "arbiter" / "verdicts"
     assert paths.arbiter_reports_dir == root / "millrace-agents" / "arbiter" / "reports"
+    assert paths.templates_dir == root / "millrace-agents" / "templates"
+    assert paths.shared_instruction_file == root / "millrace-agents" / "MILLRACE.md"
+    assert paths.shared_instruction_candidate_file == root / "millrace-agents" / "templates" / "MILLRACE.md.candidate"
+    assert paths.workspace_map_dir == root / "millrace-agents" / "workspace-map"
+    assert paths.workspace_map_generated_dir == root / "millrace-agents" / "workspace-map" / "generated"
+    assert paths.workspace_map_wiki_dir == root / "millrace-agents" / "workspace-map" / "wiki"
+    wiki_domains_dir = root / "millrace-agents" / "workspace-map" / "wiki" / "domains"
+    assert paths.workspace_map_wiki_runtime_file == wiki_domains_dir / "runtime.md"
+    assert paths.workspace_map_wiki_compiler_file == wiki_domains_dir / "compiler.md"
+    assert paths.workspace_map_wiki_workspace_file == wiki_domains_dir / "workspace.md"
+    assert paths.workspace_map_wiki_runners_file == root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "runners.md"
+    assert paths.workspace_map_wiki_assets_file == root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "assets.md"
+    assert paths.workspace_map_wiki_cli_file == root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "cli.md"
+    assert paths.workspace_map_wiki_contracts_file == wiki_domains_dir / "contracts.md"
+    assert paths.workspace_map_wiki_invariants_file == root / "millrace-agents" / "workspace-map" / "wiki" / "invariants.md"
+    assert paths.workspace_map_wiki_glossary_file == root / "millrace-agents" / "workspace-map" / "wiki" / "glossary.md"
+    assert paths.workspace_map_wiki_maintenance_notes_file == (
+        root / "millrace-agents" / "workspace-map" / "wiki" / "maintenance-notes.md"
+    )
+    assert paths.history_log_dir == root / "millrace-agents" / "history-log"
+    assert paths.history_log_entries_dir == root / "millrace-agents" / "history-log" / "entries"
+    assert paths.intake_ideas_inbox_dir == root / "millrace-agents" / "intake" / "ideas" / "inbox"
+    assert paths.intake_ideas_normalized_dir == root / "millrace-agents" / "intake" / "ideas" / "normalized"
+    assert paths.intake_ideas_archived_dir == root / "millrace-agents" / "intake" / "ideas" / "archived"
+    assert paths.intake_sources_idea_dir == root / "millrace-agents" / "intake" / "sources" / "idea"
+    assert paths.intake_ideas_archived_legacy_dir == root / "millrace-agents" / "intake" / "ideas" / "archived" / "legacy"
+    assert paths.intake_ideas_invalid_dir == root / "millrace-agents" / "intake" / "ideas" / "invalid"
     assert paths.outline_file == root / "millrace-agents" / "outline.md"
     assert paths.historylog_file == root / "millrace-agents" / "historylog.md"
     assert paths.execution_status_file == root / "millrace-agents" / "state" / "execution_status.md"
@@ -154,6 +189,21 @@ def test_bootstrap_creates_canonical_workspace_surfaces(tmp_path: Path) -> None:
     expected_files = [
         root / "millrace-agents" / "outline.md",
         root / "millrace-agents" / "historylog.md",
+        root / "millrace-agents" / "MILLRACE.md",
+        root / "millrace-agents" / "workspace-map" / "index.md",
+        root / "millrace-agents" / "workspace-map" / "manifest.json",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "runtime.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "compiler.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "workspace.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "runners.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "assets.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "cli.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "contracts.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "invariants.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "glossary.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "maintenance-notes.md",
+        root / "millrace-agents" / "history-log" / "index.md",
+        root / "millrace-agents" / "history-log" / "latest.md",
         root / "millrace-agents" / "millrace.toml",
         root / "millrace-agents" / "state" / "baseline_manifest.json",
         root / "millrace-agents" / "state" / "execution_status.md",
@@ -184,6 +234,7 @@ def test_bootstrap_creates_canonical_workspace_surfaces(tmp_path: Path) -> None:
         assert not (root / legacy).exists(), f"Unexpected root-level runtime artifact: {legacy}"
 
     assert not (root / "millrace-agents" / "roles").exists()
+    assert not (root / "millrace-agents" / "AGENTS.md").exists()
 
     expected_runtime_assets = [
         root / "millrace-agents" / "graphs" / "execution" / "lad.json",
@@ -218,6 +269,21 @@ def test_initialize_workspace_creates_canonical_workspace_surfaces(tmp_path: Pat
     expected_files = [
         root / "millrace-agents" / "outline.md",
         root / "millrace-agents" / "historylog.md",
+        root / "millrace-agents" / "MILLRACE.md",
+        root / "millrace-agents" / "workspace-map" / "index.md",
+        root / "millrace-agents" / "workspace-map" / "manifest.json",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "runtime.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "compiler.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "workspace.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "runners.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "assets.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "cli.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "domains" / "contracts.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "invariants.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "glossary.md",
+        root / "millrace-agents" / "workspace-map" / "wiki" / "maintenance-notes.md",
+        root / "millrace-agents" / "history-log" / "index.md",
+        root / "millrace-agents" / "history-log" / "latest.md",
         root / "millrace-agents" / "millrace.toml",
         root / "millrace-agents" / "state" / "baseline_manifest.json",
         root / "millrace-agents" / "state" / "execution_status.md",
@@ -314,6 +380,7 @@ def test_bootstrap_is_idempotent_and_preserves_existing_files(tmp_path: Path) ->
     paths.execution_status_file.write_text("### CHECKER_PASS\n", encoding="utf-8")
     paths.planning_status_file.write_text("### PLANNER_COMPLETE\n", encoding="utf-8")
     paths.outline_file.write_text("# Existing Outline\n", encoding="utf-8")
+    paths.shared_instruction_file.write_text("# Local MILLRACE\n", encoding="utf-8")
     paths.runtime_snapshot_file.write_text('{"custom": true}\n', encoding="utf-8")
 
     bootstrap_workspace(paths)
@@ -322,6 +389,7 @@ def test_bootstrap_is_idempotent_and_preserves_existing_files(tmp_path: Path) ->
     assert paths.execution_status_file.read_text(encoding="utf-8") == "### CHECKER_PASS\n"
     assert paths.planning_status_file.read_text(encoding="utf-8") == "### PLANNER_COMPLETE\n"
     assert paths.outline_file.read_text(encoding="utf-8") == "# Existing Outline\n"
+    assert paths.shared_instruction_file.read_text(encoding="utf-8") == "# Local MILLRACE\n"
     assert paths.runtime_snapshot_file.read_text(encoding="utf-8") == '{"custom": true}\n'
 
 

@@ -9,7 +9,13 @@ from millrace_ai.config import RuntimeConfig
 from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine
 from millrace_ai.state_store import load_snapshot
-from millrace_ai.workspace.baseline import apply_baseline_upgrade, preview_baseline_upgrade
+from millrace_ai.workspace.baseline import (
+    UpgradeDisposition,
+    apply_baseline_upgrade,
+    load_baseline_manifest,
+    preview_baseline_upgrade,
+    write_baseline_manifest,
+)
 from millrace_ai.workspace.initialization import initialize_workspace
 
 
@@ -100,3 +106,31 @@ def test_workspace_lifecycle_end_to_end(tmp_path: Path) -> None:
     assert failed.diagnostics.ok is False
     assert failed.active_plan is None
     assert failed.used_last_known_good is False
+
+
+def test_workspace_upgrade_backfills_missing_wiki_starters_without_overwriting_local_content(tmp_path: Path) -> None:
+    paths = initialize_workspace(tmp_path / "workspace")
+    manifest = load_baseline_manifest(paths)
+    legacy_entries = tuple(
+        entry for entry in manifest.entries if not entry.relative_path.startswith("workspace-map/wiki/")
+    )
+    write_baseline_manifest(paths, manifest.model_copy(update={"entries": legacy_entries}))
+
+    local_runtime_notes = "# Runtime\n\nLocal operator notes.\n"
+    paths.workspace_map_wiki_runtime_file.write_text(local_runtime_notes, encoding="utf-8")
+    paths.workspace_map_wiki_contracts_file.unlink()
+
+    preview = preview_baseline_upgrade(paths)
+
+    assert (
+        preview.classifications_by_path["workspace-map/wiki/domains/runtime.md"]
+        is UpgradeDisposition.LOCAL_ONLY_MODIFICATION
+    )
+    assert preview.classifications_by_path["workspace-map/wiki/domains/contracts.md"] is UpgradeDisposition.MISSING
+
+    outcome = apply_baseline_upgrade(paths)
+
+    assert outcome.applied is True
+    assert paths.workspace_map_wiki_runtime_file.read_text(encoding="utf-8") == local_runtime_notes
+    assert paths.workspace_map_wiki_contracts_file.is_file()
+    assert not (paths.runtime_root / "AGENTS.md").exists()

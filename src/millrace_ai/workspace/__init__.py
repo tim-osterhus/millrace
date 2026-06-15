@@ -5,7 +5,9 @@ from __future__ import annotations
 from .baseline import (
     BaselineManifest,
     BaselineManifestEntry,
+    WorkspaceFileOwnership,
     build_baseline_manifest,
+    classify_workspace_relative_path,
     load_baseline_manifest,
     write_baseline_manifest,
 )
@@ -18,7 +20,9 @@ __all__ = [
     "WorkspacePaths",
     "bootstrap_workspace",
     "build_baseline_manifest",
+    "classify_workspace_relative_path",
     "load_baseline_manifest",
+    "WorkspaceFileOwnership",
     "workspace_paths",
     "write_baseline_manifest",
 ]

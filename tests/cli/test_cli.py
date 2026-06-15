@@ -2781,7 +2781,7 @@ def test_queue_add_idea_stages_markdown_in_ideas_inbox(tmp_path: Path) -> None:
     )
 
     assert add_idea.exit_code == 0
-    staged = paths.root / "ideas" / "inbox" / "idea-001.md"
+    staged = paths.intake_ideas_inbox_dir / "idea-001.md"
     assert staged.is_file()
 
 

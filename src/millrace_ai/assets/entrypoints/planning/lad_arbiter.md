@@ -38,6 +38,7 @@ Runtime-owned, not stage-owned:
 
 ## Inputs (read in order)
 
+- shared instructions listed in this request
 1. the request-provided `closure_target_path` (typically `millrace-agents/arbiter/targets/<ROOT_SPEC_ID>.json`)
 2. the canonical root spec copy referenced by that target (typically `millrace-agents/arbiter/contracts/root-specs/<ROOT_SPEC_ID>.md`)
 3. the canonical root source copy referenced by that target (typically `millrace-agents/arbiter/contracts/root-sources/<KIND>/<SOURCE_ID>.md`; legacy idea-rooted targets may also mirror `millrace-agents/arbiter/contracts/ideas/<ROOT_IDEA_ID>.md`)
@@ -52,6 +53,12 @@ Treat pre-watermark verdicts, reports, and inherited verification as historical
 unless you explicitly revalidate that evidence against the current source tree.
 When the freshness window lists newer same-lineage remediation, do not decide a
 current pass/fail criterion solely from pre-watermark evidence.
+
+## Run-Local Memory Artifacts
+
+- Read the shared instructions listed in this request before broader workspace context when they exist.
+- Write a run-local `history_entry.json` proposal summarizing the stage decision, changed paths, evidence paths, and warnings.
+- Runtime-owned history accepts JSON proposals only.
 
 ## Skills Index Selection
 

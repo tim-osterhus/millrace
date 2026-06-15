@@ -28,6 +28,17 @@ _BASELINE_PATHS = (
     "learning_requests_queue_dir",
     "entrypoints_dir",
     "skills_dir",
+    "templates_dir",
+    "shared_instruction_file",
+    "workspace_map_dir",
+    "workspace_map_index_file",
+    "workspace_map_manifest_file",
+    "workspace_map_generated_dir",
+    "workspace_map_wiki_dir",
+    "history_log_dir",
+    "history_log_index_file",
+    "history_log_latest_file",
+    "intake_ideas_archived_legacy_dir",
     "outline_file",
     "historylog_file",
     "baseline_manifest_file",
@@ -85,10 +96,7 @@ def require_initialized_workspace(target: WorkspacePaths | Path | str) -> Worksp
     )
     missing = tuple(path for path in required_paths if not path.exists())
     if missing:
-        raise ValueError(
-            "workspace is not initialized: "
-            f"{paths.root}. Run `millrace init --workspace {paths.root}` first."
-        )
+        raise ValueError(f"workspace is not initialized: {paths.root}. Run `millrace init --workspace {paths.root}` first.")
     return paths
 
 

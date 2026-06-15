@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,7 @@ from millrace_ai.contracts import (
     ActiveRunState,
     ClosureTargetState,
     ExecutionStageName,
+    ExecutionTerminalResult,
     LearningRequestDocument,
     LearningStageName,
     LearningTerminalResult,
@@ -35,6 +38,7 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.contracts.router import RouterAction, RouterDecision
+from millrace_ai.events import read_runtime_events
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.recon_packets import render_recon_packet
@@ -63,6 +67,18 @@ def _unused_stage_runner(request: StageRunRequest) -> RunnerRawResult:
     raise AssertionError("stage runner should not be called")
 
 
+def _write_run_history_entry(run_dir: Path, payload: dict[str, object], *, modified_at: datetime) -> Path:
+    history_path = run_dir / "history_entry.json"
+    history_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    timestamp = modified_at.timestamp()
+    os.utime(history_path, (timestamp, timestamp))
+    return history_path
+
+
+def _claimed_history_entry_path(stage_result_path: Path) -> Path:
+    return stage_result_path.with_name(f"{stage_result_path.stem}.history_entry.json")
+
+
 def _task_doc(task_id: str) -> TaskDocument:
     return TaskDocument(
         task_id=task_id,
@@ -76,6 +92,217 @@ def _task_doc(task_id: str) -> TaskDocument:
         created_at=NOW,
         created_by="tests",
     )
+
+
+def test_apply_router_decision_applies_run_local_history_entry(tmp_path: Path) -> None:
+    paths = _workspace(tmp_path)
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.EXECUTION: ActiveRunState(
+                    plane=Plane.EXECUTION,
+                    stage=ExecutionStageName.BUILDER,
+                    node_id="builder",
+                    stage_kind_id="builder",
+                    run_id="run-history",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(engine.compiled_plan),
+                    request_kind="active_work_item",
+                    work_item_kind=WorkItemKind.TASK,
+                    work_item_id="task-history",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.BUILDER,
+            "active_node_id": "builder",
+            "active_stage_kind_id": "builder",
+            "active_run_id": "run-history",
+            "active_work_item_kind": WorkItemKind.TASK,
+            "active_work_item_id": "task-history",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+    run_dir = paths.runs_dir / "run-history"
+    stage_result_path = run_dir / "stage_results" / "request-history.json"
+    stage_result_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_run_history_entry(
+        run_dir,
+        {
+            "schema_version": 1,
+            "summary": "Applied runtime history artifact.",
+            "changed_paths": ["src/millrace_ai/runtime/result_application.py"],
+            "evidence_paths": ["millrace-agents/runs/run-history/stage_results/request-history.json"],
+            "warnings": [],
+        },
+        modified_at=NOW,
+    )
+    builder_result = StageResultEnvelope(
+        run_id="run-history",
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-history",
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    stage_result_path.write_text(builder_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    decision = RouterDecision(
+        action=RouterAction.RUN_STAGE,
+        next_plane=Plane.EXECUTION,
+        next_stage=ExecutionStageName.CHECKER,
+        next_node_id="checker",
+        next_stage_kind_id="checker",
+        reason="continue",
+    )
+
+    apply_router_decision(engine, decision, builder_result, stage_result_path=stage_result_path)
+    assert not (run_dir / "history_entry.json").exists()
+    assert _claimed_history_entry_path(stage_result_path).exists()
+
+    checker_stage_result_path = run_dir / "stage_results" / "request-checker.json"
+    checker_stage_result = StageResultEnvelope(
+        run_id="run-history",
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.CHECKER,
+        node_id="checker",
+        stage_kind_id="checker",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-history",
+        terminal_result=ExecutionTerminalResult.CHECKER_PASS,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### CHECKER_PASS",
+        success=True,
+        started_at=NOW + timedelta(seconds=1),
+        completed_at=NOW + timedelta(seconds=1),
+    )
+    checker_stage_result_path.write_text(checker_stage_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    apply_router_decision(engine, decision, checker_stage_result, stage_result_path=checker_stage_result_path)
+
+    entry_path = paths.history_log_entries_dir / "2026-04-28.jsonl"
+    entry_lines = [line for line in entry_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(entry_lines) == 1
+    entry = json.loads(entry_lines[0])
+    assert entry["history_entry_id"] == "history:run-history:request-history:execution:builder:BUILDER_COMPLETE"
+    events = read_runtime_events(paths)
+    history_events = [event for event in events if event.event_type.startswith("history_entry_")]
+    assert [event.event_type for event in history_events].count("history_entry_appended") == 1
+    assert history_events[0].data["history_entry_id"] == entry["history_entry_id"]
+
+
+def test_apply_router_decision_treats_workspace_map_update_request_as_advisory(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+    generated_outputs = {
+        paths.workspace_map_manifest_file: '{"sentinel": "manifest"}\n',
+        paths.workspace_map_generated_file_tree_file: "# sentinel file tree\n",
+        paths.workspace_map_generated_repo_map_file: "# sentinel repo map\n",
+        paths.workspace_map_generated_symbols_file: '{"sentinel": "symbols"}\n',
+        paths.workspace_map_generated_imports_file: '{"sentinel": "imports"}\n',
+        paths.workspace_map_generated_reverse_imports_file: '{"sentinel": "reverse-imports"}\n',
+        paths.workspace_map_generated_public_api_file: '{"sentinel": "public-api"}\n',
+        paths.workspace_map_generated_tests_map_file: '{"sentinel": "tests-map"}\n',
+        paths.workspace_map_generated_docs_references_file: '{"sentinel": "docs-references"}\n',
+        paths.workspace_map_generated_freshness_file: '{"sentinel": "freshness"}\n',
+    }
+    for output_path, content in generated_outputs.items():
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content, encoding="utf-8")
+    before = {output_path: output_path.read_text(encoding="utf-8") for output_path in generated_outputs}
+
+    engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine.startup()
+    assert engine.snapshot is not None
+    assert engine.compiled_plan is not None
+    engine.snapshot = engine.snapshot.model_copy(
+        update={
+            "active_runs_by_plane": {
+                Plane.EXECUTION: ActiveRunState(
+                    plane=Plane.EXECUTION,
+                    stage=ExecutionStageName.BUILDER,
+                    node_id="builder",
+                    stage_kind_id="builder",
+                    run_id="run-workspace-map-advisory",
+                    compiled_plan_id=engine.compiled_plan.compiled_plan_id,
+                    compiled_plan_fingerprint=compiled_plan_fingerprint_for_runtime(engine.compiled_plan),
+                    request_kind="active_work_item",
+                    work_item_kind=WorkItemKind.TASK,
+                    work_item_id="task-workspace-map-advisory",
+                    active_since=NOW,
+                )
+            },
+            "active_plane": Plane.EXECUTION,
+            "active_stage": ExecutionStageName.BUILDER,
+            "active_node_id": "builder",
+            "active_stage_kind_id": "builder",
+            "active_run_id": "run-workspace-map-advisory",
+            "active_work_item_kind": WorkItemKind.TASK,
+            "active_work_item_id": "task-workspace-map-advisory",
+            "active_since": NOW,
+            "updated_at": NOW,
+        }
+    )
+    save_snapshot(paths, engine.snapshot)
+    run_dir = paths.runs_dir / "run-workspace-map-advisory"
+    stage_result_path = run_dir / "stage_results" / "request-builder.json"
+    stage_result_path.parent.mkdir(parents=True, exist_ok=True)
+    (run_dir / "workspace_map_update_request.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "reason": "generated map appears stale",
+                "requested_by_stage": "builder",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stage_result = StageResultEnvelope(
+        run_id="run-workspace-map-advisory",
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.BUILDER,
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-workspace-map-advisory",
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        artifact_paths=("workspace_map_update_request.json",),
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    stage_result_path.write_text(stage_result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    decision = RouterDecision(
+        action=RouterAction.RUN_STAGE,
+        next_plane=Plane.EXECUTION,
+        next_stage=ExecutionStageName.CHECKER,
+        next_node_id="checker",
+        next_stage_kind_id="checker",
+        reason="continue",
+    )
+
+    apply_router_decision(engine, decision, stage_result, stage_result_path=stage_result_path)
+
+    after = {output_path: output_path.read_text(encoding="utf-8") for output_path in generated_outputs}
+    assert after == before
+    assert (run_dir / "workspace_map_update_request.json").is_file()
 
 
 def _learning_request_doc(learning_request_id: str) -> LearningRequestDocument:

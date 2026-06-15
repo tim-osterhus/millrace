@@ -44,7 +44,7 @@ Fallback paths:
 - `millrace-agents/runs/latest/builder_summary.md`
 
 History requirements:
-- prepend a concise, high-signal builder summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise, high-signal builder summary
 
 Optional artifact:
 - if a scratch plan or prompt artifact materially helps on a larger task, it may be written, but it is not required for a normal successful pass
@@ -75,17 +75,18 @@ Do not stop merely because:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - the request-provided active task path `active_work_item_path` (typically `millrace-agents/tasks/active/<TASK_ID>.md`)
 - any companion artifacts explicitly referenced by that active task
 - the current repo state relevant to the task
 
 ## Useful Context If Helpful
 
-- `millrace-agents/outline.md`
+- `millrace-agents/workspace-map/index.md`
 - `README.md` when present at repo root
 - request-provided `runtime_snapshot_path` for active run context
 - recent run artifacts in request-provided `run_dir` if Builder is re-entering after a bounded recovery
-- `millrace-agents/historylog.md` when prior attempts materially affect the current pass
+- `millrace-agents/history-log/latest.md` when prior attempts materially affect the current pass
 
 ## Skills Index Selection
 

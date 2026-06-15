@@ -15,7 +15,7 @@ Allowed:
 - read the active task and current repo state
 - write expectations and fix artifacts
 - run validation commands
-- update `millrace-agents/historylog.md` with QA findings
+- write a run-local `history_entry.json` proposal with QA findings
 
 Not allowed:
 - perform implementation work except for minimal evidence capture artifacts
@@ -25,15 +25,16 @@ Not allowed:
 
 ## Inputs (read in order)
 
-1. `millrace-agents/outline.md`
+- shared instructions listed in this request
+1. `millrace-agents/workspace-map/index.md`
 2. request-provided `active_work_item_path` (typically `millrace-agents/tasks/active/<TASK_ID>.md`)
 3. `README.md` when present at repo root
 4. request-provided `summary_status_path` (typically `millrace-agents/state/execution_status.md`)
 5. request-provided `run_dir`, `run_dir/builder_summary.md`, and `run_dir/integration_report.md` when present, but only after expectations are written
-6. `millrace-agents/historylog.md`, but only after expectations are written
+6. `millrace-agents/history-log/latest.md`, but only after expectations are written
 
 Before expectations are written:
-- do not read `millrace-agents/historylog.md`
+- do not read `millrace-agents/history-log/latest.md`
 - do not inspect diffs or prior test output
 - do not read builder notes yet
 
@@ -125,7 +126,7 @@ Fallback artifacts:
 - `millrace-agents/runs/latest/fix_contract.md`
 
 History / summary requirements:
-- prepend a newest-first checker summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a checker summary
 - if a fix contract exists, reference it explicitly
 - the summary must say whether the result is pass, fix-needed, or blocked
 

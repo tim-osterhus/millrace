@@ -125,6 +125,7 @@ def build_stage_run_request(
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=required_skill_paths,
         attached_skill_paths=attached_skill_paths,
+        shared_instruction_paths=_shared_instruction_paths(engine),
         active_work_item_family_id=active_work_item_family_id,
         active_work_item_kind=active_work_item_kind,
         active_work_item_id=active_work_item_id,
@@ -282,6 +283,7 @@ def build_closure_target_stage_run_request(
         entrypoint_contract_id=stage_plan.entrypoint_contract_id,
         required_skill_paths=required_skill_paths,
         attached_skill_paths=attached_skill_paths,
+        shared_instruction_paths=_shared_instruction_paths(engine),
         **closure_fields,  # type: ignore[arg-type]
         run_dir=str(run_dir),
         summary_status_path=str(engine.paths.planning_status_file),
@@ -458,6 +460,14 @@ def new_run_id() -> str:
 
 def new_request_id() -> str:
     return f"request-{uuid4().hex}"
+
+
+def _workspace_relative_path(root: Path, path: Path) -> str:
+    return path.resolve().relative_to(root.resolve()).as_posix()
+
+
+def _shared_instruction_paths(engine: RuntimeEngine) -> tuple[str, ...]:
+    return (_workspace_relative_path(engine.paths.root, engine.paths.shared_instruction_file),)
 
 
 def now() -> datetime:

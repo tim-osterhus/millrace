@@ -30,6 +30,10 @@ LEGACY_ENTRYPOINT_TOKENS = (
     "ideas/incidents",
     "status_contract",
 )
+FORBIDDEN_SHARED_INSTRUCTION_TOKENS = (
+    "MILLRACE.md",
+    "millrace-agents/MILLRACE.md",
+)
 SKILLS_SECTION_HEADER = re.compile(
     r"^##\s+(Required Stage-Core Skill|Optional Secondary Skills)\s*$",
     re.IGNORECASE,
@@ -699,7 +703,7 @@ def _expected_stage_core_body_keywords() -> dict[str, tuple[str, ...]]:
         ExecutionStageName.UPDATER.value: (
             "stale",
             "evidence",
-            "outline.md",
+            "workspace-map",
         ),
         ExecutionStageName.TROUBLESHOOTER.value: (
             "symptom",
@@ -1103,9 +1107,13 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
         stage_to_body[stage] = body
         for token in LEGACY_ENTRYPOINT_TOKENS:
             assert token not in body
+        for token in FORBIDDEN_SHARED_INSTRUCTION_TOKENS:
+            assert token not in body
         assert "runs/<RUN_ID>" not in body
         assert "reports/" not in body
         assert "`historylog.md`" not in body
+        assert "history_entry.md" not in body
+        assert "history_entry.json" in body
 
     assert "active_work_item_path" in stage_to_body["builder"]
     assert "active_work_item_path" in stage_to_body["integrator"]
@@ -1139,7 +1147,13 @@ def test_runtime_entrypoints_align_to_runtime_workspace_contract() -> None:
     assert "summary_status_path" in stage_to_body["updater"]
     assert "run_dir/builder_summary.md" in stage_to_body["builder"]
     assert "millrace-agents/runs/latest/builder_summary.md" in stage_to_body["builder"]
-    assert "millrace-agents/historylog.md" in stage_to_body["builder"]
+    assert "millrace-agents/historylog.md" not in stage_to_body["builder"]
+    assert "history_entry.json" in stage_to_body["builder"]
+    assert "millrace-agents/workspace-map/index.md" in stage_to_body["builder"]
+    assert "millrace-agents/workspace-map/index.md" in stage_to_body["updater"]
+    assert "millrace-agents/workspace-map/generated/freshness.json" in stage_to_body["updater"]
+    assert "millrace-agents/workspace-map/wiki/" in stage_to_body["updater"]
+    assert "workspace_map_update_request.json" in stage_to_body["updater"]
     assert "millrace-agents/specs/queue/<SPEC_ID>.md" in stage_to_body["planner"]
     assert "planner_disposition.json" in stage_to_body["planner"]
     assert "millrace-agents/incidents/incoming/<INCIDENT_ID>.md" in stage_to_body["consultant"]
@@ -1399,6 +1413,8 @@ def test_evaluator_blueprint_assets_match_artifact_contract_filenames() -> None:
         for accepted_filename in contracts_by_id[artifact_id].accepted_filenames
     }
     allowed_non_output_filenames = {
+        "MILLRACE.md",
+        "history_entry.json",
         "historylog.md",
         "skills_index.md",
     }

@@ -15,19 +15,30 @@ def build_stage_prompt(request: StageRunRequest) -> str:
     request_context = render_stage_request_context_lines(request)
     legal_markers = ", ".join(f"`{marker}`" for marker in legal_terminal_markers(request))
     rendered_request_context = _rendered_request_context_text(request)
+    shared_instruction_lines = _shared_instruction_open_order_lines(request)
     return "\n".join(
         (
             "You are executing one Millrace runtime stage request.",
-            f"Open `{request.entrypoint_path}` and follow instructions exactly.",
+            "Open these files in this order:",
+            *shared_instruction_lines,
+            f"{len(shared_instruction_lines) + 1}. `{request.entrypoint_path}`",
+            f"{len(shared_instruction_lines) + 2}. Required stage-core skills listed in this request",
+            f"{len(shared_instruction_lines) + 3}. Request context artifacts listed in this request",
+            "",
+            "If instructions conflict, apply this precedence:",
+            "1. active user/operator instruction attached to this run",
+            "2. runtime request contract and compiled plan authority",
+            "3. capability grants, approval gates, and safety constraints",
+            "4. stage entrypoint",
+            "5. required stage-core skill",
+            "6. shared instructions listed in this request",
+            "7. workspace-map/wiki/ and other advisory docs",
             "",
             "Stage Request Context:",
             *request_context,
             *rendered_request_context,
             "",
-            (
-                "When done, print exactly one legal terminal marker defined by the opened "
-                "entrypoint contract."
-            ),
+            ("When done, print exactly one legal terminal marker defined by the opened entrypoint contract."),
             f"Legal markers for this stage: {legal_markers}.",
             "Do not invent or rename terminal markers.",
             "Do not print multiple terminal markers.",
@@ -37,6 +48,10 @@ def build_stage_prompt(request: StageRunRequest) -> str:
             ),
         )
     )
+
+
+def _shared_instruction_open_order_lines(request: StageRunRequest) -> tuple[str, ...]:
+    return tuple(f"{index}. `{path}`" for index, path in enumerate(request.shared_instruction_paths, start=1))
 
 
 def _rendered_request_context_text(request: StageRunRequest) -> tuple[str, ...]:

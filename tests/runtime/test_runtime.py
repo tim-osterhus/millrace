@@ -58,7 +58,7 @@ from millrace_ai.runner import RunnerRawResult, StageRunRequest
 from millrace_ai.runtime import RuntimeEngine, closure_transitions
 from millrace_ai.runtime.monitoring import RuntimeMonitorEvent
 from millrace_ai.runtime.supervisor import RuntimeDaemonSupervisor
-from millrace_ai.runtime.watcher_intake import safe_spec_id_from_idea_path
+from millrace_ai.runtime.watcher_intake import safe_spec_id_from_idea_content, safe_spec_id_from_idea_path
 from millrace_ai.runtime_lock import (
     RuntimeOwnershipLockError,
     acquire_runtime_ownership_lock,
@@ -2824,9 +2824,11 @@ def test_runtime_tick_normalizes_idea_watch_event_before_execution(tmp_path: Pat
     engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
     engine.startup()
 
-    ideas_inbox = paths.root / "ideas" / "inbox"
-    ideas_inbox.mkdir(parents=True, exist_ok=True)
-    (ideas_inbox / "idea-001.md").write_text("# Idea 001\n\nPrioritize planning from watcher input.\n", encoding="utf-8")
+    paths.intake_ideas_inbox_dir.mkdir(parents=True, exist_ok=True)
+    (paths.intake_ideas_inbox_dir / "idea-001.md").write_text(
+        "# Idea 001\n\nPrioritize planning from watcher input.\n",
+        encoding="utf-8",
+    )
 
     outcome = engine.tick()
 
@@ -2851,12 +2853,9 @@ def test_runtime_tick_normalizes_preexisting_idea_inbox_file_on_startup(
         ),
         encoding="utf-8",
     )
-    ideas_inbox = paths.root / "ideas" / "inbox"
-    ideas_inbox.mkdir(parents=True, exist_ok=True)
-    (ideas_inbox / "startup-idea.md").write_text(
-        "# Startup Idea\n\nNormalize this idea on the first daemon tick.\n",
-        encoding="utf-8",
-    )
+    idea_markdown = "# Startup Idea\n\nNormalize this idea on the first daemon tick.\n"
+    paths.intake_ideas_inbox_dir.mkdir(parents=True, exist_ok=True)
+    (paths.intake_ideas_inbox_dir / "startup-idea.md").write_text(idea_markdown, encoding="utf-8")
 
     seen_stages: list[PlanningStageName | ExecutionStageName] = []
 
@@ -2875,7 +2874,8 @@ def test_runtime_tick_normalizes_preexisting_idea_inbox_file_on_startup(
 
     assert outcome.stage is PlanningStageName.PLANNER
     assert seen_stages == [PlanningStageName.PLANNER]
-    assert (paths.specs_active_dir / "idea-startup-idea.md").is_file()
+    spec_id = safe_spec_id_from_idea_content(idea_markdown, fallback="startup-idea")
+    assert (paths.specs_active_dir / f"{spec_id}.md").is_file()
 
 
 def test_runtime_tick_applies_mailbox_then_watcher_before_no_work_idle(tmp_path: Path) -> None:
@@ -2947,7 +2947,7 @@ def test_runtime_normalize_idea_watch_event_ignores_read_errors(
     engine = RuntimeEngine(paths, stage_runner=stage_runner)
     engine.startup()
 
-    idea_path = paths.root / "ideas" / "inbox" / "idea-error.md"
+    idea_path = paths.intake_ideas_inbox_dir / "idea-error.md"
     idea_path.parent.mkdir(parents=True, exist_ok=True)
     idea_path.write_text("# Idea\n", encoding="utf-8")
 
@@ -2973,7 +2973,7 @@ def test_runtime_normalize_idea_watch_event_writes_root_lineage_fields(tmp_path:
     engine = RuntimeEngine(paths, stage_runner=stage_runner)
     engine.startup()
 
-    idea_path = paths.root / "ideas" / "inbox" / "seed-idea.md"
+    idea_path = paths.intake_ideas_inbox_dir / "seed-idea.md"
     idea_path.parent.mkdir(parents=True, exist_ok=True)
     idea_path.write_text("# Seed Idea\n\nPreserve root lineage from watcher input.\n", encoding="utf-8")
 
@@ -3001,31 +3001,70 @@ def test_runtime_normalize_idea_watch_event_writes_durable_source_reference(
     engine.startup()
 
     idea_markdown = "# Seed Idea\n\nPreserve this exact markdown.\n"
-    idea_path = paths.root / "ideas" / "inbox" / "seed-idea.md"
+    idea_path = paths.intake_ideas_inbox_dir / "seed-idea.md"
     idea_path.parent.mkdir(parents=True, exist_ok=True)
     idea_path.write_text(idea_markdown, encoding="utf-8")
 
     engine._normalize_idea_watch_event(idea_path)
 
-    durable_source = paths.runtime_root / "intake" / "ideas" / "idea-seed-idea.md"
+    spec_id = safe_spec_id_from_idea_content(idea_markdown, fallback="seed-idea")
+    durable_source = paths.intake_sources_idea_dir / f"{spec_id}.md"
     assert durable_source.read_text(encoding="utf-8") == idea_markdown
+    assert (paths.intake_ideas_normalized_dir / f"{spec_id}.json").is_file()
+    assert (paths.intake_ideas_archived_dir / "seed-idea.md").is_file()
 
     queued_specs = sorted(paths.specs_queue_dir.glob("idea-*.md"))
     assert len(queued_specs) == 1
     spec = read_work_document_as(queued_specs[0], model=SpecDocument)
     assert spec.references == (
-        "millrace-agents/intake/ideas/idea-seed-idea.md",
-        "ideas/inbox/seed-idea.md",
+        f"millrace-agents/intake/sources/idea/{spec_id}.md",
+        "millrace-agents/intake/ideas/inbox/seed-idea.md",
     )
+
+
+def test_runtime_legacy_idea_inbox_archives_duplicate_after_canonical_intake(
+    tmp_path: Path,
+) -> None:
+    paths = _workspace(tmp_path)
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        raise AssertionError("stage_runner should not be called")
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner)
+    engine.startup()
+
+    canonical_path = paths.intake_ideas_inbox_dir / "duplicate.md"
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_path.write_text("# Duplicate\n\nCanonical copy wins.\n", encoding="utf-8")
+    legacy_path = paths.root / "ideas" / "inbox" / "duplicate.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text("# Duplicate\n\nLegacy copy is suppressed.\n", encoding="utf-8")
+
+    engine._normalize_idea_watch_event(canonical_path)
+    engine._normalize_idea_watch_event(legacy_path)
+
+    assert len(tuple(paths.specs_queue_dir.glob("idea-duplicate*.md"))) == 1
+    spec_id = safe_spec_id_from_idea_content("# Duplicate\n\nCanonical copy wins.\n", fallback="duplicate")
+    durable_source = paths.intake_sources_idea_dir / f"{spec_id}.md"
+    assert durable_source.read_text(encoding="utf-8") == "# Duplicate\n\nCanonical copy wins.\n"
+    archived = paths.intake_ideas_archived_legacy_dir / "duplicate.md"
+    assert archived.read_text(encoding="utf-8") == "# Duplicate\n\nLegacy copy is suppressed.\n"
+    assert not legacy_path.exists()
+    event_types = [event.event_type for event in read_runtime_events(paths)]
+    assert "legacy_idea_inbox_compatibility_warning" in event_types
+    assert "legacy_idea_archived" in event_types
 
 
 def test_watcher_idea_spec_ids_are_idempotent_for_prefixed_filenames() -> None:
-    assert safe_spec_id_from_idea_path(Path("seed-idea.md")) == "idea-seed-idea"
+    seed_id = safe_spec_id_from_idea_path(Path("seed-idea.md"))
+    prefixed_id = safe_spec_id_from_idea_path(Path("idea-2026-04-27-browser-local-qa.md"))
+    titled_id = safe_spec_id_from_idea_path(Path("Feature idea!.md"))
+
+    assert seed_id.startswith("idea-seed-idea-")
     assert (
-        safe_spec_id_from_idea_path(Path("idea-2026-04-27-browser-local-qa.md"))
-        == "idea-2026-04-27-browser-local-qa"
+        prefixed_id.startswith("idea-2026-04-27-browser-local-qa-")
     )
-    assert safe_spec_id_from_idea_path(Path("Feature idea!.md")) == "idea-Feature-idea"
+    assert titled_id.startswith("idea-feature-idea-")
 
 
 def test_runtime_tick_handles_active_stage_without_work_item_identity(tmp_path: Path) -> None:
@@ -3839,7 +3878,7 @@ def test_runtime_mailbox_add_task_spec_and_idea_apply_payloads(tmp_path: Path) -
 
     assert (paths.tasks_queue_dir / "task-mailbox-001.md").is_file()
     assert (paths.specs_queue_dir / "spec-mailbox-001.md").is_file()
-    assert (paths.root / "ideas" / "inbox" / "idea-mailbox-001.md").is_file()
+    assert (paths.intake_ideas_inbox_dir / "idea-mailbox-001.md").is_file()
 
     snapshot = load_snapshot(paths)
     assert snapshot.queue_depth_execution == 1

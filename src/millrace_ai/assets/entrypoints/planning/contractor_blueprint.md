@@ -54,7 +54,7 @@ Packet requirements:
 - keep open questions explicit instead of pretending uncertainty is settled
 
 History requirements:
-- prepend a concise Contractor Blueprint summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise Contractor Blueprint summary
 
 ## Legal Terminal Results
 
@@ -70,6 +70,7 @@ After emitting a legal terminal result:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - request-provided `active_work_item_path`
 - request-provided `run_dir`
 - request-provided `required_skill_paths`

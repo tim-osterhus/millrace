@@ -56,8 +56,11 @@ pre-packaging draft tree for entrypoints.
 - Planning outputs that should be re-ingested target markdown queue surfaces:
   - `millrace-agents/specs/queue/<SPEC_ID>.md`
   - `millrace-agents/incidents/incoming/<INCIDENT_ID>.md`
-- Run-scoped summaries and diagnostics belong under request-provided `run_dir`.
-- Historical summary output goes to `millrace-agents/historylog.md`.
+- Run-scoped summaries, diagnostics, and stage-authored `history_entry.json`
+  proposals belong under request-provided `run_dir`.
+- Runtime result application owns canonical append/render behavior under
+  `millrace-agents/history-log/`; `historylog.md` is deprecated compatibility,
+  not an active stage write target.
 
 ## Skill-Only Advisory Expectations
 
@@ -81,3 +84,4 @@ pre-packaging draft tree for entrypoints.
 During `millrace init`, packaged entrypoints are copied to `<workspace>/millrace-agents/entrypoints/`.
 During `millrace upgrade --apply`, safe managed entrypoint updates are applied according to the workspace baseline manifest.
 Compiled stage requests always reference deployed workspace entrypoint paths so invoked agents can be told to open files from the workspace runtime tree directly.
+Shared instructions are included by the runtime wrapper that launches the stage; entrypoint markdown stays stage-specific and does not duplicate `MILLRACE.md` locally.

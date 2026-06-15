@@ -272,6 +272,26 @@ Load these on demand when the current task requires them:
 - Prefer supported CLI commands over direct mutation of runtime-owned files.
 - Treat content under `<workspace>/millrace-agents/` as runtime-owned unless a
   documented intake surface says otherwise.
+- Keep runtime artifacts distinct from source edits. Queues, state, runs,
+  generated workspace-map outputs, and stage artifacts live under
+  `<workspace>/millrace-agents/`; Builder edits to repository source files are
+  ordinary source changes, not runtime state.
+- Treat `workspace-map/index.md` as seeded starter/index guidance,
+  `workspace-map/generated/` plus `workspace-map/manifest.json` as refreshable
+  runtime artifacts, and `workspace-map/wiki/` pages as curated
+  operator-maintained workspace memory. Bootstrap and upgrade may seed missing
+  starter wiki pages, but operators own local wiki content.
+- Treat run-local `history_entry.json` files as stage-produced history
+  proposals. The runtime owns durable history-log append/render behavior; do
+  not rewrite canonical history logs directly.
+- Treat `<workspace>/millrace-agents/MILLRACE.md` as operator-owned shared
+  instructions after seeding. Read it for context only unless the active task
+  explicitly requests shared-instruction changes. Millrace preserves it as
+  workspace-local guidance rather than overwriting operator policy.
+- Stage new ideas through `<workspace>/millrace-agents/intake/ideas/inbox/`.
+  Legacy watcher-style idea files remain compatibility inputs and should be
+  normalized, archived, or diagnosed through the documented legacy paths, not
+  promoted as the preferred intake location.
 - Keep operator-authored tasks, probes, specs, and ideas outcome-focused; do not hide
   routing instructions inside them.
 - Do not invent new queue states, stage names, or terminal results.
@@ -430,7 +450,12 @@ millrace-web serve --workspace <workspace-a> --workspace <workspace-b> --view fl
 Queue intake commands are typed Millrace document imports, not generic markdown
 ingestion commands. `queue add-task` imports a valid `TaskDocument`,
 `queue add-probe` imports a valid `ProbeDocument`, `queue add-spec` imports a
-valid `SpecDocument`, and `queue add-idea` stages idea-shaped markdown.
+valid `SpecDocument`, and `queue add-idea` stages idea-shaped markdown that
+the runtime later normalizes into durable source markdown under
+`millrace-agents/intake/sources/idea/`, normalized metadata under
+`millrace-agents/intake/ideas/normalized/`, and legacy archive/invalid records
+under `millrace-agents/intake/ideas/archived/legacy/` and
+`millrace-agents/intake/ideas/invalid/`.
 
 When supporting material is needed, package it inside the active workspace or
 repo and reference it with repo-relative paths. Do not enqueue thin wrappers

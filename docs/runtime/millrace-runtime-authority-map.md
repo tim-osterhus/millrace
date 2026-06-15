@@ -116,8 +116,12 @@ The compiled-plan router path uses:
   `runtime/effects/operation_runners/`, `runtime/closure_boundary.py`,
   `runtime/closure_transitions.py`, `runtime/result_counters.py`,
   `runtime/stage_result_persistence.py`, `runtime/run_traces.py`,
-  `runtime/snapshot_state.py`, and
+  `runtime/snapshot_state.py`, `workspace/history_log.py`, and
   `workspace/*_state.py` own the durable mutations for their domains.
+  `runtime/result_application.py` delegates accepted `history_entry.json`
+  proposals to `workspace/history_log.py`, which owns append/duplicate/
+  conflict handling and deterministic rendering for `history-log/`;
+  `historylog.md` remains compatibility only.
   Recon and closure post-stage mutations are reached through built-in
   extension boundary adapters from `runtime/result_application.py`; Blueprint
   operation runners and context providers remain documented compatibility
@@ -414,8 +418,12 @@ Closure target creation resolves the root source, writes canonical contracts
 under `millrace-agents/arbiter/contracts/root-sources/<kind>/<id>.md` and
 `root-specs/<root_spec_id>.md`, then records those paths in the target. Probe
 roots are recoverable from durable probe lifecycle files or workspace-relative
-references; idea roots prefer `millrace-agents/intake/ideas/<id>.md` before
-legacy inbox files.
+references; idea roots prefer `millrace-agents/intake/sources/idea/<id>.md`
+before legacy durable or inbox files. During the compatibility window,
+consumed legacy `ideas/inbox/` files are archived under
+`millrace-agents/intake/ideas/archived/legacy/`, and malformed legacy inbox
+files are captured under `millrace-agents/intake/ideas/invalid/` with
+diagnostic metadata.
 
 ### Learning Concurrent With Foreground Work
 

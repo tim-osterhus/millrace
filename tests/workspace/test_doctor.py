@@ -7,6 +7,8 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from millrace_ai.architecture import WorkItemDocumentAdapterDefinition, WorkItemFamilyDefinition
 from millrace_ai.compiler import compile_and_persist_workspace_plan
 from millrace_ai.config import RuntimeConfig
@@ -1056,6 +1058,35 @@ def test_doctor_flags_invalid_baseline_manifest_schema(tmp_path: Path) -> None:
     assert any(item.code == "baseline_manifest_invalid" for item in report.errors)
 
 
+@pytest.mark.parametrize(
+    ("path_getter", "expected_code"),
+    [
+        (lambda paths: paths.shared_instruction_file, "shared_instruction_missing"),
+        (lambda paths: paths.workspace_map_generated_file_tree_file, "generated_runtime_owned_missing_file"),
+        (lambda paths: paths.workspace_map_wiki_index_file, "curated_local_missing_file"),
+        (lambda paths: paths.history_log_latest_file, "runtime_history_missing_file"),
+        (lambda paths: paths.outline_file, "deprecated_compatibility_missing_file"),
+        (
+            lambda paths: paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md",
+            "packaged_managed_missing_file",
+        ),
+    ],
+)
+def test_doctor_classifies_workspace_surface_ownership_missing_files(
+    tmp_path: Path,
+    path_getter,
+    expected_code: str,
+) -> None:
+    paths = _bootstrap(tmp_path)
+    missing_path = path_getter(paths)
+    missing_path.unlink()
+
+    report = run_workspace_doctor(paths)
+
+    assert report.ok is False
+    assert any(item.code == expected_code and item.path == missing_path for item in report.errors)
+
+
 def test_doctor_flags_missing_manifest_tracked_managed_file(tmp_path: Path) -> None:
     paths = _bootstrap(tmp_path)
     (paths.runtime_root / "entrypoints" / "execution" / "lad_builder.md").unlink()
@@ -1063,4 +1094,4 @@ def test_doctor_flags_missing_manifest_tracked_managed_file(tmp_path: Path) -> N
     report = run_workspace_doctor(paths)
 
     assert report.ok is False
-    assert any(item.code == "baseline_manifest_managed_file_missing" for item in report.errors)
+    assert any(item.code == "packaged_managed_missing_file" for item in report.errors)

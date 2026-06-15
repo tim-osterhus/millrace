@@ -32,6 +32,10 @@ plans by guessing shipped defaults.
 
 - Workspace root is operator-owned.
 - Runtime-managed content lives under `<workspace>/millrace-agents/`.
+- Source edits live outside runtime-owned state even when a stage creates
+  them; stage source changes are ordinary repository edits, while
+  `millrace-agents/` contains runtime artifacts, workspace memory, queues,
+  state, and run evidence.
 - Exactly one daemon may own one workspace at a time via `state/runtime_daemon.lock.json`.
 - A second daemon in the same workspace fails fast.
 - Different workspaces can run independent daemons concurrently.
@@ -42,6 +46,28 @@ Managed workspaces initialized with older packaged assets may need
 `millrace upgrade --apply`, a fresh compile, or reinitialization before daemon
 startup. Stale compiled plans that omit required graph-authority metadata are
 expected to fail validation instead of being normalized by runtime fallbacks.
+
+`millrace-agents/workspace-map/index.md` is seeded starter/index guidance.
+The generated JSON/JSONL map outputs under
+`millrace-agents/workspace-map/generated/` plus
+`millrace-agents/workspace-map/manifest.json` are refreshable runtime
+artifacts. Curated pages under `millrace-agents/workspace-map/wiki/` are
+operator-maintained workspace memory; bootstrap and upgrade may seed missing
+starter pages, but should preserve local wiki edits. Stage-local
+`history_entry.json` artifacts are proposals from a run. The runtime owns the
+canonical history-log append/render path and applies valid proposals after
+stage completion. `millrace-agents/MILLRACE.md` is seeded as shared
+instructions; the runtime wrapper includes it when stages run, then the file
+is preserved as operator-owned local workspace guidance rather than being
+duplicated inside entrypoint-local markdown.
+
+Idea intake now starts at `millrace-agents/intake/ideas/inbox/`. Runtime
+normalization preserves durable source markdown in
+`millrace-agents/intake/sources/idea/`, writes normalized metadata JSON under
+`millrace-agents/intake/ideas/normalized/`, and archives consumed inputs.
+Legacy watcher-style idea files remain accepted for compatibility and are
+archived or diagnosed through the legacy archive/invalid paths rather than
+becoming the preferred intake surface.
 
 ## Canonical Artifact Model
 
@@ -163,12 +189,13 @@ the generic interpreter or its declared adapter.
 ## Module Topology
 
 - `src/millrace_ai/workspace/paths.py`: workspace path contract for the `millrace-agents` tree.
-- `src/millrace_ai/workspace/bootstrap_files.py`: default bootstrap payload construction for state, status, config, and recovery-counter files.
+- `src/millrace_ai/workspace/bootstrap_files.py`: default bootstrap payload construction for state, status, config, recovery-counter, shared-instructions, and workspace-map starter wiki files.
 - `src/millrace_ai/workspace/asset_deployment.py`: packaged runtime asset source resolution and deployment into initialized workspaces.
 - `src/millrace_ai/workspace/initialization.py`: explicit `millrace init` workspace baseline orchestration and the `bootstrap_workspace` compatibility alias.
 - `src/millrace_ai/workspace/baseline.py`: managed baseline manifests and upgrade classification.
 - `src/millrace_ai/workspace/work_documents.py`: headed markdown parsing/serialization for task/probe/spec/incident/learning-request documents.
 - `src/millrace_ai/workspace/queue_store.py`: queue claim/transition/requeue facade for markdown documents; `queue_selection.py` quarantines matching Arbiter-authored repeated-remediation incident markdown unless it carries runtime-created provenance.
+- `src/millrace_ai/workspace/idea_sources.py`: runtime-owned idea intake helpers stage operator input under `millrace-agents/intake/ideas/inbox/`, preserve durable source markdown under `millrace-agents/intake/sources/idea/`, write normalized metadata under `millrace-agents/intake/ideas/normalized/`, archive consumed legacy inbox files under `millrace-agents/intake/ideas/archived/legacy/`, and capture invalid legacy markdown under `millrace-agents/intake/ideas/invalid/` with diagnostics.
 - `src/millrace_ai/workspace/work_item_adapters.py`: family-aware document
   adapters for built-in queue work documents.
 - `src/millrace_ai/workspace/queue_lifecycle.py`: interpreter that applies

@@ -171,7 +171,7 @@ Fallback paths:
 - `millrace-agents/runs/latest/planner_summary.md`
 
 History requirements:
-- prepend a concise planning summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise planning summary
 
 ## Legal Terminal Results
 
@@ -198,12 +198,13 @@ Do not stop merely because:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - the active planning input assigned by the runtime at request-provided `active_work_item_path`
 - enough repo context to understand what already exists and what the input is asking for
 
 ## Useful Context If Helpful
 
-- `millrace-agents/outline.md`
+- `millrace-agents/workspace-map/index.md`
 - `README.md` when present at repo root
 - closely related specs under `millrace-agents/specs/queue/`, `millrace-agents/specs/active/`, and `millrace-agents/specs/done/` for collision awareness
 - request-provided `runtime_snapshot_path` when active context matters

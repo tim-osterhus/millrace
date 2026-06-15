@@ -54,7 +54,7 @@ The troubleshoot report must capture:
 - recommended next action
 
 History requirements:
-- prepend a concise troubleshoot summary entry to `millrace-agents/historylog.md`
+- write a run-local `history_entry.json` proposal containing a concise troubleshoot summary
 
 ## Legal Terminal Results
 
@@ -83,6 +83,7 @@ Do not stop merely because:
 
 ## Minimum Required Context
 
+- shared instructions listed in this request
 - the current failure evidence assigned by the runtime
 - request-provided `runtime_snapshot_path`
 - request-provided `runtime_error_code` and `runtime_error_report_path` when this repair was spawned by a runtime-owned exception
@@ -93,7 +94,7 @@ Do not stop merely because:
 
 - request-provided `summary_status_path`
 - request-provided `runtime_error_catalog_path` when `runtime_error_code` needs interpretation
-- `millrace-agents/historylog.md`
+- `millrace-agents/history-log/latest.md`
 - `README.md` when present at repo root
 - recent checker or fixer artifacts when they explain the blocker pattern
 - broader diagnostics only if current-run evidence is insufficient
