@@ -942,14 +942,13 @@ first. The main operator surfaces are:
 - `millrace skills ...`
 - `millrace upgrade`
 - `millrace doctor`
-- `millrace-web serve` from the separate `millrace-web` package
 
 Use `status` for current runtime snapshot and closure visibility, `queue` for
 managed work documents, `runs` for post-run artifacts, `compile` for frozen
 structure, `config` and `modes` for selected runtime policy, `approvals` for
 capability-gated stages, `skills` for installed/downloadable skill workflows,
-`doctor` for integrity problems, and `millrace-web` for read-only local
-dashboard inspection.
+`doctor` for integrity problems, and run/trace commands for read-only local
+inspection.
 
 ## Source Layout And Compatibility Facades
 
@@ -974,10 +973,6 @@ The most important package boundaries are:
   result application
 - `workspace/` for path models, initialization/bootstrap, asset deployment,
   queue stores, work-document parsing, family adapters, and source-state files
-
-The optional dashboard is intentionally outside the base runtime package under
-`packages/millrace-web/`. It depends on `millrace-ai`, serves read-only state,
-and does not own daemon mutation.
 
 For the full source ownership map, use `docs/source-package-map.md`.
 

@@ -29,6 +29,8 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Changed
 
+- Removed the `millrace-web` sidecar package and its release/CI smoke paths so
+  the repository ships only the base `millrace-ai` runtime package.
 - Tightened Arbiter closure freshness discipline: Arbiter prompts now require
   reading the runtime-authored freshness window before old verdict/report
   artifacts, per-criterion evidence provenance, and runtime-owned closure
@@ -150,8 +152,7 @@ This file starts at `0.13.0`, the current documented public baseline.
   implementation detail into the technical docs.
 - Updated the technical overview and graph/runtime/operator docs for Blueprint
   Planning, JSON-backed Blueprint drafts, stale-plan refusal, mode-local model
-  aliases, `millrace-web`, current operator surfaces, and the current source
-  ownership map.
+  aliases, current operator surfaces, and the current source ownership map.
 
 ### Fixed
 

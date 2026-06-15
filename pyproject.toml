@@ -23,12 +23,9 @@ millrace = "millrace_ai.cli:main"
 
 [project.optional-dependencies]
 dev = [
-  "fastapi>=0.115,<1",
-  "httpx>=0.27,<1",
   "mypy>=1.11,<2",
   "pytest>=8,<9",
   "ruff>=0.11,<1",
-  "uvicorn>=0.30,<1",
 ]
 
 [tool.setuptools.dynamic]

@@ -199,11 +199,7 @@ non-blocking Learning work; Planning and Execution do not wait on Librarian.
    Use `millrace compile graph --workspace <workspace>` when you need the legal
    compiled topology, and `millrace runs trace <run_id> --workspace <workspace>`
    when you need the graph-shaped path one concrete run followed.
-9. For a browser dashboard, install the separate optional `millrace-web`
-   package and run `millrace-web serve --workspace <workspace>`. Use Detail for
-   dense state inspection and Flow for visual plane/lane monitoring. Treat it
-   as read-only observability, not as a control surface.
-10. Use `millrace skills ...` commands only for the optional skills workflow and
+9. Use `millrace skills ...` commands only for the optional skills workflow and
    learning-plane skill requests; ordinary task intake still belongs in
    `millrace queue ...`.
 
@@ -441,8 +437,6 @@ millrace config show --workspace <workspace>
 millrace config validate --workspace <workspace>
 millrace config reload --workspace <workspace>
 millrace doctor --workspace <workspace>
-millrace-web serve --workspace <workspace>
-millrace-web serve --workspace <workspace-a> --workspace <workspace-b> --view flow
 ```
 
 ### Self-Contained Intake Rule
@@ -516,17 +510,6 @@ Important monitoring note:
   still inspectable through stage-result fallback derivation.
 - `millrace run daemon --monitor-log <path>` writes basic monitor output to a
   file; combine it with `--monitor none` for quiet foreground operation
-- optional local dashboard monitoring lives in the separate `millrace-web`
-  package: install it separately and run
-  `millrace-web serve --workspace <workspace>`. It binds to
-  `127.0.0.1:8765` by default, accepts repeated `--workspace` options, and
-  supports `--view detail|flow` plus `--poll-interval-seconds <seconds>`.
-  Detail is the dense operator view for current runtime state, queues, recent
-  runs, artifacts, compiled plan, Arbiter, and usage governance. Flow is the
-  visual plane/lane view over the same read-only DTOs. `millrace-web` does not
-  ship inside `millrace-ai`, does not acquire daemon ownership locks, does not
-  expose queue/control mutation routes, and must not be treated as a runtime
-  control surface.
 - `millrace doctor` is the quick integrity check for mode assets and resolved
   runner posture, including missing harness binaries and closure lineage drift
 - `millrace status` exposes `pause_sources` and usage-governance blockers when

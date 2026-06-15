@@ -21,7 +21,6 @@ source boundaries change.
 | Arbiter and completion behavior | `docs/runtime/millrace-arbiter-and-completion-behavior.md` | `docs/runtime/millrace-runtime-architecture.md`, `docs/runtime/millrace-modes-and-loops.md` |
 | Runtime error codes and recovery classes | `docs/runtime/millrace-runtime-error-codes.md` | planned `docs/maintenance/recovery-status-doctor-runner-contracts.md`, `docs/skills/millrace-ops-agent-manual/SKILL.md` |
 | CLI command surface | `docs/runtime/millrace-cli-reference.md` | `docs/skills/millrace-ops-agent-manual/SKILL.md` |
-| Web dashboard sidecar | `packages/millrace-web/README.md` | `docs/source-package-map.md`, `docs/runtime/millrace-compiled-stage-graphs-and-run-traces.md` |
 | Operator manual | `docs/skills/millrace-ops-agent-manual/SKILL.md` | `docs/runtime/millrace-cli-reference.md`, `docs/runtime/millrace-runtime-error-codes.md` |
 | Source package map | `docs/source-package-map.md` | `docs/maintenance/codebase-stewardship.md`, `docs/maintenance/refactor-candidate-register.md` |
 | Release verification | `docs/adr/0004-release-verification-contract.md` | `docs/source-package-map.md`, `docs/runtime/README.md`, planned `docs/maintenance/release-readiness-maintainability-refactor.md` |

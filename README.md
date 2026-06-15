@@ -89,7 +89,8 @@ Millrace turns large AI-assisted software work into explicit runtime state:
 - **Closure:** work does not close because an agent says it is done. Arbiter closure runs only when the relevant lineage has no queued, active, or blocked work left.
 - **Inspection:** status, monitor output, run artifacts, traces, compile diagnostics, and CLI commands make the runtime state visible after each handoff.
 
-The base package is intentionally local and lightweight. Optional surfaces, such as the read-only dashboard, ship separately.
+The base package is intentionally local and lightweight. Runtime observation is
+kept in CLI/status/run/trace surfaces rather than a bundled web dashboard.
 
 ## The Runtime Model
 
@@ -178,17 +179,6 @@ millrace run daemon --monitor basic --workspace "$WORKSPACE"
 ```
 
 The default daemon is quiet. `--monitor basic` prints a compact human-facing stream and throttles repeated `idle reason=no_work` lines to a long heartbeat so idle daemons do not flood logs. Durable `runtime_tick_idle` records are throttled separately and default to a 6-hour heartbeat.
-
-## Optional Dashboard
-
-`millrace-web` is a separate package. It serves a read-only local dashboard with Detail and Flow views over one or more workspaces.
-
-```bash
-pip install millrace-web
-millrace-web serve --workspace "$WORKSPACE"
-```
-
-The dashboard observes workspace state. It does not own the daemon, mutate queues, or replace CLI control commands.
 
 ## Operator Surface
 

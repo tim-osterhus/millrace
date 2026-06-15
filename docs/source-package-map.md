@@ -44,10 +44,8 @@ adapter modules.
   `tests/cli/`, `tests/compilation/`, `tests/config/`, `tests/runners/`,
   `tests/runtime/`, `tests/workspace/`, and `tests/integration/`
 - the package entrypoints are `src/millrace_ai/__main__.py` and the `src/millrace_ai/cli/` package
-- optional web dashboard code lives under `packages/millrace-web/` as a
-  separate source distribution with its own `pyproject.toml`, `millrace_web`
-  package, tests, changelog, and README; it is not imported by or packaged into
-  the base `millrace-ai` wheel
+- the repository no longer ships a web dashboard sidecar; runtime observation
+  lives in CLI/status/run/trace surfaces owned by the base package
 
 ## Package Ownership Snapshot
 

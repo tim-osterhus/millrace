@@ -350,7 +350,7 @@ class RuntimeSnapshot(ContractModel):
 
         # Derive legacy plane-keyed compat from canonical surfaces when
         # the canonical surface is populated.  This keeps older consumers
-        # (monitor, web dashboard, CLI) correct while the runtime writes
+        # (monitor, CLI, external observers) correct while the runtime writes
         # only canonical surfaces going forward.
         self._project_canonical_into_legacy_compat()
 

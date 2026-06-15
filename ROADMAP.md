@@ -50,8 +50,9 @@ loop engineering contracts:
 - opt-in Blueprint Planning that decomposes a spec into strict draft packets,
   critiques Blueprint plans before task promotion, and keeps implementation
   inside the Execution plane
-- optional local observability surfaces that make workspace state visible
-  without adding runtime authority or weight to the base deployment package
+- local CLI/status/run/trace observability surfaces that make workspace state
+  visible without adding runtime authority or weight to the base deployment
+  package
 - hot-swappable model assignment aliases so operators can change model/depth
   policy through compiler-owned config without editing every stage binding
 - Arbiter closure freshness windows, criterion-level evidence provenance, and
@@ -202,17 +203,15 @@ Expected user impact:
 - a simple operator choice between standard and integrated Codex modes instead
   of opaque conditional routing heuristics
 
-### Optional Web Observability
+### Local Inspection Surfaces
 
-`millrace-web` is now a separate optional distribution for local read-only
-workspace observation. The active direction is to keep Detail and Flow views
-grounded in runtime-owned state while preserving the base `millrace-ai` wheel as
-a lightweight runtime package.
+Millrace no longer ships a web dashboard sidecar. The active direction is to
+keep local inspection grounded in CLI/status/run/trace surfaces that read
+runtime-owned state without adding a second package or control layer.
 
-Flow should render compiled stage graph topology as the stable lane structure
-and overlay active runtime state plus recent run-trace outcomes. It must remain
-read-only unless a future control surface is explicitly routed through the same
-supported runtime control APIs as the CLI.
+Compiled graph exports and run traces should remain machine-readable enough
+for future external observers, but mutation authority must continue to route
+through supported runtime APIs.
 
 Expected user impact:
 
@@ -357,8 +356,8 @@ when needed to isolate compiler/runtime regressions from runner-specific issues.
 ### Operator Diagnostics
 
 The operator surface should keep improving around `doctor`, `status`,
-`status watch`, `runs ls`, `runs show`, `runs tail`, compile diagnostics,
-runner artifacts, and the optional read-only web dashboard.
+`status watch`, `runs ls`, `runs show`, `runs tail`, compile diagnostics, and
+runner artifacts.
 
 The goal is enough evidence to answer:
 

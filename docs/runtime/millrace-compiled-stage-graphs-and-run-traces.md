@@ -73,18 +73,9 @@ Trace writing is best-effort and runtime-owned. Stage workers do not write
 traces directly, and trace data is never used as a second source of routing
 truth.
 
-## Web UI Use
+## Read-Only Inspection
 
-The optional `millrace-web` package uses the same graph and trace readers:
-
-- `/api/workspaces/<workspace_id>/compiled-plan/graphs` returns compiled graph
-  exports.
-- `/api/workspaces/<workspace_id>/runs/<run_id>/trace` returns a compact run
-  trace summary with terminal-action/lifecycle/runtime-operation provenance
-  when available.
-- The Flow view renders compiled topology as the stable lane structure, orders
-  nodes from the compiled graph, and overlays active runtime state plus recent
-  trace outcomes and terminal-action/lifecycle tooltips when available.
-
-The dashboard remains read-only. It does not acquire the daemon ownership lock
-and does not expose queue or control mutation routes.
+Compiled graph exports and run traces are read-only inspection surfaces. They
+do not acquire the daemon ownership lock, mutate queues, or influence runtime
+routing. Use the CLI commands above when an operator or external tool needs to
+inspect legal topology or one concrete run path.

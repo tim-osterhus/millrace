@@ -111,8 +111,8 @@ runtime events.
 - `millrace-agents/state/planning_status.md`
 
 Runtime events are stored in append-only JSONL for auditability. Normal
-status, closure, and web-dashboard views should use the streaming, recent-tail,
-or latest-event helpers in `src/millrace_ai/workspace/events.py` so routine
+status, closure, and operator-inspection views should use the streaming,
+recent-tail, or latest-event helpers in `src/millrace_ai/workspace/events.py` so routine
 operator views stay bounded as the log grows. `read_runtime_events()` remains
 available for explicit audit/debug workflows that intentionally load the full
 history.
@@ -366,10 +366,6 @@ the generic interpreter or its declared adapter.
   registered extension status projections, text rendering, and JSON payload
   rendering. `collection.py` now uses bounded latest-event lookup for latest
   operator-intervention tracking.
-- `packages/millrace-web/src/millrace_web/services/event_stream.py`: bounded
-  recent-tail event summaries and SSE polling, with workspace/time sorting
-  before idle-noise suppression and deduping of repeated `idle` /
-  `runtime_tick_idle reason=no_work` records on normal polls.
 - `src/millrace_ai/cli/runs_view.py`: persisted run-list loading and line rendering.
 - `src/millrace_ai/cli/config_view.py`: config-show state loading and line rendering.
 - `src/millrace_ai/cli/compile_view.py`: compile diagnostics and compile-show line rendering.
