@@ -6,6 +6,11 @@ This document describes the shipped completion model for modes that select
 `lad_codex_integrated`, `learning_lad_codex_integrated`, `blueprint_lad_codex`,
 and `blueprint_learning_lad_codex`.
 
+This is a workflow-specific completion model, not a requirement for every
+Millrace loop. Millrace can run other workflow configurations with different
+completion rules as long as those rules are explicit, compiled, and
+inspectable.
+
 Millrace no longer treats backlog drain as automatic completion. When a root
 lineage has an open closure target and no queued, active, or blocked work
 remains for that lineage, the compiled planning-loop `completion_behavior`

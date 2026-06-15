@@ -22,7 +22,7 @@ mappings, use `../graphs/config-mapping.md`.
   including idea-intake normalization and legacy compatibility, queue
   selection, runner requests, artifacts, result normalization, and durable
   runtime mutation.
-- `millrace-arbiter-and-completion-behavior.md`: closure-target lineage model, Arbiter artifacts, compiler-driven backlog-drain behavior, and the shipped broad-audit posture used when narrow evidence is not enough.
+- `millrace-arbiter-and-completion-behavior.md`: closure-target lineage model, Arbiter artifacts, compiler-driven backlog-drain behavior, and the shipped broad-audit posture used by closure-capable LAD and Blueprint Planning modes when narrow evidence is not enough.
 - `millrace-cli-reference.md`: current CLI command surface, aliases, and operator-facing command groups.
 - `millrace-usage-governance.md`: shipped v1 default-off runtime-owned usage accounting, automatic pause/resume behavior, subscription telemetry, config-reload next-tick behavior, and operator visibility.
 - `millrace-execution-capabilities.md`: typed execution capability grants, runtime pre-dispatch gating, approval-required grants, advisory enforcement language, and inspection output.
@@ -72,7 +72,7 @@ write location.
 ## Suggested Reading Order
 
 - Start with `millrace-runtime-architecture.md` if you need the overall runtime model.
-- Read `millrace-arbiter-and-completion-behavior.md` next if you need to understand how backlog drain now reaches true completion.
+- Read `millrace-arbiter-and-completion-behavior.md` next if you need the Arbiter-style completion model used by closure-capable LAD and Blueprint Planning modes.
 - Use `millrace-cli-reference.md` if you need commands.
 - Use `millrace-compiled-stage-graphs-and-run-traces.md` when you need to distinguish legal compiled topology from what one concrete run actually did.
 - Use `millrace-usage-governance.md` before enabling automatic runtime pause/resume rules for token or subscription quota protection.
