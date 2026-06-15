@@ -70,6 +70,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Fixed
 
+- Fixed compiled-plan currentness so persisted plans missing scheduler or
+  selected recovery-policy authority are treated as stale and recompiled
+  instead of being reused as incomplete modern plans.
 - Fixed installed-wheel smoke failures by declaring `packaging>=24,<27` as a
   runtime dependency for extension validation's `packaging.version` import.
 - Fixed daemon reconciliation so a lane's persisted active-run ownership is not

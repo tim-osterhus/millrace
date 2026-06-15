@@ -51,7 +51,8 @@ That compiled plan freezes:
   learning target-stage routing, recovery fallback routing,
   backpressure/deferral policy, predicate-backed rules, foreground
   ordering, completion/closure priority fallback, learning dispatch, and rule
-  priority
+  priority, plus whether the scheduler authority came from a registry asset or
+  was compiler-generated
 - workflow primitives: work-item families, document adapters, queue claim
   policies, scheduler policies, terminal actions, lifecycle mutation plans,
   runtime effect handlers, runtime effect operations, runtime effect runners,
@@ -307,8 +308,9 @@ inspection output.
 - a persisted `compiled_plan.json` exists
 - the plan's stored `compile_input_fingerprint` matches current expected inputs
 - the plan still carries required workflow authority, including the required
-  workflow-authority asset families in `resolved_assets` and non-empty compiled
-  maps such as `runtime_effect_primitives_by_id`
+  workflow-authority asset families in `resolved_assets`, scheduler authority
+  metadata, selected recovery-policy ids and definitions, and non-empty
+  compiled maps such as `runtime_effect_primitives_by_id`
 
 `stale` means:
 

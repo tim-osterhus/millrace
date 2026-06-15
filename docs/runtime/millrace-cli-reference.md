@@ -850,7 +850,9 @@ Entrypoint advisory model:
 Currentness interpretation:
 
 - `current`: persisted compiled plan matches the current mode/config/assets fingerprint
-- `stale`: persisted compiled plan exists but does not match current compile inputs
+- `stale`: persisted compiled plan exists but does not match current compile
+  inputs, or it is missing required workflow authority such as scheduler or
+  selected recovery-policy metadata
 - `missing`: no persisted compiled plan exists yet
 
 ### `millrace compile graph [--mode MODE_ID]`
