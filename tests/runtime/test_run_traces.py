@@ -117,6 +117,43 @@ def test_inspect_run_trace_derives_fallback_from_stage_results(tmp_path: Path) -
     assert "derived from stage result artifacts" in trace.notes
 
 
+def test_inspect_run_trace_ignores_history_entry_sidecars(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-history-sidecars"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+    stage_result = StageResultEnvelope(
+        run_id="run-history-sidecars",
+        plane="execution",
+        stage=ExecutionStageName.BUILDER,
+        node_id="builder",
+        stage_kind_id="builder",
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.BUILDER_COMPLETE,
+        result_class=ResultClass.SUCCESS,
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        metadata={"request_id": "request-001", "compiled_plan_id": "plan-001"},
+        started_at=NOW,
+        completed_at=NOW + timedelta(seconds=2),
+        duration_seconds=2,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (stage_results_dir / "request-001.history_entry.json").write_text(
+        '{"summary": "operator-readable sidecar"}\n',
+        encoding="utf-8",
+    )
+
+    trace = inspect_run_trace(run_dir)
+
+    assert len(trace.nodes) == 1
+    assert trace.nodes[0].trace_node_id == "request-001"
+    assert not any("history_entry" in note for note in trace.notes)
+
+
 def test_runtime_tick_writes_run_trace_node_and_router_edge(tmp_path: Path) -> None:
     paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
     QueueStore(paths).enqueue_task(_task_doc("task-001"))

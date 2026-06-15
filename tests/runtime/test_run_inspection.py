@@ -207,6 +207,41 @@ def test_inspect_run_marks_malformed_stage_result_json(tmp_path: Path) -> None:
     assert "invalid JSON" in summary.notes[0]
 
 
+def test_inspect_run_ignores_history_entry_sidecars(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-history-sidecars"
+    stage_results_dir = run_dir / "stage_results"
+    stage_results_dir.mkdir(parents=True, exist_ok=True)
+    stage_result = StageResultEnvelope(
+        run_id="run-history-sidecars",
+        plane="execution",
+        stage="builder",
+        work_item_kind="task",
+        work_item_id="task-001",
+        terminal_result="BUILDER_COMPLETE",
+        result_class="success",
+        summary_status_marker="### BUILDER_COMPLETE",
+        success=True,
+        metadata={"request_id": "request-001"},
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    (stage_results_dir / "request-001.json").write_text(
+        stage_result.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (stage_results_dir / "request-001.history_entry.json").write_text(
+        '{"summary": "operator-readable sidecar"}\n',
+        encoding="utf-8",
+    )
+
+    summary = inspect_run(run_dir)
+
+    assert summary.status == "valid"
+    assert summary.artifact_status == "valid"
+    assert [stage.request_id for stage in summary.stage_results] == ["request-001"]
+    assert summary.notes == ()
+
+
 def test_list_runs_keeps_incomplete_and_malformed_runs_visible(tmp_path: Path) -> None:
     paths = bootstrap_workspace(workspace_paths(tmp_path / "workspace"))
     valid_run_dir = paths.runs_dir / "run-b"

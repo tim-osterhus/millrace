@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from pydantic import ValidationError
 
@@ -55,6 +56,13 @@ from .validation import (
 )
 
 _ModelT = TypeVar("_ModelT")
+
+
+@dataclass(frozen=True)
+class _SchedulerPolicyBuildResult:
+    policy: WorkflowPlaneSchedulerPolicyDefinition
+    authority_kind: Literal["registry", "generated"]
+    selected_asset_id: str | None
 
 
 def compile_and_persist_workspace_plan(
@@ -203,15 +211,23 @@ def compile_compiled_run_plan(
     queue_claim_policies_by_plane = _map_queue_claim_policies_by_plane(
         workflow_primitives.queue_claim_policies
     )
-    scheduler_policy = _build_scheduler_policy(
+    scheduler_policy_result = _build_scheduler_policy(
         mode=mode,
         queue_claim_policies_by_plane=queue_claim_policies_by_plane,
         workflow_primitives=workflow_primitives,
     )
+    scheduler_policy = scheduler_policy_result.policy
     queue_claim_policies_by_plane = dict(scheduler_policy.claim_policies_by_plane)
     selected_recovery_policies = _mode_selected_recovery_policies(
         workflow_primitives.recovery_policies,
         mode.recovery_policy_ids,
+    )
+    selected_recovery_policies_by_id = _map_by_attr(
+        selected_recovery_policies,
+        "policy_id",
+    )
+    selected_recovery_policy_ids = tuple(
+        policy.policy_id for policy in selected_recovery_policies
     )
     request_context_profiles_by_id = _map_by_attr(
         workflow_primitives.request_context_profiles,
@@ -349,13 +365,7 @@ def compile_compiled_run_plan(
                     workflow_primitives.effect_validators,
                     "validator_id",
                 ),
-                "workflow_recovery_policies_by_id": _map_by_attr(
-                    _mode_selected_recovery_policies(
-                        workflow_primitives.recovery_policies,
-                        mode.recovery_policy_ids,
-                    ),
-                    "policy_id",
-                ),
+                "workflow_recovery_policies_by_id": selected_recovery_policies_by_id,
                 "runtime_failure_policies_by_id": _map_by_attr(
                     workflow_primitives.runtime_failure_policies,
                     "policy_id",
@@ -366,6 +376,9 @@ def compile_compiled_run_plan(
                     else None
                 ),
                 "scheduler_policy": scheduler_policy,
+                "scheduler_policy_authority_kind": scheduler_policy_result.authority_kind,
+                "selected_scheduler_policy_asset_id": scheduler_policy_result.selected_asset_id,
+                "selected_workflow_recovery_policy_ids": selected_recovery_policy_ids,
             },
         ),
         compile_input_fingerprint=compile_input_fingerprint,
@@ -440,18 +453,15 @@ def compile_compiled_run_plan(
             "primitive_id",
         ),
         runtime_effect_rules=workflow_primitives.runtime_effect_rules,
-        workflow_recovery_policies_by_id=_map_by_attr(
-            _mode_selected_recovery_policies(
-                workflow_primitives.recovery_policies,
-                mode.recovery_policy_ids,
-            ),
-            "policy_id",
-        ),
+        workflow_recovery_policies_by_id=selected_recovery_policies_by_id,
         runtime_failure_policies_by_id=_map_by_attr(
             workflow_primitives.runtime_failure_policies,
             "policy_id",
         ),
         scheduler_policy=scheduler_policy,
+        scheduler_policy_authority_kind=scheduler_policy_result.authority_kind,
+        selected_scheduler_policy_asset_id=scheduler_policy_result.selected_asset_id,
+        selected_workflow_recovery_policy_ids=selected_recovery_policy_ids,
         lane_conflict_policies_by_id={
             policy.policy_id: policy
             for policy in scheduler_policy.lane_conflict_policies
@@ -505,7 +515,7 @@ def _build_scheduler_policy(
     mode: ModeDefinition,
     queue_claim_policies_by_plane: dict[Plane, PlaneQueueClaimPolicyDefinition],
     workflow_primitives: object,
-) -> WorkflowPlaneSchedulerPolicyDefinition:
+) -> _SchedulerPolicyBuildResult:
     if mode.scheduler_policy_id is not None:
         policy_id = mode.scheduler_policy_id
         scheduler_policies_by_id = {
@@ -523,7 +533,11 @@ def _build_scheduler_policy(
                         )
                     }
                 )
-            return resolved
+            return _SchedulerPolicyBuildResult(
+                policy=resolved,
+                authority_kind="registry",
+                selected_asset_id=policy_id,
+            )
         raise CompilerValidationError(
             f"mode {mode.mode_id} references unknown scheduler policy: {policy_id}"
         )
@@ -561,15 +575,19 @@ def _build_scheduler_policy(
             lane_conflict_policies = _default_lane_conflict_policies(mode)
         else:
             lane_conflict_policies = ()
-        return base_policy.model_copy(
-            update={
-                "policy_id": auto_policy_id,
-                "concurrency_policy_id": (
-                    f"{mode.mode_id}.concurrency" if mode.concurrency_policy is not None else None
-                ),
-                "lane_conflict_policies": lane_conflict_policies,
-                "claim_policies_by_plane": queue_claim_policies_by_plane,
-            }
+        return _SchedulerPolicyBuildResult(
+            policy=base_policy.model_copy(
+                update={
+                    "policy_id": auto_policy_id,
+                    "concurrency_policy_id": (
+                        f"{mode.mode_id}.concurrency" if mode.concurrency_policy is not None else None
+                    ),
+                    "lane_conflict_policies": lane_conflict_policies,
+                    "claim_policies_by_plane": queue_claim_policies_by_plane,
+                }
+            ),
+            authority_kind="registry",
+            selected_asset_id=default_policy_id,
         )
 
     lanes = tuple(
@@ -593,18 +611,22 @@ def _build_scheduler_policy(
         p for p in (Plane.PLANNING, Plane.EXECUTION, Plane.LEARNING)
         if p in mode.loop_ids_by_plane
     )
-    return WorkflowPlaneSchedulerPolicyDefinition(
-        policy_id=auto_policy_id,
-        plane_order=tuple(mode.loop_ids_by_plane),
-        concurrency_policy_id=(
-            f"{mode.mode_id}.concurrency" if mode.concurrency_policy is not None else None
+    return _SchedulerPolicyBuildResult(
+        policy=WorkflowPlaneSchedulerPolicyDefinition(
+            policy_id=auto_policy_id,
+            plane_order=tuple(mode.loop_ids_by_plane),
+            concurrency_policy_id=(
+                f"{mode.mode_id}.concurrency" if mode.concurrency_policy is not None else None
+            ),
+            lanes=lanes,
+            claim_policies_by_plane=queue_claim_policies_by_plane,
+            completion_check_order=tuple(mode.loop_ids_by_plane),
+            experimental_multi_lane=False,
+            lane_conflict_policies=lane_conflict_policies,
+            foreground_order=foreground_order,
         ),
-        lanes=lanes,
-        claim_policies_by_plane=queue_claim_policies_by_plane,
-        completion_check_order=tuple(mode.loop_ids_by_plane),
-        experimental_multi_lane=False,
-        lane_conflict_policies=lane_conflict_policies,
-        foreground_order=foreground_order,
+        authority_kind="generated",
+        selected_asset_id=None,
     )
 
 

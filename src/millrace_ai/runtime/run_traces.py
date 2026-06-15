@@ -78,7 +78,7 @@ def derive_run_trace_from_stage_results(
 ) -> RunTraceGraph:
     stage_results_dir = run_dir / "stage_results"
     stage_result_paths = (
-        sorted(path for path in stage_results_dir.iterdir() if path.suffix == ".json")
+        sorted(path for path in stage_results_dir.iterdir() if is_stage_result_artifact_path(path))
         if stage_results_dir.is_dir()
         else []
     )
@@ -133,6 +133,10 @@ def derive_run_trace_from_stage_results(
         notes=tuple(collected_notes),
         generated_at=datetime.now(timezone.utc),
     )
+
+
+def is_stage_result_artifact_path(path: Path) -> bool:
+    return path.suffix == ".json" and not path.name.endswith(".history_entry.json")
 
 
 def upsert_stage_result_trace_node(

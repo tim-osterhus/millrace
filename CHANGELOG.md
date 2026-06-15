@@ -13,6 +13,8 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-15
+
 ### Added
 
 - Added conceptual config mappings (`config-mapping.md`) documenting the five
@@ -29,15 +31,17 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Changed
 
-- Removed the `millrace-web` sidecar package and its release/CI smoke paths so
-  the repository ships only the base `millrace-ai` runtime package.
+- Restored the optional `millrace-web` sidecar package and synchronized
+  release/CI smoke paths so `v0.21.0` publishes both `millrace-ai` and the
+  read-only local dashboard while keeping web dependencies out of the base
+  runtime package.
 - Tightened Arbiter closure freshness discipline: Arbiter prompts now require
   reading the runtime-authored freshness window before old verdict/report
   artifacts, per-criterion evidence provenance, and runtime-owned closure
   remediation enqueueing. Shipped closure-capable modes now assign Arbiter via
   an explicit high-depth model alias so missing or downgraded assignment is
   visible in compile diagnostics.
-- Made the pure graph-authority cleanup explicit as a breaking `0.20.x`
+- Made the pure graph-authority cleanup explicit as a breaking pre-1.0
   contract: runtime decisions require compiled graph, extension, policy,
   lifecycle, runtime-effect, queue-family, and artifact-contract metadata.
   Missing compiled policy now fails as an authority error instead of falling
@@ -48,7 +52,7 @@ This file starts at `0.13.0`, the current documented public baseline.
   removed, and fallback route reasons/classes derive from compiled `node_id`
   rather than `source_stage.value`.
 - Bounded routine runtime-event reads and idle-event growth: status, closure,
-  and web views now use streaming/recent/latest event helpers for normal
+  and inspection surfaces now use streaming/recent/latest event helpers for normal
   operation, while durable no-work idle events are transition and heartbeat
   records instead of one append per idle tick. The default durable idle-event
   heartbeat is 6 hours, with explicit shorter operator configuration still
@@ -140,9 +144,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Added
 
-- Added `efficient_learning_codex`, a learning-enabled Codex mode that keeps
+- Added `efficient_learning_lad_mixed`, a learning-enabled LAD mode that keeps
   standard Execution, Planning, and Learning topology, leaves Integrator off by
-  default, and carries a mode-local stage alias profile for mixed model depth.
+  default, and carries a mode-local mixed Codex/Pi stage alias profile.
 
 ### Changed
 
@@ -1122,7 +1126,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.20.3...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/tim-osterhus/millrace/compare/v0.20.3...v0.21.0
 [0.20.3]: https://github.com/tim-osterhus/millrace/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/tim-osterhus/millrace/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/tim-osterhus/millrace/compare/v0.20.0...v0.20.1

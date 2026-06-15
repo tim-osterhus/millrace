@@ -113,11 +113,14 @@ The compiled-plan router path uses:
   for `REQUEST_COMPLETE_SOURCE` and `REQUEST_BLOCK_SOURCE`, while repair-route
   exceptions remain failure-policy-owned.
 - `runtime/work_item_transitions.py`, `runtime/recon_transitions.py`,
-  `runtime/effects/operation_runners/`, `runtime/closure_boundary.py`,
-  `runtime/closure_transitions.py`, `runtime/result_counters.py`,
-  `runtime/stage_result_persistence.py`, `runtime/run_traces.py`,
-  `runtime/snapshot_state.py`, `workspace/history_log.py`, and
-  `workspace/*_state.py` own the durable mutations for their domains.
+  `runtime/closure_boundary.py`, `runtime/closure_transitions.py`,
+  `runtime/result_counters.py`, `runtime/stage_result_persistence.py`,
+  `runtime/run_traces.py`, `runtime/snapshot_state.py`,
+  `workspace/history_log.py`, and `workspace/*_state.py` own generic durable
+  mutations for their domains. Blueprint durable mutation code lives under
+  `extensions/builtin/blueprint/operation_runners/` and is selected through
+  compiled runtime-effect metadata plus extension-loaded handler
+  registrations.
   `runtime/result_application.py` delegates accepted `history_entry.json`
   proposals to `workspace/history_log.py`, which owns append/duplicate/
   conflict handling and deterministic rendering for `history-log/`;
@@ -223,16 +226,18 @@ based on compiled runner identity:
 **Legacy handler-backed path** (`runner_id = "legacy_python_handler"`):
 - All six shipped runtime-effect operations (Planner disposition, five
   Blueprint operations) use this runner.
-- Handler callables are registered in `runtime/effects/legacy.py` and
-  executed directly. The handler registry in `runtime/effects/registry.py`
-  provides operation-id-to-handler lookup.
+- The generic Planner handler is registered in `runtime/effects/legacy.py`.
+  Blueprint handlers are registered by the Blueprint extension package. The
+  handler registry in `runtime/effects/registry.py` provides
+  operation-id-to-handler lookup.
 - `effect_execution.py:_handler_for_operation()` resolves handlers for
   legacy-runner operations through the registry; `_legacy_handler_id_for_
   operation()` maps operation IDs to legacy handler IDs for result
   annotation and failure-policy matching.
-- `runtime/effects/operation_runners/` contains the Python mutation code
-  for these handler-backed operations (Blueprint candidate evaluation,
-  Mechanic repair, etc.).
+- `extensions/builtin/blueprint/operation_runners/` contains the Python
+  mutation code for Blueprint handler-backed operations (candidate evaluation,
+  Mechanic repair, etc.); `runtime/effects/operation_runners/` contains shared
+  generic helper modules.
 
 ### Scheduler-policy authority
 
@@ -398,11 +403,11 @@ handoff artifacts and persists canonical Recon packets before enqueuing a
 generated task/spec, completing a no-op probe, or blocking the probe.
 `runtime/planner_effects.py`, `runtime/effect_execution.py`,
 `runtime/lifecycle_interpreter.py`, `runtime/work_item_transitions.py`, and
-Blueprint operation runners under `runtime/effects/operation_runners/` apply
-compiled Planning mutations. For runtime-effect results, `effect_execution.py`
-applies effect-rule-declared source completion/blocking lifecycle intent
-before queue mutation, while repair-route exceptions stay failure-policy-
-owned.
+extension-loaded Blueprint operation runners under
+`extensions/builtin/blueprint/operation_runners/` apply compiled Planning
+mutations. For runtime-effect results, `effect_execution.py` applies
+effect-rule-declared source completion/blocking lifecycle intent before queue
+mutation, while repair-route exceptions stay failure-policy-owned.
 `runtime/closure_boundary.py` opens a closure target when a root spec is
 claimed, snapshots canonical contracts through its internal
 `completion_behavior.py` implementation, and derives closure-blocking lineage
@@ -515,16 +520,15 @@ are stage artifacts only.
 Blueprint terminal results and metadata. Stage-result persistence records the
 normalized result before runtime effect application.
 
-**Runtime mutation owner:** `runtime/effects/operation_runners/` applies
-compiled Blueprint runtime operations: persist manifests/drafts, queue drafts,
-persist candidate packets, route rejected drafts back to Contractor, approve
-drafts, write promotion records, enqueue generated execution tasks, apply safe
-Mechanic repair actions, and block precise replay/partial-mutation failures.
+**Runtime mutation owner:**
+`extensions/builtin/blueprint/operation_runners/` applies compiled Blueprint
+runtime operations: persist manifests/drafts, queue drafts, persist candidate
+packets, route rejected drafts back to Contractor, approve drafts, write
+promotion records, enqueue generated execution tasks, apply safe Mechanic
+repair actions, and block precise replay/partial-mutation failures.
 `runtime/effect_execution.py` selects those operations by compiled operation id
-and runner id; legacy handler ids are compatibility aliases, not dispatch
-authority.
-`runtime/effects/operation_runners/` contains the Python executors for
-operations that still need file mutation code, and the retired
+and runner id plus extension-loaded handler registrations; legacy handler ids
+are compatibility aliases, not dispatch authority. The retired
 `workspace/blueprint_state.py` removal stub now points callers to
 `extensions/builtin/blueprint/state.py` and
 `extensions/builtin/blueprint/doctor.py` for Blueprint file layout helpers.

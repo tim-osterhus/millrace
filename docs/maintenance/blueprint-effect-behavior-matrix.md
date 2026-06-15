@@ -2,8 +2,9 @@
 
 This note records Blueprint runtime-effect behavior across the declarative
 runtime effect migration. The source of truth for actual mutation is now
-`src/millrace_ai/runtime/effects/operation_runners/`, selected through compiled
-operation assets and dispatched by `src/millrace_ai/runtime/effect_execution.py`.
+`src/millrace_ai/extensions/builtin/blueprint/operation_runners/`, selected
+through compiled operation assets, extension-loaded handler registrations, and
+dispatched by `src/millrace_ai/runtime/effect_execution.py`.
 Declared policy lives in
 `src/millrace_ai/assets/registry/runtime_effect_rules/blueprint_effect_rules.json`,
 and compatibility handler metadata lives in

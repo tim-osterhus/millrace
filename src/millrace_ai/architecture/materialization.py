@@ -269,6 +269,9 @@ class CompiledRunPlan(ArchitectureContractModel):
     runtime_failure_policies_by_id: dict[str, RuntimeFailurePolicyDefinition] = Field(default_factory=dict)
     runtime_effect_rules: tuple[RuntimeEffectRuleDefinition, ...] = ()
     scheduler_policy: WorkflowPlaneSchedulerPolicyDefinition | None = None
+    scheduler_policy_authority_kind: Literal["registry", "generated"] | None = None
+    selected_scheduler_policy_asset_id: str | None = None
+    selected_workflow_recovery_policy_ids: tuple[str, ...] | None = None
     lane_conflict_policies_by_id: dict[str, LaneConflictPolicyDefinition] = Field(default_factory=dict)
     workspace_schema_epoch: WorkspaceSchemaEpochDefinition | None = None
     compiled_at: datetime

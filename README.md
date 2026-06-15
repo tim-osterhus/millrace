@@ -32,10 +32,10 @@ side work. Millrace's job is different: it decides which bounded stage is
 allowed to run next, gives that stage a compiled contract, records the result,
 and keeps durable workspace state outside any one chat or terminal session.
 
-Status: Millrace is pre-1.0 and maintained. The current `0.20.x` line is still
-stabilizing, so pin patch versions when behavior matters.
+Status: Millrace is pre-1.0 and maintained. The current `0.21.x` line is still
+stabilizing, so pin minor or patch versions when behavior matters.
 
-Compatibility note: current `0.20.x` builds expect modern compiled-plan
+Compatibility note: current `0.21.x` builds expect modern compiled-plan
 metadata. Older workspaces may need `millrace upgrade --apply`, a fresh
 `millrace init`, or reinitialization before daemon startup will validate.
 
@@ -88,7 +88,14 @@ Millrace turns a governed agentic workflow into explicit runtime state:
 - **Inspection:** status, monitor output, run artifacts, traces, compile diagnostics, and CLI commands make runtime state visible after each handoff.
 
 The base package is intentionally local and lightweight. Runtime observation is
-kept in CLI/status/run/trace surfaces rather than a bundled web dashboard.
+available through CLI/status/run/trace surfaces, and the optional
+`millrace-web` sidecar provides a separate read-only local dashboard without
+adding web dependencies to `millrace-ai`.
+
+```bash
+pip install millrace-web
+millrace-web serve --workspace /path/to/workspace --view flow
+```
 
 ## The Runtime Model
 

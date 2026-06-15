@@ -24,7 +24,9 @@ Current public agent docs:
   should decide whether substantial work should enter Millrace or stay direct
 - `millrace-ops-agent-manual/SKILL.md`: how a dedicated ops agent should
   deploy, configure, monitor, and operate Millrace after Millrace is requested
-  or selected
+  or selected. The entry file is intentionally compact and links to
+  `millrace-ops-agent-manual/references/` for detailed command, monitoring,
+  recovery, mode/configuration, and verification guidance.
 - `millrace-loop-authoring/SKILL.md`: how to reason about loops, stages, modes, and
   compiler-valid authoring when extending Millrace
 

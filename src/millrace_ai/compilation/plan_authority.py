@@ -36,8 +36,45 @@ def has_required_workflow_authority(plan: CompiledRunPlan) -> bool:
     ):
         return False
 
+    if plan.scheduler_policy is None:
+        return False
+
     asset_families = {ref.asset_family for ref in plan.resolved_assets}
-    return _REQUIRED_WORKFLOW_AUTHORITY_ASSET_FAMILIES <= asset_families
+    if not _REQUIRED_WORKFLOW_AUTHORITY_ASSET_FAMILIES <= asset_families:
+        return False
+
+    asset_logical_ids = {ref.logical_id for ref in plan.resolved_assets}
+
+    if plan.scheduler_policy_authority_kind is None:
+        return False
+    if plan.scheduler_policy_authority_kind == "registry":
+        if not plan.selected_scheduler_policy_asset_id:
+            return False
+        if f"scheduler_policy:{plan.selected_scheduler_policy_asset_id}" not in asset_logical_ids:
+            return False
+    elif plan.selected_scheduler_policy_asset_id is not None:
+        return False
+
+    selected_recovery_policy_ids = plan.selected_workflow_recovery_policy_ids
+    if selected_recovery_policy_ids is None:
+        return False
+
+    selected_recovery_policy_id_set = set(selected_recovery_policy_ids)
+    if len(selected_recovery_policy_id_set) != len(selected_recovery_policy_ids):
+        return False
+
+    recovery_policy_id_set = set(plan.workflow_recovery_policies_by_id)
+    if recovery_policy_id_set != selected_recovery_policy_id_set:
+        return False
+
+    for policy_id in selected_recovery_policy_ids:
+        definition = plan.workflow_recovery_policies_by_id.get(policy_id)
+        if definition is None or definition.policy_id != policy_id:
+            return False
+        if f"workflow_recovery_policy:{policy_id}" not in asset_logical_ids:
+            return False
+
+    return True
 
 
 __all__ = ["has_required_workflow_authority"]

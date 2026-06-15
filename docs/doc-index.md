@@ -14,6 +14,8 @@ architecture material.
   runners, governance, and workspace lifecycle references.
 - `graphs/graphs-index.md`: shipped mode-to-plane graph configurations and
   per-plane graph references.
+- `../packages/millrace-web/docs/README.md`: optional read-only dashboard
+  sidecar command and API reference.
 
 ## Runtime References
 

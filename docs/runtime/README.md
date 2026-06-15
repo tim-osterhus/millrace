@@ -69,6 +69,22 @@ Legacy idea-file compatibility remains available so older watcher-style intake
 can still be normalized, archived, or diagnosed without becoming the preferred
 write location.
 
+## Optional Web Dashboard
+
+`millrace-web` is an optional separate package for read-only local workspace
+observation. It is not included in the base `millrace-ai` wheel and does not
+acquire daemon ownership locks or expose queue/control mutation routes.
+
+```bash
+pip install millrace-web
+millrace-web serve --workspace /path/to/workspace --view detail
+millrace-web serve --workspace /path/a --workspace /path/b --view flow
+```
+
+Use it when an operator wants a local Detail or Flow dashboard. Continue to use
+the CLI for authoritative runtime control, queue mutation, approvals,
+pause/resume/stop, and release/debug automation.
+
 ## Suggested Reading Order
 
 - Start with `millrace-runtime-architecture.md` if you need the overall runtime model.

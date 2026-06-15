@@ -6,6 +6,7 @@ from pathlib import Path
 
 from millrace_ai.architecture import CompiledRunPlan
 from millrace_ai.compilation.persistence import load_existing_plan
+from millrace_ai.compilation.plan_authority import has_required_workflow_authority
 from millrace_ai.compiler import compile_and_persist_workspace_plan, inspect_workspace_plan_currentness
 from millrace_ai.config import RuntimeConfig
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
@@ -227,8 +228,7 @@ def test_scheduler_policy_survives_disk_persistence(tmp_path: Path) -> None:
 
 
 def test_plan_without_scheduler_policy_loads_with_none_default(tmp_path: Path) -> None:
-    """A compiled plan serialized without scheduler_policy loads with
-    None default (backward compatibility)."""
+    """A historical plan missing scheduler_policy loads for diagnostics only."""
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
 
@@ -247,6 +247,209 @@ def test_plan_without_scheduler_policy_loads_with_none_default(tmp_path: Path) -
     loaded = load_existing_plan(compiled_plan_path)
     assert loaded is not None
     assert loaded.scheduler_policy is None
+    assert not has_required_workflow_authority(loaded)
+
+
+def test_plan_without_scheduler_authority_metadata_loads_with_none_default(
+    tmp_path: Path,
+) -> None:
+    """Historical plans missing scheduler authority metadata load but are stale."""
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="lad_codex",
+    )
+    assert outcome.diagnostics.ok is True
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("scheduler_policy_authority_kind", None)
+    payload.pop("selected_scheduler_policy_asset_id", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    loaded = load_existing_plan(compiled_plan_path)
+    assert loaded is not None
+    assert loaded.scheduler_policy_authority_kind is None
+    assert loaded.selected_scheduler_policy_asset_id is None
+    assert not has_required_workflow_authority(loaded)
+
+
+def test_plan_without_selected_recovery_policy_ids_loads_with_none_default(
+    tmp_path: Path,
+) -> None:
+    """Historical plans missing selected recovery ids load but are stale."""
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="recovery_heavy_millrace",
+    )
+    assert outcome.diagnostics.ok is True
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("selected_workflow_recovery_policy_ids", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    loaded = load_existing_plan(compiled_plan_path)
+    assert loaded is not None
+    assert loaded.selected_workflow_recovery_policy_ids is None
+    assert not has_required_workflow_authority(loaded)
+
+
+def test_currentness_marks_plan_without_scheduler_policy_stale(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="lad_codex",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("scheduler_policy", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="lad_codex",
+    )
+
+    assert currentness.state == "stale"
+    assert currentness.persisted_fingerprint == currentness.expected_fingerprint
+
+
+def test_currentness_marks_plan_without_scheduler_authority_metadata_stale(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="lad_codex",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("scheduler_policy_authority_kind", None)
+    payload.pop("selected_scheduler_policy_asset_id", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="lad_codex",
+    )
+
+    assert currentness.state == "stale"
+    assert currentness.persisted_fingerprint == currentness.expected_fingerprint
+
+
+def test_currentness_marks_plan_without_selected_recovery_policies_stale(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="recovery_heavy_millrace",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.selected_workflow_recovery_policy_ids
+    assert outcome.active_plan.workflow_recovery_policies_by_id
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload["workflow_recovery_policies_by_id"] = {}
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="recovery_heavy_millrace",
+    )
+
+    assert currentness.state == "stale"
+    assert currentness.persisted_fingerprint == currentness.expected_fingerprint
+
+
+def test_currentness_marks_plan_without_selected_recovery_policy_ids_stale(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    outcome = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="recovery_heavy_millrace",
+    )
+    assert outcome.diagnostics.ok is True
+    assert outcome.active_plan is not None
+    assert outcome.active_plan.selected_workflow_recovery_policy_ids
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("selected_workflow_recovery_policy_ids", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    currentness = inspect_workspace_plan_currentness(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="recovery_heavy_millrace",
+    )
+
+    assert currentness.state == "stale"
+    assert currentness.persisted_fingerprint == currentness.expected_fingerprint
+
+
+def test_compile_if_needed_recompiles_plan_without_scheduler_policy(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    bootstrap_workspace(workspace_root)
+
+    first = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="lad_codex",
+    )
+    assert first.active_plan is not None
+
+    compiled_plan_path = workspace_paths(workspace_root).state_dir / "compiled_plan.json"
+    payload = json.loads(compiled_plan_path.read_text(encoding="utf-8"))
+    payload.pop("scheduler_policy", None)
+    compiled_plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    second = compile_and_persist_workspace_plan(
+        workspace_root,
+        config=RuntimeConfig(),
+        requested_mode_id="lad_codex",
+        compile_if_needed=True,
+    )
+
+    assert second.active_plan is not None
+    assert second.active_plan.scheduler_policy is not None
+    loaded = load_existing_plan(compiled_plan_path)
+    assert loaded is not None
+    assert loaded.scheduler_policy is not None
 
 
 # ---------------------------------------------------------------------------

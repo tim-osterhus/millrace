@@ -205,20 +205,24 @@ Expected user impact:
 
 ### Local Inspection Surfaces
 
-Millrace no longer ships a web dashboard sidecar. The active direction is to
-keep local inspection grounded in CLI/status/run/trace surfaces that read
-runtime-owned state without adding a second package or control layer.
+Millrace keeps CLI/status/run/trace surfaces as the base runtime inspection
+contract and ships `millrace-web` as an optional read-only sidecar package for
+operators who want a local dashboard before richer external observer products
+are available. The sidecar remains separate from `millrace-ai` so web
+dependencies, static assets, and server code do not add weight to the base
+deployment.
 
 Compiled graph exports and run traces should remain machine-readable enough
-for future external observers, but mutation authority must continue to route
-through supported runtime APIs.
+for current and future external observers, but mutation authority must continue
+to route through supported runtime APIs.
 
 Expected user impact:
 
 - easier local inspection and demonstration of active workspace state
 - clearer separation between read-only observability and runtime control
 - no web dependencies, modules, or static assets in the base `millrace-ai`
-  deployment package
+  deployment package, even while the optional `millrace-web` sidecar remains
+  available
 
 ### Daemon Monitoring Follow-Through
 
@@ -233,7 +237,7 @@ Expected user impact:
 - fewer mismatches between live monitor output and persisted run/runtime
   artifacts
 - stable long-running daemon observation: live monitor output, durable idle
-  event writes, and web/status event reads should remain bounded during long
+  event writes, and status/closure event reads should remain bounded during long
   idle stretches
 
 ### Closure-Safe Handoff Reliability
@@ -316,7 +320,7 @@ Expected user impact:
 assets, runner contracts, compiler outputs, and documentation promises are
 stable enough to carry forward.
 
-After the post-0.20.3 generic-engine cleanup, the main validation work is to
+After the post-0.21.0 generic-engine cleanup, the main validation work is to
 prove the workflow primitive, lane, request-context, schema-epoch, Blueprint
 Planning, extension-boundary, and generic-router surfaces across longer real
 workspaces before declaring them stable. The release is allowed to break

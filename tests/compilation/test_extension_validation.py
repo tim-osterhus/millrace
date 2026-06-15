@@ -52,15 +52,39 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _compile_with_assets(tmp_path: Path, assets_root: Path):
+def _compile_with_assets(
+    tmp_path: Path,
+    assets_root: Path,
+    *,
+    requested_mode_id: str = "standard_plain",
+):
     workspace_root = tmp_path / "workspace"
     bootstrap_workspace(workspace_root)
     return compile_and_persist_workspace_plan(
         workspace_root,
         config=RuntimeConfig(),
-        requested_mode_id="standard_plain",
+        requested_mode_id=requested_mode_id,
         assets_root=assets_root,
     )
+
+
+def _force_generated_two_plane_scheduler_fixture(assets_root: Path) -> None:
+    scheduler_path = assets_root / "registry" / "scheduler_policies" / "default_two_plane.json"
+    payload = json.loads(scheduler_path.read_text(encoding="utf-8"))
+    for item in payload["definitions"]:
+        if item["policy_id"] != "default.two_plane":
+            continue
+        item["plane_order"] = ["execution"]
+        item["lanes"] = [
+            lane for lane in item["lanes"] if lane["plane"] == "execution"
+        ]
+        item["claim_policies_by_plane"] = {
+            "execution": item["claim_policies_by_plane"]["execution"]
+        }
+        item["completion_check_order"] = ["execution"]
+        item["foreground_order"] = ["execution"]
+        item["rules"] = []
+    scheduler_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 # ── data model tests ────────────────────────────────────────────────────────
@@ -1085,15 +1109,8 @@ class TestFullCompilationIntegration:
         assert outcome.diagnostics.ok
         assert outcome.active_plan is not None
 
-    @pytest.mark.xfail(
-        reason=(
-            "Remediation target: compiled-plan currentness does not yet treat "
-            "scheduler/recovery policy authority as required workflow authority."
-        ),
-        strict=True,
-    )
-    def test_compiled_plan_authority_requires_policy_surfaces(self, tmp_path: Path):
-        """A persisted plan missing compiled policy surfaces must not be reused."""
+    def test_compiled_plan_authority_requires_scheduler_policy(self, tmp_path: Path):
+        """A persisted plan missing compiled scheduler authority must not be reused."""
         assets_root = _copy_builtin_assets(tmp_path)
         outcome = _compile_with_assets(tmp_path, assets_root)
         assert outcome.active_plan is not None
@@ -1101,7 +1118,274 @@ class TestFullCompilationIntegration:
         stripped = outcome.active_plan.model_copy(
             update={
                 "scheduler_policy": None,
-                "recovery_policies": (),
+            }
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_accepts_auto_derived_scheduler_policy(
+        self,
+        tmp_path: Path,
+    ):
+        """Auto-derived scheduler policies use a registry asset as source authority."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="lad_codex",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.scheduler_policy is not None
+        assert outcome.active_plan.scheduler_policy.policy_id == "lad_codex.scheduler"
+        assert outcome.active_plan.selected_scheduler_policy_asset_id == "default.two_plane"
+
+        assert has_required_workflow_authority(outcome.active_plan)
+
+    def test_compiled_plan_authority_accepts_explicit_scheduler_policy_id(
+        self,
+        tmp_path: Path,
+    ):
+        """Modes with explicit scheduler_policy_id record that registry source."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="blueprint_lad_codex",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.scheduler_policy is not None
+        assert outcome.active_plan.scheduler_policy.policy_id == "default.two_plane.blueprint"
+        assert outcome.active_plan.scheduler_policy_authority_kind == "registry"
+        assert (
+            outcome.active_plan.selected_scheduler_policy_asset_id
+            == "default.two_plane.blueprint"
+        )
+        assert has_required_workflow_authority(outcome.active_plan)
+
+        stripped = outcome.active_plan.model_copy(
+            update={
+                "resolved_assets": tuple(
+                    ref
+                    for ref in outcome.active_plan.resolved_assets
+                    if ref.logical_id != "scheduler_policy:default.two_plane.blueprint"
+                )
+            }
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_accepts_generated_scheduler_policy(
+        self,
+        tmp_path: Path,
+    ):
+        """Generated scheduler policies are authoritative without a source asset id."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        _force_generated_two_plane_scheduler_fixture(assets_root)
+
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="lad_codex",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.scheduler_policy is not None
+        assert outcome.active_plan.scheduler_policy.policy_id == "lad_codex.scheduler"
+        assert outcome.active_plan.scheduler_policy_authority_kind == "generated"
+        assert outcome.active_plan.selected_scheduler_policy_asset_id is None
+
+        assert has_required_workflow_authority(outcome.active_plan)
+
+    def test_compiled_plan_authority_generated_scheduler_does_not_require_scheduler_refs(
+        self,
+        tmp_path: Path,
+    ):
+        """Generated scheduler policies do not need scheduler-policy resolved refs."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        _force_generated_two_plane_scheduler_fixture(assets_root)
+
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="lad_codex",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.scheduler_policy_authority_kind == "generated"
+
+        stripped = outcome.active_plan.model_copy(
+            update={
+                "resolved_assets": tuple(
+                    ref
+                    for ref in outcome.active_plan.resolved_assets
+                    if ref.asset_family != "scheduler_policy"
+                )
+            }
+        )
+
+        assert has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_rejects_generated_scheduler_with_selected_asset_id(
+        self,
+        tmp_path: Path,
+    ):
+        """Generated scheduler policies must not claim a selected registry asset."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        _force_generated_two_plane_scheduler_fixture(assets_root)
+
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="lad_codex",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.scheduler_policy_authority_kind == "generated"
+
+        stripped = outcome.active_plan.model_copy(
+            update={"selected_scheduler_policy_asset_id": "default.two_plane"}
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_requires_selected_scheduler_asset_ref(
+        self,
+        tmp_path: Path,
+    ):
+        """Registry-backed scheduler authority requires its exact resolved asset ref."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="lad_codex",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.selected_scheduler_policy_asset_id == "default.two_plane"
+
+        stripped = outcome.active_plan.model_copy(
+            update={
+                "resolved_assets": tuple(
+                    ref
+                    for ref in outcome.active_plan.resolved_assets
+                    if ref.logical_id != "scheduler_policy:default.two_plane"
+                )
+            }
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_requires_selected_recovery_policies(
+        self,
+        tmp_path: Path,
+    ):
+        """Selected recovery policy definitions are required authority surfaces."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="recovery_heavy_millrace",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.selected_workflow_recovery_policy_ids
+        assert outcome.active_plan.workflow_recovery_policies_by_id
+
+        stripped = outcome.active_plan.model_copy(
+            update={"workflow_recovery_policies_by_id": {}}
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_requires_selected_recovery_policy_ids(
+        self,
+        tmp_path: Path,
+    ):
+        """Selected recovery policy id metadata distinguishes old plans from empty selection."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="recovery_heavy_millrace",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.selected_workflow_recovery_policy_ids
+
+        stripped = outcome.active_plan.model_copy(
+            update={"selected_workflow_recovery_policy_ids": None}
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_rejects_mismatched_selected_recovery_policy_definition(
+        self,
+        tmp_path: Path,
+    ):
+        """Selected recovery policy map keys must match each definition's policy_id."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="recovery_heavy_millrace",
+        )
+        assert outcome.active_plan is not None
+        policies = dict(outcome.active_plan.workflow_recovery_policies_by_id)
+        execution_policy = policies["execution.blocked_recovery_heavy"]
+        policies["execution.blocked_recovery_heavy"] = execution_policy.model_copy(
+            update={"policy_id": "planning.blocked_recovery_heavy"}
+        )
+
+        stripped = outcome.active_plan.model_copy(
+            update={"workflow_recovery_policies_by_id": policies}
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_rejects_extra_unselected_recovery_policy_definition(
+        self,
+        tmp_path: Path,
+    ):
+        """Plans may not carry extra recovery policies outside the selected id set."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="recovery_heavy_millrace",
+        )
+        assert outcome.active_plan is not None
+        policies = dict(outcome.active_plan.workflow_recovery_policies_by_id)
+        assert outcome.active_plan.selected_workflow_recovery_policy_ids is not None
+        selected_ids = set(outcome.active_plan.selected_workflow_recovery_policy_ids)
+        assert "execution.blocked_recovery_heavy" in selected_ids
+
+        extra_policy = policies["execution.blocked_recovery_heavy"].model_copy(
+            update={"policy_id": "execution.unselected_extra"}
+        )
+        policies["execution.unselected_extra"] = extra_policy
+
+        stripped = outcome.active_plan.model_copy(
+            update={"workflow_recovery_policies_by_id": policies}
+        )
+
+        assert not has_required_workflow_authority(stripped)
+
+    def test_compiled_plan_authority_requires_selected_recovery_policy_asset_ref(
+        self,
+        tmp_path: Path,
+    ):
+        """Selected recovery policy authority requires its exact resolved asset refs."""
+        assets_root = _copy_builtin_assets(tmp_path)
+        outcome = _compile_with_assets(
+            tmp_path,
+            assets_root,
+            requested_mode_id="recovery_heavy_millrace",
+        )
+        assert outcome.active_plan is not None
+        assert outcome.active_plan.selected_workflow_recovery_policy_ids
+        selected_id = outcome.active_plan.selected_workflow_recovery_policy_ids[0]
+
+        stripped = outcome.active_plan.model_copy(
+            update={
+                "resolved_assets": tuple(
+                    ref
+                    for ref in outcome.active_plan.resolved_assets
+                    if ref.logical_id != f"workflow_recovery_policy:{selected_id}"
+                )
             }
         )
 

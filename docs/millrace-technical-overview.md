@@ -132,9 +132,17 @@ Runtime-owned surfaces include:
 - recovery counters and stale-state repair context
 - compiled plan persistence
 - run directories and stage-result artifacts
+- generated workspace-map output and history-log rendering
 - closure-target state for Arbiter-driven completion
 - usage-governance state and token accounting when automatic pause/resume is
   enabled
+
+Shared operator guidance lives in `millrace-agents/MILLRACE.md`. It is seeded
+by `millrace init` and intentionally sits in the workspace runtime tree so
+operators and stage agents can read durable project guidance without treating
+chat history as source of truth. Stages may propose changes to shared guidance,
+workspace-map wiki pages, or history-log entries through typed artifacts, but
+runtime-owned generated outputs remain applied by the runtime.
 
 This distinction is one of the most important design rules in Millrace. Stages
 are not allowed to mutate authoritative queue or status state directly. The
@@ -221,6 +229,22 @@ These are machine-owned, typed state and runtime outputs such as:
 - mailbox command envelopes and archives
 - run-scoped runner artifacts, capability-gate artifacts, and stage results
 
+Workspace memory is split between runtime-owned generated maps, curated
+operator-facing notes, and append-only history:
+
+- `millrace-agents/MILLRACE.md` is the shared instruction file for durable
+  workspace guidance.
+- `millrace-agents/workspace-map/index.md` is the human-facing map entrypoint.
+- `millrace-agents/workspace-map/generated/` and
+  `millrace-agents/workspace-map/manifest.json` are refreshable generated map
+  outputs.
+- `millrace-agents/workspace-map/wiki/` holds curated workspace-map pages that
+  can be proposed by stages and maintained by operators.
+- `millrace-agents/history-log/entries/` stores canonical append-only history
+  records.
+- `millrace-agents/history-log/daily/`, `latest.md`, and `index.md` are
+  runtime-rendered history views.
+
 Completion behavior adds a third specialized subtree under `millrace-agents/arbiter/`
 for canonical root contracts, closure-target state, rubrics, verdicts, and
 reports.
@@ -260,6 +284,8 @@ The compiler resolves:
 - which workflow primitive assets define work-item families, document adapters,
   queue claim policy, terminal lifecycle actions, runtime effects, recovery and
   failure policies, and workspace schema epoch compatibility
+- which scheduler policy authority and workflow recovery policy assets are
+  selected for the compiled plan
 
 `compiled_plan.json` materializes the stage-kind registry and graph-loop assets
 into explicit node plans, raw transitions, normalized compiled intake entries,
@@ -269,6 +295,15 @@ explicit terminal semantics. The live runtime executes stage-request
 construction, claim activation, closure-target activation, recovery, runtime
 effect dispatch, source lifecycle mutation, and post-stage routing from that
 compiled plan.
+
+The compiled plan also persists the authority metadata needed to prove that
+runtime policy came from compiled inputs rather than implicit runtime defaults:
+`scheduler_policy_authority_kind`,
+`selected_scheduler_policy_asset_id`, and
+`selected_workflow_recovery_policy_ids`. Currentness inspection treats a
+persisted plan as stale when those policy-authority surfaces are missing or do
+not match the selected policy definitions, even if the basic mode/config/assets
+fingerprints still match.
 
 The compiler currently ships with baseline, learning-enabled, integrated, and
 Blueprint built-in modes:
@@ -936,6 +971,7 @@ first. The main operator surfaces are:
 - `millrace compile show`
 - `millrace compile graph`
 - `millrace config show`, `validate`, and `reload`
+- `millrace workspace-map refresh`, `validate`, and `show`
 - `millrace modes list` and `millrace modes show`
 - `millrace model-aliases ...`
 - `millrace approvals ...`
@@ -945,10 +981,16 @@ first. The main operator surfaces are:
 
 Use `status` for current runtime snapshot and closure visibility, `queue` for
 managed work documents, `runs` for post-run artifacts, `compile` for frozen
-structure, `config` and `modes` for selected runtime policy, `approvals` for
-capability-gated stages, `skills` for installed/downloadable skill workflows,
-`doctor` for integrity problems, and run/trace commands for read-only local
-inspection.
+structure, `config` and `modes` for selected runtime policy, `workspace-map`
+for generated and curated workspace memory, `approvals` for capability-gated
+stages, `skills` for installed/downloadable skill workflows, `doctor` for
+integrity problems, and run/trace commands for read-only local inspection.
+
+The optional `millrace-web` package provides a separate local read-only
+dashboard over the same status, queue, compiled-plan, event, and run-trace
+surfaces. It is intentionally outside the base `millrace-ai` wheel and must not
+be treated as a runtime mutation surface; authoritative control still belongs
+to the CLI/runtime APIs.
 
 ## Source Layout And Compatibility Facades
 
@@ -994,6 +1036,8 @@ Use this document as the front door, then drop into the narrower references when
 needed:
 
 - `README.md` for the public landing-page framing
+- `QUICKSTART.md` for the human operator quickstart and everyday operating
+  model
 - `docs/doc-index.md` for the complete documentation map
 - `docs/skills/millrace-autonomous-delegation/SKILL.md` if you are an external
   agent authorized to decide whether substantial work should use Millrace

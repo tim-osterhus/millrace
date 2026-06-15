@@ -56,7 +56,7 @@ remaining debt is now owned by
 
 | ID | Source | Main reason to change | Dependency risk | Suggested batch | Dedicated spec | FU-9 status |
 | --- | --- | --- | --- | --- | --- | --- |
-| MR-MAINT-001 | `src/millrace_ai/runtime/effects/operation_runners/` | Blueprint durable mutation moved to focused operation-runner modules; the public legacy facade was retired. | Medium | Batch A | Required | Complete: FU-2 landed runner decomposition and later removed the facade imports. |
+| MR-MAINT-001 | `src/millrace_ai/extensions/builtin/blueprint/operation_runners/` | Blueprint durable mutation moved to focused extension-owned operation-runner modules; the public legacy facade was retired. | Medium | Batch A | Required | Complete: FU-2 landed runner decomposition and later removed the facade imports. |
 | MR-MAINT-002 | `src/millrace_ai/runtime/effect_execution.py` | Effect dispatch needed operation-id-first authority instead of legacy handler-id-first branching. | High | Batch A | Required | Complete: FU-1 switched dispatch/policy matching to operation ids, with legacy ids retained as compatibility metadata. |
 | MR-MAINT-003 | `src/millrace_ai/compilation/validation/` | Compiler rule families required decomposition behind one stable package surface. | Complete | Batch C | Complete | Complete: FU-6 replaced the monolith with validator-family modules. |
 | MR-MAINT-004 | `src/millrace_ai/architecture/workflow_primitives/` | Workflow primitive contracts needed contract-family modularization under a stable facade. | Medium-high | Batch C | Required | Complete: FU-7 split family modules and preserved exported symbols. |
@@ -74,15 +74,16 @@ Batch 3 as behavior-preserving package splits with compatibility facades.
 Historical repo-shape snapshot from FU-2 Packet 03:
 
 - Largest source modules at that point: `compilation/validation.py` (1494 lines),
-  `architecture/workflow_primitives.py` (1408 lines),
-  `runtime/effects/operation_runners/candidate_evaluation.py` (1253 lines,
-  historical FU-2 snapshot; current implementation now lives under
+  `architecture/workflow_primitives.py` (1408 lines), the old Blueprint
+  candidate-evaluation runner file (1253 lines; current implementation now
+  lives under
   `extensions/builtin/blueprint/operation_runners/candidate_evaluation.py`),
   `runtime/blocked_recovery.py` (1159 lines), and
   `runtime/request_context.py` (987 lines).
 - Effect-operation debt moved from a monolithic operations module to focused
   runner modules. The remaining hotspot is
-  `operation_runners/candidate_evaluation.py`, which still combines approval,
+  `extensions/builtin/blueprint/operation_runners/candidate_evaluation.py`,
+  which still combines approval,
   rejection, promotion, critique persistence, checksum/idempotency, and repair
   support helpers.
 
@@ -90,12 +91,12 @@ Historical repo-shape snapshot from FU-2 Packet 03:
 
 ### MR-MAINT-001: Blueprint Runtime Effects
 
-Source: `src/millrace_ai/runtime/effects/operation_runners/`, especially the
-Blueprint runner modules.
+Source: `src/millrace_ai/extensions/builtin/blueprint/operation_runners/`,
+especially the Blueprint runner modules.
 
 Reason to change: Manager, Contractor, Evaluator, and Mechanic Blueprint
 durable mutations now run through focused modules in
-`runtime/effects/operation_runners/` and compiled operation assets. The old
+`extensions/builtin/blueprint/operation_runners/` and compiled operation assets. The old
 Blueprint and operations compatibility facades have been retired; diagnostics
 and tests should patch focused runner modules for implementation behavior.
 
@@ -620,6 +621,6 @@ only migration ledger for this work; no parallel ledger exists elsewhere.
 | Plane-specific status | `src/millrace_ai/cli/status_view.py` + `src/millrace_ai/runtime/monitoring.py` | Runtime kernel | Extension packages | Status provider manifests | Status rendering for each plane is collected from registered status providers; no hard-coded plane-specific status logic in CLI. |
 | Runtime-effect handler dispatch | `src/millrace_ai/runtime/effect_execution.py` + `src/millrace_ai/runtime/effects/legacy.py` + `src/millrace_ai/runtime/effects/interpreter.py` + `src/millrace_ai/runtime/effects/primitives.py` | Runtime kernel | Extension packages | Operation-step manifests / extension package manifest | **Core migration complete.** Effect dispatch uses operation-id-first resolution. Legacy handler ids in `effect_execution.py` and the `effects/legacy.py` registry are preserved as compatibility metadata only for failure-policy matching and import compatibility. A constrained interpreted-runner path (`runner_id = "interpreted_runtime_effect"`) now exists alongside the legacy handler-backed path: when the runner is detected as `interpreted_runtime_effect`, `effect_execution.py` delegates to `interpret_operation()` in `interpreter.py` without calling `_handler_for_operation()`. The interpreter walks compiled operation steps, resolves `$artifact.<id>` / `$context.<key>` / `$store.<id>` bindings, dispatches to the `PrimitiveExecutorRegistry` in `primitives.py`, and enforces idempotent resume via `journal.py`. All shipped operations still use `legacy_python_handler`; the interpreted path is activated only by test fixture operations. |
 | Closure behavior | `src/millrace_ai/runtime/closure_boundary.py` + `src/millrace_ai/runtime/completion_behavior.py` + `src/millrace_ai/runtime/closure_transitions.py` | Runtime kernel compatibility boundary | Extension packages | `ClosureTransitionHandler` plus future closure lifecycle operation steps | **Named boundary in place; operation-step migration remains open.** Kernel callers route closure target lifecycle, lineage gating, and backpressure policy through `closure_boundary.py`, which lazily delegates to `completion_behavior.py`. Post-Arbiter closure mutation routes through the `ClosureTransitionHandler` extension interface to `closure_transitions.py`. Closure lifecycle primitives remain the target for a later migration. |
-| Blueprint behavior | `src/millrace_ai/runtime/context/blueprint.py` + `src/millrace_ai/runtime/effects/operation_runners/` | Runtime kernel | Extension packages | Blueprint context provider manifests + operation-step manifests | Blueprint-specific request-context providers, operation runners, and document contracts live in extension packages; the generic facade paths are retired removal stubs and kernel imports no Blueprint-specific schemas. |
+| Blueprint behavior | `src/millrace_ai/extensions/builtin/blueprint/context.py` + `src/millrace_ai/extensions/builtin/blueprint/operation_runners/` | Extension packages | Extension packages | Blueprint context provider manifests + operation-step manifests | Blueprint-specific request-context providers, operation runners, and document contracts live in extension packages; the generic facade paths are retired removal stubs or empty generic helper exports, and kernel imports no Blueprint-specific schemas. |
 | Learning behavior | `src/millrace_ai/runtime/tick_cycle.py` + `src/millrace_ai/runtime/supervisor.py` + compatibility implementations in `runtime/learning_promotions.py` and `runtime/learning_triggers.py` | Runtime kernel compatibility boundary | Extension packages | `LearningTriggerHandler` / `LearningPromotionHandler` plus future Learning operation-step manifests | **Boundary bridge in place; operation-step migration remains open.** Tick-cycle and supervisor callers resolve Learning trigger and promotion behavior through `BuiltInExtensionBoundaryRegistry`; the compatibility implementations remain in the runtime package until Learning behavior migrates to operation-step manifests. |
 | Static stage legality | `src/millrace_ai/contracts/stage_metadata.py` | Shipped registry (runtime) | Graph assets / stage-kind assets | Stage-kind registry JSON assets | `stage_metadata.py` is scoped to shipped-stage defaults; all custom stage legality derives from stage-kind assets and compiled graph metadata. |

@@ -44,8 +44,10 @@ adapter modules.
   `tests/cli/`, `tests/compilation/`, `tests/config/`, `tests/runners/`,
   `tests/runtime/`, `tests/workspace/`, and `tests/integration/`
 - the package entrypoints are `src/millrace_ai/__main__.py` and the `src/millrace_ai/cli/` package
-- the repository no longer ships a web dashboard sidecar; runtime observation
-  lives in CLI/status/run/trace surfaces owned by the base package
+- the optional read-only dashboard sidecar lives under
+  `packages/millrace-web/` and publishes as `millrace-web`; it is intentionally
+  separate from the base `millrace-ai` package so web dependencies, server
+  modules, and static assets do not enter the runtime wheel
 
 ## Package Ownership Snapshot
 
@@ -99,10 +101,10 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   `BuiltInExtensionBoundaryRegistry`, and thin built-in adapters under
   `extensions/builtin/`. Blueprint implementation code now lives under
   `extensions/builtin/blueprint/`; the root `contracts/blueprint.py`,
-  `workspace/blueprint_state.py`, `workspace/families/blueprint.py`,
-  `runtime/context/blueprint.py`, and
-  `runtime/effects/operation_runners/__init__.py` modules are deliberate
-  removal stubs.
+  `workspace/blueprint_state.py`, `workspace/families/blueprint.py`, and
+  `runtime/context/blueprint.py` modules are deliberate removal stubs.
+  `runtime/effects/operation_runners/__init__.py` remains an empty generic
+  helper-package initializer and must not export Blueprint APIs.
 - `doctor/` owns read-only workspace Doctor diagnostics, including the public
   Doctor facade, result models, check registry, manifest-discovered extension
   diagnostics, workspace/runtime state checks, queue parseability checks,
@@ -130,8 +132,9 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
   `runtime/effects/operation_runners/`), while the Blueprint operation-runner
   implementation lives under
   `extensions/builtin/blueprint/operation_runners/`. The legacy
-  `runtime/context/blueprint.py` and `runtime/effects/operation_runners/__init__.py`
-  modules are deliberate removal stubs.
+  `runtime/context/blueprint.py` module is a deliberate removal stub, while
+  `runtime/effects/operation_runners/__init__.py` is an empty generic helper
+  package initializer with no Blueprint exports.
   `runtime/scheduler_policy.py` centralizes the compiled scheduler-policy
   interpreter used by `activation.py`, `tick_cycle.py`, `supervisor.py`, and
   `lanes.py` for predicate-backed foreground order, closure-target inversion,
@@ -181,7 +184,7 @@ The current `src/millrace_ai/` package tree is intentionally split by ownership:
 | workspace map surfaces | `src/millrace_ai/workspace_map/`, `src/millrace_ai/cli/commands/workspace_map.py` | `millrace workspace-map refresh` owns `workspace-map/generated/*` and `workspace-map/manifest.json`; `workspace-map/index.md` is seeded starter/index guidance; `validate` checks missing/stale/malformed/schema/path issues without writes; `show` renders a compact summary. Curated wiki pages under `workspace-map/wiki/` are operator/Updater-maintained and are not generator output. |
 | `millrace_ai/runtime_lock.py` | `src/millrace_ai/workspace/runtime_lock.py` | Root `runtime_lock.py` remains a thin compatibility facade. |
 | `millrace_ai/mailbox.py` | `src/millrace_ai/workspace/mailbox.py` | Root `mailbox.py` remains a thin compatibility facade. |
-| `millrace_ai/events.py` | `src/millrace_ai/workspace/events.py` | Root `events.py` remains a thin compatibility facade. `iter_runtime_events()`, `read_recent_runtime_events()`, and `find_latest_runtime_event()` are the normal bounded/streaming helpers for status, closure, and web views; `read_runtime_events()` is the explicit full-history audit/debug API. |
+| `millrace_ai/events.py` | `src/millrace_ai/workspace/events.py` | Root `events.py` remains a thin compatibility facade. `iter_runtime_events()`, `read_recent_runtime_events()`, and `find_latest_runtime_event()` are the normal bounded/streaming helpers for status, closure, and external inspection surfaces; `read_runtime_events()` is the explicit full-history audit/debug API. |
 | `millrace_ai/work_documents.py` | `src/millrace_ai/workspace/work_documents.py` | Root `work_documents.py` remains a thin compatibility facade. |
 | `millrace_ai/recon_packets.py` | `src/millrace_ai/recon_packets.py` | Recon packet markdown parsing/rendering is a root helper because runtime transitions and stage tests share the same artifact contract. |
 | `millrace_ai/queue_store.py` | `src/millrace_ai/workspace/queue_store.py`, `queue_claims.py`, `queue_selection.py`, `queue_transitions.py`, `queue_lifecycle.py`, `queue_reconciliation.py`, `task_lifecycle_integrity.py`, `work_inventory.py`, `work_item_adapters.py`, `operator_interventions.py`, `lineage_integrity.py`, `arbiter_state.py`, `remote_skills.py`, `blueprint_state.py` | Root `queue_store.py` remains a thin compatibility facade over the workspace queue package. Queue claim policy, repeated-remediation incident quarantine, compiled lifecycle mutation interpretation, family-aware work-item adapters, work inventory, intervention/lineage integrity, Arbiter state, remote skill metadata, and Blueprint artifact state have explicit workspace-owned homes. |
@@ -482,13 +485,13 @@ cycles:
   registry seam, and `runtime/effects/legacy.py` is the temporary registry for
   legacy Python effect handlers while declarative operation migration proceeds.
   `runtime/effects/` owns the generic runtime-effect contracts, registry,
-  interpreter, journal, legacy handler registry, and helper modules, while
-  `extensions/builtin/blueprint/operation_runners/` owns the Blueprint
+  interpreter, journal, Planner legacy handler registry, and helper modules,
+  while `extensions/builtin/blueprint/operation_runners/` owns the Blueprint
   operation-runner implementation. Blueprint planning modes select those
-  generic operations through compiled runtime-effect rule assets; the retired
-  `runtime/effects/operation_runners/__init__.py` path now raises
-  `ImportError` and no runtime module is a dedicated Blueprint loop
-  dispatcher.
+  operations through compiled runtime-effect rule assets and extension-loaded
+  handler registrations; `runtime/effects/operation_runners/__init__.py` is an
+  empty generic helper-package export surface, and no runtime module is a
+  dedicated Blueprint loop dispatcher.
   Stage results and runtime events carry operation id and runner id as
   authority metadata; legacy handler id is
   optional compatibility metadata. `runtime/effect_execution.py` also
@@ -668,7 +671,7 @@ Use the extension-owned Blueprint modules instead of generic package paths.
 | `src/millrace_ai/cli/status/blueprint.py` | Former public import path for the historical Blueprint CLI status module; generic status assembly must use manifest-discovered `status_projection` items | Deliberate removal stub; Blueprint status projection collection, defaults, and rendering live under `extensions/builtin/blueprint/status.py` | Pure graph-authority guardrails fail direct generic calls to Blueprint status APIs, generic `blueprints` projection branches, `blueprint_status` in generic status models, and domain-owned status projection manifest items that point into generic CLI/Doctor/workspace modules |
 | `src/millrace_ai/runtime/context/blueprint.py` | Former Blueprint request-context provider import path | Deliberate removal stub; implementation lives under `extensions/builtin/blueprint/context.py` | Generic runtime import/startup guardrails and pure graph-authority guardrails prevent eager generic loading |
 | `src/millrace_ai/workspace/blueprint_state.py` and `src/millrace_ai/workspace/families/blueprint.py` | Former Blueprint state/family adapter and Doctor diagnostic helper import paths; generic Doctor checks must use manifest-discovered `doctor_diagnostic` items | Deliberate removal stubs; Blueprint state/family behavior lives under `extensions/builtin/blueprint/` and Doctor diagnostics live under `extensions/builtin/blueprint/doctor.py` | Pure graph-authority guardrails forbid generic family-id branching, direct Blueprint implementation imports outside allowed facades, direct Doctor registration of Blueprint diagnostics, domain-owned Doctor diagnostic manifest items that point into generic CLI/Doctor/workspace modules, and eager generic loading of Blueprint implementation modules |
-| `src/millrace_ai/runtime/effects/operation_runners/__init__.py` | Former legacy Blueprint runner registration import path | Deliberate removal stub; current implementation lives in `extensions/builtin/blueprint/operation_runners/` | Runtime-effect registry and generic-kernel guardrails ensure the export stays empty and generic paths do not select Blueprint branches |
+| `src/millrace_ai/runtime/effects/operation_runners/__init__.py` | Generic runtime-effect helper package initializer | Empty export surface; Blueprint operation-runner implementation lives in `extensions/builtin/blueprint/operation_runners/` | Runtime-effect registry and generic-kernel guardrails ensure the export stays empty and generic paths do not select Blueprint branches |
 | `src/millrace_ai/contracts/stage_metadata.py` | Runner normalization, entrypoint linting, and compatibility lookups for shipped stages | Shipped-stage facade backed by JSON stage-kind assets; custom stage kinds derive authority from assets and compiled plans | Shipped-stage hardwiring and entrypoint discovery guardrails protect fixture/custom stage-kind behavior |
 
 The detailed compatibility inventory lives in

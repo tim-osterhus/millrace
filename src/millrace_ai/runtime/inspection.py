@@ -18,6 +18,7 @@ from millrace_ai.runtime.run_traces import (
 from millrace_ai.runtime.run_traces import (
     inspect_run_trace_id as _inspect_run_trace_id,
 )
+from millrace_ai.runtime.run_traces import is_stage_result_artifact_path
 
 RunInspectionStatus = Literal["valid", "incomplete", "malformed"]
 RunRuntimeOutcome = Literal["active", "complete", "blocked", "handoff", "incomplete", "malformed"]
@@ -162,7 +163,7 @@ def inspect_run(run_dir: Path | str) -> InspectedRunSummary:
         )
 
     stage_result_paths = sorted(
-        path for path in stage_results_dir.iterdir() if path.is_file() and path.suffix == ".json"
+        path for path in stage_results_dir.iterdir() if path.is_file() and is_stage_result_artifact_path(path)
     )
     if not stage_result_paths:
         runtime_outcome = _runtime_outcome_for_missing_stage_results(resolved_run_dir)

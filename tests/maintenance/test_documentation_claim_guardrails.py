@@ -168,6 +168,17 @@ def _doc_text(rel: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _changelog_section(text: str, section_id: str) -> str:
+    marker = f"## [{section_id}]"
+    start = text.find(marker)
+    if start == -1:
+        return ""
+    end = text.find("\n## [", start + len(marker))
+    if end == -1:
+        end = len(text)
+    return text[start:end]
+
+
 def test_no_documentation_overclaims_arbitrary_plane_or_stage_support() -> None:
     """Guardrail: documentation must not overclaim support for arbitrary
     plane IDs, arbitrary runtime stages, or single-plane modes.
@@ -336,25 +347,22 @@ def test_readme_distinguishes_fixture_from_shipped_modes() -> None:
 
 
 def test_changelog_references_generic_engine_changes() -> None:
-    """Guardrail: CHANGELOG [Unreleased] must reference generic engine
+    """Guardrail: CHANGELOG release notes must reference generic engine
     boundary, extension domains, compatibility surfaces, and fixture mode
     limitations."""
     text = _doc_text("CHANGELOG.md")
 
-    # [Unreleased] section should exist and cover the generic engine changes
     assert "[Unreleased]" in text, "CHANGELOG.md must have an [Unreleased] section"
 
-    # Find the unreleased section
-    unreleased_start = text.find("[Unreleased]")
-    unreleased_end = text.find("\n## [", unreleased_start + 1)
-    if unreleased_end == -1:
-        unreleased_end = len(text)
-    unreleased = text[unreleased_start:unreleased_end]
+    current_release = _changelog_section(text, "0.21.0")
+    unreleased = _changelog_section(text, "Unreleased")
+    release_notes = "\n".join(section for section in (unreleased, current_release) if section)
 
     required_terms = ("generic", "extension", "compatibility", "fixture")
-    missing = [t for t in required_terms if t.lower() not in unreleased.lower()]
+    missing = [t for t in required_terms if t.lower() not in release_notes.lower()]
     assert missing == [], (
-        f"CHANGELOG [Unreleased] section missing terms: {', '.join(missing)}"
+        "CHANGELOG current release notes missing terms: "
+        f"{', '.join(missing)}"
     )
 
 

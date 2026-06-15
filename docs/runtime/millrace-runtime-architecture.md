@@ -242,10 +242,11 @@ the generic interpreter or its declared adapter.
   registry seam that keeps legacy Python handler ids as compatibility aliases
   during the operation-id migration. Maps operation IDs to handler callables
   and runner IDs.
-- `src/millrace_ai/runtime/effects/legacy.py`: temporary registry for legacy
-  Python runtime-effect handler registrations (`LEGACY_PYTHON_EFFECT_RUNNER_ID`).
-  Provides backward-compatible handler lookup until declarative operations fully
-  replace handler-backed mutation code.
+- `src/millrace_ai/runtime/effects/legacy.py`: registry for the generic Planner
+  legacy Python runtime-effect handler
+  (`LEGACY_PYTHON_EFFECT_RUNNER_ID`). Blueprint legacy handler registrations
+  are loaded from the Blueprint extension package rather than this generic
+  module.
 - `src/millrace_ai/runtime/effects/primitives.py`: primitive executor registry
   for the interpreted runtime-effect runner path. Maps primitive IDs
   (`artifact_presence`, `artifact_model_parse`, `persist_record`,
@@ -273,10 +274,13 @@ the generic interpreter or its declared adapter.
   classification plus runtime-effect failure policy matching by operation id
   with legacy handler-id fallback only for compatibility policies, including
   conservative Blueprint blocks and recoverable Mechanic Blueprint routes.
-- `src/millrace_ai/runtime/effects/operation_runners/`: focused runtime-effect
-  Python executors for handler-backed operations that still need file mutation
-  code. Operation selection comes from compiled runtime-effect
-  operation/rule/runner metadata, not from loop-mode branches.
+- `src/millrace_ai/runtime/effects/operation_runners/`: generic helper
+  modules shared by interpreted and handler-backed runtime effects
+  (`artifacts.py`, `stores.py`, `work_items.py`, idempotency/result helpers,
+  and types). Blueprint-specific Python executors live under
+  `extensions/builtin/blueprint/operation_runners/`. Operation selection comes
+  from compiled runtime-effect operation/rule/runner metadata and
+  extension-loaded handler registrations, not from loop-mode branches.
 - `src/millrace_ai/runtime/runtime_effect_status.py`: generic status metadata
   extraction for latest runtime-effect stage results used by status output.
 - `src/millrace_ai/runtime/planner_effects.py`: Planner disposition handling
@@ -284,9 +288,10 @@ the generic interpreter or its declared adapter.
   blocked Planner outcomes.
 - `src/millrace_ai/runtime/request_context.py`: compatibility facade for the
   runtime request-context surface exported from `src/millrace_ai/runtime/context/`.
-- `src/millrace_ai/runtime/context/`: request-context implementation package for
-  provider/render-plan resolution, context rendering, and Blueprint-specific
-  context helpers including repair-context refs.
+- `src/millrace_ai/runtime/context/`: generic request-context implementation
+  package for provider/render-plan resolution and context rendering. The
+  former Blueprint generic import path is a removal stub; Blueprint-specific
+  context providers live under `extensions/builtin/blueprint/context.py`.
 - `src/millrace_ai/runtime/lifecycle_interpreter.py`: runtime-facing bridge from
   source lifecycle intent to the workspace queue lifecycle interpreter,
   including terminal-action-driven ordinary source work-item resolution via
@@ -390,11 +395,13 @@ for a production runtime-effect rule.
 
 ### Legacy Handler-Backed Path (`legacy_python_handler`)
 
-All shipped runtime-effect operations use the legacy handler-backed runner.
-Handler callables are registered in `runtime/effects/legacy.py` and resolved
-through `_handler_for_operation()` in `effect_execution.py`. These are
-Python functions that perform file mutation directly, typically via the
-operation runner modules in `runtime/effects/operation_runners/`.
+All shipped runtime-effect operations currently use the legacy handler-backed
+runner. The generic Planner handler is registered in `runtime/effects/legacy.py`;
+Blueprint handlers are registered by the Blueprint extension package. Handler
+resolution still flows through `_handler_for_operation()` in
+`effect_execution.py`. These are Python functions that perform file mutation
+directly, with Blueprint mutation code living under
+`extensions/builtin/blueprint/operation_runners/`.
 
 ### Primitive Vocabulary
 
@@ -481,10 +488,11 @@ durable JSONL journal records to enable idempotent resume after interruption:
 
 ### Remaining Legacy Compatibility Surfaces
 
-- `src/millrace_ai/runtime/effects/legacy.py` — temporary handler registry;
-  `LEGACY_PYTHON_EFFECT_RUNNER_ID` is the runner identity for all shipped operations.
-- `src/millrace_ai/runtime/effects/operation_runners/` — handler-backed
-  Python executors for Blueprint and Planner operations.
+- `src/millrace_ai/runtime/effects/legacy.py` — generic Planner handler
+  registry; `LEGACY_PYTHON_EFFECT_RUNNER_ID` remains the runner identity for
+  shipped handler-backed operations.
+- `src/millrace_ai/extensions/builtin/blueprint/operation_runners/` —
+  handler-backed Python executors for Blueprint operations.
 - `effect_execution.py:_handler_for_operation()` — still resolves handlers
   through the legacy registry for non-interpreted operations.
 - `effect_execution.py:_legacy_handler_id_for_operation()` — maps operation
