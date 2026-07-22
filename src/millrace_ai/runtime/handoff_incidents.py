@@ -239,18 +239,38 @@ def _consultant_authored_incident(
         _write_authored_incident_rejection(engine, stage_result, reason="missing_path")
         return None
 
-    candidate = Path(declared_path).expanduser()
-    if not candidate.is_absolute():
-        candidate = engine.paths.root / candidate
+    lexical_candidate: Path | None = None
     try:
-        candidate = candidate.resolve()
-    except (OSError, RuntimeError) as exc:
+        lexical_candidate = Path(declared_path).expanduser()
+        if not lexical_candidate.is_absolute():
+            lexical_candidate = engine.paths.root / lexical_candidate
+        if lexical_candidate.is_symlink():
+            _write_authored_incident_rejection(
+                engine,
+                stage_result,
+                reason="symlink_not_allowed",
+                declared_path=declared_path,
+                candidate_path=lexical_candidate,
+            )
+            return None
+        if lexical_candidate.suffix != ".md":
+            _write_authored_incident_rejection(
+                engine,
+                stage_result,
+                reason="invalid_incident_filename",
+                declared_path=declared_path,
+                candidate_path=lexical_candidate,
+            )
+            return None
+        candidate = lexical_candidate.resolve()
+    except (ValueError, RuntimeError, OSError) as exc:
         _write_authored_incident_rejection(
             engine,
             stage_result,
             reason="invalid_path",
             declared_path=declared_path,
             diagnostic=str(exc),
+            candidate_path=lexical_candidate,
         )
         return None
 
@@ -322,8 +342,18 @@ def _is_incident_lifecycle_path(engine: RuntimeEngine, path: Path) -> bool:
 def _incident_path_for_id(engine: RuntimeEngine, incident_id: str) -> Path | None:
     for directory in _incident_lifecycle_directories(engine):
         candidate = directory / f"{incident_id}.md"
-        if candidate.is_file():
-            return candidate
+        try:
+            if candidate.suffix != ".md" or candidate.is_symlink():
+                continue
+            resolved_candidate = candidate.resolve()
+            if (
+                resolved_candidate.suffix == ".md"
+                and resolved_candidate.parent == directory.resolve()
+                and resolved_candidate.is_file()
+            ):
+                return resolved_candidate
+        except (ValueError, RuntimeError, OSError):
+            continue
     return None
 
 
@@ -398,10 +428,10 @@ def _quarantine_rejected_incoming_incident(
     try:
         if (
             candidate_path.parent != engine.paths.incidents_incoming_dir.resolve()
-            or not candidate_path.is_file()
+            or not (candidate_path.is_symlink() or candidate_path.is_file())
         ):
             return None
-    except OSError:
+    except (ValueError, RuntimeError, OSError):
         return None
     return QueueFamilyInterpreter(engine.paths).quarantine_invalid_artifact(
         "incident",

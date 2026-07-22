@@ -165,6 +165,27 @@ def _engine_with_active_task(
     return engine
 
 
+def _consultant_needs_planning_result(
+    *,
+    incident_path: str,
+    request_id: str,
+) -> StageResultEnvelope:
+    return StageResultEnvelope(
+        run_id="run-terminal",
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.CONSULTANT,
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.NEEDS_PLANNING,
+        result_class=ResultClass.ESCALATE_PLANNING,
+        summary_status_marker="### NEEDS_PLANNING",
+        success=False,
+        metadata={"incident_path": incident_path, "request_id": request_id},
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+
 @pytest.mark.parametrize("family_id", ("task", "spec", "probe", "incident"))
 def test_complete_work_item_action_applies_to_builtin_source_families(
     tmp_path: Path,
@@ -679,6 +700,184 @@ def test_consultant_handoff_resolves_declared_incident_after_lifecycle_move(
     assert tuple(paths.incidents_incoming_dir.glob("*.md")) == ()
 
 
+@pytest.mark.parametrize("case", ("null_byte", "expanduser_failure"))
+def test_invalid_consultant_incident_path_never_crashes_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    declared_path = "incoming\0incident.md" if case == "null_byte" else "~failure-seam"
+    stage_result = _consultant_needs_planning_result(
+        incident_path=declared_path,
+        request_id=f"request-{case}",
+    )
+    decision = route_stage_result(engine, stage_result)
+    if case == "expanduser_failure":
+        original_expanduser = Path.expanduser
+
+        def fail_selected_expanduser(path: Path) -> Path:
+            if str(path) == declared_path:
+                raise OSError("expanduser failed")
+            return original_expanduser(path)
+
+        monkeypatch.setattr(Path, "expanduser", fail_selected_expanduser)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert len(spawned) == 1
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (spawned[0],)
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+    )
+    assert rejection.data["reason"] == "invalid_path"
+    assert "quarantine_destination" not in rejection.data
+
+
+def test_consultant_incident_with_noncanonical_extension_is_quarantined(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    declared_path = paths.incidents_incoming_dir / "consultant.txt"
+    declared_path.write_text(
+        render_work_document(
+            IncidentDocument(
+                incident_id="consultant",
+                title="Consultant incident",
+                summary="Planning is required.",
+                source_task_id="task-001",
+                source_stage=ExecutionStageName.CONSULTANT,
+                source_plane=Plane.EXECUTION,
+                failure_class="consultant_needs_planning",
+                trigger_reason="Local recovery exhausted.",
+                consultant_decision=IncidentDecision.NEEDS_PLANNING,
+                opened_at=NOW,
+                opened_by="consultant",
+            )
+        ),
+        encoding="utf-8",
+    )
+    original_bytes = declared_path.read_bytes()
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(declared_path),
+        request_id="request-noncanonical-extension",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (spawned[0],)
+    assert not declared_path.exists()
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+    )
+    quarantine_path = paths.root / str(rejection.data["quarantine_destination"])
+    assert rejection.data["reason"] == "invalid_incident_filename"
+    assert quarantine_path.read_bytes() == original_bytes
+
+
+def test_incoming_consultant_incident_symlink_is_quarantined_without_touching_target(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    external_target = tmp_path / "external-consultant.md"
+    external_target.write_text(
+        render_work_document(
+            IncidentDocument(
+                incident_id="consultant",
+                title="External consultant incident",
+                summary="Planning is required.",
+                source_task_id="task-001",
+                source_stage=ExecutionStageName.CONSULTANT,
+                source_plane=Plane.EXECUTION,
+                failure_class="consultant_needs_planning",
+                trigger_reason="Local recovery exhausted.",
+                consultant_decision=IncidentDecision.NEEDS_PLANNING,
+                opened_at=NOW,
+                opened_by="consultant",
+            )
+        ),
+        encoding="utf-8",
+    )
+    external_bytes = external_target.read_bytes()
+    declared_path = paths.incidents_incoming_dir / "consultant.md"
+    declared_path.symlink_to(external_target)
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(declared_path),
+        request_id="request-symlink",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (spawned[0],)
+    assert external_target.read_bytes() == external_bytes
+    assert not declared_path.exists()
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+    )
+    quarantine_path = paths.root / str(rejection.data["quarantine_destination"])
+    assert rejection.data["reason"] == "symlink_not_allowed"
+    assert quarantine_path.is_symlink()
+    assert quarantine_path.resolve() == external_target.resolve()
+
+
+def test_lifecycle_move_lookup_skips_incident_symlinks(tmp_path: Path) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    incident_id = "consultant-moved-symlink"
+    external_target = tmp_path / f"{incident_id}.md"
+    external_target.write_text(
+        render_work_document(
+            IncidentDocument(
+                incident_id=incident_id,
+                title="External moved incident",
+                summary="Planning is required.",
+                source_task_id="task-001",
+                source_stage=ExecutionStageName.CONSULTANT,
+                source_plane=Plane.EXECUTION,
+                failure_class="consultant_needs_planning",
+                trigger_reason="Local recovery exhausted.",
+                consultant_decision=IncidentDecision.NEEDS_PLANNING,
+                opened_at=NOW,
+                opened_by="consultant",
+            )
+        ),
+        encoding="utf-8",
+    )
+    external_bytes = external_target.read_bytes()
+    active_alias = paths.incidents_active_dir / f"{incident_id}.md"
+    active_alias.symlink_to(external_target)
+    original_incoming = paths.incidents_incoming_dir / f"{incident_id}.md"
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(original_incoming),
+        request_id="request-moved-symlink",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (spawned[0],)
+    assert active_alias.is_symlink()
+    assert external_target.read_bytes() == external_bytes
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+    )
+    assert rejection.data["reason"] == "missing_or_invalid_document"
+    assert "quarantine_destination" not in rejection.data
+
+
 @pytest.mark.parametrize(
     ("case", "expected_reason"),
     (
@@ -686,6 +885,7 @@ def test_consultant_handoff_resolves_declared_incident_after_lifecycle_move(
         ("outside", "outside_workspace_incident_lifecycle"),
         ("missing", "missing_or_invalid_document"),
         ("mismatch", "source_mismatch"),
+        ("filename_mismatch", "incident_id_path_mismatch"),
         ("active", "source_mismatch"),
         ("blocked", "source_mismatch"),
         ("resolved", "source_mismatch"),
@@ -723,7 +923,11 @@ def test_invalid_consultant_incident_falls_back_with_diagnostic(
         declared_path.write_text(
             render_work_document(
                 IncidentDocument(
-                    incident_id=declared_path.stem,
+                    incident_id=(
+                        "different-incident-id"
+                        if case == "filename_mismatch"
+                        else declared_path.stem
+                    ),
                     title="Declared consultant incident",
                     summary="Planning is required.",
                     source_task_id=source_task_id,
@@ -766,7 +970,7 @@ def test_invalid_consultant_incident_falls_back_with_diagnostic(
         if event.event_type == "runtime_handoff_incident_authored_rejected"
     )
     assert rejection.data["reason"] == expected_reason
-    if case in {"malformed", "mismatch"}:
+    if case in {"malformed", "mismatch", "filename_mismatch"}:
         assert not declared_path.exists()
         quarantine_destination = paths.root / str(rejection.data["quarantine_destination"])
         assert quarantine_destination.is_file()
