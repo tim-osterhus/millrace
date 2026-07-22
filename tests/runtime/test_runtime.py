@@ -47,6 +47,7 @@ from millrace_ai.contracts import (
     terminal_outcome_value,
 )
 from millrace_ai.contracts.router import RouterAction
+from millrace_ai.contracts.run_trace import RunTraceGraph
 from millrace_ai.control import RuntimeControl
 from millrace_ai.errors import ControlRoutingError, RuntimeLifecycleError
 from millrace_ai.events import read_runtime_events, write_runtime_event
@@ -2140,7 +2141,11 @@ def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: 
         encoding="utf-8",
     )
 
+    authored_incident_path: Path | None = None
+    auditor_incident_ids: list[str] = []
+
     def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        nonlocal authored_incident_path
         if request.stage is ExecutionStageName.BUILDER:
             return _runner_result(
                 request,
@@ -2154,11 +2159,44 @@ def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: 
                 now=NOW,
             )
         if request.stage is ExecutionStageName.CONSULTANT:
+            authored_incident_path = queue.enqueue_incident(
+                IncidentDocument(
+                    incident_id="consultant-task-001",
+                    title="Consultant planning handoff",
+                    summary="Execution recovery is exhausted.",
+                    source_task_id="task-001",
+                    source_stage=ExecutionStageName.CONSULTANT,
+                    source_plane=Plane.EXECUTION,
+                    failure_class="consultant_needs_planning",
+                    trigger_reason="Consultant emitted NEEDS_PLANNING.",
+                    consultant_decision=IncidentDecision.NEEDS_PLANNING,
+                    related_run_ids=(request.run_id,),
+                    opened_at=NOW,
+                    opened_by="consultant",
+                )
+            )
+            run_dir = Path(request.run_dir)
+            (run_dir / "consultant_decision.json").write_text(
+                json.dumps(
+                    {
+                        "terminal_result": "NEEDS_PLANNING",
+                        "incident_path": str(authored_incident_path.relative_to(paths.root)),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "consultant_summary.md").write_text(
+                "# Consultant Summary\n",
+                encoding="utf-8",
+            )
             return _runner_result(
                 request,
                 terminal=ExecutionTerminalResult.NEEDS_PLANNING.value,
                 now=NOW,
             )
+        if request.stage is PlanningStageName.AUDITOR:
+            assert request.active_work_item_id is not None
+            auditor_incident_ids.append(request.active_work_item_id)
         return _runner_result(
             request,
             terminal=PlanningTerminalResult.AUDITOR_COMPLETE.value,
@@ -2176,6 +2214,7 @@ def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: 
     assert second.stage is ExecutionStageName.TROUBLESHOOTER
     assert third.stage is ExecutionStageName.CONSULTANT
     assert third.router_decision.action is RouterAction.HANDOFF
+    assert authored_incident_path is not None
 
     snapshot_after_handoff = load_snapshot(paths)
     assert snapshot_after_handoff.active_stage is None
@@ -2183,18 +2222,27 @@ def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: 
     assert snapshot_after_handoff.active_work_item_id is None
     assert snapshot_after_handoff.current_failure_class is None
     assert (paths.tasks_blocked_dir / "task-001.md").is_file()
-    assert len(tuple(paths.incidents_incoming_dir.glob("*.md"))) == 1
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (authored_incident_path,)
+    assert not tuple(paths.incidents_incoming_dir.glob("incident-task-*.md"))
     incident_path = next(paths.incidents_incoming_dir.glob("*.md"))
     incident = read_work_document_as(incident_path, model=IncidentDocument)
     assert incident.needs_planning is True
-    assert incident.trigger_reason == "consultant_needs_planning"
+    assert incident.trigger_reason == "Consultant emitted NEEDS_PLANNING."
     assert incident.source_stage is ExecutionStageName.CONSULTANT
 
     event_types = [event.event_type for event in read_runtime_events(paths)]
-    assert "runtime_handoff_incident_enqueued" in event_types
+    assert "runtime_handoff_incident_adopted" in event_types
+    assert "runtime_handoff_incident_enqueued" not in event_types
+
+    trace_path = Path(third.stage_result_path).parents[1] / "run_trace.json"
+    trace = RunTraceGraph.model_validate_json(trace_path.read_text(encoding="utf-8"))
+    handoff_edge = next(edge for edge in trace.edges if edge.outcome == "NEEDS_PLANNING")
+    assert len(handoff_edge.spawned_work) == 1
+    assert handoff_edge.spawned_work[0].path == authored_incident_path.as_posix()
 
     fourth = engine.tick()
     assert fourth.stage is PlanningStageName.AUDITOR
+    assert auditor_incident_ids == ["consultant-task-001"]
 
 
 def test_runtime_handoff_incident_inherits_task_lineage_under_open_closure_target(

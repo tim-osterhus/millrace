@@ -25,7 +25,7 @@ def discovered_stage_artifact_paths(
     request: StageRunRequest,
     terminal_result: TerminalOutcome,
 ) -> tuple[str, ...]:
-    if not _is_successful_consultant_continuation(request, terminal_result):
+    if not _is_consultant_artifact_result(request, terminal_result):
         return ()
 
     paths: list[str] = []
@@ -40,21 +40,21 @@ def stage_artifact_metadata(
     request: StageRunRequest,
     terminal_result: TerminalOutcome,
 ) -> dict[str, JsonValue]:
-    if not _is_successful_consultant_continuation(request, terminal_result):
+    if not _is_consultant_artifact_result(request, terminal_result):
         return {}
 
     decision_path = _run_artifact_path(request, "consultant_decision.json")
     if decision_path is None:
         return {}
 
+    metadata: dict[str, JsonValue] = {"consultant_decision_path": str(decision_path)}
     try:
         raw_payload = json.loads(decision_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return metadata
     if not isinstance(raw_payload, dict):
-        return {}
+        return metadata
 
-    metadata: dict[str, JsonValue] = {"consultant_decision_path": str(decision_path)}
     for key in ("target_stage", "resume_stage"):
         value = raw_payload.get(key)
         if not isinstance(value, str):
@@ -62,6 +62,10 @@ def stage_artifact_metadata(
         normalized = value.strip()
         if normalized:
             metadata[key] = normalized
+    if terminal_outcome_value(terminal_result) == ExecutionTerminalResult.NEEDS_PLANNING.value:
+        incident_path = raw_payload.get("incident_path")
+        if isinstance(incident_path, str) and incident_path.strip():
+            metadata["incident_path"] = incident_path.strip()
     return metadata
 
 
@@ -95,13 +99,17 @@ def artifact_exists(run_dir: str, candidate_path: str) -> bool:
     return resolved_candidate.exists()
 
 
-def _is_successful_consultant_continuation(
+def _is_consultant_artifact_result(
     request: StageRunRequest,
     terminal_result: TerminalOutcome,
 ) -> bool:
     return (
         request.stage is ExecutionStageName.CONSULTANT
-        and terminal_outcome_value(terminal_result) == ExecutionTerminalResult.CONSULT_COMPLETE.value
+        and terminal_outcome_value(terminal_result)
+        in {
+            ExecutionTerminalResult.CONSULT_COMPLETE.value,
+            ExecutionTerminalResult.NEEDS_PLANNING.value,
+        }
     )
 
 

@@ -21,9 +21,11 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.contracts.router import RouterAction, RouterDecision
+from millrace_ai.events import read_runtime_events
 from millrace_ai.paths import bootstrap_workspace, workspace_paths
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.runtime import RuntimeEngine
+from millrace_ai.runtime.handoff_incidents import enqueue_handoff_incident
 from millrace_ai.runtime.lanes import compiled_plan_fingerprint_for_runtime
 from millrace_ai.runtime.result_application import apply_router_decision, route_stage_result
 from millrace_ai.state_store import load_snapshot, save_snapshot
@@ -486,7 +488,7 @@ def test_explicit_non_mutating_terminal_action_clears_runtime_without_source_mut
     assert snapshot.execution_status_marker == "### UPDATE_COMPLETE"
 
 
-def test_handoff_result_uses_terminal_action_failure_class_for_incident(
+def test_consultant_handoff_without_authored_incident_is_idempotent(
     tmp_path: Path,
 ) -> None:
     engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
@@ -503,6 +505,7 @@ def test_handoff_result_uses_terminal_action_failure_class_for_incident(
         result_class=ResultClass.ESCALATE_PLANNING,
         summary_status_marker="### NEEDS_PLANNING",
         success=False,
+        metadata={"request_id": "request-001"},
         started_at=NOW,
         completed_at=NOW,
     )
@@ -516,6 +519,232 @@ def test_handoff_result_uses_terminal_action_failure_class_for_incident(
     assert len(spawned) == 1
     incident = read_work_document_as(spawned[0], model=IncidentDocument)
     assert incident.failure_class == "terminal_escalate_planning"
+    engine.close()
+    restarted_engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    restarted_engine.startup()
+    replayed_path = enqueue_handoff_incident(
+        restarted_engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+    assert replayed_path == spawned[0]
+    assert len(tuple(paths.incidents_incoming_dir.glob("*.md"))) == 1
+    assert incident.trigger_metadata["runtime_created"] is True
+    assert incident.trigger_metadata["consultant_request_id"] == "request-001"
+    assert any(
+        event.event_type == "runtime_handoff_incident_authored_rejected"
+        and event.data["reason"] == "missing_path"
+        for event in read_runtime_events(paths)
+    )
+
+
+def test_distinct_consultant_request_creates_another_runtime_incident(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    first_result = StageResultEnvelope(
+        run_id="run-terminal",
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.CONSULTANT,
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.NEEDS_PLANNING,
+        result_class=ResultClass.ESCALATE_PLANNING,
+        summary_status_marker="### NEEDS_PLANNING",
+        success=False,
+        metadata={"request_id": "request-001"},
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    decision = route_stage_result(engine, first_result)
+    first_path = enqueue_handoff_incident(engine, decision=decision, stage_result=first_result)
+    second_result = first_result.model_copy(
+        update={
+            "run_id": "run-terminal-2",
+            "metadata": {"request_id": "request-002"},
+        }
+    )
+
+    second_path = enqueue_handoff_incident(engine, decision=decision, stage_result=second_result)
+
+    assert second_path != first_path
+    assert len(tuple(paths.incidents_incoming_dir.glob("*.md"))) == 2
+
+
+def test_consultant_handoff_adopts_declared_incident(tmp_path: Path) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    (paths.tasks_active_dir / "task-001.md").write_text(
+        render_work_document(
+            _task_doc("task-001").model_copy(update={"root_spec_id": "spec-001"})
+        ),
+        encoding="utf-8",
+    )
+    authored_path = paths.incidents_incoming_dir / "consultant-incident.md"
+    authored_path.write_text(
+        render_work_document(
+            IncidentDocument(
+                incident_id="consultant-incident",
+                title="Consultant incident",
+                summary="Planning is required.",
+                source_task_id="task-001",
+                source_spec_id="spec-001",
+                source_stage=ExecutionStageName.CONSULTANT,
+                source_plane=Plane.EXECUTION,
+                failure_class="consultant_needs_planning",
+                trigger_reason="Local recovery exhausted.",
+                consultant_decision=IncidentDecision.NEEDS_PLANNING,
+                opened_at=NOW,
+                opened_by="consultant",
+            )
+        ),
+        encoding="utf-8",
+    )
+    stage_result = StageResultEnvelope(
+        run_id="run-terminal",
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.CONSULTANT,
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.NEEDS_PLANNING,
+        result_class=ResultClass.ESCALATE_PLANNING,
+        summary_status_marker="### NEEDS_PLANNING",
+        success=False,
+        metadata={"incident_path": str(authored_path), "request_id": "request-001"},
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert spawned == (authored_path,)
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (authored_path,)
+    assert any(
+        event.event_type == "runtime_handoff_incident_adopted"
+        and event.data["incident_id"] == "consultant-incident"
+        for event in read_runtime_events(paths)
+    )
+
+
+def test_consultant_handoff_resolves_declared_incident_after_lifecycle_move(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    incoming_path = paths.incidents_incoming_dir / "consultant-moved.md"
+    active_path = paths.incidents_active_dir / incoming_path.name
+    incoming_path.write_text(
+        render_work_document(
+            IncidentDocument(
+                incident_id="consultant-moved",
+                title="Moved consultant incident",
+                summary="Planning is required.",
+                source_task_id="task-001",
+                source_stage=ExecutionStageName.CONSULTANT,
+                source_plane=Plane.EXECUTION,
+                failure_class="consultant_needs_planning",
+                trigger_reason="Local recovery exhausted.",
+                consultant_decision=IncidentDecision.NEEDS_PLANNING,
+                opened_at=NOW,
+                opened_by="consultant",
+            )
+        ),
+        encoding="utf-8",
+    )
+    incoming_path.replace(active_path)
+    stage_result = StageResultEnvelope(
+        run_id="run-terminal",
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.CONSULTANT,
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.NEEDS_PLANNING,
+        result_class=ResultClass.ESCALATE_PLANNING,
+        summary_status_marker="### NEEDS_PLANNING",
+        success=False,
+        metadata={
+            "incident_path": str(incoming_path.relative_to(paths.root)),
+            "request_id": "request-001",
+        },
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert spawned == (active_path,)
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == ()
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_reason"),
+    (
+        ("malformed", "missing_or_invalid_document"),
+        ("outside", "outside_workspace_incident_lifecycle"),
+        ("missing", "missing_or_invalid_document"),
+        ("mismatch", "source_mismatch"),
+    ),
+)
+def test_invalid_consultant_incident_falls_back_with_diagnostic(
+    tmp_path: Path,
+    case: str,
+    expected_reason: str,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    declared_path = paths.incidents_incoming_dir / f"consultant-{case}.md"
+    if case == "outside":
+        declared_path = tmp_path / "outside-incident.md"
+    if case == "malformed":
+        declared_path.write_text("not an incident document\n", encoding="utf-8")
+    elif case != "missing":
+        source_task_id = "task-other" if case == "mismatch" else "task-001"
+        declared_path.write_text(
+            render_work_document(
+                IncidentDocument(
+                    incident_id=declared_path.stem,
+                    title="Declared consultant incident",
+                    summary="Planning is required.",
+                    source_task_id=source_task_id,
+                    source_stage=ExecutionStageName.CONSULTANT,
+                    source_plane=Plane.EXECUTION,
+                    failure_class="consultant_needs_planning",
+                    trigger_reason="Local recovery exhausted.",
+                    consultant_decision=IncidentDecision.NEEDS_PLANNING,
+                    opened_at=NOW,
+                    opened_by="consultant",
+                )
+            ),
+            encoding="utf-8",
+        )
+    stage_result = StageResultEnvelope(
+        run_id="run-terminal",
+        plane=Plane.EXECUTION,
+        stage=ExecutionStageName.CONSULTANT,
+        work_item_kind=WorkItemKind.TASK,
+        work_item_id="task-001",
+        terminal_result=ExecutionTerminalResult.NEEDS_PLANNING,
+        result_class=ResultClass.ESCALATE_PLANNING,
+        summary_status_marker="### NEEDS_PLANNING",
+        success=False,
+        metadata={"incident_path": str(declared_path), "request_id": f"request-{case}"},
+        started_at=NOW,
+        completed_at=NOW,
+    )
+
+    decision = route_stage_result(engine, stage_result)
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert len(spawned) == 1
+    assert spawned[0].name.startswith("incident-task-001-")
+    assert any(
+        event.event_type == "runtime_handoff_incident_authored_rejected"
+        and event.data["reason"] == expected_reason
+        for event in read_runtime_events(paths)
+    )
 
 
 # ── minimal three-plane fixture runtime tests ───────────────────────────────
