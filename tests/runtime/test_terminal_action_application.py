@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -209,6 +210,19 @@ def _consultant_incident_document(
         opened_at=NOW,
         opened_by="consultant",
     )
+
+
+def _consultant_source_event_id(*, request_id: str) -> str:
+    identity_parts = (
+        Plane.EXECUTION.value,
+        ExecutionStageName.CONSULTANT.value,
+        WorkItemKind.TASK.value,
+        "task-001",
+        ExecutionTerminalResult.NEEDS_PLANNING.value,
+        "run-terminal",
+        request_id,
+    )
+    return hashlib.sha256("\0".join(identity_parts).encode()).hexdigest()
 
 
 @pytest.mark.parametrize("family_id", ("task", "spec", "probe", "incident"))
@@ -582,6 +596,95 @@ def test_consultant_handoff_without_authored_incident_is_idempotent(
         and event.data["reason"] == "missing_path"
         for event in read_runtime_events(paths)
     )
+
+
+def test_invalid_deterministic_incoming_collision_is_quarantined_and_replayed(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    request_id = "request-partial-collision"
+    source_event_id = _consultant_source_event_id(request_id=request_id)
+    incident_id = f"incident-task-001-{source_event_id[:12]}"
+    collision_path = paths.incidents_incoming_dir / f"{incident_id}.md"
+    collision_path.write_text("# Partial incident\n", encoding="utf-8")
+    stage_result = _consultant_needs_planning_result(
+        incident_path="",
+        request_id=request_id,
+    ).model_copy(update={"metadata": {"request_id": request_id}})
+    decision = route_stage_result(engine, stage_result)
+
+    spawned_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+    replayed_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+
+    assert spawned_path == collision_path
+    assert replayed_path == spawned_path
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (spawned_path,)
+    assert read_work_document_as(spawned_path, model=IncidentDocument).incident_id == incident_id
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+        and event.data["reason"] == "deterministic_incident_collision"
+    )
+    assert (paths.root / str(rejection.data["quarantine_destination"])).is_file()
+    registrations = tuple(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_registered"
+        and event.data["source_event_id"] == source_event_id
+    )
+    assert len(registrations) == 1
+
+
+def test_nonincoming_deterministic_collision_uses_stable_registered_alternate(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    request_id = "request-active-collision"
+    source_event_id = _consultant_source_event_id(request_id=request_id)
+    incident_id = f"incident-task-001-{source_event_id[:12]}"
+    collision_path = paths.incidents_active_dir / f"{incident_id}.md"
+    collision_path.write_text("# Partial active incident\n", encoding="utf-8")
+    original_bytes = collision_path.read_bytes()
+    stage_result = _consultant_needs_planning_result(
+        incident_path="",
+        request_id=request_id,
+    ).model_copy(update={"metadata": {"request_id": request_id}})
+    decision = route_stage_result(engine, stage_result)
+
+    spawned_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+    replayed_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+
+    assert spawned_path.parent == paths.incidents_incoming_dir
+    assert spawned_path.stem == f"{incident_id}-fallback"
+    assert replayed_path == spawned_path
+    assert collision_path.read_bytes() == original_bytes
+    registrations = tuple(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_registered"
+        and event.data["source_event_id"] == source_event_id
+    )
+    assert len(registrations) == 1
+    assert registrations[0].data["incident_id"] == spawned_path.stem
 
 
 def test_distinct_consultant_request_creates_another_runtime_incident(
@@ -1094,6 +1197,50 @@ def test_missing_authored_root_lineage_remains_compatible(tmp_path: Path) -> Non
     assert spawned == (authored_path,)
 
 
+@pytest.mark.parametrize(
+    ("identity_case", "expected_diagnostic"),
+    (
+        ("wrong_run", "consultant run does not match terminal event"),
+        ("unexpected_spec", "source spec does not match terminal event"),
+    ),
+)
+def test_authored_incident_rejects_strict_consultant_identity_mismatch(
+    tmp_path: Path,
+    identity_case: str,
+    expected_diagnostic: str,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    authored_path = paths.incidents_incoming_dir / f"strict-{identity_case}.md"
+    incident = _consultant_incident_document(authored_path.stem)
+    if identity_case == "wrong_run":
+        incident = incident.model_copy(
+            update={"trigger_metadata": {"consultant_run_id": "run-other"}}
+        )
+    else:
+        incident = incident.model_copy(update={"source_spec_id": "spec-unexpected"})
+    authored_path.write_text(render_work_document(incident), encoding="utf-8")
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(authored_path),
+        request_id=f"request-{identity_case}",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert len(spawned) == 1
+    assert spawned[0] != authored_path
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == spawned
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+        and event.data["reason"] == "source_mismatch"
+    )
+    assert rejection.data["diagnostic"] == expected_diagnostic
+    assert (paths.root / str(rejection.data["quarantine_destination"])).is_file()
+
+
 def test_synthesized_registration_wins_over_later_authored_duplicate(
     tmp_path: Path,
 ) -> None:
@@ -1184,6 +1331,79 @@ def test_adopted_incident_registration_survives_restart_and_lifecycle_move(
     assert read_work_document_as(active_path, model=IncidentDocument).trigger_metadata[
         "source_event_id"
     ] == source_event_id
+
+
+def test_first_registration_wins_over_earlier_sorting_incoming_copy(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    original_incoming = paths.incidents_incoming_dir / "z-original.md"
+    original_incoming.write_text(
+        render_work_document(_consultant_incident_document(original_incoming.stem)),
+        encoding="utf-8",
+    )
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(original_incoming),
+        request_id="request-first-registration",
+    )
+    decision = route_stage_result(engine, stage_result)
+    adopted_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+    registered_document = read_work_document_as(adopted_path, model=IncidentDocument)
+    source_event_id = registered_document.trigger_metadata["source_event_id"]
+    original_active = paths.incidents_active_dir / original_incoming.name
+    original_incoming.replace(original_active)
+    later_copy = paths.incidents_incoming_dir / "a-later-copy.md"
+    later_copy.write_text(
+        render_work_document(
+            registered_document.model_copy(update={"incident_id": later_copy.stem})
+        ),
+        encoding="utf-8",
+    )
+    replay_result = stage_result.model_copy(
+        update={
+            "metadata": {
+                "incident_path": str(later_copy),
+                "request_id": "request-first-registration",
+            }
+        }
+    )
+
+    replayed_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=replay_result,
+    )
+
+    assert replayed_path == original_active
+    assert not later_copy.exists()
+    registrations = tuple(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_registered"
+        and event.data["source_event_id"] == source_event_id
+    )
+    assert len(registrations) == 1
+    assert registrations[0].data == {
+        "source_event_id": source_event_id,
+        "incident_id": original_active.stem,
+        "source_run_id": "run-terminal",
+        "source_request_id": "request-first-registration",
+        "source_work_item_id": "task-001",
+        "source_stage": "consultant",
+        "registration_source": "authored",
+    }
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+        and event.data["reason"] == "duplicate_canonical_event"
+    )
+    assert (paths.root / str(rejection.data["quarantine_destination"])).is_file()
 
 
 def test_registered_replay_rejects_matching_event_with_wrong_source_identity(

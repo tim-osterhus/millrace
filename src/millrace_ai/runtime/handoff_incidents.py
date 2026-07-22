@@ -25,7 +25,7 @@ from millrace_ai.contracts import (
     WorkItemKind,
 )
 from millrace_ai.contracts.router import RouterDecision
-from millrace_ai.events import write_runtime_event
+from millrace_ai.events import iter_runtime_events, write_runtime_event
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.work_documents import read_work_document_as, render_work_document
 from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
@@ -42,6 +42,11 @@ class _HandoffLineage:
     root_spec_id: str | None = None
     source_task_id: str | None = None
     source_spec_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ConsultantIncidentRegistration:
+    incident_id: str
 
 
 def enqueue_handoff_incident(
@@ -67,41 +72,58 @@ def enqueue_handoff_incident(
         if is_closure_target
         else _source_work_item_lineage(engine, stage_result)
     )
+    consultant_registration: _ConsultantIncidentRegistration | None = None
     if is_consultant_handoff:
         source_event_id = str(trigger_metadata["source_event_id"])
-        existing_incident = _existing_registered_consultant_incident(
+        consultant_registration = _first_consultant_incident_registration(
             engine,
             source_event_id=source_event_id,
-            stage_result=stage_result,
-            lineage=lineage,
         )
-        if existing_incident is not None:
-            _inspect_replay_authored_incident(
+        if consultant_registration is not None:
+            existing_incident = _existing_registered_consultant_incident(
+                engine,
+                registration=consultant_registration,
+                source_event_id=source_event_id,
+                stage_result=stage_result,
+                lineage=lineage,
+            )
+            _quarantine_registered_incident_duplicates(
+                engine,
+                source_event_id=source_event_id,
+                canonical_incident_id=consultant_registration.incident_id,
+                stage_result=stage_result,
+                lineage=lineage,
+            )
+            if existing_incident is not None:
+                _inspect_replay_authored_incident(
+                    engine,
+                    stage_result=stage_result,
+                    lineage=lineage,
+                    existing_incident=existing_incident,
+                )
+                write_runtime_event(
+                    engine.paths,
+                    event_type="runtime_handoff_incident_deduped",
+                    data={
+                        "source_work_item_id": stage_result.work_item_id,
+                        "source_event_id": source_event_id,
+                        "existing_destination": str(
+                            existing_incident.relative_to(engine.paths.root)
+                        ),
+                    },
+                )
+                return existing_incident
+        else:
+            authored_incident = _consultant_authored_incident(
                 engine,
                 stage_result=stage_result,
                 lineage=lineage,
-                existing_incident=existing_incident,
-            )
-            write_runtime_event(
-                engine.paths,
-                event_type="runtime_handoff_incident_deduped",
-                data={
-                    "source_work_item_id": stage_result.work_item_id,
-                    "source_event_id": source_event_id,
-                    "existing_destination": str(existing_incident.relative_to(engine.paths.root)),
+                registration_metadata={
+                    key: value for key, value in trigger_metadata.items() if key != "runtime_created"
                 },
             )
-            return existing_incident
-        authored_incident = _consultant_authored_incident(
-            engine,
-            stage_result=stage_result,
-            lineage=lineage,
-            registration_metadata={
-                key: value for key, value in trigger_metadata.items() if key != "runtime_created"
-            },
-        )
-        if authored_incident is not None:
-            return authored_incident
+            if authored_incident is not None:
+                return authored_incident
     if is_closure_target:
         existing_incident = _existing_closure_remediation_incident(
             engine,
@@ -124,10 +146,39 @@ def enqueue_handoff_incident(
     incident_id = (
         f"arbiter-gap-{lineage.root_spec_id}-{uuid4().hex[:8]}"
         if is_closure_target and lineage.root_spec_id is not None
+        else consultant_registration.incident_id
+        if is_consultant_handoff and consultant_registration is not None
         else f"incident-{stage_result.work_item_id}-{trigger_metadata['source_event_id'][:12]}"
         if is_consultant_handoff
         else f"incident-{stage_result.work_item_id}-{uuid4().hex[:8]}"
     )
+    if is_consultant_handoff:
+        incident_id, existing_target = _prepare_consultant_runtime_incident_target(
+            engine,
+            incident_id=incident_id,
+            source_event_id=str(trigger_metadata["source_event_id"]),
+            stage_result=stage_result,
+            lineage=lineage,
+            allow_alternate=consultant_registration is None,
+        )
+        if existing_target is not None:
+            _register_consultant_incident(
+                engine,
+                stage_result=stage_result,
+                source_event_id=str(trigger_metadata["source_event_id"]),
+                incident_id=incident_id,
+                registration_source="runtime",
+            )
+            write_runtime_event(
+                engine.paths,
+                event_type="runtime_handoff_incident_deduped",
+                data={
+                    "source_work_item_id": stage_result.work_item_id,
+                    "source_event_id": trigger_metadata["source_event_id"],
+                    "existing_destination": str(existing_target.relative_to(engine.paths.root)),
+                },
+            )
+            return existing_target
     source_family_id = stage_result.work_item_family_id
     evidence_paths = list(stage_result.artifact_paths)
     for key in ("preferred_rubric_path", "preferred_verdict_path", "preferred_report_path"):
@@ -185,6 +236,14 @@ def enqueue_handoff_incident(
     ) is None:
         raise RuntimeError("incident incoming directory failed lifecycle safety validation")
     destination = queue.enqueue_incident(incident)
+    if is_consultant_handoff:
+        _register_consultant_incident(
+            engine,
+            stage_result=stage_result,
+            source_event_id=str(trigger_metadata["source_event_id"]),
+            incident_id=incident_id,
+            registration_source="runtime",
+        )
     write_runtime_event(
         engine.paths,
         event_type="runtime_handoff_incident_enqueued",
@@ -230,49 +289,191 @@ def _consultant_synthesized_trigger_metadata(
     return metadata
 
 
+def _first_consultant_incident_registration(
+    engine: RuntimeEngine,
+    *,
+    source_event_id: str,
+) -> _ConsultantIncidentRegistration | None:
+    for event in iter_runtime_events(engine.paths):
+        if event.event_type != "runtime_handoff_incident_registered":
+            continue
+        if event.data.get("source_event_id") != source_event_id:
+            continue
+        incident_id = event.data.get("incident_id")
+        if isinstance(incident_id, str) and incident_id:
+            return _ConsultantIncidentRegistration(incident_id=incident_id)
+    return None
+
+
+def _register_consultant_incident(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    source_event_id: str,
+    incident_id: str,
+    registration_source: str,
+) -> None:
+    if _first_consultant_incident_registration(engine, source_event_id=source_event_id) is not None:
+        return
+    write_runtime_event(
+        engine.paths,
+        event_type="runtime_handoff_incident_registered",
+        data={
+            "source_event_id": source_event_id,
+            "incident_id": incident_id,
+            "source_run_id": stage_result.run_id,
+            "source_request_id": _metadata_string(stage_result, "request_id"),
+            "source_work_item_id": stage_result.work_item_id,
+            "source_stage": stage_result.stage.value,
+            "registration_source": registration_source,
+        },
+    )
+
+
 def _existing_registered_consultant_incident(
     engine: RuntimeEngine,
     *,
+    registration: _ConsultantIncidentRegistration,
     source_event_id: str,
     stage_result: StageResultEnvelope,
     lineage: _HandoffLineage,
 ) -> Path | None:
+    path = _incident_path_for_filename(engine, f"{registration.incident_id}.md")
+    if path is None:
+        return None
+    incident = _read_incident_document_at(path)
+    mismatch = (
+        "registered incident is not a parseable canonical document"
+        if incident is None or incident.incident_id != registration.incident_id
+        else _authored_incident_mismatch(
+            incident,
+            stage_result=stage_result,
+            lineage=lineage,
+        )
+    )
+    if incident is not None and incident.trigger_metadata.get("source_event_id") != source_event_id:
+        mismatch = "registered incident source event does not match registration"
+    if mismatch is None:
+        return path
+    _write_authored_incident_rejection(
+        engine,
+        stage_result,
+        reason="registered_source_mismatch",
+        declared_path=_metadata_string(stage_result, "incident_path"),
+        diagnostic=mismatch,
+        candidate_path=path,
+    )
+    return None
+
+
+def _quarantine_registered_incident_duplicates(
+    engine: RuntimeEngine,
+    *,
+    source_event_id: str,
+    canonical_incident_id: str,
+    stage_result: StageResultEnvelope,
+    lineage: _HandoffLineage,
+) -> None:
+    incoming_directory = _validated_incident_lifecycle_directory(
+        engine,
+        engine.paths.incidents_incoming_dir,
+    )
+    if incoming_directory is None:
+        return
+    for path in sorted(incoming_directory.glob("*.md")):
+        if path.stem == canonical_incident_id or path.is_symlink():
+            continue
+        incident = _read_incident_document_at(path)
+        if (
+            incident is None
+            or incident.incident_id != path.stem
+            or incident.trigger_metadata.get("source_event_id") != source_event_id
+        ):
+            continue
+        mismatch = _authored_incident_mismatch(
+            incident,
+            stage_result=stage_result,
+            lineage=lineage,
+        )
+        _write_authored_incident_rejection(
+            engine,
+            stage_result,
+            reason=(
+                "registered_source_mismatch" if mismatch is not None else "duplicate_canonical_event"
+            ),
+            declared_path=_metadata_string(stage_result, "incident_path"),
+            diagnostic=mismatch
+            or f"source event is registered to incident {canonical_incident_id}",
+            candidate_path=path,
+        )
+
+
+def _prepare_consultant_runtime_incident_target(
+    engine: RuntimeEngine,
+    *,
+    incident_id: str,
+    source_event_id: str,
+    stage_result: StageResultEnvelope,
+    lineage: _HandoffLineage,
+    allow_alternate: bool,
+) -> tuple[str, Path | None]:
+    selected_id = incident_id
+    for _ in range(2):
+        unusable_nonincoming_collision = False
+        for path in _incident_collision_paths_for_filename(engine, f"{selected_id}.md"):
+            incident = None if path.is_symlink() else _read_incident_document_at(path)
+            mismatch = (
+                None
+                if incident is not None
+                and incident.incident_id == selected_id
+                and incident.trigger_metadata.get("source_event_id") == source_event_id
+                else "deterministic incident target is not the matching canonical document"
+            )
+            if mismatch is None:
+                mismatch = _authored_incident_mismatch(
+                    incident,
+                    stage_result=stage_result,
+                    lineage=lineage,
+                )
+            if mismatch is None:
+                return selected_id, path
+            _write_authored_incident_rejection(
+                engine,
+                stage_result,
+                reason="deterministic_incident_collision",
+                declared_path=_metadata_string(stage_result, "incident_path"),
+                diagnostic=mismatch,
+                candidate_path=path,
+            )
+            if path.parent != engine.paths.incidents_incoming_dir:
+                unusable_nonincoming_collision = True
+
+        if not unusable_nonincoming_collision:
+            return selected_id, None
+        if selected_id != incident_id or not allow_alternate:
+            raise RuntimeError(
+                f"registered incident target {selected_id} has an unusable lifecycle collision"
+            )
+        selected_id = f"{incident_id}-fallback"
+    raise AssertionError("unreachable deterministic incident target selection")
+
+
+def _incident_collision_paths_for_filename(
+    engine: RuntimeEngine,
+    filename: str,
+) -> tuple[Path, ...]:
+    collisions: list[Path] = []
     for configured_directory in _incident_lifecycle_directories(engine):
         directory = _validated_incident_lifecycle_directory(engine, configured_directory)
         if directory is None:
             continue
-        for path in sorted(directory.glob("*.md")):
-            try:
-                if (
-                    path.is_symlink()
-                    or path.resolve().parent != directory.resolve()
-                    or not path.is_file()
-                ):
-                    continue
-            except (ValueError, RuntimeError, OSError):
-                continue
-            incident = _read_incident_document_at(path)
-            if incident is None or incident.incident_id != path.stem:
-                continue
-            if incident.trigger_metadata.get("source_event_id") != source_event_id:
-                continue
-            mismatch = _authored_incident_mismatch(
-                incident,
-                stage_result=stage_result,
-                lineage=lineage,
-            )
-            if mismatch is not None:
-                _write_authored_incident_rejection(
-                    engine,
-                    stage_result,
-                    reason="registered_source_mismatch",
-                    declared_path=_metadata_string(stage_result, "incident_path"),
-                    diagnostic=mismatch,
-                    candidate_path=path,
-                )
-                continue
-            return path
-    return None
+        candidate = directory / filename
+        try:
+            if candidate.is_symlink() or candidate.exists():
+                collisions.append(candidate)
+        except (ValueError, RuntimeError, OSError):
+            continue
+    return tuple(collisions)
 
 
 def _consultant_authored_incident(
@@ -294,6 +495,13 @@ def _consultant_authored_incident(
         update={"trigger_metadata": incident.trigger_metadata | registration_metadata}
     )
     candidate.write_text(render_work_document(registered_incident), encoding="utf-8")
+    _register_consultant_incident(
+        engine,
+        stage_result=stage_result,
+        source_event_id=str(registration_metadata["source_event_id"]),
+        incident_id=incident.incident_id,
+        registration_source="authored",
+    )
     write_runtime_event(
         engine.paths,
         event_type="runtime_handoff_incident_adopted",
@@ -533,14 +741,17 @@ def _authored_incident_mismatch(
         and incident.root_spec_id != lineage.root_spec_id
     ):
         return "root spec does not match terminal event"
-    if lineage.source_task_id is not None and incident.source_task_id != lineage.source_task_id:
+    if incident.source_task_id != lineage.source_task_id:
         return "source task does not match terminal event"
-    if lineage.source_spec_id is not None and incident.source_spec_id != lineage.source_spec_id:
+    if incident.source_spec_id != lineage.source_spec_id:
         return "source spec does not match terminal event"
     if not incident.needs_planning or incident.consultant_decision is not IncidentDecision.NEEDS_PLANNING:
         return "incident does not declare a planning escalation"
     if incident.related_run_ids and stage_result.run_id not in incident.related_run_ids:
         return "related run does not match terminal event"
+    consultant_run_id = incident.trigger_metadata.get("consultant_run_id")
+    if consultant_run_id is not None and consultant_run_id != stage_result.run_id:
+        return "consultant run does not match terminal event"
     request_id = _metadata_string(stage_result, "request_id")
     incident_request_id = incident.trigger_metadata.get("request_id") or incident.trigger_metadata.get(
         "consultant_request_id"
