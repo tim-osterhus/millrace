@@ -186,6 +186,31 @@ def _consultant_needs_planning_result(
     )
 
 
+def _consultant_incident_document(
+    incident_id: str,
+    *,
+    source_spec_id: str | None = None,
+    root_idea_id: str | None = None,
+    root_spec_id: str | None = None,
+) -> IncidentDocument:
+    return IncidentDocument(
+        incident_id=incident_id,
+        title="Consultant incident",
+        summary="Planning is required.",
+        root_idea_id=root_idea_id,
+        root_spec_id=root_spec_id,
+        source_task_id="task-001",
+        source_spec_id=source_spec_id,
+        source_stage=ExecutionStageName.CONSULTANT,
+        source_plane=Plane.EXECUTION,
+        failure_class="consultant_needs_planning",
+        trigger_reason="Local recovery exhausted.",
+        consultant_decision=IncidentDecision.NEEDS_PLANNING,
+        opened_at=NOW,
+        opened_by="consultant",
+    )
+
+
 @pytest.mark.parametrize("family_id", ("task", "spec", "probe", "incident"))
 def test_complete_work_item_action_applies_to_builtin_source_families(
     tmp_path: Path,
@@ -876,6 +901,156 @@ def test_lifecycle_move_lookup_skips_incident_symlinks(tmp_path: Path) -> None:
     )
     assert rejection.data["reason"] == "missing_or_invalid_document"
     assert "quarantine_destination" not in rejection.data
+
+
+def test_lexically_outside_symlink_parent_cannot_authorize_workspace_incident(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    workspace_target = paths.incidents_incoming_dir / "consultant-outside-alias.md"
+    workspace_target.write_text(
+        render_work_document(_consultant_incident_document(workspace_target.stem)),
+        encoding="utf-8",
+    )
+    target_bytes = workspace_target.read_bytes()
+    outside_alias = tmp_path / "outside-incoming-alias"
+    outside_alias.symlink_to(paths.incidents_incoming_dir, target_is_directory=True)
+    declared_path = outside_alias / workspace_target.name
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(declared_path),
+        request_id="request-outside-parent-alias",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert len(spawned) == 1
+    assert spawned[0].name.startswith("incident-task-001-")
+    assert workspace_target.read_bytes() == target_bytes
+    assert outside_alias.is_symlink()
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+    )
+    assert rejection.data["reason"] == "outside_workspace_incident_lifecycle"
+    assert "quarantine_destination" not in rejection.data
+
+
+def test_parent_component_symlink_is_not_followed_during_lexical_normalization(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    authored_path = paths.incidents_incoming_dir / "consultant-parent-component.md"
+    authored_path.write_text(
+        render_work_document(_consultant_incident_document(authored_path.stem)),
+        encoding="utf-8",
+    )
+    external_dir = tmp_path / "external-parent"
+    external_dir.mkdir()
+    parent_alias = paths.incidents_incoming_dir / "parent-alias"
+    parent_alias.symlink_to(external_dir, target_is_directory=True)
+    declared_path = parent_alias / ".." / authored_path.name
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(declared_path),
+        request_id="request-parent-component",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert spawned == (authored_path,)
+    assert parent_alias.is_symlink()
+    assert not (tmp_path / authored_path.name).exists()
+
+
+@pytest.mark.parametrize(
+    ("root_idea_id", "root_spec_id"),
+    (
+        ("idea-conflict", "spec-001"),
+        ("idea-001", "spec-conflict"),
+    ),
+)
+def test_conflicting_authored_root_lineage_is_rejected(
+    tmp_path: Path,
+    root_idea_id: str,
+    root_spec_id: str,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    (paths.tasks_active_dir / "task-001.md").write_text(
+        render_work_document(
+            _task_doc("task-001").model_copy(
+                update={"root_idea_id": "idea-001", "root_spec_id": "spec-001"}
+            )
+        ),
+        encoding="utf-8",
+    )
+    declared_path = paths.incidents_incoming_dir / f"root-conflict-{root_idea_id}.md"
+    declared_path.write_text(
+        render_work_document(
+            _consultant_incident_document(
+                declared_path.stem,
+                source_spec_id="spec-001",
+                root_idea_id=root_idea_id,
+                root_spec_id=root_spec_id,
+            )
+        ),
+        encoding="utf-8",
+    )
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(declared_path),
+        request_id=f"request-{declared_path.stem}",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (spawned[0],)
+    assert spawned[0].name.startswith("incident-task-001-")
+    assert not declared_path.exists()
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+    )
+    quarantine_path = paths.root / str(rejection.data["quarantine_destination"])
+    assert rejection.data["reason"] == "source_mismatch"
+    assert quarantine_path.is_file()
+
+
+def test_missing_authored_root_lineage_remains_compatible(tmp_path: Path) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    (paths.tasks_active_dir / "task-001.md").write_text(
+        render_work_document(
+            _task_doc("task-001").model_copy(
+                update={"root_idea_id": "idea-001", "root_spec_id": "spec-001"}
+            )
+        ),
+        encoding="utf-8",
+    )
+    authored_path = paths.incidents_incoming_dir / "missing-root-lineage.md"
+    authored_path.write_text(
+        render_work_document(
+            _consultant_incident_document(
+                authored_path.stem,
+                source_spec_id="spec-001",
+            )
+        ),
+        encoding="utf-8",
+    )
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(authored_path),
+        request_id="request-missing-root-lineage",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert spawned == (authored_path,)
 
 
 @pytest.mark.parametrize(

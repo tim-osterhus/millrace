@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -241,28 +242,7 @@ def _consultant_authored_incident(
 
     lexical_candidate: Path | None = None
     try:
-        lexical_candidate = Path(declared_path).expanduser()
-        if not lexical_candidate.is_absolute():
-            lexical_candidate = engine.paths.root / lexical_candidate
-        if lexical_candidate.is_symlink():
-            _write_authored_incident_rejection(
-                engine,
-                stage_result,
-                reason="symlink_not_allowed",
-                declared_path=declared_path,
-                candidate_path=lexical_candidate,
-            )
-            return None
-        if lexical_candidate.suffix != ".md":
-            _write_authored_incident_rejection(
-                engine,
-                stage_result,
-                reason="invalid_incident_filename",
-                declared_path=declared_path,
-                candidate_path=lexical_candidate,
-            )
-            return None
-        candidate = lexical_candidate.resolve()
+        lexical_candidate = _lexically_normalized_incident_reference(engine, declared_path)
     except (ValueError, RuntimeError, OSError) as exc:
         _write_authored_incident_rejection(
             engine,
@@ -274,7 +254,7 @@ def _consultant_authored_incident(
         )
         return None
 
-    if not _is_incident_lifecycle_path(engine, candidate):
+    if not _is_known_incident_lifecycle_parent(engine, lexical_candidate.parent):
         _write_authored_incident_rejection(
             engine,
             stage_result,
@@ -282,20 +262,54 @@ def _consultant_authored_incident(
             declared_path=declared_path,
         )
         return None
+    if lexical_candidate.suffix != ".md":
+        _write_authored_incident_rejection(
+            engine,
+            stage_result,
+            reason="invalid_incident_filename",
+            declared_path=declared_path,
+            candidate_path=lexical_candidate,
+        )
+        return None
+    try:
+        if lexical_candidate.is_symlink():
+            _write_authored_incident_rejection(
+                engine,
+                stage_result,
+                reason="symlink_not_allowed",
+                declared_path=declared_path,
+                candidate_path=lexical_candidate,
+            )
+            return None
+    except (ValueError, RuntimeError, OSError) as exc:
+        _write_authored_incident_rejection(
+            engine,
+            stage_result,
+            reason="invalid_path",
+            declared_path=declared_path,
+            diagnostic=str(exc),
+            candidate_path=lexical_candidate,
+        )
+        return None
 
+    candidate = _incident_path_for_filename(engine, lexical_candidate.name)
+    if candidate is None:
+        _write_authored_incident_rejection(
+            engine,
+            stage_result,
+            reason="missing_or_invalid_document",
+            declared_path=declared_path,
+            candidate_path=lexical_candidate,
+        )
+        return None
     incident = _read_incident_document_at(candidate)
-    if incident is None and not candidate.exists():
-        moved_candidate = _incident_path_for_id(engine, candidate.stem)
-        if moved_candidate is not None:
-            candidate = moved_candidate
-            incident = _read_incident_document_at(candidate)
     if incident is None:
         _write_authored_incident_rejection(
             engine,
             stage_result,
             reason="missing_or_invalid_document",
             declared_path=declared_path,
-            candidate_path=candidate,
+            candidate_path=lexical_candidate,
         )
         return None
     if incident.incident_id != candidate.stem:
@@ -304,7 +318,7 @@ def _consultant_authored_incident(
             stage_result,
             reason="incident_id_path_mismatch",
             declared_path=declared_path,
-            candidate_path=candidate,
+            candidate_path=lexical_candidate,
         )
         return None
 
@@ -316,7 +330,7 @@ def _consultant_authored_incident(
             reason="source_mismatch",
             declared_path=declared_path,
             diagnostic=mismatch,
-            candidate_path=candidate,
+            candidate_path=lexical_candidate,
         )
         return None
 
@@ -333,15 +347,28 @@ def _consultant_authored_incident(
     return candidate
 
 
-def _is_incident_lifecycle_path(engine: RuntimeEngine, path: Path) -> bool:
-    return path.parent in {
-        directory.resolve() for directory in _incident_lifecycle_directories(engine)
+def _lexically_normalized_incident_reference(
+    engine: RuntimeEngine,
+    declared_path: str,
+) -> Path:
+    if "\0" in declared_path:
+        raise ValueError("embedded null byte")
+    candidate = Path(declared_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = engine.paths.root / candidate
+    return Path(os.path.abspath(os.fspath(candidate)))
+
+
+def _is_known_incident_lifecycle_parent(engine: RuntimeEngine, parent: Path) -> bool:
+    return parent in {
+        Path(os.path.abspath(os.fspath(directory)))
+        for directory in _incident_lifecycle_directories(engine)
     }
 
 
-def _incident_path_for_id(engine: RuntimeEngine, incident_id: str) -> Path | None:
+def _incident_path_for_filename(engine: RuntimeEngine, filename: str) -> Path | None:
     for directory in _incident_lifecycle_directories(engine):
-        candidate = directory / f"{incident_id}.md"
+        candidate = directory / filename
         try:
             if candidate.suffix != ".md" or candidate.is_symlink():
                 continue
@@ -365,6 +392,18 @@ def _authored_incident_mismatch(
 ) -> str | None:
     if incident.source_stage != stage_result.stage or incident.source_plane != stage_result.plane:
         return "source stage or plane does not match terminal event"
+    if (
+        incident.root_idea_id is not None
+        and lineage.root_idea_id is not None
+        and incident.root_idea_id != lineage.root_idea_id
+    ):
+        return "root idea does not match terminal event"
+    if (
+        incident.root_spec_id is not None
+        and lineage.root_spec_id is not None
+        and incident.root_spec_id != lineage.root_spec_id
+    ):
+        return "root spec does not match terminal event"
     if lineage.source_task_id is not None and incident.source_task_id != lineage.source_task_id:
         return "source task does not match terminal event"
     if lineage.source_spec_id is not None and incident.source_spec_id != lineage.source_spec_id:
@@ -427,7 +466,8 @@ def _quarantine_rejected_incoming_incident(
         return None
     try:
         if (
-            candidate_path.parent != engine.paths.incidents_incoming_dir.resolve()
+            candidate_path.parent
+            != Path(os.path.abspath(os.fspath(engine.paths.incidents_incoming_dir)))
             or not (candidate_path.is_symlink() or candidate_path.is_file())
         ):
             return None
