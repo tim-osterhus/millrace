@@ -544,13 +544,16 @@ root source. `root_spec_id` and `root_source` are inventory and closure
 metadata, not Blueprint storage ids. Manifests are keyed by `manifest_id`, and
 same-root remediation manifests are valid when their manifest ids differ.
 
-### Runtime-Generated Incident Or Handoff Work
+### Planning Incident Or Handoff Work
 
-**Intake source:** runtime result application creates incident work when a
-foreground route requires Planning intervention, such as Consultant
-`NEEDS_PLANNING`, an Arbiter `REMEDIATION_NEEDED` result, or an Arbiter gap
-handoff. The generated incident is written to
-`millrace-agents/incidents/incoming/`.
+**Intake source:** when Consultant returns `NEEDS_PLANNING`, runtime result
+application validates the incident path declared by the Consultant decision.
+It adopts and registers the canonical authored incident when valid and creates
+a deterministic runtime fallback only when the declared artifact is absent or
+invalid. Arbiter `REMEDIATION_NEEDED` and Arbiter gap handoffs remain
+runtime-created. Canonical incoming incidents are registered under
+`millrace-agents/incidents/` and remain valid as they progress through
+lifecycle directories.
 
 **Queue selection owner:** `runtime/activation.py` and the compiled Planning
 claim policy select incoming incidents as Planning work. The QueueStore moves
@@ -575,21 +578,24 @@ the incident or enqueue canonical queue work outside declared artifacts.
 incident-stage terminal result. Stage-result persistence and run-trace writers
 record the concrete route and artifacts.
 
-**Runtime mutation owner:** `runtime/handoff_incidents.py` materializes
-planning handoffs and runtime-owned closure-target Arbiter remediation
-incidents. Closure-target remediation incidents carry durable
-`created_by=millrace-runtime` and `trigger_metadata` provenance, while
-non-closure handoffs keep their existing path. `runtime/closure_transitions.py`
-handles Arbiter remediation incidents. Planning result application then moves
-the incident through active/resolved/blocked lifecycle and enqueues any
-validated generated follow-up work through runtime-owned effects.
+**Runtime mutation owner:** `runtime/handoff_incidents.py` validates, adopts,
+registers, deduplicates, or synthesizes planning handoffs and materializes
+runtime-owned closure-target Arbiter remediation incidents. Consultant
+registration uses a stable terminal-event identity so replay and restart reuse
+the first canonical incident; invalid or conflicting incoming artifacts are
+quarantined with audit evidence. Closure-target remediation incidents carry
+durable `created_by=millrace-runtime` and `trigger_metadata` provenance.
+`runtime/closure_transitions.py` handles Arbiter remediation incidents.
+Planning result application then moves the incident through
+active/resolved/blocked lifecycle and enqueues validated generated follow-up
+work through runtime-owned effects.
 
 **Inspection/monitor visibility:** incidents appear in `queue ls/show`, status
 Planning queues, runtime events, monitor events, `runs show/trace`, and
 closure-target latest verdict/report paths when Arbiter caused the incident.
 
-**Root-source contract:** runtime-created handoff incidents inherit
-`Root-Idea-ID`, `Root-Spec-ID`, `Source-Spec-ID`, and generic root-source
+**Root-source contract:** adopted and runtime-created handoff incidents must
+match `Root-Idea-ID`, `Root-Spec-ID`, `Source-Spec-ID`, and generic root-source
 metadata from the source work item or closure target. Closure-target Arbiter
 remediation incidents also record source stage, current Arbiter run/request
 IDs, previous Arbiter run/request IDs when known, and closure root spec ID so

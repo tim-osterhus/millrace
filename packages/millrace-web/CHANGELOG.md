@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.21.1
+
+- Sync the dashboard package version and runtime dependency with the Millrace
+  `0.21.1` Consultant handoff reliability patch.
+
 ## 0.21.0
 
 - Restore the optional dashboard sidecar for the Millrace `0.21.0` release

@@ -768,13 +768,16 @@ Idle:
 - If unrelated root specs are queued while a closure target is open, runtime
   emits `closure_target_backpressure`, keeps the daemon alive, and reports
   `planning_root_specs_deferred_by_closure_target` through `millrace status`.
-- If Consultant or another routed stage escalates a same-lineage work item back
-  into planning while a closure target is open, the runtime-created handoff
-  incident inherits `Root-Idea-ID`, `Root-Spec-ID`, and `Source-Spec-ID` from
-  the source work document before it is enqueued; runtime-owned closure-target
-  Arbiter remediation incidents also carry durable provenance and dedupe keys
-  when the gap path is used. That keeps the incident visible to the strict
-  closure-scoped planning selector.
+- If Consultant escalates a same-lineage work item back into planning while a
+  closure target is open, runtime result application first validates the
+  incident declared in Consultant's decision. A valid canonical incident is
+  adopted and registered; otherwise the runtime creates a deterministic
+  fallback. In either case, the canonical incident preserves `Root-Idea-ID`,
+  `Root-Spec-ID`, and `Source-Spec-ID` from the source work document.
+  Runtime-owned closure-target Arbiter remediation incidents separately carry
+  durable provenance and dedupe keys when the gap path is used. These rules
+  keep planning handoffs visible to the strict closure-scoped selector without
+  creating duplicate Consultant incidents.
 - If a stage-authored same-ID continuation bypassed queue API uniqueness and
   later reaches `tasks/done/`, the task transition layer retires a same-root
   stale predecessor from `tasks/blocked/` into

@@ -242,11 +242,12 @@ Expected user impact:
 
 ### Closure-Safe Handoff Reliability
 
-Millrace now preserves root lineage on runtime-generated planning handoff
-incidents, including Consultant `NEEDS_PLANNING` handoffs that happen while a
-closure target is open. Active hardening is focused on keeping strict
-closure-target queue selection intact while making every runtime-generated
-same-lineage remediation item claimable and diagnosable.
+Millrace now preserves root lineage on planning handoff incidents, including
+Consultant-authored `NEEDS_PLANNING` incidents adopted by the runtime and
+runtime-created fallbacks used when authored evidence is absent or invalid.
+Active hardening is focused on keeping strict closure-target queue selection
+intact while making every same-lineage remediation item claimable and
+diagnosable.
 
 Expected user impact:
 

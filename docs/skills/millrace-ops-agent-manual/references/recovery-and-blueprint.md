@@ -78,9 +78,13 @@ blockers. Confirm `process_running`, inspect `queue ls`, then restart unless a
 separate provider/network outage explains the stop.
 
 Consultant `NEEDS_PLANNING` handoffs should produce same-lineage planning
-incidents under an open closure target. If an older workspace idles with a
-blocked source task and lineage-less incoming incident, repair incident lineage
-rather than bypassing the root.
+incidents under an open closure target. The runtime should adopt the valid
+incident declared by Consultant and should create a generic fallback only when
+that artifact is absent or invalid. If both remain visible, inspect
+`runtime_handoff_incident_registered` and authored-rejection events before
+changing queue state. If an older workspace idles with a blocked source task
+and lineage-less incoming incident, repair incident lineage rather than
+bypassing the root.
 
 ## Blueprint Diagnostics
 

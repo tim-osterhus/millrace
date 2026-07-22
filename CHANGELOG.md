@@ -13,6 +13,23 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-07-21
+
+### Fixed
+
+- Fixed Consultant `NEEDS_PLANNING` handoffs creating both the specific
+  Consultant-authored incident and a second generic runtime incident. The
+  runtime now discovers the declared incident from Consultant's decision,
+  validates and registers a canonical authored incident when valid, and
+  synthesizes a runtime fallback only when no valid authored incident exists.
+- Made Consultant handoff registration durable and idempotent across result
+  replay, daemon restart, incident lifecycle movement, and same-name queue
+  collisions. Invalid or conflicting incoming artifacts are quarantined with
+  audit evidence instead of remaining claimable by Auditor.
+- Made runtime metadata updates to adopted Consultant incidents atomic and
+  reset the registration cache on each runtime startup so sequential daemon
+  owners observe the first durable registration without duplicating it.
+
 ## [0.21.0] - 2026-06-15
 
 ### Added
@@ -1126,7 +1143,8 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.21.1...HEAD
+[0.21.1]: https://github.com/tim-osterhus/millrace/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/tim-osterhus/millrace/compare/v0.20.3...v0.21.0
 [0.20.3]: https://github.com/tim-osterhus/millrace/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/tim-osterhus/millrace/compare/v0.20.1...v0.20.2

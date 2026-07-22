@@ -429,11 +429,12 @@ cycles:
   snapshot consumers.
 - `runtime/monitoring.py`, `runtime/pause_state.py`, and
   `runtime/handoff_incidents.py` own runtime event sink contracts, pause-source
-  projection, and operator handoff incident state. Runtime-created
-  closure-target Arbiter remediation incidents carry durable
+  projection, and operator handoff incident state. Consultant
+  `NEEDS_PLANNING` handoffs adopt and durably register a valid declared
+  incident, falling back to deterministic runtime synthesis only when needed.
+  Runtime-created closure-target Arbiter remediation incidents carry durable
   `created_by=millrace-runtime` plus `trigger_metadata` provenance and dedupe
-  by root spec plus previous Arbiter identity when available; non-closure
-  handoffs keep their existing path.
+  by root spec plus previous Arbiter identity when available.
 - `runtime/compiled_plans.py` preserves active-run launch-plan authority when
   config reload compiles a newer pending plan.
 - `runtime/request_context.py` is the compatibility facade for deterministic

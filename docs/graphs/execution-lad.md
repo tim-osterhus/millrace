@@ -70,7 +70,7 @@ cycle rather than a single retry.
 | Terminal State | Status | Class | Meaning |
 | --- | --- | --- | --- |
 | `update_complete` | `UPDATE_COMPLETE` | `success` | The task completed and Updater wrote completion evidence. |
-| `needs_planning` | `NEEDS_PLANNING` | `escalate_planning` | Execution needs Planning help; the runtime creates a planning handoff incident. |
+| `needs_planning` | `NEEDS_PLANNING` | `escalate_planning` | Execution needs Planning help; the runtime adopts a valid Consultant-authored incident or creates a fallback planning handoff incident. |
 | `blocked` | `BLOCKED` | `blocked` | Execution could not recover autonomously and needs operator or later planning attention. |
 
 ## Recovery Policies

@@ -30,7 +30,7 @@ def create_app(
     default_view: str = "detail",
 ) -> FastAPI:
     registry = WorkspaceRegistry.from_paths(workspaces)
-    app = FastAPI(title="Millrace Web", version="0.21.0")
+    app = FastAPI(title="Millrace Web", version="0.21.1")
     app.state.workspace_registry = registry
     app.state.poll_interval_seconds = poll_interval_seconds
     app.state.default_view = default_view

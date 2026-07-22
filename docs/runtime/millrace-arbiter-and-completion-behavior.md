@@ -130,8 +130,9 @@ When one closure target is open:
 
 - queued root specs for other lineages stay in `millrace-agents/specs/queue/`
 - same-lineage tasks and remediation planning items remain claimable
-- runtime-created execution-to-planning handoff incidents inherit root lineage
-  from their source work item before enqueue, and runtime-created
+- execution-to-planning handoff incidents inherit root lineage from their
+  source work item before enqueue; for Consultant `NEEDS_PLANNING`, the runtime
+  adopts a valid declared incident or creates a fallback, while runtime-created
   closure-target remediation incidents carry `created_by=millrace-runtime`
   plus `trigger_metadata` provenance so same-lineage planning selection stays
   visible after restart
