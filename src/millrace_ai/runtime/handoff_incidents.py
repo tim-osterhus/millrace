@@ -72,6 +72,8 @@ def enqueue_handoff_incident(
         existing_incident = _existing_registered_consultant_incident(
             engine,
             source_event_id=source_event_id,
+            stage_result=stage_result,
+            lineage=lineage,
         )
         if existing_incident is not None:
             _inspect_replay_authored_incident(
@@ -232,6 +234,8 @@ def _existing_registered_consultant_incident(
     engine: RuntimeEngine,
     *,
     source_event_id: str,
+    stage_result: StageResultEnvelope,
+    lineage: _HandoffLineage,
 ) -> Path | None:
     for configured_directory in _incident_lifecycle_directories(engine):
         directory = _validated_incident_lifecycle_directory(engine, configured_directory)
@@ -250,8 +254,24 @@ def _existing_registered_consultant_incident(
             incident = _read_incident_document_at(path)
             if incident is None or incident.incident_id != path.stem:
                 continue
-            if incident.trigger_metadata.get("source_event_id") == source_event_id:
-                return path
+            if incident.trigger_metadata.get("source_event_id") != source_event_id:
+                continue
+            mismatch = _authored_incident_mismatch(
+                incident,
+                stage_result=stage_result,
+                lineage=lineage,
+            )
+            if mismatch is not None:
+                _write_authored_incident_rejection(
+                    engine,
+                    stage_result,
+                    reason="registered_source_mismatch",
+                    declared_path=_metadata_string(stage_result, "incident_path"),
+                    diagnostic=mismatch,
+                    candidate_path=path,
+                )
+                continue
+            return path
     return None
 
 

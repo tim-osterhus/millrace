@@ -1186,6 +1186,59 @@ def test_adopted_incident_registration_survives_restart_and_lifecycle_move(
     ] == source_event_id
 
 
+def test_registered_replay_rejects_matching_event_with_wrong_source_identity(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    stage_result = _consultant_needs_planning_result(
+        incident_path="",
+        request_id="request-poisoned-registration",
+    ).model_copy(update={"metadata": {"request_id": "request-poisoned-registration"}})
+    decision = route_stage_result(engine, stage_result)
+    synthesized_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+    source_event_id = read_work_document_as(
+        synthesized_path,
+        model=IncidentDocument,
+    ).trigger_metadata["source_event_id"]
+    synthesized_path.unlink()
+    poisoned_path = paths.incidents_incoming_dir / "registered-wrong-source.md"
+    poisoned_path.write_text(
+        render_work_document(
+            _consultant_incident_document(poisoned_path.stem).model_copy(
+                update={
+                    "source_task_id": "task-other",
+                    "trigger_metadata": {"source_event_id": source_event_id},
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    replayed_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+
+    assert replayed_path == synthesized_path
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (synthesized_path,)
+    assert not poisoned_path.exists()
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+        and event.data["reason"] == "registered_source_mismatch"
+    )
+    assert rejection.data["diagnostic"] == "source task does not match terminal event"
+    quarantine_path = paths.root / str(rejection.data["quarantine_destination"])
+    assert quarantine_path.is_file()
+
+
 def test_rejection_quarantines_actual_incoming_candidate_found_by_filename(
     tmp_path: Path,
 ) -> None:
