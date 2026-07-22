@@ -27,7 +27,7 @@ from millrace_ai.contracts import (
 from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueStore
-from millrace_ai.work_documents import read_work_document_as
+from millrace_ai.work_documents import read_work_document_as, render_work_document
 from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
 
 if TYPE_CHECKING:
@@ -68,10 +68,35 @@ def enqueue_handoff_incident(
         else _source_work_item_lineage(engine, stage_result)
     )
     if is_consultant_handoff:
+        source_event_id = str(trigger_metadata["source_event_id"])
+        existing_incident = _existing_registered_consultant_incident(
+            engine,
+            source_event_id=source_event_id,
+        )
+        if existing_incident is not None:
+            _inspect_replay_authored_incident(
+                engine,
+                stage_result=stage_result,
+                lineage=lineage,
+                existing_incident=existing_incident,
+            )
+            write_runtime_event(
+                engine.paths,
+                event_type="runtime_handoff_incident_deduped",
+                data={
+                    "source_work_item_id": stage_result.work_item_id,
+                    "source_event_id": source_event_id,
+                    "existing_destination": str(existing_incident.relative_to(engine.paths.root)),
+                },
+            )
+            return existing_incident
         authored_incident = _consultant_authored_incident(
             engine,
             stage_result=stage_result,
             lineage=lineage,
+            registration_metadata={
+                key: value for key, value in trigger_metadata.items() if key != "runtime_created"
+            },
         )
         if authored_incident is not None:
             return authored_incident
@@ -91,22 +116,6 @@ def enqueue_handoff_incident(
                     "existing_destination": str(existing_incident.relative_to(engine.paths.root)),
                     "previous_arbiter_run_id": trigger_metadata.get("previous_arbiter_run_id"),
                     "previous_arbiter_request_id": trigger_metadata.get("previous_arbiter_request_id"),
-                },
-            )
-            return existing_incident
-    if is_consultant_handoff:
-        existing_incident = _existing_consultant_synthesized_incident(
-            engine,
-            source_event_id=str(trigger_metadata["source_event_id"]),
-        )
-        if existing_incident is not None:
-            write_runtime_event(
-                engine.paths,
-                event_type="runtime_handoff_incident_deduped",
-                data={
-                    "source_work_item_id": stage_result.work_item_id,
-                    "source_event_id": trigger_metadata["source_event_id"],
-                    "existing_destination": str(existing_incident.relative_to(engine.paths.root)),
                 },
             )
             return existing_incident
@@ -214,15 +223,24 @@ def _consultant_synthesized_trigger_metadata(
     return metadata
 
 
-def _existing_consultant_synthesized_incident(
+def _existing_registered_consultant_incident(
     engine: RuntimeEngine,
     *,
     source_event_id: str,
 ) -> Path | None:
     for directory in _incident_lifecycle_directories(engine):
         for path in sorted(directory.glob("*.md")):
+            try:
+                if (
+                    path.is_symlink()
+                    or path.resolve().parent != directory.resolve()
+                    or not path.is_file()
+                ):
+                    continue
+            except (ValueError, RuntimeError, OSError):
+                continue
             incident = _read_incident_document_at(path)
-            if incident is None or incident.created_by != "millrace-runtime":
+            if incident is None or incident.incident_id != path.stem:
                 continue
             if incident.trigger_metadata.get("source_event_id") == source_event_id:
                 return path
@@ -234,7 +252,69 @@ def _consultant_authored_incident(
     *,
     stage_result: StageResultEnvelope,
     lineage: _HandoffLineage,
+    registration_metadata: dict[str, bool | str],
 ) -> Path | None:
+    validated = _validated_consultant_authored_incident(
+        engine,
+        stage_result=stage_result,
+        lineage=lineage,
+    )
+    if validated is None:
+        return None
+    candidate, incident = validated
+    registered_incident = incident.model_copy(
+        update={"trigger_metadata": incident.trigger_metadata | registration_metadata}
+    )
+    candidate.write_text(render_work_document(registered_incident), encoding="utf-8")
+    write_runtime_event(
+        engine.paths,
+        event_type="runtime_handoff_incident_adopted",
+        data={
+            "incident_id": incident.incident_id,
+            "source_work_item_id": stage_result.work_item_id,
+            "source_event_id": registration_metadata["source_event_id"],
+            "declared_path": _metadata_string(stage_result, "incident_path"),
+            "destination": str(candidate.relative_to(engine.paths.root)),
+        },
+    )
+    return candidate
+
+
+def _inspect_replay_authored_incident(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    lineage: _HandoffLineage,
+    existing_incident: Path,
+) -> None:
+    if _metadata_string(stage_result, "incident_path") is None:
+        return
+    validated = _validated_consultant_authored_incident(
+        engine,
+        stage_result=stage_result,
+        lineage=lineage,
+    )
+    if validated is None:
+        return
+    candidate, _ = validated
+    if candidate == existing_incident:
+        return
+    _write_authored_incident_rejection(
+        engine,
+        stage_result,
+        reason="duplicate_canonical_event",
+        declared_path=_metadata_string(stage_result, "incident_path"),
+        diagnostic="a canonical incident is already registered for this terminal event",
+        candidate_path=candidate,
+    )
+
+
+def _validated_consultant_authored_incident(
+    engine: RuntimeEngine,
+    *,
+    stage_result: StageResultEnvelope,
+    lineage: _HandoffLineage,
+) -> tuple[Path, IncidentDocument] | None:
     declared_path = _metadata_string(stage_result, "incident_path")
     if declared_path is None:
         _write_authored_incident_rejection(engine, stage_result, reason="missing_path")
@@ -309,7 +389,7 @@ def _consultant_authored_incident(
             stage_result,
             reason="missing_or_invalid_document",
             declared_path=declared_path,
-            candidate_path=lexical_candidate,
+            candidate_path=candidate,
         )
         return None
     if incident.incident_id != candidate.stem:
@@ -318,7 +398,7 @@ def _consultant_authored_incident(
             stage_result,
             reason="incident_id_path_mismatch",
             declared_path=declared_path,
-            candidate_path=lexical_candidate,
+            candidate_path=candidate,
         )
         return None
 
@@ -330,21 +410,10 @@ def _consultant_authored_incident(
             reason="source_mismatch",
             declared_path=declared_path,
             diagnostic=mismatch,
-            candidate_path=lexical_candidate,
+            candidate_path=candidate,
         )
         return None
-
-    write_runtime_event(
-        engine.paths,
-        event_type="runtime_handoff_incident_adopted",
-        data={
-            "incident_id": incident.incident_id,
-            "source_work_item_id": stage_result.work_item_id,
-            "declared_path": declared_path,
-            "destination": str(candidate.relative_to(engine.paths.root)),
-        },
-    )
-    return candidate
+    return candidate, incident
 
 
 def _lexically_normalized_incident_reference(
