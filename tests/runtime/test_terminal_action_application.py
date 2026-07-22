@@ -903,6 +903,47 @@ def test_lifecycle_move_lookup_skips_incident_symlinks(tmp_path: Path) -> None:
     assert "quarantine_destination" not in rejection.data
 
 
+def test_symlinked_lifecycle_directory_cannot_authorize_external_incident(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    external_dir = tmp_path / "external-active"
+    external_dir.mkdir()
+    external_incident = external_dir / "consultant-external-active.md"
+    external_incident.write_text(
+        render_work_document(_consultant_incident_document(external_incident.stem)),
+        encoding="utf-8",
+    )
+    original_bytes = external_incident.read_bytes()
+    paths.incidents_active_dir.rmdir()
+    paths.incidents_active_dir.symlink_to(external_dir, target_is_directory=True)
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(paths.incidents_active_dir / external_incident.name),
+        request_id="request-external-active",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned = apply_router_decision(engine, decision, stage_result)
+
+    assert len(spawned) == 1
+    assert spawned[0].parent == paths.incidents_incoming_dir
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == spawned
+    assert external_incident.read_bytes() == original_bytes
+    assert paths.incidents_active_dir.is_symlink()
+    assert not any(
+        event.event_type == "runtime_handoff_incident_adopted"
+        for event in read_runtime_events(paths)
+    )
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+    )
+    assert rejection.data["reason"] == "outside_workspace_incident_lifecycle"
+    assert "quarantine_destination" not in rejection.data
+
+
 def test_lexically_outside_symlink_parent_cannot_authorize_workspace_incident(
     tmp_path: Path,
 ) -> None:

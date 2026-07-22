@@ -177,6 +177,11 @@ def enqueue_handoff_incident(
         trigger_metadata=trigger_metadata,
         created_by="millrace-runtime" if is_closure_target or is_consultant_handoff else None,
     )
+    if _validated_incident_lifecycle_directory(
+        engine,
+        engine.paths.incidents_incoming_dir,
+    ) is None:
+        raise RuntimeError("incident incoming directory failed lifecycle safety validation")
     destination = queue.enqueue_incident(incident)
     write_runtime_event(
         engine.paths,
@@ -228,7 +233,10 @@ def _existing_registered_consultant_incident(
     *,
     source_event_id: str,
 ) -> Path | None:
-    for directory in _incident_lifecycle_directories(engine):
+    for configured_directory in _incident_lifecycle_directories(engine):
+        directory = _validated_incident_lifecycle_directory(engine, configured_directory)
+        if directory is None:
+            continue
         for path in sorted(directory.glob("*.md")):
             try:
                 if (
@@ -429,14 +437,46 @@ def _lexically_normalized_incident_reference(
 
 
 def _is_known_incident_lifecycle_parent(engine: RuntimeEngine, parent: Path) -> bool:
-    return parent in {
-        Path(os.path.abspath(os.fspath(directory)))
-        for directory in _incident_lifecycle_directories(engine)
-    }
+    for directory in _incident_lifecycle_directories(engine):
+        validated_directory = _validated_incident_lifecycle_directory(engine, directory)
+        if validated_directory is not None and parent == validated_directory:
+            return True
+    return False
+
+
+def _validated_incident_lifecycle_directory(
+    engine: RuntimeEngine,
+    directory: Path,
+) -> Path | None:
+    try:
+        runtime_root = Path(os.path.abspath(os.fspath(engine.paths.runtime_root)))
+        lexical_directory = Path(os.path.abspath(os.fspath(directory)))
+        relative_directory = lexical_directory.relative_to(runtime_root)
+        if not relative_directory.parts:
+            return None
+
+        component = runtime_root
+        for part in relative_directory.parts:
+            component /= part
+            if component.is_symlink():
+                return None
+
+        resolved_runtime_root = runtime_root.resolve()
+        resolved_directory = lexical_directory.resolve()
+        expected_directory = resolved_runtime_root.joinpath(*relative_directory.parts)
+        resolved_directory.relative_to(resolved_runtime_root)
+        if resolved_directory != expected_directory or not resolved_directory.is_dir():
+            return None
+    except (ValueError, RuntimeError, OSError):
+        return None
+    return lexical_directory
 
 
 def _incident_path_for_filename(engine: RuntimeEngine, filename: str) -> Path | None:
-    for directory in _incident_lifecycle_directories(engine):
+    for configured_directory in _incident_lifecycle_directories(engine):
+        directory = _validated_incident_lifecycle_directory(engine, configured_directory)
+        if directory is None:
+            continue
         candidate = directory / filename
         try:
             if candidate.suffix != ".md" or candidate.is_symlink():
@@ -533,10 +573,15 @@ def _quarantine_rejected_incoming_incident(
 ) -> Path | None:
     if candidate_path is None:
         return None
+    incoming_directory = _validated_incident_lifecycle_directory(
+        engine,
+        engine.paths.incidents_incoming_dir,
+    )
+    if incoming_directory is None:
+        return None
     try:
         if (
-            candidate_path.parent
-            != Path(os.path.abspath(os.fspath(engine.paths.incidents_incoming_dir)))
+            candidate_path.parent != incoming_directory
             or not (candidate_path.is_symlink() or candidate_path.is_file())
         ):
             return None
@@ -616,8 +661,20 @@ def _existing_closure_remediation_incident(
     previous_request_id = trigger_metadata.get("previous_arbiter_request_id")
     if previous_run_id is None and previous_request_id is None:
         return None
-    for directory in _incident_lifecycle_directories(engine):
+    for configured_directory in _incident_lifecycle_directories(engine):
+        directory = _validated_incident_lifecycle_directory(engine, configured_directory)
+        if directory is None:
+            continue
         for path in sorted(directory.glob("*.md")):
+            try:
+                if (
+                    path.is_symlink()
+                    or path.resolve().parent != directory.resolve()
+                    or not path.is_file()
+                ):
+                    continue
+            except (ValueError, RuntimeError, OSError):
+                continue
             incident = _read_incident_document_at(path)
             if incident is None:
                 continue
@@ -706,15 +763,8 @@ def _read_spec_document(engine: RuntimeEngine, spec_id: str) -> SpecDocument | N
 
 
 def _read_incident_document(engine: RuntimeEngine, incident_id: str) -> IncidentDocument | None:
-    return _read_first_existing_document(
-        (
-            engine.paths.incidents_active_dir / f"{incident_id}.md",
-            engine.paths.incidents_incoming_dir / f"{incident_id}.md",
-            engine.paths.incidents_blocked_dir / f"{incident_id}.md",
-            engine.paths.incidents_resolved_dir / f"{incident_id}.md",
-        ),
-        model=IncidentDocument,
-    )
+    path = _incident_path_for_filename(engine, f"{incident_id}.md")
+    return _read_incident_document_at(path) if path is not None else None
 
 
 def _read_incident_document_at(path: Path) -> IncidentDocument | None:
