@@ -27,6 +27,7 @@ from millrace_ai.contracts.router import RouterDecision
 from millrace_ai.events import write_runtime_event
 from millrace_ai.queue_store import QueueStore
 from millrace_ai.work_documents import read_work_document_as
+from millrace_ai.workspace.queue_family_interpreter import QueueFamilyInterpreter
 
 if TYPE_CHECKING:
     from millrace_ai.runtime.engine import RuntimeEngine
@@ -274,6 +275,7 @@ def _consultant_authored_incident(
             stage_result,
             reason="missing_or_invalid_document",
             declared_path=declared_path,
+            candidate_path=candidate,
         )
         return None
     if incident.incident_id != candidate.stem:
@@ -282,6 +284,7 @@ def _consultant_authored_incident(
             stage_result,
             reason="incident_id_path_mismatch",
             declared_path=declared_path,
+            candidate_path=candidate,
         )
         return None
 
@@ -293,6 +296,7 @@ def _consultant_authored_incident(
             reason="source_mismatch",
             declared_path=declared_path,
             diagnostic=mismatch,
+            candidate_path=candidate,
         )
         return None
 
@@ -359,16 +363,50 @@ def _write_authored_incident_rejection(
     reason: str,
     declared_path: str | None = None,
     diagnostic: str | None = None,
+    candidate_path: Path | None = None,
 ) -> None:
+    quarantine_destination = _quarantine_rejected_incoming_incident(
+        engine,
+        candidate_path,
+        diagnostic=diagnostic or reason,
+    )
+    data: dict[str, bool | str | None] = {
+        "source_work_item_id": stage_result.work_item_id,
+        "declared_path": declared_path,
+        "reason": reason,
+        "diagnostic": diagnostic,
+    }
+    if quarantine_destination is not None:
+        data["quarantine_destination"] = str(
+            quarantine_destination.relative_to(engine.paths.root)
+        )
     write_runtime_event(
         engine.paths,
         event_type="runtime_handoff_incident_authored_rejected",
-        data={
-            "source_work_item_id": stage_result.work_item_id,
-            "declared_path": declared_path,
-            "reason": reason,
-            "diagnostic": diagnostic,
-        },
+        data=data,
+    )
+
+
+def _quarantine_rejected_incoming_incident(
+    engine: RuntimeEngine,
+    candidate_path: Path | None,
+    *,
+    diagnostic: str,
+) -> Path | None:
+    if candidate_path is None:
+        return None
+    try:
+        if (
+            candidate_path.parent != engine.paths.incidents_incoming_dir.resolve()
+            or not candidate_path.is_file()
+        ):
+            return None
+    except OSError:
+        return None
+    return QueueFamilyInterpreter(engine.paths).quarantine_invalid_artifact(
+        "incident",
+        candidate_path,
+        diagnostic,
     )
 
 

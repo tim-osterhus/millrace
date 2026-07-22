@@ -686,6 +686,9 @@ def test_consultant_handoff_resolves_declared_incident_after_lifecycle_move(
         ("outside", "outside_workspace_incident_lifecycle"),
         ("missing", "missing_or_invalid_document"),
         ("mismatch", "source_mismatch"),
+        ("active", "source_mismatch"),
+        ("blocked", "source_mismatch"),
+        ("resolved", "source_mismatch"),
     ),
 )
 def test_invalid_consultant_incident_falls_back_with_diagnostic(
@@ -698,10 +701,25 @@ def test_invalid_consultant_incident_falls_back_with_diagnostic(
     declared_path = paths.incidents_incoming_dir / f"consultant-{case}.md"
     if case == "outside":
         declared_path = tmp_path / "outside-incident.md"
+    elif case in {"active", "blocked", "resolved"}:
+        lifecycle_dir = {
+            "active": paths.incidents_active_dir,
+            "blocked": paths.incidents_blocked_dir,
+            "resolved": paths.incidents_resolved_dir,
+        }[case]
+        declared_path = lifecycle_dir / f"consultant-{case}.md"
     if case == "malformed":
+        declared_path.with_suffix(".md.invalid").write_text(
+            "existing quarantined evidence\n",
+            encoding="utf-8",
+        )
         declared_path.write_text("not an incident document\n", encoding="utf-8")
     elif case != "missing":
-        source_task_id = "task-other" if case == "mismatch" else "task-001"
+        source_task_id = (
+            "task-other"
+            if case in {"mismatch", "active", "blocked", "resolved"}
+            else "task-001"
+        )
         declared_path.write_text(
             render_work_document(
                 IncidentDocument(
@@ -720,6 +738,7 @@ def test_invalid_consultant_incident_falls_back_with_diagnostic(
             ),
             encoding="utf-8",
         )
+    original_declared_bytes = declared_path.read_bytes() if declared_path.is_file() else None
     stage_result = StageResultEnvelope(
         run_id="run-terminal",
         plane=Plane.EXECUTION,
@@ -740,11 +759,29 @@ def test_invalid_consultant_incident_falls_back_with_diagnostic(
 
     assert len(spawned) == 1
     assert spawned[0].name.startswith("incident-task-001-")
-    assert any(
-        event.event_type == "runtime_handoff_incident_authored_rejected"
-        and event.data["reason"] == expected_reason
+    assert tuple(paths.incidents_incoming_dir.glob("*.md")) == (spawned[0],)
+    rejection = next(
+        event
         for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
     )
+    assert rejection.data["reason"] == expected_reason
+    if case in {"malformed", "mismatch"}:
+        assert not declared_path.exists()
+        quarantine_destination = paths.root / str(rejection.data["quarantine_destination"])
+        assert quarantine_destination.is_file()
+        assert quarantine_destination.read_bytes() == original_declared_bytes
+        assert quarantine_destination.name.startswith(f"{declared_path.name}.invalid")
+        assert (paths.incidents_incoming_dir / "invalid-artifacts.jsonl").is_file()
+        if case == "malformed":
+            collision_path = declared_path.with_suffix(".md.invalid")
+            assert collision_path.read_text(encoding="utf-8") == "existing quarantined evidence\n"
+            assert quarantine_destination != collision_path
+    else:
+        assert "quarantine_destination" not in rejection.data
+        if case != "missing":
+            assert declared_path.is_file()
+            assert declared_path.read_bytes() == original_declared_bytes
 
 
 # ── minimal three-plane fixture runtime tests ───────────────────────────────

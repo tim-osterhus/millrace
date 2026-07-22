@@ -77,7 +77,7 @@ from millrace_ai.state_store import (
     set_planning_status,
 )
 from millrace_ai.watchers import WatcherMode, WatchEvent
-from millrace_ai.work_documents import read_work_document_as
+from millrace_ai.work_documents import read_work_document_as, render_work_document
 from millrace_ai.workspace.arbiter_state import load_closure_target_state, save_closure_target_state
 
 NOW = datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -2243,6 +2243,121 @@ def test_runtime_handoff_creates_incident_and_transitions_to_planning(tmp_path: 
     fourth = engine.tick()
     assert fourth.stage is PlanningStageName.AUDITOR
     assert auditor_incident_ids == ["consultant-task-001"]
+
+
+@pytest.mark.parametrize("case", ("malformed", "mismatch"))
+def test_runtime_quarantines_rejected_incoming_consultant_incident_before_auditor(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    paths = _workspace(tmp_path)
+    queue = QueueStore(paths)
+    queue.enqueue_task(_task_doc("task-001", created_at=NOW))
+    config_path = paths.runtime_root / "millrace.toml"
+    config_path.write_text(
+        "[recovery]\nmax_troubleshoot_attempts_before_consult = 1\n",
+        encoding="utf-8",
+    )
+    rejected_path = paths.incidents_incoming_dir / f"consultant-{case}.md"
+    auditor_incident_ids: list[str] = []
+
+    def stage_runner(request: StageRunRequest) -> RunnerRawResult:
+        if request.stage in {
+            ExecutionStageName.BUILDER,
+            ExecutionStageName.TROUBLESHOOTER,
+        }:
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.BLOCKED.value,
+                now=NOW,
+            )
+        if request.stage is ExecutionStageName.CONSULTANT:
+            if case == "malformed":
+                rejected_path.write_text("not an incident document\n", encoding="utf-8")
+            else:
+                rejected_path.write_text(
+                    render_work_document(
+                        IncidentDocument(
+                            incident_id=rejected_path.stem,
+                            title="Mismatched consultant incident",
+                            summary="Planning is required.",
+                            source_task_id="task-other",
+                            source_stage=ExecutionStageName.CONSULTANT,
+                            source_plane=Plane.EXECUTION,
+                            failure_class="consultant_needs_planning",
+                            trigger_reason="Local recovery exhausted.",
+                            consultant_decision=IncidentDecision.NEEDS_PLANNING,
+                            opened_at=NOW,
+                            opened_by="consultant",
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+            run_dir = Path(request.run_dir)
+            (run_dir / "consultant_decision.json").write_text(
+                json.dumps(
+                    {
+                        "terminal_result": "NEEDS_PLANNING",
+                        "incident_path": str(rejected_path.relative_to(paths.root)),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "consultant_summary.md").write_text(
+                "# Consultant Summary\n",
+                encoding="utf-8",
+            )
+            return _runner_result(
+                request,
+                terminal=ExecutionTerminalResult.NEEDS_PLANNING.value,
+                now=NOW,
+            )
+        if request.stage is PlanningStageName.AUDITOR:
+            assert request.active_work_item_id is not None
+            auditor_incident_ids.append(request.active_work_item_id)
+        return _runner_result(
+            request,
+            terminal=PlanningTerminalResult.AUDITOR_COMPLETE.value,
+            now=NOW,
+        )
+
+    engine = RuntimeEngine(paths, stage_runner=stage_runner, config_path=config_path)
+    engine.startup()
+    first = engine.tick()
+    second = engine.tick()
+    third = engine.tick()
+
+    assert first.stage is ExecutionStageName.BUILDER
+    assert second.stage is ExecutionStageName.TROUBLESHOOTER
+    assert third.stage is ExecutionStageName.CONSULTANT
+    incoming_paths = tuple(paths.incidents_incoming_dir.glob("*.md"))
+    assert len(incoming_paths) == 1
+    assert incoming_paths[0].name.startswith("incident-task-001-")
+    assert not rejected_path.exists()
+    quarantined_paths = tuple(
+        paths.incidents_incoming_dir.glob(f"{rejected_path.name}.invalid*")
+    )
+    assert len(quarantined_paths) == 1
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+    )
+    assert rejection.data["quarantine_destination"] == str(
+        quarantined_paths[0].relative_to(paths.root)
+    )
+    invalid_log = paths.incidents_incoming_dir / "invalid-artifacts.jsonl"
+    diagnostics = [
+        json.loads(line)
+        for line in invalid_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert diagnostics[-1]["source_name"] == rejected_path.name
+
+    fourth = engine.tick()
+
+    assert fourth.stage is PlanningStageName.AUDITOR
+    assert auditor_incident_ids == [incoming_paths[0].stem]
 
 
 def test_runtime_handoff_incident_inherits_task_lineage_under_open_closure_target(
