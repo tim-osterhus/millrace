@@ -91,6 +91,7 @@ def enqueue_handoff_incident(
                 engine,
                 source_event_id=source_event_id,
                 canonical_incident_id=consultant_registration.incident_id,
+                canonical_path=existing_incident,
                 stage_result=stage_result,
                 lineage=lineage,
             )
@@ -338,32 +339,43 @@ def _existing_registered_consultant_incident(
     stage_result: StageResultEnvelope,
     lineage: _HandoffLineage,
 ) -> Path | None:
-    path = _incident_path_for_filename(engine, f"{registration.incident_id}.md")
-    if path is None:
-        return None
-    incident = _read_incident_document_at(path)
-    mismatch = (
-        "registered incident is not a parseable canonical document"
-        if incident is None or incident.incident_id != registration.incident_id
-        else _authored_incident_mismatch(
-            incident,
-            stage_result=stage_result,
-            lineage=lineage,
+    lifecycle_priority = {
+        engine.paths.incidents_active_dir: 0,
+        engine.paths.incidents_blocked_dir: 1,
+        engine.paths.incidents_resolved_dir: 2,
+        engine.paths.incidents_incoming_dir: 3,
+    }
+    # A progressed lifecycle copy wins over a recreated incoming copy.
+    candidates = sorted(
+        _incident_collision_paths_for_filename(engine, f"{registration.incident_id}.md"),
+        key=lambda path: lifecycle_priority[path.parent],
+    )
+    valid_candidates: list[Path] = []
+    for path in candidates:
+        incident = None if path.is_symlink() else _read_incident_document_at(path)
+        mismatch = (
+            "registered incident is not a parseable canonical document"
+            if incident is None or incident.incident_id != registration.incident_id
+            else _authored_incident_mismatch(
+                incident,
+                stage_result=stage_result,
+                lineage=lineage,
+            )
         )
-    )
-    if incident is not None and incident.trigger_metadata.get("source_event_id") != source_event_id:
-        mismatch = "registered incident source event does not match registration"
-    if mismatch is None:
-        return path
-    _write_authored_incident_rejection(
-        engine,
-        stage_result,
-        reason="registered_source_mismatch",
-        declared_path=_metadata_string(stage_result, "incident_path"),
-        diagnostic=mismatch,
-        candidate_path=path,
-    )
-    return None
+        if incident is not None and incident.trigger_metadata.get("source_event_id") != source_event_id:
+            mismatch = "registered incident source event does not match registration"
+        if mismatch is None:
+            valid_candidates.append(path)
+            continue
+        _write_authored_incident_rejection(
+            engine,
+            stage_result,
+            reason="registered_source_mismatch",
+            declared_path=_metadata_string(stage_result, "incident_path"),
+            diagnostic=mismatch,
+            candidate_path=path,
+        )
+    return valid_candidates[0] if valid_candidates else None
 
 
 def _quarantine_registered_incident_duplicates(
@@ -371,6 +383,7 @@ def _quarantine_registered_incident_duplicates(
     *,
     source_event_id: str,
     canonical_incident_id: str,
+    canonical_path: Path | None,
     stage_result: StageResultEnvelope,
     lineage: _HandoffLineage,
 ) -> None:
@@ -381,7 +394,7 @@ def _quarantine_registered_incident_duplicates(
     if incoming_directory is None:
         return
     for path in sorted(incoming_directory.glob("*.md")):
-        if path.stem == canonical_incident_id or path.is_symlink():
+        if path == canonical_path or path.is_symlink():
             continue
         incident = _read_incident_document_at(path)
         if (

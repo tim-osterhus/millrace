@@ -1406,6 +1406,70 @@ def test_first_registration_wins_over_earlier_sorting_incoming_copy(
     assert (paths.root / str(rejection.data["quarantine_destination"])).is_file()
 
 
+def test_registered_active_incident_wins_over_same_id_incoming_copy(
+    tmp_path: Path,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    original_incoming = paths.incidents_incoming_dir / "same-id-canonical.md"
+    original_incoming.write_text(
+        render_work_document(_consultant_incident_document(original_incoming.stem)),
+        encoding="utf-8",
+    )
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(original_incoming),
+        request_id="request-same-id-copy",
+    )
+    decision = route_stage_result(engine, stage_result)
+    adopted_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+    original_active = paths.incidents_active_dir / original_incoming.name
+    adopted_path.replace(original_active)
+    original_bytes = original_active.read_bytes()
+    recreated_incoming = paths.incidents_incoming_dir / original_active.name
+    recreated_incoming.write_bytes(original_bytes)
+    replay_result = stage_result.model_copy(
+        update={
+            "metadata": {
+                "incident_path": str(recreated_incoming),
+                "request_id": "request-same-id-copy",
+            }
+        }
+    )
+
+    replayed_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=replay_result,
+    )
+
+    assert replayed_path == original_active
+    assert original_active.read_bytes() == original_bytes
+    assert not recreated_incoming.exists()
+    lifecycle_documents = tuple(
+        path
+        for directory in (
+            paths.incidents_incoming_dir,
+            paths.incidents_active_dir,
+            paths.incidents_blocked_dir,
+            paths.incidents_resolved_dir,
+        )
+        for path in directory.glob("*.md")
+    )
+    assert lifecycle_documents == (original_active,)
+    rejection = next(
+        event
+        for event in read_runtime_events(paths)
+        if event.event_type == "runtime_handoff_incident_authored_rejected"
+        and event.data["reason"] == "duplicate_canonical_event"
+    )
+    assert (paths.root / str(rejection.data["quarantine_destination"])).is_file()
+    assert QueueStore(paths).claim_next_planning_item() is None
+
+
 def test_registered_replay_rejects_matching_event_with_wrong_source_identity(
     tmp_path: Path,
 ) -> None:
