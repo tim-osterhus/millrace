@@ -295,15 +295,34 @@ def _first_consultant_incident_registration(
     *,
     source_event_id: str,
 ) -> _ConsultantIncidentRegistration | None:
+    registrations = _consultant_incident_registration_ids(engine)
+    incident_id = registrations.get(source_event_id)
+    return (
+        _ConsultantIncidentRegistration(incident_id=incident_id)
+        if incident_id is not None
+        else None
+    )
+
+
+def _consultant_incident_registration_ids(engine: RuntimeEngine) -> dict[str, str]:
+    registrations = engine._consultant_incident_registration_ids
+    if registrations is not None:
+        return registrations
+    registrations = {}
     for event in iter_runtime_events(engine.paths):
         if event.event_type != "runtime_handoff_incident_registered":
             continue
-        if event.data.get("source_event_id") != source_event_id:
-            continue
+        source_event_id = event.data.get("source_event_id")
         incident_id = event.data.get("incident_id")
-        if isinstance(incident_id, str) and incident_id:
-            return _ConsultantIncidentRegistration(incident_id=incident_id)
-    return None
+        if (
+            isinstance(source_event_id, str)
+            and source_event_id
+            and isinstance(incident_id, str)
+            and incident_id
+        ):
+            registrations.setdefault(source_event_id, incident_id)
+    engine._consultant_incident_registration_ids = registrations
+    return registrations
 
 
 def _register_consultant_incident(
@@ -314,7 +333,8 @@ def _register_consultant_incident(
     incident_id: str,
     registration_source: str,
 ) -> None:
-    if _first_consultant_incident_registration(engine, source_event_id=source_event_id) is not None:
+    registrations = _consultant_incident_registration_ids(engine)
+    if source_event_id in registrations:
         return
     write_runtime_event(
         engine.paths,
@@ -329,6 +349,7 @@ def _register_consultant_incident(
             "registration_source": registration_source,
         },
     )
+    registrations[source_event_id] = incident_id
 
 
 def _existing_registered_consultant_incident(
@@ -507,7 +528,7 @@ def _consultant_authored_incident(
     registered_incident = incident.model_copy(
         update={"trigger_metadata": incident.trigger_metadata | registration_metadata}
     )
-    candidate.write_text(render_work_document(registered_incident), encoding="utf-8")
+    _atomic_write_text(candidate, render_work_document(registered_incident))
     _register_consultant_incident(
         engine,
         stage_result=stage_result,
@@ -566,7 +587,6 @@ def _validated_consultant_authored_incident(
 ) -> tuple[Path, IncidentDocument] | None:
     declared_path = _metadata_string(stage_result, "incident_path")
     if declared_path is None:
-        _write_authored_incident_rejection(engine, stage_result, reason="missing_path")
         return None
 
     lexical_candidate: Path | None = None
@@ -621,7 +641,16 @@ def _validated_consultant_authored_incident(
         )
         return None
 
-    candidate = _incident_path_for_filename(engine, lexical_candidate.name)
+    try:
+        candidate = lexical_candidate if lexical_candidate.is_file() else None
+    except (ValueError, RuntimeError, OSError):
+        candidate = None
+    if candidate is None:
+        candidate = _incident_path_for_filename(
+            engine,
+            lexical_candidate.name,
+            progressed_first=True,
+        )
     if candidate is None:
         _write_authored_incident_rejection(
             engine,
@@ -713,8 +742,23 @@ def _validated_incident_lifecycle_directory(
     return lexical_directory
 
 
-def _incident_path_for_filename(engine: RuntimeEngine, filename: str) -> Path | None:
-    for configured_directory in _incident_lifecycle_directories(engine):
+def _incident_path_for_filename(
+    engine: RuntimeEngine,
+    filename: str,
+    *,
+    progressed_first: bool = False,
+) -> Path | None:
+    directories = (
+        (
+            engine.paths.incidents_active_dir,
+            engine.paths.incidents_blocked_dir,
+            engine.paths.incidents_resolved_dir,
+            engine.paths.incidents_incoming_dir,
+        )
+        if progressed_first
+        else _incident_lifecycle_directories(engine)
+    )
+    for configured_directory in directories:
         directory = _validated_incident_lifecycle_directory(engine, configured_directory)
         if directory is None:
             continue
@@ -1062,6 +1106,19 @@ def _incident_lifecycle_directories(engine: RuntimeEngine) -> tuple[Path, ...]:
 def _metadata_string(stage_result: StageResultEnvelope, key: str) -> str | None:
     value = stage_result.metadata.get(key)
     return value if isinstance(value, str) and value else None
+
+
+def _atomic_write_text(path: Path, payload: str) -> None:
+    temp_path = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
 
 
 __all__ = ["enqueue_handoff_incident"]

@@ -125,6 +125,7 @@ class RuntimeEngine:
         self._daemon_lock_session_id: str | None = None
         self._watcher_session: WatcherSession | None = None
         self._idle_event_suppression: _IdleEventSuppressionState | None = None
+        self._consultant_incident_registration_ids: dict[str, str] | None = None
 
     def __del__(self) -> None:  # pragma: no cover - GC timing is non-deterministic
         try:

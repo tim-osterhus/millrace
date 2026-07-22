@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import millrace_ai.runtime.handoff_incidents as handoff_incidents_module
 from millrace_ai.contracts import (
     ActiveRunState,
     ExecutionStageName,
@@ -591,11 +592,87 @@ def test_consultant_handoff_without_authored_incident_is_idempotent(
     assert len(tuple(paths.incidents_incoming_dir.glob("*.md"))) == 1
     assert incident.trigger_metadata["runtime_created"] is True
     assert incident.trigger_metadata["consultant_request_id"] == "request-001"
-    assert any(
+    assert not any(
         event.event_type == "runtime_handoff_incident_authored_rejected"
-        and event.data["reason"] == "missing_path"
         for event in read_runtime_events(paths)
     )
+
+
+def test_consultant_registration_cache_hydrates_once_and_tracks_appends(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    original_iter_runtime_events = handoff_incidents_module.iter_runtime_events
+    scan_count = 0
+
+    def counting_iter_runtime_events(target):
+        nonlocal scan_count
+        scan_count += 1
+        yield from original_iter_runtime_events(target)
+
+    monkeypatch.setattr(
+        handoff_incidents_module,
+        "iter_runtime_events",
+        counting_iter_runtime_events,
+    )
+    first_result = _consultant_needs_planning_result(
+        incident_path="",
+        request_id="request-cache-first",
+    ).model_copy(update={"metadata": {"request_id": "request-cache-first"}})
+    first_decision = route_stage_result(engine, first_result)
+    first_path = enqueue_handoff_incident(
+        engine,
+        decision=first_decision,
+        stage_result=first_result,
+    )
+    assert enqueue_handoff_incident(
+        engine,
+        decision=first_decision,
+        stage_result=first_result,
+    ) == first_path
+    second_result = first_result.model_copy(
+        update={
+            "run_id": "run-terminal-second",
+            "metadata": {"request_id": "request-cache-second"},
+        }
+    )
+    second_decision = first_decision
+    second_path = enqueue_handoff_incident(
+        engine,
+        decision=second_decision,
+        stage_result=second_result,
+    )
+    assert enqueue_handoff_incident(
+        engine,
+        decision=second_decision,
+        stage_result=second_result,
+    ) == second_path
+
+    assert scan_count == 1
+    assert len(
+        tuple(
+            event
+            for event in read_runtime_events(paths)
+            if event.event_type == "runtime_handoff_incident_registered"
+        )
+    ) == 2
+
+    engine.close()
+    restarted_engine = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    restarted_engine.startup()
+    assert enqueue_handoff_incident(
+        restarted_engine,
+        decision=first_decision,
+        stage_result=first_result,
+    ) == first_path
+    assert enqueue_handoff_incident(
+        restarted_engine,
+        decision=first_decision,
+        stage_result=first_result,
+    ) == first_path
+    assert scan_count == 2
 
 
 def test_invalid_deterministic_incoming_collision_is_quarantined_and_replayed(
@@ -777,6 +854,45 @@ def test_consultant_handoff_adopts_declared_incident(tmp_path: Path) -> None:
     )
 
 
+def test_authored_incident_registration_rewrite_is_atomic_on_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    authored_path = paths.incidents_incoming_dir / "atomic-authored.md"
+    authored_path.write_text(
+        render_work_document(_consultant_incident_document(authored_path.stem)),
+        encoding="utf-8",
+    )
+    original_bytes = authored_path.read_bytes()
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(authored_path),
+        request_id="request-atomic-authored",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    def fail_replace(_: str | Path, __: str | Path) -> None:
+        raise OSError("replace failure")
+
+    monkeypatch.setattr("millrace_ai.runtime.handoff_incidents.os.replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failure"):
+        enqueue_handoff_incident(
+            engine,
+            decision=decision,
+            stage_result=stage_result,
+        )
+
+    assert authored_path.read_bytes() == original_bytes
+    assert read_work_document_as(authored_path, model=IncidentDocument).incident_id == authored_path.stem
+    assert tuple(authored_path.parent.glob(f".{authored_path.name}.tmp-*")) == ()
+    assert not any(
+        event.event_type == "runtime_handoff_incident_registered"
+        for event in read_runtime_events(paths)
+    )
+
+
 def test_consultant_handoff_resolves_declared_incident_after_lifecycle_move(
     tmp_path: Path,
 ) -> None:
@@ -826,6 +942,41 @@ def test_consultant_handoff_resolves_declared_incident_after_lifecycle_move(
 
     assert spawned == (active_path,)
     assert tuple(paths.incidents_incoming_dir.glob("*.md")) == ()
+
+
+@pytest.mark.parametrize("lifecycle", ("active", "blocked", "resolved"))
+def test_declared_progressed_incident_wins_over_malformed_incoming_collision(
+    tmp_path: Path,
+    lifecycle: str,
+) -> None:
+    engine = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine.paths
+    lifecycle_dir = {
+        "active": paths.incidents_active_dir,
+        "blocked": paths.incidents_blocked_dir,
+        "resolved": paths.incidents_resolved_dir,
+    }[lifecycle]
+    declared_path = lifecycle_dir / "declared-collision.md"
+    declared_path.write_text(
+        render_work_document(_consultant_incident_document(declared_path.stem)),
+        encoding="utf-8",
+    )
+    malformed_incoming = paths.incidents_incoming_dir / declared_path.name
+    malformed_incoming.write_text("# Malformed duplicate\n", encoding="utf-8")
+    stage_result = _consultant_needs_planning_result(
+        incident_path=str(declared_path),
+        request_id=f"request-declared-{lifecycle}",
+    )
+    decision = route_stage_result(engine, stage_result)
+
+    spawned_path = enqueue_handoff_incident(
+        engine,
+        decision=decision,
+        stage_result=stage_result,
+    )
+
+    assert spawned_path == declared_path
+    assert read_work_document_as(spawned_path, model=IncidentDocument).incident_id == declared_path.stem
 
 
 @pytest.mark.parametrize("case", ("null_byte", "expanduser_failure"))
