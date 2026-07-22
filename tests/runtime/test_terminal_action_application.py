@@ -675,6 +675,60 @@ def test_consultant_registration_cache_hydrates_once_and_tracks_appends(
     assert scan_count == 2
 
 
+def test_reused_engine_rehydrates_registration_cache_after_sequential_owner(
+    tmp_path: Path,
+) -> None:
+    engine_a = _engine_with_active_task(tmp_path, stage=ExecutionStageName.CONSULTANT)
+    paths = engine_a.paths
+    seed_result = _consultant_needs_planning_result(
+        incident_path="",
+        request_id="request-owner-a-seed",
+    ).model_copy(update={"metadata": {"request_id": "request-owner-a-seed"}})
+    decision = route_stage_result(engine_a, seed_result)
+    enqueue_handoff_incident(engine_a, decision=decision, stage_result=seed_result)
+    external_result = seed_result.model_copy(
+        update={"metadata": {"request_id": "request-owner-b"}}
+    )
+    external_source_event_id = _consultant_source_event_id(request_id="request-owner-b")
+    assert external_source_event_id not in engine_a._consultant_incident_registration_ids
+    engine_a.close()
+
+    engine_b = RuntimeEngine(paths, stage_runner=_unused_stage_runner)
+    engine_b.startup()
+    external_path = enqueue_handoff_incident(
+        engine_b,
+        decision=decision,
+        stage_result=external_result,
+    )
+    engine_b.close()
+    assert len(
+        tuple(
+            event
+            for event in read_runtime_events(paths)
+            if event.event_type == "runtime_handoff_incident_registered"
+            and event.data["source_event_id"] == external_source_event_id
+        )
+    ) == 1
+
+    engine_a.startup()
+    replayed_path = enqueue_handoff_incident(
+        engine_a,
+        decision=decision,
+        stage_result=external_result,
+    )
+
+    assert replayed_path == external_path
+    assert engine_a._consultant_incident_registration_ids[external_source_event_id] == external_path.stem
+    assert len(
+        tuple(
+            event
+            for event in read_runtime_events(paths)
+            if event.event_type == "runtime_handoff_incident_registered"
+            and event.data["source_event_id"] == external_source_event_id
+        )
+    ) == 1
+
+
 def test_invalid_deterministic_incoming_collision_is_quarantined_and_replayed(
     tmp_path: Path,
 ) -> None:

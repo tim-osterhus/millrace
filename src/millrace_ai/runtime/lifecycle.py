@@ -37,6 +37,7 @@ def close_engine(engine: RuntimeEngine) -> None:
 def startup_engine(engine: RuntimeEngine) -> RuntimeSnapshot:
     """Load config, compile the active mode, and reconcile stale runtime state."""
 
+    engine._consultant_incident_registration_ids = None
     lock_acquired = False
     try:
         engine.config = load_runtime_config(engine.config_path)
