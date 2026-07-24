@@ -11,7 +11,7 @@ The base `millrace-ai` runtime requires Python 3.11 or newer. The complete
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install "millrace==0.22.0"
+python -m pip install "millrace==0.22.1"
 millrace --version
 ```
 

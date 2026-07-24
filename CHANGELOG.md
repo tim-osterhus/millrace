@@ -30,6 +30,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Split the ecosystem into the `millrace-ai` runtime, `millrace-plus` official
   workflows and authoring skills, the independent `millforge` execution
   harness, and the dependency-only `millrace` bundle.
+- Published the current dependency-only bundle as `millrace==0.22.1`, retaining
+  the tested `millrace-ai==0.22.0`, `millrace-plus==0.22.0`, and
+  `millforge==0.1.0` member pins.
 
 ### Removed
 
