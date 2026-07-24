@@ -1,3 +1,0 @@
-recursive-include src/millrace_ai/assets *.md *.json
-include src/millrace_ai/py.typed
-global-exclude .DS_Store

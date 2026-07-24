@@ -1,62 +1,81 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.11.30,<0.12"]
+build-backend = "uv_build"
 
 [project]
 name = "millrace-ai"
-dynamic = ["version"]
-description = "Millrace runtime rewrite baseline package"
-readme = "README.md"
-license = "Apache-2.0"
+version = "0.22.0"
+description = "A governed runtime for compiler-validated, durable agent workflows."
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
-dependencies = [
-  "click>=8,<9",
-  "packaging>=24,<27",
-  "pydantic>=2,<3",
-  "tomlkit>=0.13,<1",
-  "typer>=0.12,<1",
-  "watchdog>=4,<7",
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Tim Osterhus", email = "tim@millrace.ai" },
 ]
+dependencies = []
 
 [project.scripts]
-millrace = "millrace_ai.cli:main"
+millrace = "millrace.adapters.cli.main:cli"
 
-[project.optional-dependencies]
+[project.urls]
+Homepage = "https://github.com/tim-osterhus/millrace"
+Repository = "https://github.com/tim-osterhus/millrace"
+Issues = "https://github.com/tim-osterhus/millrace/issues"
+
+[dependency-groups]
 dev = [
-  "mypy>=1.11,<2",
-  "pytest>=8,<9",
-  "ruff>=0.11,<1",
+    "mypy>=1.15",
+    "pytest>=8.0",
+    "ruff>=0.11",
 ]
 
-[tool.setuptools.dynamic]
-version = {attr = "millrace_ai.__version__"}
-
-[tool.setuptools]
-include-package-data = false
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["millrace_ai", "millrace_ai.*"]
-
-[tool.setuptools.package-data]
-millrace_ai = ["assets/**/*.md", "assets/**/*.json", "assets/**/*.py", "py.typed"]
-
-[tool.setuptools.exclude-package-data]
-"*" = [".DS_Store"]
+[tool.uv.build-backend]
+module-root = "src"
+module-name = "millrace"
+source-include = [
+    "LICENSE",
+    "README.md",
+    "docs/getting-started.md",
+    "docs/migrating-from-v0.21.md",
+    "docs/v0.22-compatibility.md",
+    "docs/errors.md",
+    "docs/how-millrace-works.md",
+    "docs/workflow-packages.md",
+    "docs/millforge-runner.md",
+    "docs/codex-runner.md",
+]
+source-exclude = [
+    "/.gitignore",
+    "**/.DS_Store",
+    "/docs/maintainers/**",
+    "/src/millrace/**/README.md",
+    "/src/millrace/testing/**",
+    "/src/millrace/workflows/lad_execution.py",
+    "/src/millrace/workflows/lad_learning.py",
+    "/src/millrace/workflows/lad_planning.py",
+    "/src/millrace/workflows/simple_loop.py",
+    "/src/millrace/workflows/vendor_selection.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+addopts = ["-p", "no:faker"]
+markers = [
+    "live_model: opt-in actual-model E2E rows; skipped unless explicit live config is present",
+]
 
 [tool.ruff]
-line-length = 130
 target-version = "py311"
-extend-exclude = ["build"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
 python_version = "3.11"
+mypy_path = ["src", "tests"]
+files = ["src"]
 strict = true
-warn_unused_configs = true
-exclude = "(^build/|^clean/)"
+explicit_package_bases = true

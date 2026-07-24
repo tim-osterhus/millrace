@@ -1,146 +1,98 @@
-name: Publish To PyPI
+name: Publish to PyPI
 
 on:
   push:
     tags:
-      - "v*"
-  workflow_dispatch:
+      - v0.22.0
 
 jobs:
-  build:
+  validate:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.0' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
-          python-version: "3.12"
-
-      - name: Install release tooling
-        run: python -m pip install --upgrade pip build uv twine
-
-      - name: Build distribution artifacts
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          version: 0.9.30
+      - name: Sync dependencies
+        run: uv sync --frozen --group dev
+      - name: Test
+        run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 uv run --frozen --group dev pytest -q
+      - name: Lint
+        run: uv run --frozen --group dev ruff check src tests scripts
+      - name: Type check
+        run: uv run --frozen --group dev mypy --strict src
+      - name: Check clean source tree
+        run: test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Build
         run: |
-          uv build
-          python -m build --wheel --outdir dist packages/millrace-web
-
-      - name: Validate distribution metadata
-        run: python -m twine check dist/*
-
-      - name: Smoke install built wheel against the minimum-functionality contract
+          test ! -e dist
+          SOURCE_DATE_EPOCH=1580601600 PYTHONDONTWRITEBYTECODE=1 uv build --python 3.11 --force-pep517
+      - name: Verify built distributions
+        shell: bash
         run: |
-          set -euo pipefail
-          dump_smoke_logs() {
-            status=$?
-            if [ "$status" -ne 0 ]; then
-              for file in "$RUNNER_TEMP"/millrace-*.txt; do
-                [ -f "$file" ] || continue
-                echo "::group::$(basename "$file")"
-                sed -n '1,200p' "$file"
-                echo "::endgroup::"
-              done
-            fi
-            exit "$status"
-          }
-          trap dump_smoke_logs EXIT
-
-          python -m venv .publish-smoke
-          .publish-smoke/bin/python -m pip install --upgrade pip
-          .publish-smoke/bin/python -m pip install dist/*.whl
-          workspace="$RUNNER_TEMP/millrace-minimum-functionality"
-          task_json="$RUNNER_TEMP/smoke-task-001.json"
-          runner_python="$PWD/.publish-smoke/bin/python"
-          shim_path="$PWD/tests/integration/codex_smoke_shim.py"
-          rm -rf "$workspace"
-          mkdir -p "$workspace"
-          .publish-smoke/bin/millrace init --workspace "$workspace" > "$RUNNER_TEMP/millrace-init.txt"
-          test -x .publish-smoke/bin/millrace-web
-          MILLRACE_WEB_WORKSPACE="$workspace" .publish-smoke/bin/python - <<'PY' > "$RUNNER_TEMP/millrace-web-smoke.txt"
-          import os
-          from pathlib import Path
-
-          from millrace_web.app import create_app
-
-          app = create_app(workspaces=[Path(os.environ["MILLRACE_WEB_WORKSPACE"])])
-          paths = {getattr(route, "path", "") for route in app.routes}
-          required = {"/", "/api/health", "/api/workspaces", "/api/events"}
-          missing = sorted(required - paths)
-          if missing:
-              raise SystemExit(f"missing web routes: {', '.join(missing)}")
-          print("web_app: ok")
-          PY
-          cat > "$task_json" <<'JSON'
-          {
-            "task_id": "smoke-task-001",
-            "title": "Smoke Task 001",
-            "summary": "Deterministic queued-work smoke task",
-            "target_paths": ["README.md"],
-            "acceptance": ["One builder stage executes through the shipped CLI"],
-            "required_checks": ["uv run --extra dev python -m pytest tests/integration/test_smoke.py -q"],
-            "references": ["tests/integration/test_smoke.py"],
-            "risk": ["none"],
-            "created_at": "2026-04-15T12:00:00Z",
-            "created_by": "tests"
-          }
-          JSON
-
-          .publish-smoke/bin/millrace compile validate --workspace "$workspace" > "$RUNNER_TEMP/millrace-compile.txt"
-          .publish-smoke/bin/millrace run daemon --max-ticks 1 --workspace "$workspace" > "$RUNNER_TEMP/millrace-daemon-no-work.txt"
-          .publish-smoke/bin/millrace status --workspace "$workspace" > "$RUNNER_TEMP/millrace-status.txt"
-          cat >> "$workspace/millrace-agents/millrace.toml" <<EOF
-          command = "$runner_python"
-          args = ["$shim_path"]
-          EOF
-          .publish-smoke/bin/millrace queue add-task "$task_json" --workspace "$workspace" > "$RUNNER_TEMP/millrace-queue-add-task.txt"
-          .publish-smoke/bin/millrace run daemon --max-ticks 1 --workspace "$workspace" > "$RUNNER_TEMP/millrace-daemon-task.txt"
-          .publish-smoke/bin/millrace runs ls --workspace "$workspace" > "$RUNNER_TEMP/millrace-runs-ls.txt"
-          run_id="$(awk -F': ' '/^run_id: / { print $2; exit }' "$RUNNER_TEMP/millrace-runs-ls.txt")"
-          test -n "$run_id"
-          .publish-smoke/bin/millrace runs show "$run_id" --workspace "$workspace" > "$RUNNER_TEMP/millrace-runs-show.txt"
-
-          test -f "$workspace/millrace-agents/millrace.toml"
-          test -f "$workspace/millrace-agents/state/compiled_plan.json"
-          grep -q '^web_app: ok$' "$RUNNER_TEMP/millrace-web-smoke.txt"
-          grep -q '^ok: true$' "$RUNNER_TEMP/millrace-compile.txt"
-          grep -q '^run_mode: daemon$' "$RUNNER_TEMP/millrace-daemon-no-work.txt"
-          grep -q '^ticks: 1$' "$RUNNER_TEMP/millrace-daemon-no-work.txt"
-          grep -q '^compiled_plan_id: ' "$RUNNER_TEMP/millrace-status.txt"
-          grep -q '^enqueued_task: ' "$RUNNER_TEMP/millrace-queue-add-task.txt"
-          grep -q '^run_mode: daemon$' "$RUNNER_TEMP/millrace-daemon-task.txt"
-          grep -q '^ticks: 1$' "$RUNNER_TEMP/millrace-daemon-task.txt"
-          grep -q '^work_item_id: smoke-task-001$' "$RUNNER_TEMP/millrace-runs-ls.txt"
-          grep -q '^work_item_id: smoke-task-001$' "$RUNNER_TEMP/millrace-runs-show.txt"
-          grep -q '^stage: builder$' "$RUNNER_TEMP/millrace-runs-show.txt"
-          grep -q '^terminal_result: BUILDER_COMPLETE$' "$RUNNER_TEMP/millrace-runs-show.txt"
-          grep -q '^runner_name: codex_cli$' "$RUNNER_TEMP/millrace-runs-show.txt"
-          if grep -R -n '### TOKEN' "$workspace/millrace-agents/runs"; then
+          expected=(
+            ".gitignore"
+            "millrace_ai-0.22.0-py3-none-any.whl"
+            "millrace_ai-0.22.0.tar.gz"
+          )
+          mapfile -t actual < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          if [[ "${actual[*]}" != "${expected_sorted[*]}" ]]; then
+            printf 'unexpected distribution set: %s\n' "${actual[*]}" >&2
             exit 1
           fi
-
-      - name: Upload built distributions
-        uses: actions/upload-artifact@v7
+          sha256sum --check --strict <<'SHA256'
+          0b4e7245c02902e14da71787258b7f9bac5dceeed1048da67c2ceaf7bb20e124  dist/millrace_ai-0.22.0-py3-none-any.whl
+          f47bd3e1371213097f21349c3266e125ef385c8af0dbf94464020cec10caa84b  dist/millrace_ai-0.22.0.tar.gz
+          SHA256
+      - name: Check source unchanged
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all -- ':!dist')"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: python-package-distributions
-          path: dist/
+          name: pypi-distributions
+          if-no-files-found: error
+          path: |
+            dist/millrace_ai-0.22.0-py3-none-any.whl
+            dist/millrace_ai-0.22.0.tar.gz
 
   publish:
-    needs: build
+    needs: validate
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.0' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/millrace-ai
     permissions:
+      contents: read
       id-token: write
     steps:
-      - name: Download built distributions
-        uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: python-package-distributions
+          name: pypi-distributions
           path: dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Verify downloaded distributions
+        shell: bash
+        run: |
+          expected=(
+            "millrace_ai-0.22.0-py3-none-any.whl"
+            "millrace_ai-0.22.0.tar.gz"
+          )
+          mapfile -t actual < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          if [[ "${actual[*]}" != "${expected_sorted[*]}" ]]; then
+            printf 'unexpected downloaded distribution set: %s\n' "${actual[*]}" >&2
+            exit 1
+          fi
+          sha256sum --check --strict <<'SHA256'
+          0b4e7245c02902e14da71787258b7f9bac5dceeed1048da67c2ceaf7bb20e124  dist/millrace_ai-0.22.0-py3-none-any.whl
+          f47bd3e1371213097f21349c3266e125ef385c8af0dbf94464020cec10caa84b  dist/millrace_ai-0.22.0.tar.gz
+          SHA256
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        with:
+          packages-dir: dist/

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Cache offline build backend
+        run: >-
+          uv run --no-project
+          --with 'uv_build>=0.11.30,<0.12'
+          python -c 'import uv_build'
+
+      - name: Run tests
+        run: uv run --frozen pytest -q
+
+      - name: Run Ruff
+        run: uv run --frozen ruff check src tests
+
+      - name: Run mypy
+        run: uv run --frozen mypy src
+
+      - name: Build package
+        run: uv build

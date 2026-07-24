@@ -13,6 +13,36 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-23
+
+### Added
+
+- Added a generic workflow-package compiler and immutable compiled-plan
+  runtime.
+- Added durable queues, runs, artifacts, waits, interventions, traces, daemon
+  execution, and local operator commands.
+
+### Changed
+
+- Made Millforge the default runner for eligible newly compiled plans while
+  keeping Codex explicitly selectable. Existing selected plans are not
+  remapped.
+- Split the ecosystem into the `millrace-ai` runtime, `millrace-plus` official
+  workflows and authoring skills, the independent `millforge` execution
+  harness, and the dependency-only `millrace` bundle.
+
+### Removed
+
+- Removed the legacy `millrace-web` sidecar from the distributed product.
+- Temporarily removed `Pi` support as a usable agent harness.
+
+### Compatibility Notes
+
+- v0.22 is a clean compatibility break and a full overhaul of how Millrace
+  operates. It does not open or migrate v0.21 workspaces, state, configuration,
+  snapshots, imports, or removed command surfaces. Start v0.22 with a new
+  workspace and new runtime state.
+
 ## [0.21.1] - 2026-07-21
 
 ### Fixed

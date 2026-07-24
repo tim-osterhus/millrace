@@ -1,45 +1,11 @@
+# Local/generated artifacts only.
 .DS_Store
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-.coverage.*
-htmlcov/
-snapshot_report.html
 .venv/
-.publish-smoke/
-.wheel-smoke/
-build/
+.ruff_cache/
+.mypy_cache/
 dist/
+build/
 *.egg-info/
-
-# Package-first public repo: local dogfood/runtime workspaces should stay untracked.
-/.millrace-rust/
-/agents/
-/millrace-agents/
-/ideas/
-/millrace.toml
-/outline.md
-/historylog.md
-/state/
-/runs/
-/tasks/
-/specs/
-/incidents/
-/loops/
-/modes/
-/logs/
-/entrypoints/
-/skills/
-/roles/
-
-# Stray compatibility artifact: usage governance lives in the package directory
-# `src/millrace_ai/runtime/usage_governance/`, not this module file.
-/src/millrace_ai/runtime/usage_governance.py
-
-# Zero-byte root file removed during generic engine remediation;
-# must remain untracked so it does not reappear as a shippable artifact.
-/default_codex
