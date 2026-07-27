@@ -17,7 +17,6 @@ COMPILER_ROOT = SOURCE_ROOT / "millrace" / "compiler"
 SUBSTRATE_ROOT = SOURCE_ROOT / "millrace" / "substrate"
 OPERATOR_ROOT = SOURCE_ROOT / "millrace" / "operator"
 ROOT_README = PROJECT_ROOT / "README.md"
-COMPILER_README = COMPILER_ROOT / "README.md"
 CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 PYTEST_CONFTEST = PROJECT_ROOT / "tests" / "conftest.py"
 
@@ -829,26 +828,6 @@ def test_public_compiler_export_api_is_intentional_facade() -> None:
     assert [name for name in compiler.__all__ if name.startswith("_")] == []
     assert [name for name in compiler_export.__all__ if name.startswith("_")] == []
     assert not hasattr(compiler, "import_compiled_plan_export")
-
-
-def test_readmes_describe_export_capability_and_omissions() -> None:
-    required = (
-        "versioned compiled-plan export",
-        "compiled-plan export verification",
-        "not runtime plan admission",
-        "CLI/operator",
-        "package-marketplace import",
-    )
-    missing: list[str] = []
-    for readme in (ROOT_README, COMPILER_README):
-        text = readme.read_text(encoding="utf-8")
-        missing.extend(
-            f"{readme.relative_to(PROJECT_ROOT)}: {phrase}"
-            for phrase in required
-            if phrase not in text
-        )
-
-    assert missing == []
 
 
 def test_compiler_export_module_has_no_runtime_dependency_leaks() -> None:

@@ -46,7 +46,8 @@ bugfixing, and a hard blocker escalates to automated recovery. You can have
 as many recovery mechanisms or branching paths as you like, and the compiler
 makes sure you're only running valid plans.
 
-For more information, check out the [FAQ](FAQ.md).
+For more information, check out the
+[FAQ](https://github.com/tim-osterhus/millrace/blob/v0.22.0/FAQ.md).
 
 ## Start With Your Agent
 
@@ -65,7 +66,8 @@ Then delegate work:
 > official workflow, explain why, start with a bounded run, and report the
 > selected plan, state, waits, and evidence.
 
-Manual setup is documented in [Getting started](docs/getting-started.md).
+Manual setup is documented in
+[Getting started](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/getting-started.md).
 
 ## Runtime Rules
 
@@ -88,14 +90,17 @@ These are package data, not hard-coded kernel behavior.
 
 ## Documentation
 
-[How Millrace works](docs/how-millrace-works.md) ·
-[Workflow packages](docs/workflow-packages.md) ·
-[Runner setup](docs/millforge-runner.md) ·
-[Errors](docs/errors.md) ·
-[v0.22 support](docs/v0.22-compatibility.md)
+[Getting started](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/getting-started.md) ·
+[How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/how-millrace-works.md) ·
+[Workflow packages](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/workflow-packages.md) ·
+[Millforge runner](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/millforge-runner.md) ·
+[Codex runner](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/codex-runner.md) ·
+[Errors](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/errors.md) ·
+[Migrating from v0.21](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/migrating-from-v0.21.md) ·
+[v0.22 support](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/v0.22-compatibility.md)
 
 Millrace v0.22 is local and single-operator. It supports Linux, macOS, and WSL.
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[Apache License 2.0](https://github.com/tim-osterhus/millrace/blob/v0.22.0/LICENSE)

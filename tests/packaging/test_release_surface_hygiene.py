@@ -23,6 +23,7 @@ DONOR_WORKFLOWS = {
     "vendor_selection.py",
 }
 PUBLIC_DOCS = {
+    "FAQ.md",
     "README.md",
     "docs/getting-started.md",
     "docs/migrating-from-v0.21.md",
