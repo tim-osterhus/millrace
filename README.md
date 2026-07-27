@@ -10,136 +10,92 @@
     width="180"
   />
   <h1>Millrace</h1>
-  <p><strong>Compiler-governed workflow runtime for durable AI automation.</strong></p>
 </div>
 
-Millrace is a graph-driven runtime that executes long-running AI workflows using compiler-validated authority rather than prompt conventions.
+Ever find yourself doing the same thing over and over with AI agents?
 
-Instead of letting an agent decide what happens next, Millrace compiles a workflow into an immutable execution plan and enforces state transitions, recovery, approvals, capabilities, and operator intervention throughout the lifetime of a run.
+You construct the plan. You tell it to execute the plan, then you have another
+agent check the first agent's work. It finds issues, so you tell it to fix
+those issues. Any time a new blocker comes up, you ask it to troubleshoot the
+issue and fix it before moving on. You rinse and repeat until there's no more
+bugs and everything matches the initial plan.
 
-It is not another agent harness.
+All you did was manage which agent performs which role at which time. If you
+sketched out the entire process on paper, you'd find it's just a manually-driven
+decision tree. An agent can generally be relied upon to execute any single
+step on its own, but owning the entire workflow end to end? No agent is owning
+that reliably (yet). And this is where Millrace comes in.
 
-## Agent-Native By Design
-
-Millrace is designed to be installed, configured, and operated through an AI
-agent acting as the intermediary between you and the runtime. You describe the
-work and its constraints; the agent uses Millrace's deterministic CLI and JSON
-surfaces to configure the workflow, enqueue work, run and monitor the daemon,
-and bring approvals, blockers, and evidence back to you.
-
-Manual operation is fully supported, but the CLI favors explicit, replay-safe
-machine operation over interactive convenience. It is not intended to be
-Millrace's primary human-facing interface.
-
-For agent-led setup and operation, give the agent the
-[Millrace instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.0/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md).
-
-## Install
-
-To install the full distribution directly:
-
-```bash
-python -m pip install millrace
-millrace --version
+```mermaid
+flowchart TD
+    W["Workflow package<br/>stages, routes, rules"] --> C["Compiler<br/>validate and freeze"]
+    C --> P["Selected plan<br/>immutable authority"]
+    P --> R["Durable runtime<br/>queues, runs, waits"]
+    R -->|"bounded dispatch"| A["Agent runner<br/>Codex, Claude Code, Millforge"]
+    A -->|"candidate evidence"| V{"Valid under<br/>selected plan?"}
+    P -.->|"governs"| V
+    V -->|"yes"| T["Commit state transition"]
+    T --> R
+    V -->|"no"| X["Refuse, retry,<br/>or wait for operator"]
+    X --> R
 ```
 
-The bundle installs the `millrace-ai` runtime, official `millrace-plus`
-workflows and authoring skills, and Millforge. Install `millrace-ai`
-directly when you need only the generic runtime and its diagnostic
-`kernel_ping` workflow. The complete `millrace` bundle requires Python 3.12
-or newer; the base `millrace-ai` runtime supports Python 3.11 or newer.
+If your workflow can be described as a decision tree, it can be turned into
+a plan by Millrace. Completion moves to the next step, failure moves to
+bugfixing, and a hard blocker escalates to automated recovery. You can have
+as many recovery mechanisms or branching paths as you like, and the compiler
+makes sure you're only running valid plans.
 
-## Start A Workspace
+For more information, check out the [FAQ](FAQ.md).
 
-```bash
-export WORKSPACE=/absolute/path/to/new-workspace
+## Start With Your Agent
 
-millrace --workspace "$WORKSPACE" workspace init \
-  --input-id workspace-init-001
-millrace --workspace "$WORKSPACE" workspace check
-```
+Millrace is **agent-first**. Give this repository to a capable local agent:
 
-Import an installed workflow package, compile and select a workflow, enqueue
-work, then run the daemon with an explicit local adapter configuration. The
-[getting-started guide](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/getting-started.md)
-walks through one complete `simple_loop` setup.
+> Install Millrace for me in this workspace using
+> https://github.com/tim-osterhus/millrace. Read its README and
+> [instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.0/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
+> first. Check the CLI, workspace, workflows, and runners. Report what you
+> installed and what you need next. Do not store credentials in workflow
+> assets or start unattended work.
 
-## What Millrace Owns
+Then delegate work:
 
-- **Compiled authority:** workflow data becomes an immutable selected plan
-  before work starts.
-- **Durable progress:** queues, runs, artifacts, waits, and audit records
-  survive process and model-session restarts.
-- **Bounded dispatch:** each stage receives only its selected prompt, skills,
-  schemas, and runtime context.
-- **Governed routing:** runner output is candidate evidence. It cannot invent
-  a legal route or approve its own completion.
-- **Recovery and intervention:** workflows can retry, reroute, pause,
-  quarantine, or request a local operator decision.
-- **Inspection:** the CLI exposes status, runs, traces, waits, interventions,
-  package health, and workspace health.
+> Use Millrace to govern this work: `<goal and constraints>`. Choose an
+> official workflow, explain why, start with a bounded run, and report the
+> selected plan, state, waits, and evidence.
 
-```text
-workflow package -> compiler -> selected plan -> durable queue
-                                                   |
-                                                   v
-validated outcome <- runtime transition <- runner stage
-```
+Manual setup is documented in [Getting started](docs/getting-started.md).
 
-SQLite stores local control state. Content-addressed storage keeps immutable
-plans, payloads, and artifacts. Millrace refuses unsupported or inconsistent
-authority rather than reconstructing it from filenames, prompts, or runner
-claims.
+## Runtime Rules
 
-## Workflows And Runners
+- The selected plan defines legal stages, routes, assets, runners, and outcomes.
+- Queues, runs, waits, traces, and artifacts survive restarts.
+- Each stage receives only its selected assets and context.
+- Model output is evidence, not runtime truth.
+- Retries, reroutes, pauses, and operator decisions remain on record.
+- Supported commands change state; direct file edits do not.
 
-The base `millrace-ai` package ships only `kernel_ping`. `millrace-plus`
-provides the official workflow collection, including `simple_loop`, LAD
-variants, and `vendor_selection`. Plane names, stage names, queues, and
-terminal markers remain package data rather than kernel concepts.
+## Workflows
 
-Millforge executes the default `millforge-base` component for eligible new
-plans. Codex is an explicit alternative that requires an operator-provided
-wrapper implementing Millrace's versioned JSON protocol.
+`millrace-plus` provides:
 
-Millrace also supports versioned compiled-plan export. It performs
-compiled-plan export verification. Export is not runtime plan admission. v0.22
-does not expose this through the CLI/operator surface.
-A package-marketplace import flow is not part of the v0.22 CLI/operator
-surface.
+- `simple_loop`: plan, run, review, and bounded recovery;
+- `lean_agentic_development`: full end-to-end autonomous agentic engineering;
+- `vendor_selection`: policy checks, parallel evaluation, and an operator gate.
 
-## Operator Commands
-
-| Need | Command |
-| --- | --- |
-| Initialize local state | `millrace workspace init --input-id <id>` |
-| Manage workflow packages | `millrace package ...` |
-| Admit and select plans | `millrace plan ...` |
-| Enqueue work | `millrace queue enqueue ...` |
-| Run work | `millrace run daemon ...` |
-| Inspect state | `millrace status`, `millrace runs ...`, `millrace trace ...` |
-| Resolve governed waits | `millrace waits ...`, `millrace interventions ...` |
-| Check health | `millrace doctor` |
-
-Workspace-scoped commands accept
-`millrace --workspace /absolute/path ...`. Mutation commands require explicit
-replay-safe input or command IDs where applicable.
-
-Millforge supports Linux and macOS, and WSL through Linux execution semantics.
-Native Windows execution is not supported in v0.22.
+These are package data, not hard-coded kernel behavior.
 
 ## Documentation
 
-- [Getting started](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/getting-started.md)
-- [How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/how-millrace-works.md)
-- [Workflow packages](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/workflow-packages.md)
-- [Errors and refusals](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/errors.md)
-- [Migrating from v0.21](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/migrating-from-v0.21.md)
-- [v0.22 compatibility](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/v0.22-compatibility.md)
-- [Millforge runner](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/millforge-runner.md)
-- [Codex runner](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/codex-runner.md)
+[How Millrace works](docs/how-millrace-works.md) ·
+[Workflow packages](docs/workflow-packages.md) ·
+[Runner setup](docs/millforge-runner.md) ·
+[Errors](docs/errors.md) ·
+[v0.22 support](docs/v0.22-compatibility.md)
+
+Millrace v0.22 is local and single-operator. It supports Linux, macOS, and WSL.
 
 ## License
 
-Millrace is licensed under the
-[Apache License 2.0](https://github.com/tim-osterhus/millrace/blob/v0.22.0/LICENSE).
+[Apache License 2.0](LICENSE)
