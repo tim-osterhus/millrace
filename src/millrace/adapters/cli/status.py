@@ -20,6 +20,7 @@ from millrace.adapters.cli.session_coordinator import (
     request_operator_cancellation,
     terminate_grace_seconds,
 )
+from millrace.contracts.state import RuntimeState
 from millrace.operator.intake import OperatorInputError
 from millrace.operator.status import operator_status
 
@@ -69,7 +70,7 @@ def _status(namespace: object) -> CliSuccess:
         command=command,
         code="status_projected",
         message="Status projected.",
-        data=_status_projection(status),
+        data=_status_projection(status, state=state),
     )
 
 
@@ -162,6 +163,10 @@ def _runs_show(namespace: object) -> CliSuccess:
                         "dispatch_generation": session.dispatch_generation,
                         "state": session.state,
                         "cleanup_disposition": session.cleanup_disposition,
+                        "orphan_risk": (
+                            session.state == "lost"
+                            or session.cleanup_disposition == "orphan_risk"
+                        ),
                         "primary_cancellation_reason": (
                             None if cancellation is None else cancellation.reason
                         ),
@@ -312,7 +317,15 @@ def _trace_show(namespace: object) -> CliSuccess:
         command=command,
         code="trace_projected",
         message="Trace projected.",
-        data={"run_id": run_id, "events": events},
+        data={
+            "run_id": run_id,
+            "events": events,
+            "runner_session": (
+                None
+                if run_id is None
+                else _runner_session_projection(state, str(run_id))
+            ),
+        },
     )
 
 
@@ -323,7 +336,23 @@ def _max_events(namespace: object, *, command: str) -> int:
     return max_events
 
 
-def _status_projection(status: object) -> dict[str, object]:
+def _status_projection(
+    status: object,
+    *,
+    state: RuntimeState | None = None,
+) -> dict[str, object]:
+    runner_sessions = (
+        []
+        if state is None
+        else [
+            projection
+            for run_id in sorted(state.runs)
+            if (
+                projection := _runner_session_projection(state, run_id)
+            )
+            is not None
+        ]
+    )
     return {
         "selected_plan": json_ready(getattr(status, "selected_plan")),
         "known_plans": [json_ready(item) for item in getattr(status, "known_plans")],
@@ -372,6 +401,36 @@ def _status_projection(status: object) -> dict[str, object]:
         "recent_events": [
             json_ready(item) for item in getattr(status, "recent_events")
         ],
+        "runner_sessions": runner_sessions,
+    }
+
+
+def _runner_session_projection(
+    state: RuntimeState,
+    run_id: str,
+) -> dict[str, object] | None:
+    run = state.runs.get(run_id)
+    if run is None or run.current_session_id is None:
+        return None
+    session = state.runner_sessions.get(run.current_session_id)
+    if session is None:
+        return None
+    completion = state.runner_session_completions.get(session.session_id)
+    return {
+        "session_id": session.session_id,
+        "run_id": session.run_id,
+        "dispatch_generation": session.dispatch_generation,
+        "state": session.state,
+        "cleanup_disposition": session.cleanup_disposition,
+        "orphan_risk": (
+            session.state == "lost"
+            or session.cleanup_disposition == "orphan_risk"
+        ),
+        "completion_persisted": completion is not None,
+        "application_persisted": (
+            completion is not None
+            and completion.application_input_id in state.receipts
+        ),
     }
 
 

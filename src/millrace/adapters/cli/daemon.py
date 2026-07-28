@@ -30,6 +30,7 @@ from millrace.adapters.cli.output import CliSuccess, ExitCode, success_result
 from millrace.adapters.cli.run import (
     BoundedExecutionUnitResult,
     load_adapter_local_config,
+    reconcile_pending_runner_sessions,
     run_bounded_execution_unit,
 )
 from millrace.adapters.runner_contract import AdapterLocalConfig
@@ -43,6 +44,7 @@ _RUNNER_FAILURE_REASONS = frozenset(
         "adapter_failure",
         "adapter_conversion_refused",
         "runner_session_orphan_risk",
+        "runner_session_reconciliation_contradiction",
         "session_reconciliation_required",
     }
 )
@@ -303,6 +305,31 @@ def _run_locked_loop(
     last_result: dict[str, object] = {}
 
     with _SignalStop() as stop:
+        startup = _reconcile_startup_sessions(
+            options,
+            daemon_stop_requested=lambda: stop.requested,
+        )
+        if startup.code != "no_runner_session_reconciliation":
+            last_result = _result_data(startup)
+            stopped_reason = _non_idle_stop_reason(startup)
+            if stopped_reason is not None:
+                return _summary(
+                    options,
+                    iterations=0,
+                    units_started=0,
+                    units_succeeded=0,
+                    units_refused=0,
+                    adapter_failures=(
+                        1 if startup.code in _RUNNER_FAILURE_REASONS else 0
+                    ),
+                    idle_iterations=0,
+                    lifecycle_transitions_applied=0,
+                    stopped_reason=stopped_reason,
+                    last_result=last_result,
+                    diagnostics=tuple(
+                        dict(item) for item in startup.diagnostics
+                    ),
+                )
         while options.max_ticks is None or iterations < options.max_ticks:
             result = _run_one_bounded_unit(
                 options,
@@ -408,6 +435,24 @@ def _run_locked_loop(
         stopped_reason="max_ticks",
         last_result=last_result,
     )
+
+
+def _reconcile_startup_sessions(
+    options: DaemonRunOptions,
+    *,
+    daemon_stop_requested: Callable[[], bool],
+) -> BoundedExecutionUnitResult:
+    runtime = open_runtime_context(options.paths, command=_COMMAND)
+    try:
+        return reconcile_pending_runner_sessions(
+            runtime,
+            adapter_kind=options.adapter_kind,
+            local_config=options.local_config,
+            actor_id=options.actor_id,
+            daemon_stop_requested=daemon_stop_requested,
+        )
+    finally:
+        runtime.close()
 
 
 def _run_one_bounded_unit(

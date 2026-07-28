@@ -21,18 +21,26 @@ from millrace.adapters.runner_contract import (
     AdapterInvocationOutcome,
     AdapterInvocationRequest,
     AdapterSuccessResult,
+    CleanupPending,
+    Contradiction,
+    DispatchEcho,
     RedactionPolicy,
     RunnerAdapter,
     RunnerCancellationOperationResult,
     RunnerCleanupResult,
     RunnerSessionHandle,
+    RunnerSessionReconcileRequest,
     StartedSession,
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
+    Terminal,
+    Unsupported,
+    VerifiedLive,
     runner_cancellation_diagnostic_digest,
     runner_evidence_from_adapter_outcome,
     start_refusal_diagnostic_bytes,
 )
+from millrace.contracts.compiled_plan import AuthorityValue
 from millrace.contracts.runner import (
     RunnerDispatchEnvelope,
     RunnerResultEvidence,
@@ -40,6 +48,7 @@ from millrace.contracts.runner import (
     runner_result_evidence_digest,
     runner_result_evidence_from_payload,
     runner_session_locator_bytes,
+    runner_session_locator_from_bytes,
 )
 from millrace.contracts.state import (
     RunnerSessionCancellationRecord,
@@ -121,17 +130,30 @@ def execute_runner_session(
         if completion is not None:
             if completion.terminal_state == "completed":
                 return _apply_persisted_completion(runtime, completion)
+            if completion.terminal_state == "lost":
+                return SessionExecutionResult("runner_session_orphan_risk")
             if not explicit_retry_intent:
                 return SessionExecutionResult(
                     "adapter_failure",
                     adapter_error_kind=completion.adapter_error_kind,
                 )
-        elif current.state == "starting":
-            return SessionExecutionResult("session_reconciliation_required")
-        elif current.state == "running":
-            return SessionExecutionResult("session_running")
-        elif current.state in {"cancellation_requested", "terminating"}:
-            return SessionExecutionResult("session_running")
+        elif current.state in {
+            "starting",
+            "running",
+            "cancellation_requested",
+            "terminating",
+        }:
+            return _reconcile_session(
+                runtime,
+                run_ref=run_ref,
+                session=current,
+                adapter=adapter,
+                request_factory=request_factory,
+                daemon_stop_requested=daemon_stop_requested,
+                effective_timeout_seconds=effective_timeout_seconds,
+            )
+        elif current.state == "lost":
+            return SessionExecutionResult("runner_session_orphan_risk")
         elif current.state == "created":
             return _start_created_session(
                 runtime,
@@ -166,6 +188,333 @@ def execute_runner_session(
         request_factory=request_factory,
         daemon_stop_requested=daemon_stop_requested,
         effective_timeout_seconds=effective_timeout_seconds,
+    )
+
+
+def _reconcile_session(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    adapter: RunnerAdapter,
+    request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
+    daemon_stop_requested: Callable[[], bool] | None,
+    effective_timeout_seconds: float | None,
+) -> SessionExecutionResult:
+    request = request_factory(session)
+    if not _request_matches_current_authority(
+        runtime,
+        session=session,
+        adapter=adapter,
+        request=request,
+    ):
+        return _reconciliation_contradiction(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            signal=request,
+        )
+    locator = _load_reconciliation_locator(runtime, session)
+    if locator is None:
+        return _reconciliation_contradiction(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            signal={"durable_locator_digest": session.durable_locator_digest},
+        )
+    try:
+        outcome = adapter.reconcile_session(
+            RunnerSessionReconcileRequest(request, locator)
+        )
+    except Exception:
+        return _reconciliation_contradiction(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            signal={"adapter_exception": True},
+        )
+    echo = getattr(outcome, "dispatch_echo", None)
+    if not isinstance(echo, DispatchEcho):
+        return _reconciliation_contradiction(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            signal=outcome,
+        )
+    try:
+        echo.validate_against(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return _reconciliation_contradiction(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            signal=outcome,
+        )
+    if isinstance(outcome, Contradiction):
+        return _reconciliation_contradiction(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            signal=outcome,
+        )
+    if isinstance(outcome, Unsupported):
+        return _persist_orphan_risk(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+        )
+    if isinstance(outcome, Terminal):
+        if outcome.adapter_outcome.dispatch_echo != outcome.dispatch_echo:
+            return _reconciliation_contradiction(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                signal=outcome,
+            )
+        if session.state == "starting":
+            running_session = _advance_reconciled_starting_session(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                locator_digest=session.durable_locator_digest,
+            )
+            if running_session is None:
+                return SessionExecutionResult(
+                    "runner_session_reconciliation_contradiction"
+                )
+            session = running_session
+        return _persist_completion(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            outcome=outcome.adapter_outcome,
+            cleanup_disposition=outcome.cleanup_disposition,
+            primary=_primary_cancellation(_load(runtime), session),
+        )
+    if isinstance(outcome, VerifiedLive):
+        locator_digest = _safe_locator_digest(
+            runtime,
+            request,
+            outcome.durable_locator_metadata,
+        )
+        if locator_digest is None:
+            return _reconciliation_contradiction(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                signal=outcome.durable_locator_metadata,
+            )
+        if session.state == "starting":
+            running_session = _advance_reconciled_starting_session(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                locator_digest=locator_digest,
+            )
+            if running_session is None:
+                return SessionExecutionResult(
+                    "runner_session_reconciliation_contradiction"
+                )
+            session = running_session
+        deadline = _monotonic() + (
+            request.timeout_seconds
+            if effective_timeout_seconds is None
+            else min(request.timeout_seconds, effective_timeout_seconds)
+        )
+        return _drive_running_session(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            handle=outcome.handle,
+            deadline=deadline,
+            daemon_stop_requested=daemon_stop_requested,
+        )
+    if isinstance(outcome, CleanupPending):
+        return _resume_reconciled_cleanup(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            handle=outcome.handle,
+        )
+    return _reconciliation_contradiction(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        signal=outcome,
+    )
+
+
+def _advance_reconciled_starting_session(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    locator_digest: str | None,
+) -> RunnerSessionRecord | None:
+    running = AdvanceRunnerSession(
+        f"cli:run.session-reconciled-running:{session.session_id}",
+        run_ref=run_ref,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        expected_state="starting",
+        next_state="running",
+        occurred_at=max(_now(), cast(int, session.start_intent_at)),
+        durable_locator_digest=locator_digest,
+    )
+    persisted = _persist_transition(runtime, running)
+    if persisted is None:
+        return None
+    return persisted.runner_sessions[session.session_id]
+
+
+def _load_reconciliation_locator(
+    runtime: OpenRuntimeContext,
+    session: RunnerSessionRecord,
+) -> Mapping[str, AuthorityValue] | None:
+    if session.durable_locator_digest is None:
+        return {} if session.state == "starting" else None
+    try:
+        payload = runtime.cas_store.get_bytes(session.durable_locator_digest)
+        locator = runner_session_locator_from_bytes(payload)
+    except (OSError, TypeError, ValueError):
+        return None
+    return locator
+
+
+def _reconciliation_contradiction(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    signal: object,
+) -> SessionExecutionResult:
+    _audit_session_refusal(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        reason="runner_session_reconciliation_contradiction",
+        signal_kind="runner_reconciliation",
+        signal_digest=_signal_digest(signal),
+    )
+    return SessionExecutionResult("runner_session_reconciliation_contradiction")
+
+
+def _persist_orphan_risk(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    request: AdapterInvocationRequest,
+) -> SessionExecutionResult:
+    diagnostic_digest = runtime.cas_store.put_bytes(
+        _canonical_json_bytes({"reconciliation": "unsupported"})
+    )
+    completion = _completion_record(
+        session=session,
+        terminal_state="lost",
+        exit_kind="lost",
+        adapter_outcome_kind="unsupported",
+        adapter_error_kind=None,
+        evidence_digest=None,
+        diagnostic_digest=diagnostic_digest,
+        cleanup_disposition="orphan_risk",
+        redaction_policy_id=request.redaction_policy.policy_id,
+        primary=_primary_cancellation(_load(runtime), session),
+    )
+    if _persist_completion_record(runtime, run_ref, session, completion) is None:
+        return SessionExecutionResult(
+            "runner_session_reconciliation_contradiction"
+        )
+    return SessionExecutionResult("runner_session_orphan_risk")
+
+
+def _resume_reconciled_cleanup(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    request: AdapterInvocationRequest,
+    handle: RunnerSessionHandle,
+) -> SessionExecutionResult:
+    primary = _primary_cancellation(_load(runtime), session)
+    if primary is None:
+        return _reconciliation_contradiction(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            signal={"cleanup_pending_without_primary": True},
+        )
+    cleanup = _call_cleanup(handle.cleanup)
+    attempts = [
+        attempt
+        for attempt in _load(runtime).runner_session_cancellation_attempts.values()
+        if attempt.session_id == session.session_id
+    ]
+    _persist_cleanup_operation(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        primary=primary,
+        sequence=len(attempts),
+        cleanup=cleanup,
+        redaction_policy=request.redaction_policy,
+    )
+    if cleanup.disposition == "orphan_risk":
+        return _persist_orphan_risk(
+            runtime,
+            run_ref=run_ref,
+            session=_load(runtime).runner_sessions[session.session_id],
+            request=request,
+        )
+    try:
+        outcome = _poll_handle(handle)
+    except TypeError:
+        outcome = None
+    if outcome is None:
+        return _reconciliation_contradiction(
+            runtime,
+            run_ref=run_ref,
+            session=_load(runtime).runner_sessions[session.session_id],
+            signal={"cleanup_completed_without_terminal_outcome": True},
+        )
+    if isinstance(outcome, AdapterErrorResult) and outcome.error_kind == "cancelled":
+        diagnostic_bytes = _adapter_error_diagnostic_bytes(
+            outcome,
+            request=request,
+        )
+        if diagnostic_bytes is None:
+            return _reconciliation_contradiction(
+                runtime,
+                run_ref=run_ref,
+                session=_load(runtime).runner_sessions[session.session_id],
+                signal=outcome,
+            )
+        return _persist_adapter_error(
+            runtime,
+            run_ref=run_ref,
+            session=_load(runtime).runner_sessions[session.session_id],
+            outcome=outcome,
+            diagnostic_digest=runtime.cas_store.put_bytes(diagnostic_bytes),
+            cleanup_disposition=cleanup.disposition,
+            terminal_state="interrupted",
+            primary=primary,
+        )
+    return _persist_completion(
+        runtime,
+        run_ref=run_ref,
+        session=_load(runtime).runner_sessions[session.session_id],
+        request=request,
+        outcome=outcome,
+        cleanup_disposition=cleanup.disposition,
+        primary=primary,
     )
 
 

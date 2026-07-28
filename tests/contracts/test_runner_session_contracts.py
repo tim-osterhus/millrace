@@ -167,6 +167,52 @@ def test_adapter_request_refuses_session_authority_mismatch() -> None:
         )
 
 
+def test_reconcile_request_carries_v5_selected_authority() -> None:
+    dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+    invocation = AdapterInvocationRequest(
+        adapter_id="adapter-1",
+        selected_runner_binding_id=dispatch.runner_binding_id,
+        selected_adapter_kind="fake",
+        dispatch_envelope=dispatch,
+        session_id=dispatch.session_id,
+        dispatch_generation=dispatch.dispatch_generation,
+        session_fencing_token=dispatch.session_fencing_token,
+        timeout_seconds=1,
+        correlation_id="correlation-1",
+        redaction_policy=RedactionPolicy("test"),
+        cancellation_token="cancel-1",
+    )
+
+    reconcile = RunnerSessionReconcileRequest(
+        invocation,
+        {"provider_request_id": "owned-request"},
+    )
+
+    assert reconcile.invocation_request.dispatch_envelope.schema_version == 5
+    payload = reconcile.invocation_request.dispatch_envelope.payload()
+    assert payload["record_kind"] == "runner_dispatch_envelope"
+    assert payload["schema_version"] == 5
+    for field_name in (
+        "run_id",
+        "claim_id",
+        "plan_fingerprint",
+        "runner_binding_id",
+        "stage_kind_id",
+        "graph_node_id",
+        "queue_family_id",
+        "session_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "generation",
+        "fencing_token",
+    ):
+        assert payload[field_name] == _dispatch_values()[field_name]
+    assert reconcile.invocation_request.session_id == "session-1"
+    assert reconcile.invocation_request.dispatch_generation == 1
+    assert reconcile.invocation_request.session_fencing_token == "session-fence-1"
+    assert reconcile.invocation_request.correlation_id == "correlation-1"
+
+
 def test_dispatch_echo_refuses_session_authority_mismatch() -> None:
     dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
     echo = DispatchEcho.from_dispatch_envelope(
@@ -272,6 +318,10 @@ def test_runner_session_locator_codec_is_canonical_bounded_and_mapping_only() ->
         runner_session_locator_from_bytes(b'{"value": "x"}')
     with pytest.raises(ValueError, match="authority"):
         runner_session_locator_from_bytes(b'{"value":1.5}')
+    with pytest.raises(ValueError, match="selected authority"):
+        runner_session_locator_from_bytes(
+            b'{"nested":{"claim_id":"hostile-claim"}}'
+        )
 
 
 def test_start_refusal_diagnostic_owns_real_bounded_redacted_content() -> None:

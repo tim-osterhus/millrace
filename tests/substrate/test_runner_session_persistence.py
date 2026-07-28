@@ -709,6 +709,7 @@ def test_runner_session_invalid_cas_reference_is_refused_on_reload(
         b"[]",
         b'{"value": 1}',
         b'{"value":1.5}',
+        b'{"claim_id":"hostile-claim"}',
     ),
 )
 def test_runner_session_locator_codec_is_enforced_by_sqlite_boundaries(
@@ -1049,6 +1050,12 @@ def test_runner_session_cancellation_link_raw_corruption_is_refused(
     with sqlite3.connect(db_path) as connection:
         connection.execute("PRAGMA ignore_check_constraints = ON")
         connection.execute(sql)
+    database_before = db_path.read_bytes()
+    cas_before = {
+        path.relative_to(tmp_path / "cas"): path.read_bytes()
+        for path in (tmp_path / "cas").rglob("*")
+        if path.is_file()
+    }
 
     store = SQLiteRuntimeStore.open(db_path)
     try:
@@ -1056,6 +1063,12 @@ def test_runner_session_cancellation_link_raw_corruption_is_refused(
             store.load_runtime_state(cas_store)
     finally:
         store.close()
+    assert db_path.read_bytes() == database_before
+    assert {
+        path.relative_to(tmp_path / "cas"): path.read_bytes()
+        for path in (tmp_path / "cas").rglob("*")
+        if path.is_file()
+    } == cas_before
 
 
 @pytest.mark.parametrize(

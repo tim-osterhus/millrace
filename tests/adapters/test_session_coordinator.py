@@ -31,6 +31,8 @@ from millrace.adapters.runner_contract import (
     AdapterInvocationRequest,
     AdapterLocalConfig,
     AdapterSuccessResult,
+    CleanupPending,
+    Contradiction,
     DispatchEcho,
     RedactionPolicy,
     RunnerCancellationOperationResult,
@@ -38,13 +40,16 @@ from millrace.adapters.runner_contract import (
     StartedSession,
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
+    Terminal,
     Unsupported,
+    VerifiedLive,
     runner_cancellation_diagnostic_digest,
     start_refusal_diagnostic_bytes,
     start_refusal_diagnostic_digest,
 )
 from millrace.contracts.runner import runner_result_evidence_from_payload
 from millrace.contracts.transition import (
+    AdvanceRunnerSession,
     RequestRunnerSessionCancellation,
     RunnerResultObserved,
 )
@@ -336,15 +341,21 @@ class _RecordingAdapter:
     def __init__(
         self,
         start: Callable[[AdapterInvocationRequest], object],
+        reconcile: Callable[[object], object] | None = None,
     ) -> None:
         self._start = start
+        self._reconcile = reconcile
         self.requests: list[AdapterInvocationRequest] = []
+        self.reconcile_requests: list[object] = []
 
     def start_session(self, request: AdapterInvocationRequest) -> object:
         self.requests.append(request)
         return self._start(request)
 
     def reconcile_session(self, request: object) -> object:
+        self.reconcile_requests.append(request)
+        if self._reconcile is not None:
+            return self._reconcile(request)
         invocation = request.invocation_request
         return Unsupported(
             DispatchEcho.from_dispatch_envelope(
@@ -3074,3 +3085,450 @@ def test_codex_and_generic_fake_adapters_share_session_lifecycle(tmp_path) -> No
         assert session.state == "completed"
         completion = after.runner_session_completions[session.session_id]
         assert completion.application_input_id in after.receipts
+
+
+def _indeterminate_start(request: AdapterInvocationRequest) -> StartIndeterminate:
+    return StartIndeterminate(
+        DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        ),
+        {"provider_request_id": "owned-request"},
+        "sha256:" + "a" * 64,
+    )
+
+
+def test_restart_unsupported_marks_potentially_started_session_orphan_risk(
+    tmp_path,
+) -> None:
+    adapter = _RecordingAdapter(_indeterminate_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    before = _load(runtime)
+
+    restarted = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert restarted.code == "runner_session_orphan_risk"
+    assert len(adapter.requests) == 1
+    assert len(adapter.reconcile_requests) == 1
+    reconcile = adapter.reconcile_requests[0]
+    invocation = reconcile.invocation_request
+    session = next(iter(after.runner_sessions.values()))
+    run = after.runs[session.run_id]
+    assert invocation.dispatch_envelope.schema_version == 5
+    assert invocation.dispatch_envelope.run_id == run.run_ref.run_id
+    assert invocation.dispatch_envelope.claim_id == run.run_ref.claim_id
+    assert invocation.dispatch_envelope.plan_fingerprint == (
+        run.run_ref.plan_ref.authority_fingerprint
+    )
+    assert invocation.session_id == session.session_id
+    assert invocation.dispatch_generation == session.dispatch_generation
+    assert invocation.session_fencing_token == session.session_fencing_token
+    assert (session.state, session.cleanup_disposition) == ("lost", "orphan_risk")
+    assert run.run_ref.claim_id == before.runs[session.run_id].run_ref.claim_id
+    assert run.current_session_id == session.session_id
+    assert after.runner_observations == {}
+    assert after.artifacts == {}
+    assert after.quarantines == before.quarantines
+    assert after.recovery_attempts == before.recovery_attempts
+    assert after.runs.keys() == before.runs.keys()
+
+
+def test_restart_verified_live_continues_observation_with_returned_handle(
+    tmp_path,
+) -> None:
+    def reconcile(request):
+        invocation = request.invocation_request
+        echo = DispatchEcho.from_dispatch_envelope(
+            invocation.dispatch_envelope,
+            correlation_id=invocation.correlation_id,
+        )
+        return VerifiedLive(
+            echo,
+            _ImmediateHandle(_success_outcome(invocation)),
+            "verified-owned-handle",
+            request.durable_locator_metadata,
+        )
+
+    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+
+    restarted = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert restarted.code == "observation_accepted"
+    assert len(adapter.requests) == 1
+    assert len(adapter.reconcile_requests) == 1
+    assert next(iter(after.runner_sessions.values())).state == "completed"
+    assert len(after.runner_observations) == 1
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    (
+        {"claim_id": "hostile-claim"},
+        {"plan_fingerprint": "sha256:" + "f" * 64},
+        {"runner_binding_id": "hostile-binding"},
+        {"stage_kind_id": "hostile-stage"},
+        {"graph_node_id": "hostile-node"},
+        {"queue_family_id": "hostile-queue"},
+        {"session_id": "hostile-session"},
+        {"session_fencing_token": "hostile-fence"},
+        {"run_id": "hostile-run"},
+        {"generation": 99},
+        {"fencing_token": "hostile-run-fence"},
+        {"correlation_id": "hostile-correlation"},
+    ),
+)
+def test_restart_refuses_verified_live_authority_mismatch(
+    tmp_path,
+    mismatch: dict[str, object],
+) -> None:
+    def reconcile(request):
+        invocation = request.invocation_request
+        echo = replace(
+            DispatchEcho.from_dispatch_envelope(
+                invocation.dispatch_envelope,
+                correlation_id=invocation.correlation_id,
+            ),
+            **mismatch,
+        )
+        return VerifiedLive(echo, _SequenceHandle([]), "hostile-handle", {})
+
+    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    before = _load(runtime)
+
+    restarted = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert restarted.code == "runner_session_reconciliation_contradiction"
+    assert after.runner_sessions == before.runner_sessions
+    assert after.runner_session_completions == before.runner_session_completions
+    assert after.runner_observations == before.runner_observations
+    assert after.runs == before.runs
+
+
+def test_restart_terminal_outcome_uses_existing_completion_path(tmp_path) -> None:
+    def reconcile(request):
+        invocation = request.invocation_request
+        echo = DispatchEcho.from_dispatch_envelope(
+            invocation.dispatch_envelope,
+            correlation_id=invocation.correlation_id,
+        )
+        return Terminal(echo, _success_outcome(invocation), "complete")
+
+    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+
+    restarted = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert restarted.code == "observation_accepted"
+    assert len(after.runner_session_completions) == 1
+    assert len(after.runner_observations) == 1
+
+
+def test_restart_adapter_contradiction_refuses_without_guessed_repair(
+    tmp_path,
+) -> None:
+    def reconcile(request):
+        invocation = request.invocation_request
+        return Contradiction(
+            DispatchEcho.from_dispatch_envelope(
+                invocation.dispatch_envelope,
+                correlation_id=invocation.correlation_id,
+            ),
+            "sha256:" + "c" * 64,
+        )
+
+    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    before = _load(runtime)
+
+    restarted = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert restarted.code == "runner_session_reconciliation_contradiction"
+    assert after.runner_sessions == before.runner_sessions
+    assert after.runner_session_completions == {}
+    assert after.runner_observations == {}
+    assert after.runs == before.runs
+
+
+def test_orphan_risk_explicit_retry_preserves_claim_and_refuses_replacement(
+    tmp_path,
+) -> None:
+    adapter = _RecordingAdapter(_indeterminate_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    orphaned = _load(runtime)
+    run = orphaned.runs[first.run_id]
+
+    retry = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(_RecordingAdapter(_success_start)),
+    )
+    after = _load(runtime)
+
+    assert retry.code == "runner_session_orphan_risk"
+    assert after.runs == orphaned.runs
+    assert after.runner_sessions == orphaned.runner_sessions
+    assert after.runner_session_completions == (
+        orphaned.runner_session_completions
+    )
+    assert after.runs[first.run_id].run_ref.claim_id == run.run_ref.claim_id
+
+
+def test_late_output_after_orphan_risk_remains_fenced(tmp_path) -> None:
+    adapter = _RecordingAdapter(_indeterminate_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    request = adapter.requests[0]
+    run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    orphaned = _load(runtime)
+    session = orphaned.runner_sessions[request.session_id]
+
+    late = session_coordinator._persist_completion(
+        runtime,
+        run_ref=orphaned.runs[session.run_id].run_ref,
+        session=session,
+        request=request,
+        outcome=_success_outcome(request),
+        cleanup_disposition="complete",
+    )
+    after = _load(runtime)
+
+    assert late.code == "completion_refused"
+    assert after.runner_sessions == orphaned.runner_sessions
+    assert after.runner_session_completions == (
+        orphaned.runner_session_completions
+    )
+    assert after.runner_observations == orphaned.runner_observations == {}
+    assert after.artifacts == orphaned.artifacts == {}
+    assert after.activation_routes == orphaned.activation_routes == ()
+
+
+def test_restart_resumes_created_session_without_reconciliation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter(_success_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    original = session_coordinator._persist_transition
+    crashed = False
+
+    def crash_before_start_intent(current_runtime, transition):
+        nonlocal crashed
+        if (
+            not crashed
+            and getattr(transition, "input_kind", None)
+            == "workflow.advance_runner_session"
+        ):
+            crashed = True
+            raise RuntimeError("crash before durable start intent")
+        return original(current_runtime, transition)
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_transition",
+        crash_before_start_intent,
+    )
+    with pytest.raises(RuntimeError, match="start intent"):
+        run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    created = _load(runtime)
+    session = next(iter(created.runner_sessions.values()))
+    assert session.state == "created"
+    assert adapter.requests == []
+
+    monkeypatch.setattr(session_coordinator, "_persist_transition", original)
+    restarted = run_bounded_execution_unit(
+        runtime,
+        activation_id="activation-taskmaster",
+        local_config=_config(adapter),
+    )
+
+    assert restarted.code == "observation_accepted"
+    assert len(adapter.requests) == 1
+    assert adapter.reconcile_requests == []
+
+
+def test_restart_cleanup_pending_continues_only_verified_handle_cleanup(
+    tmp_path,
+) -> None:
+    handle = None
+
+    class CleanupHandle(_ImmediateHandle):
+        def __init__(self, outcome: AdapterInvocationOutcome) -> None:
+            super().__init__(outcome)
+            self.operations: list[str] = []
+
+        def cleanup(self) -> RunnerCleanupResult:
+            self.operations.append("transport_cleanup")
+            diagnostic = {"cleanup": "complete"}
+            return RunnerCleanupResult(
+                "complete",
+                200,
+                200,
+                diagnostic,
+                runner_cancellation_diagnostic_digest(diagnostic),
+            )
+
+    def reconcile(request):
+        nonlocal handle
+        invocation = request.invocation_request
+        echo = DispatchEcho.from_dispatch_envelope(
+            invocation.dispatch_envelope,
+            correlation_id=invocation.correlation_id,
+        )
+        handle = CleanupHandle(
+            AdapterErrorResult.from_unredacted(
+                adapter_id=invocation.adapter_id,
+                error_kind="cancelled",
+                dispatch_echo=echo,
+                redaction_policy=invocation.redaction_policy,
+            )
+        )
+        return CleanupPending(echo, handle, "verified-cleanup-handle")
+
+    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    cancellation = session_coordinator.request_operator_cancellation(
+        runtime,
+        run_id=first.run_id,
+        request_id="cleanup-restart-cancel",
+        actor_id="operator",
+    )
+    assert cancellation.accepted
+
+    restarted = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert restarted.code == "adapter_failure"
+    assert restarted.adapter_error_kind == "cancelled"
+    assert handle is not None
+    assert handle.operations == ["transport_cleanup"]
+    session = next(iter(after.runner_sessions.values()))
+    assert (session.state, session.cleanup_disposition) == (
+        "interrupted",
+        "complete",
+    )
+
+
+@pytest.mark.parametrize("restart_state", ("running", "terminating"))
+def test_restart_reconciles_running_and_terminating_sessions(
+    tmp_path,
+    restart_state: str,
+) -> None:
+    adapter = _RecordingAdapter(_indeterminate_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    current = _load(runtime)
+    session = next(iter(current.runner_sessions.values()))
+    run = current.runs[session.run_id]
+    if restart_state == "running":
+        assert session.durable_locator_digest is not None
+        persisted = session_coordinator._persist_transition(
+            runtime,
+            AdvanceRunnerSession(
+                f"test:restart-running:{session.session_id}",
+                run_ref=run.run_ref,
+                session_id=session.session_id,
+                dispatch_generation=session.dispatch_generation,
+                session_fencing_token=session.session_fencing_token,
+                expected_state="starting",
+                next_state="running",
+                occurred_at=session.start_intent_at,
+                durable_locator_digest=session.durable_locator_digest,
+            ),
+        )
+        assert persisted is not None
+    else:
+        cancellation = session_coordinator.request_operator_cancellation(
+            runtime,
+            run_id=first.run_id,
+            request_id="terminating-restart-cancel",
+            actor_id="operator",
+        )
+        assert cancellation.accepted
+        current = _load(runtime)
+        session = current.runner_sessions[session.session_id]
+        primary = current.runner_session_cancellation_requests[
+            "terminating-restart-cancel"
+        ]
+        persisted = session_coordinator._persist_transition(
+            runtime,
+            AdvanceRunnerSession(
+                f"test:restart-terminating:{session.session_id}",
+                run_ref=run.run_ref,
+                session_id=session.session_id,
+                dispatch_generation=session.dispatch_generation,
+                session_fencing_token=session.session_fencing_token,
+                expected_state="cancellation_requested",
+                next_state="terminating",
+                occurred_at=primary.requested_at,
+            ),
+        )
+        assert persisted is not None
+
+    restarted = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert restarted.code == "runner_session_orphan_risk"
+    assert len(adapter.reconcile_requests) == 1
+    session = next(iter(after.runner_sessions.values()))
+    assert (session.state, session.cleanup_disposition) == ("lost", "orphan_risk")

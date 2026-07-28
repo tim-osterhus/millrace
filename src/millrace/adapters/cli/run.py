@@ -201,6 +201,71 @@ def run_bounded_execution_unit(
     )
 
 
+def reconcile_pending_runner_sessions(
+    runtime: OpenRuntimeContext,
+    *,
+    adapter_kind: str | None = None,
+    local_config: AdapterLocalConfig | None = None,
+    actor_id: str = "local_operator",
+    daemon_stop_requested: Callable[[], bool] | None = None,
+) -> BoundedExecutionUnitResult:
+    """Reconcile durable session work before selecting new daemon work."""
+
+    state = runtime.store.load_runtime_state(runtime.cas_store)
+    candidates: list[tuple[int, str, str]] = []
+    for run in state.runs.values():
+        session_id = run.current_session_id
+        if session_id is None:
+            continue
+        session = state.runner_sessions.get(session_id)
+        if session is None or session.run_id != run.run_ref.run_id:
+            return BoundedExecutionUnitResult(code="ready_state_corrupt")
+        completion = state.runner_session_completions.get(session_id)
+        needs_replay = (
+            completion is not None
+            and completion.terminal_state == "completed"
+            and completion.application_input_id not in state.receipts
+        )
+        if session.state in {
+            "created",
+            "starting",
+            "running",
+            "cancellation_requested",
+            "terminating",
+            "lost",
+        } or needs_replay:
+            priority = (
+                0
+                if needs_replay
+                else 1 if session.state == "created" else 2
+            )
+            candidates.append((priority, run.run_ref.run_id, run.activation_id))
+    if not candidates:
+        return BoundedExecutionUnitResult(
+            code="no_runner_session_reconciliation"
+        )
+
+    latest = BoundedExecutionUnitResult(
+        code="no_runner_session_reconciliation"
+    )
+    blocker: BoundedExecutionUnitResult | None = None
+    for _priority, _run_id, activation_id in sorted(candidates):
+        latest = run_bounded_execution_unit(
+            runtime,
+            activation_id=activation_id,
+            adapter_kind=adapter_kind,
+            local_config=local_config,
+            actor_id=actor_id,
+            daemon_stop_requested=daemon_stop_requested,
+        )
+        if latest.code not in {
+            "observation_accepted",
+            "adapter_failure",
+        } and blocker is None:
+            blocker = latest
+    return blocker or latest
+
+
 def load_adapter_local_config(path: Path) -> AdapterLocalConfig:
     config_path = Path(path)
     try:

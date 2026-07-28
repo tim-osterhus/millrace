@@ -252,6 +252,7 @@ def test_daemon_reloads_persisted_state_between_bounded_units(
         paths.db_path,
         paths.db_path,
         paths.db_path,
+        paths.db_path,
     )
     assert summary.iterations == 3
     assert summary.units_succeeded == 2

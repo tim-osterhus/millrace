@@ -134,6 +134,7 @@ _RUNNER_SESSION_SIGNAL_KINDS = frozenset(
         "runner_result_evidence",
         "runner_session_deadline",
         "runner_start_diagnostic",
+        "runner_reconciliation",
     }
 )
 _RUNNER_SESSION_SIGNAL_REFUSAL_REASONS = frozenset(

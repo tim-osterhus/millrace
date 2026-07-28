@@ -395,6 +395,8 @@ def runner_session_locator_bytes(
     if not isinstance(locator, Mapping):
         raise ValueError("runner session locator must be a mapping")
     frozen = _coerce_payload_mapping(locator, "runner session locator")
+    if _locator_contains_selected_authority(frozen):
+        raise ValueError("runner session locator cannot contain selected authority")
     payload = json.dumps(
         _plain_authority_value(frozen),
         ensure_ascii=False,
@@ -408,6 +410,37 @@ def runner_session_locator_bytes(
             f"{RUNNER_SESSION_LOCATOR_MAX_BYTES} bytes"
         )
     return payload
+
+
+_LOCATOR_SELECTED_AUTHORITY_FIELDS = frozenset(
+    {
+        "run_id",
+        "claim_id",
+        "plan_ref",
+        "plan_fingerprint",
+        "runner_binding_id",
+        "stage_kind_id",
+        "graph_node_id",
+        "queue_family_id",
+        "session_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "generation",
+        "fencing_token",
+    }
+)
+
+
+def _locator_contains_selected_authority(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            key in _LOCATOR_SELECTED_AUTHORITY_FIELDS
+            or _locator_contains_selected_authority(nested)
+            for key, nested in value.items()
+        )
+    if isinstance(value, (tuple, list)):
+        return any(_locator_contains_selected_authority(item) for item in value)
+    return False
 
 
 def runner_session_locator_from_bytes(

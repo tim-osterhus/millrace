@@ -118,6 +118,7 @@ def test_doctor_is_minimal_generic_read_only_projection(tmp_path: Path) -> None:
         "packages",
         "ready_dispatch",
         "runner_session_mechanics",
+        "runner_session_diagnostics",
         "required_paths",
     ]
     assert data["workspace"]["path"] == str(workspace)
@@ -130,6 +131,10 @@ def test_doctor_is_minimal_generic_read_only_projection(tmp_path: Path) -> None:
     assert data["runner_session_mechanics"] == {
         "cooperative_cancel_grace_seconds": 5.0,
         "terminate_grace_seconds": 5.0,
+    }
+    assert data["runner_session_diagnostics"] == {
+        "diagnostic_counts": {},
+        "diagnostics": [],
     }
     assert data["required_paths"]["db_path"]["exists"] is True
     assert data["required_paths"]["cas_path"]["exists"] is True

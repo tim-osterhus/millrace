@@ -271,6 +271,83 @@ def test_signal_with_orphan_risk_is_not_reported_as_clean_stop(tmp_path) -> None
     assert daemon._summary_is_success(summary) is False
 
 
+def test_daemon_reconciles_restart_sessions_before_new_dispatch(tmp_path) -> None:
+    from millrace.adapters.cli import daemon
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    config = AdapterLocalConfig(adapters={"codex": _IndeterminateAdapter()})
+    started = run_bounded_execution_unit(runtime, local_config=config)
+    assert started.code == "session_reconciliation_required"
+    paths = runtime.paths
+    _close(runtime)
+
+    summary = daemon.run_daemon_loop(
+        _daemon_options(paths, max_ticks=1, local_config=config)
+    )
+    reopened = daemon.open_runtime_context(paths, command="test")
+    try:
+        after = _load(reopened)
+    finally:
+        reopened.close()
+
+    assert summary.stopped_reason == "runner_session_orphan_risk"
+    assert summary.iterations == 0
+    session = after.runner_sessions[
+        after.runs[started.run_id].current_session_id
+    ]
+    assert (session.state, session.cleanup_disposition) == ("lost", "orphan_risk")
+    assert len(after.runs) == 1
+    assert after.runner_observations == {}
+    show_code, show_stdout, show_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "runs",
+            "show",
+            started.run_id,
+        ]
+    )
+    doctor_code, doctor_stdout, doctor_stderr = _invoke(
+        ["--json", "--workspace", str(paths.workspace_path), "doctor"]
+    )
+    trace_code, trace_stdout, trace_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "trace",
+            "show",
+            started.run_id,
+        ]
+    )
+    status_code, status_stdout, status_stderr = _invoke(
+        ["--json", "--workspace", str(paths.workspace_path), "status"]
+    )
+    assert show_code == doctor_code == trace_code == status_code == 0, (
+        show_stderr,
+        doctor_stderr,
+        trace_stderr,
+        status_stderr,
+    )
+    assert show_stderr == doctor_stderr == trace_stderr == status_stderr == ""
+    shown = json.loads(show_stdout)["data"]["run"]["runner_session"]
+    assert shown["orphan_risk"] is True
+    doctor = json.loads(doctor_stdout)["data"]["runner_session_diagnostics"]
+    assert doctor["diagnostic_counts"] == {
+        "runner_session_lost": 1,
+        "runner_session_orphan_risk": 1,
+        "runner_session_reconciliation_unsupported": 1,
+    }
+    traced = json.loads(trace_stdout)["data"]["runner_session"]
+    assert traced["session_id"] == session.session_id
+    assert traced["state"] == "lost"
+    projected = json.loads(status_stdout)["data"]["runner_sessions"]
+    assert projected == [traced]
+
+
 def test_runs_cancel_persists_fixed_operator_reason_and_replays(tmp_path) -> None:
     from millrace.adapters.cli import daemon
     from millrace.adapters.cli.run import run_bounded_execution_unit
