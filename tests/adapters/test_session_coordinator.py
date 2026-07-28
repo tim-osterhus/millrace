@@ -260,6 +260,36 @@ class _ThrowingCancellationPollHandle(_CancellingHandle):
         raise RuntimeError("poll transport failed")
 
 
+class _MalformedCancellationPollHandle(_CancellingHandle):
+    def __init__(
+        self,
+        runtime,
+        request: AdapterInvocationRequest,
+        *,
+        malformed_after: str,
+    ) -> None:
+        super().__init__(runtime, request, cooperative_result="timed_out")
+        self._malformed_after = malformed_after
+        self._malformed_emitted = False
+
+    def poll_completion(self) -> object:
+        if not self._requested:
+            return super().poll_completion()
+        if (
+            self._malformed_after in self.operations
+            and not self._malformed_emitted
+        ):
+            self._malformed_emitted = True
+            return object()
+        if self._malformed_emitted:
+            return _success_outcome(self._request)
+        return None
+
+    def terminate(self) -> RunnerCancellationOperationResult:
+        result = super().terminate()
+        return replace(result, result="timed_out")
+
+
 class _CapturingImmediateHandle(_ImmediateHandle):
     def __init__(
         self,
@@ -531,6 +561,94 @@ def test_cancellation_after_start_intent_prevents_external_start(
         "interrupted",
         "not_required",
     )
+
+
+def test_operator_cancellation_after_authority_check_prevents_external_start(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter(_success_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    original = session_coordinator._request_matches_current_authority
+    workflow_snapshot = None
+
+    def cancel_after_authority(*args: object, **kwargs: object) -> bool:
+        nonlocal workflow_snapshot
+        matches = original(*args, **kwargs)
+        assert matches
+        workflow_snapshot = _load(runtime)
+        session = kwargs["session"]
+        result = session_coordinator.request_operator_cancellation(
+            runtime,
+            run_id=session.run_id,
+            request_id="cancel-after-authority",
+            actor_id="operator",
+        )
+        assert result.accepted
+        return matches
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_request_matches_current_authority",
+        cancel_after_authority,
+    )
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+
+    assert result.adapter_error_kind == "cancelled"
+    assert adapter.requests == []
+    assert len(after.runner_session_completions) == 1
+    session = next(iter(after.runner_sessions.values()))
+    assert (session.state, session.cleanup_disposition) == (
+        "interrupted",
+        "not_required",
+    )
+    assert workflow_snapshot is not None
+    assert after.work_items == workflow_snapshot.work_items
+    assert after.activations == workflow_snapshot.activations
+    assert after.activation_routes == workflow_snapshot.activation_routes
+    assert after.closed_work_items == workflow_snapshot.closed_work_items
+    assert after.runner_observations == workflow_snapshot.runner_observations
+
+
+def test_daemon_stop_after_authority_check_prevents_external_start(
+    tmp_path,
+) -> None:
+    adapter = _RecordingAdapter(_success_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    callback_calls = 0
+
+    def stop_at_final_gate() -> bool:
+        nonlocal callback_calls
+        callback_calls += 1
+        return callback_calls == 2
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(adapter),
+        daemon_stop_requested=stop_at_final_gate,
+    )
+    after = _load(runtime)
+
+    assert result.adapter_error_kind == "cancelled"
+    assert adapter.requests == []
+    assert len(after.runner_session_completions) == 1
+    session = next(iter(after.runner_sessions.values()))
+    assert (session.state, session.cleanup_disposition) == (
+        "interrupted",
+        "not_required",
+    )
+    cancellation = next(iter(after.runner_session_cancellation_requests.values()))
+    assert (cancellation.reason, cancellation.source_kind, cancellation.actor_id) == (
+        "daemon_shutdown",
+        "daemon",
+        "daemon",
+    )
+    assert after.runner_observations == {}
+    assert after.artifacts == {}
+    assert after.activation_routes == ()
 
 
 @pytest.mark.parametrize(
@@ -1200,6 +1318,84 @@ def test_throwing_poll_during_cancellation_still_cleans_and_completes(
         "complete",
     )
     assert session.session_id in after.runner_session_completions
+
+
+@pytest.mark.parametrize(
+    "malformed_after",
+    ("cooperative_cancel", "terminate", "kill"),
+)
+def test_malformed_poll_during_cancellation_is_refused_then_cleaned(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    malformed_after: str,
+) -> None:
+    runtime = None
+    handle = None
+    monotonic_value = 0.0
+
+    def monotonic() -> float:
+        nonlocal monotonic_value
+        monotonic_value += 10
+        return monotonic_value
+
+    monkeypatch.setattr(session_coordinator, "_monotonic", monotonic)
+    monkeypatch.setattr(session_coordinator, "_sleep", lambda _value: None)
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _MalformedCancellationPollHandle(
+            runtime,
+            request,
+            malformed_after=malformed_after,
+        )
+        return StartedSession(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            handle,
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+    after = _load(runtime)
+
+    assert result.adapter_error_kind == "cancelled"
+    assert handle is not None
+    assert handle.operations == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
+    attempts = sorted(
+        after.runner_session_cancellation_attempts.values(),
+        key=lambda item: item.sequence,
+    )
+    assert [attempt.operation for attempt in attempts] == handle.operations
+    assert len(after.runner_session_completions) == 1
+    completion = next(iter(after.runner_session_completions.values()))
+    assert (
+        completion.terminal_state,
+        completion.exit_kind,
+        completion.cleanup_disposition,
+    ) == ("interrupted", "cancelled", "complete")
+    refusals = [
+        refusal
+        for refusal in after.refusals
+        if refusal.input_kind == "workflow.refuse_runner_session_signal"
+    ]
+    assert len(refusals) == 1
+    assert refusals[0].reason == "runner_session_reconciliation_contradiction"
+    assert after.runner_observations == {}
+    assert after.artifacts == {}
+    assert after.activation_routes == ()
 
 
 def test_forever_pending_handle_times_out_then_cleans_up(

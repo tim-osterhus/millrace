@@ -403,7 +403,7 @@ class SubprocessTransportHandle:
                 and current != self._process_start_marker
             )
         if current is None:
-            return False
+            return _pid_exists(self.process.pid)
         return (
             self._process_start_marker is None
             or current != self._process_start_marker
@@ -505,6 +505,16 @@ def _process_start_marker(pid: int) -> str | None:
         return None
     marker = result.stdout.strip()
     return marker or None
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _coerce_env_allowlist(value: object) -> Mapping[str, str]:

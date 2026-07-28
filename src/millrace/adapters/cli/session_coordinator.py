@@ -259,6 +259,25 @@ def _start_created_session(
             signal_digest=_signal_digest(request),
         )
         return SessionExecutionResult("session_reconciliation_required")
+    if daemon_stop_requested is not None and daemon_stop_requested():
+        _request_cancellation(
+            runtime,
+            run_id=run_ref.run_id,
+            request_id=f"daemon:runner-session-cancel:{session.session_id}",
+            reason="daemon_shutdown",
+            source_kind="daemon",
+            actor_id="daemon",
+        )
+    durable_state = _load(runtime)
+    durable_session = durable_state.runner_sessions[session.session_id]
+    primary = _primary_cancellation(durable_state, durable_session)
+    if primary is not None:
+        return _cancel_before_external_start(
+            runtime,
+            run_ref=run_ref,
+            session=durable_session,
+            primary=primary,
+        )
     deadline = _monotonic() + (
         request.timeout_seconds
         if effective_timeout_seconds is None
@@ -674,6 +693,7 @@ def _cancel_running_session(
     session = _load(runtime).runner_sessions[session.session_id]
     sequence = 0
     outcome: AdapterInvocationOutcome | None = None
+    malformed_completion = False
 
     operation = _call_cancellation_operation(
         "cooperative_cancel",
@@ -688,14 +708,14 @@ def _cancel_running_session(
         operation=operation,
         redaction_policy=request.redaction_policy,
     )
-    outcome = (
-        None
-        if operation.result == "unsupported"
-        else _wait_for_completion(
-            handle,
+    if operation.result != "unsupported":
+        outcome, malformed_completion = _wait_for_cancellation_completion(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            handle=handle,
             seconds=cooperative_cancel_grace_seconds,
         )
-    )
 
     if outcome is None:
         state = _load(runtime)
@@ -727,10 +747,15 @@ def _cancel_running_session(
             operation=operation,
             redaction_policy=request.redaction_policy,
         )
-        outcome = _wait_for_completion(
-            handle,
+        phase_outcome, malformed = _wait_for_cancellation_completion(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            handle=handle,
             seconds=terminate_grace_seconds,
         )
+        malformed_completion = malformed_completion or malformed
+        outcome = None if malformed_completion else phase_outcome
 
     if outcome is None:
         operation = _call_cancellation_operation("kill", handle.kill)
@@ -743,7 +768,14 @@ def _cancel_running_session(
             operation=operation,
             redaction_policy=request.redaction_policy,
         )
-        outcome = _poll_handle(handle)
+        phase_outcome, malformed = _poll_cancellation_handle(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            handle=handle,
+        )
+        malformed_completion = malformed_completion or malformed
+        outcome = None if malformed_completion else phase_outcome
 
     cleanup = _call_cleanup(handle.cleanup)
     _persist_cleanup_operation(
@@ -899,6 +931,48 @@ def _wait_for_completion(
         if outcome is not None or _monotonic() >= deadline:
             return outcome
         _sleep(min(_POLL_INTERVAL_SECONDS, deadline - _monotonic()))
+
+
+def _wait_for_cancellation_completion(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    handle: RunnerSessionHandle,
+    seconds: float,
+) -> tuple[AdapterInvocationOutcome | None, bool]:
+    deadline = _monotonic() + seconds
+    while True:
+        outcome, malformed = _poll_cancellation_handle(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            handle=handle,
+        )
+        if malformed or outcome is not None or _monotonic() >= deadline:
+            return outcome, malformed
+        _sleep(min(_POLL_INTERVAL_SECONDS, deadline - _monotonic()))
+
+
+def _poll_cancellation_handle(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    handle: RunnerSessionHandle,
+) -> tuple[AdapterInvocationOutcome | None, bool]:
+    try:
+        return _poll_handle(handle), False
+    except TypeError:
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_reconciliation_contradiction",
+            signal_kind="runner_completion_poll",
+            signal_digest=_signal_digest("malformed_runner_completion"),
+        )
+        return None, True
 
 
 def _poll_handle(handle: RunnerSessionHandle) -> AdapterInvocationOutcome | None:

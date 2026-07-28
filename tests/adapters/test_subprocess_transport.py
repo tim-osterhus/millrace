@@ -783,6 +783,66 @@ def test_live_handle_accounts_for_child_after_leader_exits(tmp_path: Path) -> No
         handle.cleanup()
 
 
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+@pytest.mark.parametrize("current_marker", (None, "different process generation"))
+def test_live_handle_refuses_possibly_reused_process_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    current_marker: str | None,
+) -> None:
+    from millrace.adapters import subprocess_transport
+    from millrace.adapters.subprocess_transport import (
+        SubprocessTransport,
+        SubprocessTransportHandle,
+        SubprocessTransportRequest,
+    )
+
+    handle = SubprocessTransport().start(
+        SubprocessTransportRequest(
+            argv=(sys.executable, "-c", "pass"),
+            stdin_bytes=b"",
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=5,
+            max_stdin_bytes=64,
+            max_stdout_bytes=128,
+            max_stderr_bytes=128,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+    assert isinstance(handle, SubprocessTransportHandle)
+    handle.process.wait(timeout=2)
+    signal_calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        subprocess_transport,
+        "_process_start_marker",
+        lambda _pid: current_marker,
+    )
+    monkeypatch.setattr(
+        subprocess_transport,
+        "_pid_exists",
+        lambda _pid: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        os,
+        "killpg",
+        lambda process_group_id, signum: signal_calls.append(
+            (process_group_id, signum)
+        ),
+    )
+
+    result = handle.kill()
+    cleanup = handle.cleanup()
+
+    assert result.result == "failed"
+    assert all(signum == 0 for _, signum in signal_calls)
+    assert cleanup.disposition == "orphan_risk"
+
+
 def test_subprocess_transport_production_imports_stay_below_runtime_authority() -> None:
     module_path = Path("src/millrace/adapters/subprocess_transport.py")
     tree = ast.parse(module_path.read_text())
