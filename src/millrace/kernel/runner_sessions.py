@@ -405,6 +405,28 @@ def completion_refusal(
     if completion.completed_at < latest_session_fact_at:
         return "runner_session_reconciliation_contradiction"
     primary_request_id = completion.primary_cancellation_request_id
+    cancellation_requests = tuple(
+        request
+        for request in state.runner_session_cancellation_requests.values()
+        if request.session_id == completion.session_id
+    )
+    has_cancellation_history = bool(cancellation_requests) or any(
+        attempt.session_id == completion.session_id
+        for attempt in state.runner_session_cancellation_attempts.values()
+    )
+    if completion.terminal_state == "interrupted" and has_cancellation_history:
+        if not cancellation_requests:
+            return "runner_session_reconciliation_contradiction"
+        primary_request = min(
+            cancellation_requests,
+            key=lambda request: request.request_order,
+        )
+        if (
+            not primary_request.primary
+            or primary_request_id != primary_request.request_id
+            or completion.cancel_requested_at != primary_request.requested_at
+        ):
+            return "runner_session_reconciliation_contradiction"
     if primary_request_id is None:
         if completion.cancel_requested_at is not None:
             return "runner_session_reconciliation_contradiction"

@@ -242,6 +242,24 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             raise StorageIntegrityError(
                 "runner session cancellation timestamps must be monotonic"
             )
+    cancellation_history_states = {
+        "cancellation_requested",
+        "terminating",
+        *terminal_states,
+    }
+    for session in state.runner_sessions.values():
+        requests = requests_by_session.get(session.session_id, [])
+        if requests and session.state not in cancellation_history_states:
+            raise StorageIntegrityError(
+                "runner session cancellation history contradicts session state"
+            )
+        if (
+            session.state in {"cancellation_requested", "terminating"}
+            and not requests
+        ):
+            raise StorageIntegrityError(
+                "active runner session cancellation requires primary request"
+            )
 
     attempts_by_session: dict[str, list[RunnerSessionCancellationAttemptRecord]] = {}
     for attempt_id, attempt in state.runner_session_cancellation_attempts.items():
@@ -321,6 +339,21 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             )
         application_input_ids.add(completion.application_input_id)
         completion_request_id = completion.primary_cancellation_request_id
+        completion_requests = requests_by_session.get(session_id, [])
+        if completion.terminal_state == "interrupted" and completion_requests:
+            primary_request = min(
+                completion_requests,
+                key=lambda request: request.request_order,
+            )
+            if (
+                completion_request_id != primary_request.request_id
+                or completion.cancel_requested_at
+                != primary_request.requested_at
+            ):
+                raise StorageIntegrityError(
+                    "interrupted runner session completion must link "
+                    "primary cancellation request"
+                )
         if completion_request_id is not None:
             completion_request = state.runner_session_cancellation_requests.get(
                 completion_request_id

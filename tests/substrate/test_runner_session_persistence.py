@@ -993,6 +993,168 @@ def test_runner_session_attempt_linked_to_secondary_request_is_refused(
         store.close()
 
 
+def test_runner_session_history_on_running_raw_corruption_is_refused(
+    tmp_path,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(_session_state(), cas_store)
+    session = replace(
+        state.runner_sessions["session-1"],
+        state="cancellation_requested",
+        ended_at=None,
+        cleanup_disposition="pending",
+    )
+    state = replace(
+        state,
+        runner_sessions={session.session_id: session},
+        runner_session_completions={},
+    )
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_sessions
+            SET state = 'running'
+            WHERE session_id = 'session-1'
+            """
+        )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match="cancellation history"):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "active_state",
+    ("cancellation_requested", "terminating"),
+)
+def test_active_cancellation_state_missing_primary_raw_corruption_is_refused(
+    tmp_path,
+    active_state: str,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(_session_state(), cas_store)
+    session = replace(
+        state.runner_sessions["session-1"],
+        state=active_state,
+        ended_at=None,
+        cleanup_disposition="pending",
+    )
+    state = replace(
+        state,
+        runner_sessions={session.session_id: session},
+        runner_session_completions={},
+    )
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DELETE FROM runner_session_cancellation_attempts")
+        connection.execute("DELETE FROM runner_session_cancellation_requests")
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match="requires primary"):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
+def test_interrupted_completion_missing_primary_link_raw_corruption_is_refused(
+    tmp_path,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(_session_state(), cas_store)
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_session_completions
+            SET primary_cancellation_request_id = NULL,
+                cancel_requested_at = NULL
+            WHERE session_id = 'session-1'
+            """
+        )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match="interrupted"):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("terminal_state", ("completed", "failed", "lost"))
+def test_terminal_completion_race_may_retain_unlinked_cancellation_history(
+    tmp_path,
+    terminal_state: str,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, digests = _cas_backed_session_state(_session_state(), cas_store)
+    cleanup = "orphan_risk" if terminal_state == "lost" else "complete"
+    session = replace(
+        state.runner_sessions["session-1"],
+        state=terminal_state,
+        cleanup_disposition=cleanup,
+    )
+    completion = replace(
+        state.runner_session_completions["session-1"],
+        completion_id=f"completion-{terminal_state}",
+        terminal_state=terminal_state,
+        exit_kind="success" if terminal_state == "completed" else "error",
+        adapter_outcome_kind=(
+            "success" if terminal_state == "completed" else None
+        ),
+        adapter_error_kind=(
+            None if terminal_state == "completed" else "invocation_failed"
+        ),
+        runner_result_evidence_digest=(
+            digests["completed_evidence"]
+            if terminal_state == "completed"
+            else None
+        ),
+        primary_cancellation_request_id=None,
+        cleanup_disposition=cleanup,
+        cancel_requested_at=None,
+        application_input_id=(
+            f"cli:run.session-completion:completion-{terminal_state}"
+        ),
+    )
+    state = replace(
+        state,
+        runner_sessions={session.session_id: session},
+        runner_session_completions={session.session_id: completion},
+    )
+    store = SQLiteRuntimeStore.initialize(tmp_path / "runtime.sqlite3")
+    try:
+        store.persist_runtime_state(state, cas_store)
+        loaded = store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+    assert loaded.runner_sessions["session-1"].state == terminal_state
+    assert "cancel-1" in loaded.runner_session_cancellation_requests
+
+
 def test_runner_session_reason_source_mismatch_raw_row_is_refused(
     tmp_path,
 ) -> None:

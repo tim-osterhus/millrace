@@ -991,6 +991,163 @@ def test_completion_temporal_admission_is_stable_before_apply(
         )
 
 
+def _state_with_active_cancellation_history():
+    state = _claimed_state()
+    run = state.runs["run-taskmaster"]
+    session = RunnerSessionRecord(
+        session_id="session-1",
+        run_id=run.run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        state="cancellation_requested",
+        created_at=100,
+        start_intent_at=110,
+        started_at=120,
+        ended_at=None,
+        durable_locator_digest="sha256:" + "a" * 64,
+        cleanup_disposition="pending",
+    )
+    request = RunnerSessionCancellationRecord(
+        request_id="cancel-1",
+        session_id=session.session_id,
+        dispatch_generation=1,
+        reason="operator_cancel_work",
+        source_kind="operator",
+        actor_id="operator-1",
+        requested_at=130,
+        request_order=1,
+        primary=True,
+    )
+    return replace(
+        state,
+        runs={
+            **state.runs,
+            run.run_ref.run_id: replace(
+                run,
+                current_session_id=session.session_id,
+                last_dispatch_generation=1,
+            ),
+        },
+        runner_sessions={session.session_id: session},
+        runner_session_cancellation_requests={request.request_id: request},
+    )
+
+
+@pytest.mark.parametrize(
+    ("terminal_state", "links_primary", "accepted"),
+    (
+        ("interrupted", False, False),
+        ("interrupted", True, True),
+        ("completed", False, True),
+        ("failed", False, True),
+        ("lost", False, True),
+    ),
+)
+def test_completion_cancellation_history_linkage_preserves_terminal_races(
+    terminal_state: str,
+    links_primary: bool,
+    accepted: bool,
+) -> None:
+    state = _state_with_active_cancellation_history()
+    run_ref = state.runs["run-taskmaster"].run_ref
+    completion = RunnerSessionCompletionRecord(
+        completion_id=f"completion-{terminal_state}",
+        session_id="session-1",
+        run_id=run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        terminal_state=terminal_state,
+        exit_kind="success" if terminal_state == "completed" else "error",
+        adapter_outcome_kind=(
+            "success" if terminal_state == "completed" else None
+        ),
+        adapter_error_kind=(
+            None if terminal_state == "completed" else "invocation_failed"
+        ),
+        runner_result_evidence_digest=(
+            "sha256:" + "b" * 64 if terminal_state == "completed" else None
+        ),
+        primary_cancellation_request_id="cancel-1" if links_primary else None,
+        cleanup_disposition=(
+            "orphan_risk" if terminal_state == "lost" else "complete"
+        ),
+        started_at=120,
+        cancel_requested_at=130 if links_primary else None,
+        completed_at=140,
+        bounds_summary="bounded",
+        truncation_metadata="none",
+        redaction_policy_id="redaction.default",
+        diagnostic_digest="sha256:" + "c" * 64,
+        application_input_id=(
+            f"cli:run.session-completion:completion-{terminal_state}"
+        ),
+    )
+
+    decision = decide(
+        state,
+        RecordRunnerSessionCompletion(
+            f"complete-{terminal_state}",
+            run_ref=run_ref,
+            expected_state="cancellation_requested",
+            completion=completion,
+        ),
+        deterministic_context(
+            transition_id=f"transition-complete-{terminal_state}"
+        ),
+    )
+
+    assert decision.accepted is accepted
+    if accepted:
+        applied = apply(state, decision)
+        assert applied.runner_sessions["session-1"].state == terminal_state
+    else:
+        assert decision.refusal is not None
+        assert (
+            decision.refusal.reason
+            == "runner_session_reconciliation_contradiction"
+        )
+
+
+def test_cancellation_request_apply_atomically_enters_cancellation_state() -> None:
+    state = _state_with_active_cancellation_history()
+    session = replace(
+        state.runner_sessions["session-1"],
+        state="running",
+    )
+    state = replace(
+        state,
+        runner_sessions={session.session_id: session},
+        runner_session_cancellation_requests={},
+    )
+    run_ref = state.runs["run-taskmaster"].run_ref
+    transition_input = RequestRunnerSessionCancellation(
+        "cancel-session",
+        run_ref=run_ref,
+        session_id=session.session_id,
+        dispatch_generation=1,
+        session_fencing_token=session.session_fencing_token,
+        expected_state="running",
+        request_id="cancel-1",
+        reason="operator_cancel_work",
+        source_kind="operator",
+        actor_id="operator-1",
+        requested_at=130,
+        request_order=1,
+        primary=True,
+    )
+
+    decision = decide(
+        state,
+        transition_input,
+        deterministic_context(transition_id="transition-cancel-session"),
+    )
+    assert decision.accepted
+
+    applied = apply(state, decision)
+    assert applied.runner_sessions["session-1"].state == "cancellation_requested"
+    assert applied.runner_session_cancellation_requests["cancel-1"].primary
+
+
 def test_cancellation_request_refuses_time_before_latest_session_phase() -> None:
     state = _claimed_state()
     run = state.runs["run-taskmaster"]
