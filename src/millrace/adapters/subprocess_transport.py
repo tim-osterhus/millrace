@@ -13,7 +13,6 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
@@ -24,7 +23,9 @@ from millrace.adapters.runner_contract import (
     RunnerCancellationOperationResult,
     RunnerCleanupResult,
     canonicalize_redaction_policy,
+    runner_cancellation_diagnostic_digest,
 )
+from millrace.contracts.compiled_plan import AuthorityValue
 
 _ERROR_KINDS = frozenset(
     {
@@ -243,8 +244,14 @@ class SubprocessTransport:
         stdout_capture.start()
         stderr_capture.start()
         stdin_writer.start()
+        try:
+            process_group_id = os.getpgid(process.pid)
+        except (AttributeError, OSError):
+            process_group_id = None
         return SubprocessTransportHandle(
             process=process,
+            process_group_id=process_group_id,
+            process_start_marker=_process_start_marker(process.pid),
             request=request,
             stdout_capture=stdout_capture,
             stderr_capture=stderr_capture,
@@ -260,6 +267,8 @@ class SubprocessTransportHandle:
         self,
         *,
         process: subprocess.Popen[bytes],
+        process_group_id: int | None,
+        process_start_marker: str | None,
         request: SubprocessTransportRequest,
         stdout_capture: _BoundedPipeCapture,
         stderr_capture: _BoundedPipeCapture,
@@ -267,6 +276,8 @@ class SubprocessTransportHandle:
         termination_lock: threading.Lock,
     ) -> None:
         self.process = process
+        self._process_group_id = process_group_id
+        self._process_start_marker = process_start_marker
         self._request = request
         self._stdout_capture = stdout_capture
         self._stderr_capture = stderr_capture
@@ -312,19 +323,29 @@ class SubprocessTransportHandle:
                 pass
         if self.process.poll() is not None:
             self._join_workers()
+            self._wait_for_process_group_exit(timeout_seconds=1.0)
+        process_group_exists = self._process_group_exists()
         disposition = (
             "complete"
-            if self.process.poll() is not None and self.readers_joined
+            if (
+                self.process.poll() is not None
+                and self.readers_joined
+                and not process_group_exists
+            )
             else "orphan_risk"
         )
         completed_at = max(started_at, time.time_ns())
+        diagnostic: dict[str, AuthorityValue] = {
+            "disposition": disposition,
+            "readers_joined": self.readers_joined,
+            "process_group_exists": process_group_exists,
+        }
         return RunnerCleanupResult(
             disposition,
             started_at,
             completed_at,
-            _diagnostic_digest(
-                f"cleanup:{disposition}:readers_joined={self.readers_joined}"
-            ),
+            diagnostic,
+            runner_cancellation_diagnostic_digest(diagnostic),
         )
 
     def _signal(
@@ -336,23 +357,62 @@ class SubprocessTransportHandle:
         result = "succeeded"
         try:
             with self._termination_lock:
-                if self.process.poll() is None:
+                if self._process_group_id is not None:
+                    if self._process_group_identity_reused():
+                        raise RuntimeError("owned process group identity was reused")
                     try:
-                        os.killpg(os.getpgid(self.process.pid), signum)
-                    except Exception:
-                        if signum == signal.SIGTERM:
-                            self.process.terminate()
-                        else:
-                            self.process.kill()
+                        os.killpg(self._process_group_id, signum)
+                    except ProcessLookupError:
+                        pass
+                elif self.process.poll() is None:
+                    if signum == signal.SIGTERM:
+                        self.process.terminate()
+                    else:
+                        self.process.kill()
         except Exception:
             result = "failed"
+        diagnostic = {"operation": operation, "result": result}
         return RunnerCancellationOperationResult(
             operation,
             result,
             started_at,
             max(started_at, time.time_ns()),
-            _diagnostic_digest(f"{operation}:{result}"),
+            diagnostic,
+            runner_cancellation_diagnostic_digest(diagnostic),
         )
+
+    def _process_group_exists(self) -> bool:
+        if self._process_group_id is None:
+            return self.process.poll() is None
+        try:
+            os.killpg(self._process_group_id, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _process_group_identity_reused(self) -> bool:
+        if self._process_group_id != self.process.pid:
+            return True
+        current = _process_start_marker(self.process.pid)
+        if self.process.poll() is None:
+            return (
+                current is not None
+                and self._process_start_marker is not None
+                and current != self._process_start_marker
+            )
+        if current is None:
+            return False
+        return (
+            self._process_start_marker is None
+            or current != self._process_start_marker
+        )
+
+    def _wait_for_process_group_exit(self, *, timeout_seconds: float) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while self._process_group_exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
 
     def _join_workers(self) -> None:
         self._stdout_capture.join()
@@ -430,6 +490,23 @@ def _coerce_argv(value: object) -> tuple[str, ...]:
     )
 
 
+def _process_start_marker(pid: int) -> str | None:
+    if os.name != "posix":
+        return None
+    try:
+        result = subprocess.run(
+            ("ps", "-o", "lstart=", "-p", str(pid)),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    marker = result.stdout.strip()
+    return marker or None
+
+
 def _coerce_env_allowlist(value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         raise TypeError("env_allowlist must be a mapping")
@@ -467,17 +544,15 @@ def _operation_result(
     result: str,
 ) -> RunnerCancellationOperationResult:
     started_at = time.time_ns()
+    diagnostic = {"operation": operation, "result": result}
     return RunnerCancellationOperationResult(
         operation,
         result,
         started_at,
         max(started_at, time.time_ns()),
-        _diagnostic_digest(f"{operation}:{result}"),
+        diagnostic,
+        runner_cancellation_diagnostic_digest(diagnostic),
     )
-
-
-def _diagnostic_digest(value: str) -> str:
-    return f"sha256:{sha256(value.encode('utf-8')).hexdigest()}"
 
 
 def _redact_and_bound_text(

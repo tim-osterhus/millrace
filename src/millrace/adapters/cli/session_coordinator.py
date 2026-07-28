@@ -28,6 +28,7 @@ from millrace.adapters.runner_contract import (
     StartedSession,
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
+    runner_cancellation_diagnostic_digest,
     runner_evidence_from_adapter_outcome,
     start_refusal_diagnostic_bytes,
     start_refusal_diagnostic_digest,
@@ -94,6 +95,7 @@ def execute_runner_session(
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
     explicit_retry_intent: bool,
     daemon_stop_requested: Callable[[], bool] | None = None,
+    effective_timeout_seconds: float | None = None,
 ) -> SessionExecutionResult:
     """Start or replay one durable session attempt for the current run."""
 
@@ -127,6 +129,7 @@ def execute_runner_session(
                 adapter=adapter,
                 request_factory=request_factory,
                 daemon_stop_requested=daemon_stop_requested,
+                effective_timeout_seconds=effective_timeout_seconds,
             )
 
     session_id = f"session-{uuid4().hex}"
@@ -151,6 +154,7 @@ def execute_runner_session(
         adapter=adapter,
         request_factory=request_factory,
         daemon_stop_requested=daemon_stop_requested,
+        effective_timeout_seconds=effective_timeout_seconds,
     )
 
 
@@ -195,6 +199,7 @@ def _start_created_session(
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
     daemon_stop_requested: Callable[[], bool] | None,
+    effective_timeout_seconds: float | None,
 ) -> SessionExecutionResult:
     if daemon_stop_requested is not None and daemon_stop_requested():
         _request_cancellation(
@@ -229,6 +234,16 @@ def _start_created_session(
         return SessionExecutionResult("session_start_intent_refused")
     session = persisted.runner_sessions[session.session_id]
     request = request_factory(session)
+    durable_state = _load(runtime)
+    durable_session = durable_state.runner_sessions[session.session_id]
+    primary = _primary_cancellation(durable_state, durable_session)
+    if primary is not None:
+        return _cancel_before_external_start(
+            runtime,
+            run_ref=run_ref,
+            session=durable_session,
+            primary=primary,
+        )
     if not _request_matches_current_authority(
         runtime,
         session=session,
@@ -244,7 +259,11 @@ def _start_created_session(
             signal_digest=_signal_digest(request),
         )
         return SessionExecutionResult("session_reconciliation_required")
-    deadline = _monotonic() + request.timeout_seconds
+    deadline = _monotonic() + (
+        request.timeout_seconds
+        if effective_timeout_seconds is None
+        else min(request.timeout_seconds, effective_timeout_seconds)
+    )
     try:
         start_outcome = adapter.start_session(request)
     except Exception:
@@ -565,12 +584,34 @@ def _request_cancellation(
     if (
         session is None
         or session.run_id != run_id
-        or session.state
-        in {"completed", "interrupted", "failed", "lost"}
-        or session.session_id in state.runner_session_completions
     ):
         return SessionCancellationRequestResult(
             "runner_session_cancel_refused", False
+        )
+    if (
+        session.state in {"completed", "interrupted", "failed", "lost"}
+        or session.session_id in state.runner_session_completions
+    ):
+        _audit_session_refusal(
+            runtime,
+            run_ref=run.run_ref,
+            session=session,
+            reason="runner_session_reconciliation_contradiction",
+            signal_kind="runner_request",
+            signal_digest=_signal_digest(
+                {
+                    "request_id": request_id,
+                    "reason": reason,
+                    "source_kind": source_kind,
+                }
+            ),
+            input_id=(
+                "cli:run.session-cancel-refusal:"
+                f"{session.session_id}:{request_id}"
+            ),
+        )
+        return SessionCancellationRequestResult(
+            "runner_session_cancel_refused", False, session.session_id
         )
     session_requests = tuple(
         item
@@ -645,10 +686,15 @@ def _cancel_running_session(
         primary=primary,
         sequence=sequence,
         operation=operation,
+        redaction_policy=request.redaction_policy,
     )
-    outcome = _wait_for_completion(
-        handle,
-        seconds=cooperative_cancel_grace_seconds,
+    outcome = (
+        None
+        if operation.result == "unsupported"
+        else _wait_for_completion(
+            handle,
+            seconds=cooperative_cancel_grace_seconds,
+        )
     )
 
     if outcome is None:
@@ -679,6 +725,7 @@ def _cancel_running_session(
             primary=primary,
             sequence=sequence,
             operation=operation,
+            redaction_policy=request.redaction_policy,
         )
         outcome = _wait_for_completion(
             handle,
@@ -694,6 +741,7 @@ def _cancel_running_session(
             primary=primary,
             sequence=sequence,
             operation=operation,
+            redaction_policy=request.redaction_policy,
         )
         outcome = _poll_handle(handle)
 
@@ -705,9 +753,49 @@ def _cancel_running_session(
         primary=primary,
         sequence=sequence,
         cleanup=cleanup,
+        redaction_policy=request.redaction_policy,
     )
     state = _load(runtime)
     session = state.runner_sessions[session.session_id]
+    if cleanup.disposition == "orphan_risk":
+        diagnostic_digest = runtime.cas_store.put_bytes(
+            _canonical_json_bytes(
+                {
+                    "cleanup_disposition": "orphan_risk",
+                    "adapter_outcome_present": outcome is not None,
+                }
+            )
+        )
+        completion = _completion_record(
+            session=session,
+            terminal_state="lost",
+            exit_kind="lost",
+            adapter_outcome_kind=(
+                "error"
+                if not isinstance(outcome, AdapterSuccessResult)
+                else "success"
+            ),
+            adapter_error_kind=(
+                outcome.error_kind
+                if isinstance(outcome, AdapterErrorResult)
+                else None
+            ),
+            evidence_digest=None,
+            diagnostic_digest=diagnostic_digest,
+            cleanup_disposition="orphan_risk",
+            redaction_policy_id=request.redaction_policy.policy_id,
+            primary=primary,
+        )
+        if _persist_completion_record(runtime, run_ref, session, completion) is None:
+            return SessionExecutionResult("completion_refused")
+        return SessionExecutionResult(
+            "runner_session_orphan_risk",
+            adapter_error_kind=(
+                outcome.error_kind
+                if isinstance(outcome, AdapterErrorResult)
+                else "cancelled"
+            ),
+        )
     if outcome is not None:
         if isinstance(outcome, AdapterSuccessResult):
             return _persist_completion(
@@ -833,15 +921,22 @@ def _call_cancellation_operation(
         result = call()
         if not isinstance(result, RunnerCancellationOperationResult):
             raise TypeError("invalid cancellation operation result")
+        if result.operation != operation:
+            raise ValueError("cancellation operation label mismatch")
         return result
     except Exception as exc:
         now = _now()
+        diagnostic = {
+            "error": type(exc).__qualname__,
+            "expected_operation": operation,
+        }
         return RunnerCancellationOperationResult(
             operation,
             "failed",
             now,
             now,
-            _signal_digest(type(exc).__qualname__),
+            diagnostic,
+            runner_cancellation_diagnostic_digest(diagnostic),
         )
 
 
@@ -855,11 +950,13 @@ def _call_cleanup(
         return result
     except Exception as exc:
         now = _now()
+        diagnostic = {"error": type(exc).__qualname__}
         return RunnerCleanupResult(
             "orphan_risk",
             now,
             now,
-            _signal_digest(type(exc).__qualname__),
+            diagnostic,
+            runner_cancellation_diagnostic_digest(diagnostic),
         )
 
 
@@ -871,17 +968,15 @@ def _persist_cancellation_operation(
     primary: RunnerSessionCancellationRecord,
     sequence: int,
     operation: RunnerCancellationOperationResult,
+    redaction_policy: RedactionPolicy,
 ) -> int:
     if not isinstance(operation, RunnerCancellationOperationResult):
         raise TypeError("cancellation operation returned an invalid result")
     started_at = max(primary.requested_at, operation.started_at)
     completed_at = max(started_at, operation.completed_at)
-    diagnostic = _canonical_json_bytes(
-        {
-            "operation": operation.operation,
-            "result": operation.result,
-            "reported_diagnostic_digest": operation.diagnostic_digest,
-        }
+    diagnostic = _bounded_session_diagnostic_bytes(
+        operation.diagnostic,
+        redaction_policy=redaction_policy,
     )
     digest = runtime.cas_store.put_bytes(diagnostic)
     next_sequence = sequence + 1
@@ -917,6 +1012,7 @@ def _persist_cleanup_operation(
     primary: RunnerSessionCancellationRecord,
     sequence: int,
     cleanup: RunnerCleanupResult,
+    redaction_policy: RedactionPolicy,
 ) -> None:
     if not isinstance(cleanup, RunnerCleanupResult):
         raise TypeError("cleanup returned an invalid result")
@@ -929,6 +1025,7 @@ def _persist_cleanup_operation(
         ),
         cleanup.started_at,
         cleanup.completed_at,
+        cleanup.diagnostic,
         cleanup.diagnostic_digest,
     )
     _persist_cancellation_operation(
@@ -938,6 +1035,7 @@ def _persist_cleanup_operation(
         primary=primary,
         sequence=sequence,
         operation=operation,
+        redaction_policy=redaction_policy,
     )
 
 
@@ -1282,13 +1380,17 @@ def _audit_session_refusal(
     reason: str,
     signal_kind: str,
     signal_digest: str,
+    input_id: str | None = None,
 ) -> None:
     _persist_transition(
         runtime,
         RefuseRunnerSessionSignal(
-            "cli:run.session-signal-refusal:"
-            f"{session.session_id}:{signal_kind}:"
-            f"{signal_digest.removeprefix('sha256:')}",
+            input_id
+            or (
+                "cli:run.session-signal-refusal:"
+                f"{session.session_id}:{signal_kind}:"
+                f"{signal_digest.removeprefix('sha256:')}"
+            ),
             run_ref=run_ref,
             session_id=session.session_id,
             dispatch_generation=session.dispatch_generation,
@@ -1398,8 +1500,11 @@ def _bounded_session_diagnostic_bytes(
     *,
     redaction_policy: RedactionPolicy,
 ) -> bytes:
-    redacted = redaction_policy.redact_authority_value(value)
-    payload = _canonical_json_bytes(redacted)
+    try:
+        redacted = redaction_policy.redact_authority_value(value)
+        payload = _canonical_json_bytes(redacted)
+    except Exception:
+        return _canonical_json_bytes({"redaction_failed": True})
     if len(payload) <= SESSION_DIAGNOSTIC_MAX_BYTES:
         return payload
     return _canonical_json_bytes(

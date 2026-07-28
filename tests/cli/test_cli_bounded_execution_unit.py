@@ -1910,11 +1910,16 @@ def test_bounded_unit_timeout_failure_creates_no_observation_or_action(
     after = _load(runtime)
 
     assert result.code == "adapter_failure"
-    assert result.adapter_error_kind == "result_parse_failed"
+    assert result.adapter_error_kind == "cancelled"
     session_id = after.runs[cast(str, result.run_id)].current_session_id
     assert session_id is not None
-    assert after.runner_sessions[session_id].state == "failed"
+    assert after.runner_sessions[session_id].state == "interrupted"
     assert session_id in after.runner_session_completions
+    cancellation = next(iter(after.runner_session_cancellation_requests.values()))
+    assert (cancellation.reason, cancellation.source_kind) == (
+        "runner_timeout",
+        "runtime",
+    )
 
     assert result.activation_id is not None
     retry = run_bounded_execution_unit(

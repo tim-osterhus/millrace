@@ -31,6 +31,7 @@ from millrace.adapters.runner_contract import (
     StartRefusedBeforeExternalWork,
     Unsupported,
     canonicalize_redaction_policy,
+    runner_cancellation_diagnostic_digest,
     start_refusal_diagnostic_digest,
 )
 from millrace.contracts.compiled_plan import (
@@ -450,28 +451,31 @@ class _CompletedMillforgeCompatibilityHandle:
         return _unsupported_session_operation("kill")
 
     def cleanup(self) -> RunnerCleanupResult:
+        diagnostic = {"disposition": "not_required"}
         return RunnerCleanupResult(
             "not_required",
             0,
             0,
-            _session_operation_digest("not_required"),
+            diagnostic,
+            runner_cancellation_diagnostic_digest(diagnostic),
         )
 
 
 def _unsupported_session_operation(
     operation: str,
 ) -> RunnerCancellationOperationResult:
+    diagnostic: dict[str, AuthorityValue] = {
+        "operation": operation,
+        "supported": False,
+    }
     return RunnerCancellationOperationResult(
         operation,
         "unsupported",
         0,
         0,
-        _session_operation_digest(operation),
+        diagnostic,
+        runner_cancellation_diagnostic_digest(diagnostic),
     )
-
-
-def _session_operation_digest(value: str) -> str:
-    return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
 @dataclass(frozen=True, slots=True)

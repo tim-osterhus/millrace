@@ -163,6 +163,12 @@ def run_bounded_execution_unit(
             ),
             explicit_retry_intent=normalized_activation_id is not None,
             daemon_stop_requested=daemon_stop_requested,
+            effective_timeout_seconds=_effective_invocation_timeout_seconds(
+                selected_plan=active.selected_plan,
+                runner_binding_id=str(active.run.runner_binding_id),
+                selected_kind=selected_kind,
+                effective_config=effective_config,
+            ),
         )
     except SelectedAssetMaterializationError as exc:
         return _with_active_ids(
@@ -819,6 +825,24 @@ def _selected_invocation_timeout_seconds(
         selected_plan,
         runner_binding_id,
     ).invocation_timeout_seconds
+
+
+def _effective_invocation_timeout_seconds(
+    *,
+    selected_plan: SelectedCompiledPlan,
+    runner_binding_id: str,
+    selected_kind: str,
+    effective_config: AdapterLocalConfig,
+) -> float:
+    selected = float(
+        _selected_invocation_timeout_seconds(selected_plan, runner_binding_id)
+    )
+    adapter = effective_config.adapters.get(selected_kind)
+    config = _adapter_config(adapter)
+    local = getattr(config, "timeout_seconds", None)
+    if not isinstance(local, (int, float)):
+        return selected
+    return min(selected, float(local))
 
 
 def _codex_adapter_config(adapter: CodexAdapter) -> CodexAdapterConfig | None:

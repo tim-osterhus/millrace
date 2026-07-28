@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from millrace.adapters.cli.context import CliCommandError, open_runtime_context
+from millrace.adapters.cli.context import (
+    CliCommandError,
+    open_runtime_context,
+    require_nonblank,
+)
 from millrace.adapters.cli.output import (
     CliSuccess,
     ExitCode,
@@ -179,9 +183,21 @@ def _runs_show(namespace: object) -> CliSuccess:
 
 def _runs_cancel(namespace: object) -> CliSuccess:
     command = "runs.cancel"
-    run_id = str(getattr(namespace, "run_id"))
-    request_id = str(getattr(namespace, "input_id"))
-    actor_id = str(getattr(namespace, "actor_id", "local_operator"))
+    run_id = require_nonblank(
+        str(getattr(namespace, "run_id")),
+        option="RUN_ID",
+        command=command,
+    )
+    request_id = require_nonblank(
+        str(getattr(namespace, "input_id")),
+        option="--input-id",
+        command=command,
+    )
+    actor_id = require_nonblank(
+        str(getattr(namespace, "actor_id", "local_operator")),
+        option="--actor-id",
+        command=command,
+    )
     runtime = open_runtime_context(namespace, command=command)
     try:
         result = request_operator_cancellation(

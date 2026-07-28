@@ -618,10 +618,12 @@ def test_subprocess_transport_does_not_create_workspace_state_files(
 )
 def test_subprocess_transport_timeout_kills_process_group_child(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from millrace.adapters.subprocess_transport import (
         SubprocessTransport,
         SubprocessTransportError,
+        SubprocessTransportHandle,
         SubprocessTransportRequest,
     )
 
@@ -643,26 +645,44 @@ def test_subprocess_transport_timeout_kills_process_group_child(
         "time.sleep(30)\n"
     )
 
-    result = SubprocessTransport().invoke(
-        SubprocessTransportRequest(
-            argv=(sys.executable, "-c", parent_code),
-            stdin_bytes=b"",
-            cwd=tmp_path,
-            env_allowlist={},
-            timeout_seconds=0.3,
-            max_stdin_bytes=64,
-            max_stdout_bytes=128,
-            max_stderr_bytes=128,
-            redaction_policy=RedactionPolicy(policy_id="redact-default"),
-        ),
+    transport = SubprocessTransport()
+    request = SubprocessTransportRequest(
+        argv=(sys.executable, "-c", parent_code),
+        stdin_bytes=b"",
+        cwd=tmp_path,
+        env_allowlist={},
+        timeout_seconds=0.3,
+        max_stdin_bytes=64,
+        max_stdout_bytes=128,
+        max_stderr_bytes=128,
+        redaction_policy=RedactionPolicy(policy_id="redact-default"),
     )
+    started_handles: list[SubprocessTransportHandle] = []
+    original_start = transport.start
 
-    assert isinstance(result, SubprocessTransportError)
-    assert result.error_kind == "timeout"
-    assert heartbeat.exists()
-    stable_value = heartbeat.read_text()
-    time.sleep(0.3)
-    assert heartbeat.read_text() == stable_value
+    def capture_start(
+        captured_request: SubprocessTransportRequest,
+    ) -> SubprocessTransportHandle | SubprocessTransportError:
+        started = original_start(captured_request)
+        if isinstance(started, SubprocessTransportHandle):
+            started_handles.append(started)
+        return started
+
+    monkeypatch.setattr(transport, "start", capture_start)
+
+    try:
+        result = transport.invoke(request)
+
+        assert isinstance(result, SubprocessTransportError)
+        assert result.error_kind == "timeout"
+        assert heartbeat.exists()
+        stable_value = heartbeat.read_text()
+        time.sleep(0.3)
+        assert heartbeat.read_text() == stable_value
+    finally:
+        for started in started_handles:
+            started.kill()
+            started.cleanup()
 
 
 def test_live_subprocess_handle_terminates_group_and_joins_readers(
@@ -693,11 +713,74 @@ def test_live_subprocess_handle_terminates_group_and_joins_readers(
     )
 
     assert isinstance(handle, SubprocessTransportHandle)
-    assert handle.poll_completion() is None
-    assert handle.terminate().operation == "terminate"
-    cleanup = handle.cleanup()
-    assert cleanup.disposition == "complete"
-    assert handle.readers_joined
+    try:
+        assert handle.poll_completion() is None
+        assert handle.terminate().operation == "terminate"
+        cleanup = handle.cleanup()
+        assert cleanup.disposition == "complete"
+        assert handle.readers_joined
+    finally:
+        handle.kill()
+        handle.cleanup()
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+def test_live_handle_accounts_for_child_after_leader_exits(tmp_path: Path) -> None:
+    from millrace.adapters.subprocess_transport import (
+        SubprocessTransport,
+        SubprocessTransportHandle,
+        SubprocessTransportRequest,
+    )
+
+    heartbeat = tmp_path / "leader-exit-child.txt"
+    child = (
+        "import pathlib,time\n"
+        f"path=pathlib.Path({str(heartbeat)!r})\n"
+        "while True:\n"
+        " path.write_text(str(time.time()))\n"
+        " time.sleep(0.03)\n"
+    )
+    parent = (
+        "import subprocess,sys\n"
+        f"subprocess.Popen([sys.executable,'-c',{child!r}],"
+        "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+    )
+    handle = SubprocessTransport().start(
+        SubprocessTransportRequest(
+            argv=(sys.executable, "-c", parent),
+            stdin_bytes=b"",
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=5,
+            max_stdin_bytes=64,
+            max_stdout_bytes=128,
+            max_stderr_bytes=128,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+    assert isinstance(handle, SubprocessTransportHandle)
+    try:
+        deadline = time.time() + 2
+        while handle.process.poll() is None and time.time() < deadline:
+            time.sleep(0.01)
+        assert handle.process.poll() is not None
+        while not heartbeat.exists() and time.time() < deadline:
+            time.sleep(0.01)
+
+        handle.kill()
+        cleanup = handle.cleanup()
+        value = heartbeat.read_text()
+        time.sleep(0.15)
+
+        assert cleanup.disposition in {"complete", "orphan_risk"}
+        if cleanup.disposition == "complete":
+            assert heartbeat.read_text() == value
+    finally:
+        handle.kill()
+        handle.cleanup()
 
 
 def test_subprocess_transport_production_imports_stay_below_runtime_authority() -> None:

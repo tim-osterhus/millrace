@@ -244,18 +244,27 @@ def cancellation_request_refusal(
         return refusal
     if transition_input.request_id in state.runner_session_cancellation_requests:
         return "runner_session_reconciliation_contradiction"
-    if transition_input.expected_state != "cancellation_requested" and (
-        not is_legal_runner_session_transition(
-            transition_input.expected_state,
-            "cancellation_requested",
-        )
-    ):
-        return "invalid_runner_session_transition"
     requests = tuple(
         request
         for request in state.runner_session_cancellation_requests.values()
         if request.session_id == transition_input.session_id
     )
+    preserving_terminating_secondary = (
+        transition_input.expected_state == "terminating"
+        and bool(requests)
+        and not transition_input.primary
+    )
+    if (
+        transition_input.expected_state != "cancellation_requested"
+        and not preserving_terminating_secondary
+        and (
+        not is_legal_runner_session_transition(
+            transition_input.expected_state,
+            "cancellation_requested",
+        )
+        )
+    ):
+        return "invalid_runner_session_transition"
     expected_order = len(requests) + 1
     if transition_input.request_order != expected_order:
         return "runner_session_reconciliation_contradiction"
@@ -287,7 +296,7 @@ def session_for_cancellation_request(
     transition_input: RequestRunnerSessionCancellation,
 ) -> RunnerSessionRecord:
     session = state.runner_sessions[transition_input.session_id]
-    if session.state == "cancellation_requested":
+    if session.state in {"cancellation_requested", "terminating"}:
         return session
     return replace(session, state="cancellation_requested")
 

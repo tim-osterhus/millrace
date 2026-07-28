@@ -23,6 +23,7 @@ from millrace.adapters.runner_contract import (
     Terminal,
     Unsupported,
     VerifiedLive,
+    runner_cancellation_diagnostic_digest,
     start_refusal_diagnostic_bytes,
     start_refusal_diagnostic_digest,
 )
@@ -223,19 +224,33 @@ def test_runner_session_outcomes_are_exact_typed_records() -> None:
     assert CleanupPending(echo, handle, "handle-1").outcome_kind == "cleanup_pending"
     assert Unsupported(echo).outcome_kind == "unsupported"
     assert Contradiction(echo, "sha256:" + "c" * 64).outcome_kind == "contradiction"
+    operation_diagnostic = {"operation": "terminate"}
     assert RunnerCancellationOperationResult(
         "terminate",
         "succeeded",
         1,
         2,
-        "sha256:" + "d" * 64,
+        operation_diagnostic,
+        runner_cancellation_diagnostic_digest(operation_diagnostic),
     ).result == "succeeded"
+    cleanup_diagnostic = {"cleanup": "complete"}
     assert RunnerCleanupResult(
         "complete",
         1,
         2,
-        "sha256:" + "e" * 64,
+        cleanup_diagnostic,
+        runner_cancellation_diagnostic_digest(cleanup_diagnostic),
     ).disposition == "complete"
+
+    with pytest.raises(ValueError, match="diagnostic_digest"):
+        RunnerCancellationOperationResult(
+            "kill",
+            "succeeded",
+            1,
+            2,
+            {"actual": "content"},
+            "sha256:" + "f" * 64,
+        )
 
 
 def test_runner_session_locator_codec_is_canonical_bounded_and_mapping_only() -> None:

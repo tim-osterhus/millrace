@@ -10,7 +10,6 @@ import json
 import os
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
@@ -33,6 +32,7 @@ from millrace.adapters.runner_contract import (
     StartRefusedBeforeExternalWork,
     Unsupported,
     canonicalize_redaction_policy,
+    runner_cancellation_diagnostic_digest,
     start_refusal_diagnostic_digest,
 )
 from millrace.adapters.subprocess_transport import (
@@ -42,6 +42,7 @@ from millrace.adapters.subprocess_transport import (
     SubprocessTransportRequest,
     SubprocessTransportSuccess,
 )
+from millrace.contracts.compiled_plan import AuthorityValue
 
 CODEX_ADAPTER_KIND = "codex"
 
@@ -584,17 +585,18 @@ class _LiveCodexSessionHandle:
 def _unsupported_session_operation(
     operation: str,
 ) -> RunnerCancellationOperationResult:
+    diagnostic: dict[str, AuthorityValue] = {
+        "operation": operation,
+        "supported": False,
+    }
     return RunnerCancellationOperationResult(
         operation,
         "unsupported",
         0,
         0,
-        _session_operation_digest(operation),
+        diagnostic,
+        runner_cancellation_diagnostic_digest(diagnostic),
     )
-
-
-def _session_operation_digest(value: str) -> str:
-    return f"sha256:{sha256(value.encode('utf-8')).hexdigest()}"
 
 
 def _bundle_stdin_bytes(

@@ -42,6 +42,7 @@ _RUNNER_FAILURE_REASONS = frozenset(
     {
         "adapter_failure",
         "adapter_conversion_refused",
+        "runner_session_orphan_risk",
         "session_reconciliation_required",
     }
 )
@@ -330,7 +331,11 @@ def _run_locked_loop(
                     result=result,
                 )
 
-            if stop.requested and result.adapter_error_kind == "cancelled":
+            if (
+                stop.requested
+                and result.adapter_error_kind == "cancelled"
+                and result.code != "runner_session_orphan_risk"
+            ):
                 return _summary(
                     options,
                     iterations=iterations,
