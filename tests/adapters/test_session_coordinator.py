@@ -307,10 +307,27 @@ class _CapturingImmediateHandle(_ImmediateHandle):
     ) -> None:
         super().__init__(outcome)
         self._capture = capture
+        self.operations: list[str] = []
 
     def poll_completion(self) -> AdapterInvocationOutcome | None:
         self._capture()
         return super().poll_completion()
+
+    def request_cancel(self) -> RunnerCancellationOperationResult:
+        self.operations.append("cooperative_cancel")
+        return super().request_cancel()
+
+    def terminate(self) -> RunnerCancellationOperationResult:
+        self.operations.append("terminate")
+        return super().terminate()
+
+    def kill(self) -> RunnerCancellationOperationResult:
+        self.operations.append("kill")
+        return super().kill()
+
+    def cleanup(self) -> RunnerCleanupResult:
+        self.operations.append("transport_cleanup")
+        return super().cleanup()
 
 
 class _RecordingAdapter:
@@ -388,13 +405,20 @@ def _assert_single_refusal_audit(
     *,
     session_state: str,
     reason: str,
+    emergency_cancellation: bool = False,
 ) -> None:
-    assert len(after.receipts) == len(before.receipts) + 1
+    assert len(after.receipts) == len(before.receipts) + (
+        2 if emergency_cancellation else 1
+    )
     assert len(after.refusals) == len(before.refusals) + 1
-    assert len(after.governance_events) == len(before.governance_events) + 1
-    assert len(after.traces) == len(before.traces) + 1
-    assert after.runner_sessions == before.runner_sessions
+    transition_count = 2 if emergency_cancellation else 1
+    assert len(after.governance_events) == (
+        len(before.governance_events) + transition_count
+    )
+    assert len(after.traces) == len(before.traces) + transition_count
     assert next(iter(after.runner_sessions.values())).state == session_state
+    if not emergency_cancellation:
+        assert after.runner_sessions == before.runner_sessions
     assert after.runner_session_completions == before.runner_session_completions
     assert after.runner_observations == before.runner_observations
     assert after.artifacts == before.artifacts
@@ -431,6 +455,7 @@ def _completion_signal_result(
     ],
 ):
     snapshots = []
+    handles = []
     runtime = None
 
     def start(request: AdapterInvocationRequest) -> StartedSession:
@@ -438,12 +463,14 @@ def _completion_signal_result(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
         )
+        handle = _CapturingImmediateHandle(
+            outcome_factory(request),
+            lambda: snapshots.append(_load(runtime)),
+        )
+        handles.append(handle)
         return StartedSession(
             echo,
-            _CapturingImmediateHandle(
-                outcome_factory(request),
-                lambda: snapshots.append(_load(runtime)),
-            ),
+            handle,
             f"fake:{request.session_id}",
             {},
         )
@@ -453,7 +480,8 @@ def _completion_signal_result(
     runtime = _runtime(tmp_path, state)
     result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
     assert len(snapshots) == 1
-    return result, snapshots[0], _load(runtime)
+    assert len(handles) == 1
+    return result, snapshots[0], _load(runtime), handles[0]
 
 
 def _success_outcome(
@@ -1289,8 +1317,10 @@ def test_adapter_error_policy_mismatch_is_refused_without_diagnostic_cas(
     tmp_path,
 ) -> None:
     secret = "POLICY_MISMATCH_SECRET"
+    handle = None
 
     def mismatched(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
         outcome = AdapterErrorResult(
             adapter_id=request.adapter_id,
             error_kind="invocation_failed",
@@ -1301,7 +1331,8 @@ def test_adapter_error_policy_mismatch_is_refused_without_diagnostic_cas(
             ),
             diagnostics={"secret": secret},
         )
-        return replace(_success_start(request), handle=_ImmediateHandle(outcome))
+        handle = _CapturingImmediateHandle(outcome, lambda: None)
+        return replace(_success_start(request), handle=handle)
 
     state, _ = _ready_state()
     runtime = _runtime(tmp_path, state)
@@ -1311,6 +1342,18 @@ def test_adapter_error_policy_mismatch_is_refused_without_diagnostic_cas(
     )
 
     assert result.code == "session_reconciliation_required"
+    assert handle is not None
+    assert handle.operations == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
+    after = _load(runtime)
+    assert next(iter(after.runner_sessions.values())).state == (
+        "cancellation_requested"
+    )
+    assert after.runner_session_completions == {}
     assert all(
         secret.encode() not in path.read_bytes()
         for path in runtime.paths.cas_path.rglob("*")
@@ -2087,20 +2130,24 @@ def test_forever_pending_handle_times_out_then_cleans_up(
     )
 
 
-def test_malformed_handle_outcome_remains_running_and_requires_reconciliation(
+def test_malformed_handle_outcome_is_cleaned_and_requires_reconciliation(
     tmp_path,
 ) -> None:
-    class _MalformedOutcomeHandle(_ImmediateHandle):
-        def __init__(self) -> None:
-            pass
+    handle = None
+
+    class _MalformedOutcomeHandle(_CancellingHandle):
+        def __init__(self, request: AdapterInvocationRequest) -> None:
+            super().__init__(None, request)
 
         def poll_completion(self) -> object:
             return object()
 
     def malformed_outcome(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _MalformedOutcomeHandle(request)
         return replace(
             _success_start(request),
-            handle=_MalformedOutcomeHandle(),
+            handle=handle,
         )
 
     adapter = _RecordingAdapter(malformed_outcome)
@@ -2111,22 +2158,327 @@ def test_malformed_handle_outcome_remains_running_and_requires_reconciliation(
     after = _load(runtime)
 
     assert result.code == "session_reconciliation_required"
+    assert handle is not None
+    assert handle.operations == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
+    assert (
+        next(iter(after.runner_sessions.values())).state
+        == "cancellation_requested"
+    )
+    assert after.runner_session_completions == {}
+
+
+@pytest.mark.parametrize("request_accepted", (True, False))
+def test_poll_exception_without_primary_cancellation_cleans_handle(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    request_accepted: bool,
+) -> None:
+    handle = None
+
+    class PollFailureHandle(_CancellingHandle):
+        def poll_completion(self) -> AdapterInvocationOutcome | None:
+            raise RuntimeError("poll failed")
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = PollFailureHandle(None, request)
+        return replace(_success_start(request), handle=handle)
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_request_cancellation",
+        lambda *_args, **_kwargs: SimpleNamespace(accepted=request_accepted),
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    assert handle is not None
+    assert handle.operations == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
+    after = _load(runtime)
     assert next(iter(after.runner_sessions.values())).state == "running"
     assert after.runner_session_completions == {}
 
 
+def test_terminal_completion_persistence_refusal_cleans_handle(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handle = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _CapturingImmediateHandle(
+            _success_outcome(request),
+            lambda: None,
+        )
+        return replace(_success_start(request), handle=handle)
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_completion_record",
+        lambda *_args, **_kwargs: None,
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    assert handle is not None
+    assert handle.operations == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
+    after = _load(runtime)
+    assert next(iter(after.runner_sessions.values())).state == (
+        "cancellation_requested"
+    )
+    assert after.runner_session_completions == {}
+    assert after.runner_observations == {}
+
+
+def test_cancel_cleanup_is_idempotently_repeated_when_completion_refuses(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = None
+    handle = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _CancellingHandle(runtime, request)
+        return replace(_success_start(request), handle=handle)
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_completion_record",
+        lambda *_args, **_kwargs: None,
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    assert handle is not None
+    assert handle.operations == [
+        "cooperative_cancel",
+        "transport_cleanup",
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
+    after = _load(runtime)
+    session = next(iter(after.runner_sessions.values()))
+    assert session.state == "cancellation_requested"
+    assert session.cleanup_disposition == "pending"
+    assert after.runner_session_completions == {}
+    assert after.runner_observations == {}
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+@pytest.mark.parametrize(
+    "fault_kind",
+    (
+        "malformed_poll",
+        "poll_exception_accepted",
+        "poll_exception_refused",
+        "dispatch_mismatch",
+        "evidence_refusal",
+        "policy_refusal",
+        "completion_persistence_refusal",
+    ),
+)
+def test_nonterminal_return_fault_cleans_live_subprocess_before_return(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_kind: str,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+    heartbeat = tmp_path / "malformed-live-heartbeat.txt"
+    process_pid = tmp_path / "malformed-live.pid"
+    wrapper = (
+        "import os,pathlib,time\n"
+        f"heartbeat=pathlib.Path({str(heartbeat)!r})\n"
+        f"pathlib.Path({str(process_pid)!r}).write_text(str(os.getpid()))\n"
+        "while True:\n"
+        " heartbeat.write_text(str(time.time()))\n"
+        " time.sleep(0.03)\n"
+    )
+    captured_handles = []
+
+    class FaultingLiveHandle:
+        def __init__(self, inner, request: AdapterInvocationRequest) -> None:
+            self._inner = inner
+            self._request = request
+
+        def poll_completion(self) -> object:
+            deadline = time.time() + 2
+            while not heartbeat.exists() and time.time() < deadline:
+                time.sleep(0.01)
+            if fault_kind == "malformed_poll":
+                return object()
+            if fault_kind.startswith("poll_exception"):
+                raise RuntimeError("poll failed")
+            if fault_kind == "dispatch_mismatch":
+                return _success_outcome(
+                    self._request,
+                    dispatch_echo=_mismatched_echo(self._request),
+                )
+            if fault_kind == "evidence_refusal":
+                return replace(_success_outcome(self._request), marker=None)
+            if fault_kind == "policy_refusal":
+                return AdapterErrorResult(
+                    adapter_id=self._request.adapter_id,
+                    error_kind="invocation_failed",
+                    redaction_policy_id="wrong-policy",
+                    dispatch_echo=DispatchEcho.from_dispatch_envelope(
+                        self._request.dispatch_envelope,
+                        correlation_id=self._request.correlation_id,
+                    ),
+                    diagnostics={},
+                )
+            self._inner.kill()
+            outcome = None
+            while outcome is None and time.time() < deadline:
+                outcome = self._inner.poll_completion()
+                if outcome is None:
+                    time.sleep(0.01)
+            assert outcome is not None
+            return outcome
+
+        def request_cancel(self):
+            return self._inner.request_cancel()
+
+        def terminate(self):
+            return self._inner.terminate()
+
+        def kill(self):
+            return self._inner.kill()
+
+        def cleanup(self):
+            return self._inner.cleanup()
+
+    class MalformedCodexAdapter(CodexAdapter):
+        def start_session(self, request):
+            started = super().start_session(request)
+            if isinstance(started, StartedSession):
+                captured_handles.append(started.handle)
+                return replace(
+                    started,
+                    handle=FaultingLiveHandle(started.handle, request),
+                )
+            return started
+
+    adapter = MalformedCodexAdapter(
+        CodexAdapterConfig(
+            adapter_id="codex-default",
+            wrapper_mode="offline_fake",
+            wrapper_argv=(sys.executable, "-c", wrapper),
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=5,
+            max_input_bundle_bytes=16384,
+            max_stdout_bytes=8192,
+            max_stderr_diagnostic_bytes=512,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    if fault_kind.startswith("poll_exception"):
+        monkeypatch.setattr(
+            session_coordinator,
+            "_request_cancellation",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                accepted=fault_kind.endswith("accepted")
+            ),
+        )
+    if fault_kind == "completion_persistence_refusal":
+        monkeypatch.setattr(
+            session_coordinator,
+            "_persist_completion_record",
+            lambda *_args, **_kwargs: None,
+        )
+    try:
+        result = run_bounded_execution_unit(
+            runtime,
+            local_config=AdapterLocalConfig(adapters={"codex": adapter}),
+        )
+
+        assert result.code == "session_reconciliation_required"
+        assert heartbeat.exists()
+        stable = heartbeat.read_text()
+        time.sleep(0.15)
+        assert heartbeat.read_text() == stable
+        after = _load(runtime)
+        session = next(iter(after.runner_sessions.values()))
+        assert session.state == (
+            "running"
+            if fault_kind.startswith("poll_exception")
+            else "cancellation_requested"
+        )
+        assert after.runner_session_completions == {}
+        assert after.runner_observations == {}
+    finally:
+        for live_handle in captured_handles:
+            live_handle.kill()
+            live_handle.cleanup()
+        if process_pid.exists():
+            try:
+                os.killpg(int(process_pid.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def test_adapter_error_without_dispatch_echo_is_durably_audited(tmp_path) -> None:
-    result, before_signal, after = _completion_signal_result(
+    result, before_signal, after, handle = _completion_signal_result(
         tmp_path,
         lambda request: _error_outcome(request, dispatch_echo=None),
     )
 
     assert result.code == "session_reconciliation_required"
+    assert handle.operations == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
     _assert_single_refusal_audit(
         before_signal,
         after,
-        session_state="running",
+        session_state="cancellation_requested",
         reason="runner_session_reconciliation_contradiction",
+        emergency_cancellation=True,
     )
 
 
@@ -2146,32 +2498,46 @@ def test_completion_dispatch_echo_mismatch_is_durably_audited(
             dispatch_echo=echo,
         )
 
-    result, before_signal, after = _completion_signal_result(
+    result, before_signal, after, handle = _completion_signal_result(
         tmp_path,
         mismatched_completion,
     )
 
     assert result.code == "session_reconciliation_required"
+    assert handle.operations == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
     _assert_single_refusal_audit(
         before_signal,
         after,
-        session_state="running",
+        session_state="cancellation_requested",
         reason="runner_session_authority_mismatch",
+        emergency_cancellation=True,
     )
 
 
 def test_evidence_conversion_refusal_is_durably_audited(tmp_path) -> None:
-    result, before_signal, after = _completion_signal_result(
+    result, before_signal, after, handle = _completion_signal_result(
         tmp_path,
         lambda request: replace(_success_outcome(request), marker=None),
     )
 
-    assert result.code == "adapter_conversion_refused"
+    assert result.code == "session_reconciliation_required"
+    assert handle.operations == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
     _assert_single_refusal_audit(
         before_signal,
         after,
-        session_state="running",
+        session_state="cancellation_requested",
         reason="runner_session_reconciliation_contradiction",
+        emergency_cancellation=True,
     )
 
 
@@ -2336,7 +2702,17 @@ def test_crash_after_completion_persistence_replays_without_adapter_invocation(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    adapter = _RecordingAdapter(_success_start)
+    handle = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _CapturingImmediateHandle(
+            _success_outcome(request),
+            lambda: None,
+        )
+        return replace(_success_start(request), handle=handle)
+
+    adapter = _RecordingAdapter(start)
     state, _ = _ready_state()
     runtime = _runtime(tmp_path, state)
     original_decide = session_coordinator.decide
@@ -2350,6 +2726,8 @@ def test_crash_after_completion_persistence_replays_without_adapter_invocation(
     with pytest.raises(RuntimeError, match="application crash"):
         run_bounded_execution_unit(runtime, local_config=_config(adapter))
     persisted = _load(runtime)
+    assert handle is not None
+    assert handle.operations == []
     assert len(persisted.runner_session_completions) == 1
     assert persisted.runner_observations == {}
 

@@ -1961,7 +1961,7 @@ def test_bounded_unit_adapter_conversion_refusal_creates_no_evidence(
     )
     after = _load(runtime)
 
-    assert result.code == "adapter_conversion_refused"
+    assert result.code == "session_reconciliation_required"
     assert result.run_id in after.runs
     assert result.claim_id is not None
     assert result.fencing_token is not None
@@ -1971,8 +1971,11 @@ def test_bounded_unit_adapter_conversion_refusal_creates_no_evidence(
         "artifacts": 0,
         "routes": 0,
         "closed": 0,
-        "receipts": _observed_counts(state)["receipts"] + 5,
+        "receipts": _observed_counts(state)["receipts"] + 6,
     }
+    session = next(iter(after.runner_sessions.values()))
+    assert session.state == "cancellation_requested"
+    assert after.runner_session_completions == {}
 
 
 def test_bounded_unit_adapter_failure_after_claim_allows_explicit_active_retry(

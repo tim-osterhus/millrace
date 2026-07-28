@@ -491,7 +491,7 @@ def _start_created_session(
         )
     running_session = running_state.runner_sessions[session.session_id]
     try:
-        return _drive_running_session(
+        result = _drive_running_session(
             runtime,
             run_ref=run_ref,
             session=running_session,
@@ -515,6 +515,20 @@ def _start_created_session(
             session=running_session,
             handle=start_outcome.handle,
         )
+    try:
+        completion_persisted = (
+            session.session_id in _load(runtime).runner_session_completions
+        )
+    except Exception:
+        completion_persisted = False
+    if completion_persisted:
+        return result
+    return _emergency_cleanup_live_handle(
+        runtime,
+        run_ref=run_ref,
+        session=running_session,
+        handle=start_outcome.handle,
+    )
 
 
 def _drive_running_session(
