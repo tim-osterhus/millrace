@@ -204,6 +204,13 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             raise StorageIntegrityError(
                 "runner session cancellation request predates session phase"
             )
+        if (
+            request_session.ended_at is not None
+            and request.requested_at > request_session.ended_at
+        ):
+            raise StorageIntegrityError(
+                "runner session cancellation request exceeds session ended_at"
+            )
         requests_by_session.setdefault(request.session_id, []).append(request)
     for requests in requests_by_session.values():
         ordered = sorted(requests, key=lambda record: record.request_order)
@@ -251,6 +258,13 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
         if attempt.started_at < attempt_request.requested_at:
             raise StorageIntegrityError(
                 "runner session cancellation attempt predates request"
+            )
+        if (
+            attempt_session.ended_at is not None
+            and attempt.completed_at > attempt_session.ended_at
+        ):
+            raise StorageIntegrityError(
+                "runner session cancellation attempt exceeds session ended_at"
             )
         attempts_by_session.setdefault(attempt.session_id, []).append(attempt)
     for attempts in attempts_by_session.values():

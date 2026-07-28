@@ -404,6 +404,123 @@ def test_starting_completion_decides_applies_and_round_trips(tmp_path) -> None:
     assert loaded == state
 
 
+@pytest.mark.parametrize("prior", ("cancellation_requested", "terminating"))
+def test_composed_start_completion_decides_applies_and_round_trips(
+    tmp_path,
+    prior: str,
+) -> None:
+    result = compile_workflow(kernel_ping.workflow_source())
+    assert result.plan is not None
+    state = bootstrap_to_taskmaster_claim(
+        result.plan,
+        authority_fingerprint(result.plan),
+    )
+    run_ref = state.runs["run-taskmaster"].run_ref
+    inputs = [
+        CreateRunnerSession(
+            "create-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            session_fencing_token="session-fence-1",
+            created_at=100,
+            explicit_retry_intent=False,
+        ),
+        AdvanceRunnerSession(
+            "start-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="created",
+            next_state="starting",
+            occurred_at=110,
+        ),
+        RequestRunnerSessionCancellation(
+            "cancel-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="starting",
+            request_id="cancel-1",
+            reason="operator_cancel_work",
+            source_kind="operator",
+            actor_id="operator-1",
+            requested_at=115,
+            request_order=1,
+            primary=True,
+        ),
+    ]
+    if prior == "terminating":
+        inputs.append(
+            AdvanceRunnerSession(
+                "terminate-session",
+                run_ref=run_ref,
+                session_id="session-1",
+                dispatch_generation=1,
+                session_fencing_token="session-fence-1",
+                expected_state="cancellation_requested",
+                next_state="terminating",
+                occurred_at=116,
+            )
+        )
+    for transition_input in inputs:
+        decision = decide(
+            state,
+            transition_input,
+            deterministic_context(
+                transition_id=f"transition-{transition_input.input_id}"
+            ),
+        )
+        assert decision.accepted
+        state = apply(state, decision)
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    completion = RunnerSessionCompletionRecord(
+        completion_id="completion-1",
+        session_id="session-1",
+        run_id=run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        terminal_state="completed",
+        exit_kind="success",
+        adapter_outcome_kind="success",
+        adapter_error_kind=None,
+        runner_result_evidence_digest=cas_store.put_bytes(b"result evidence"),
+        primary_cancellation_request_id="cancel-1",
+        cleanup_disposition="complete",
+        started_at=112,
+        cancel_requested_at=115,
+        completed_at=130,
+        bounds_summary="bounded",
+        truncation_metadata="none",
+        redaction_policy_id="redaction.default",
+        diagnostic_digest=cas_store.put_bytes(b"completion diagnostic"),
+        application_input_id="cli:run.session-completion:completion-1",
+    )
+    decision = decide(
+        state,
+        RecordRunnerSessionCompletion(
+            "complete-session",
+            run_ref=run_ref,
+            expected_state=prior,
+            completion=completion,
+        ),
+        deterministic_context(transition_id="transition-complete-session"),
+    )
+
+    assert decision.accepted
+    state = apply(state, decision)
+    assert state.runner_sessions["session-1"].started_at == 112
+    store = SQLiteRuntimeStore.initialize(tmp_path / "runtime.sqlite3")
+    try:
+        store.persist_runtime_state(state, cas_store)
+        loaded = store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+    assert loaded == state
+
+
 @pytest.mark.parametrize(
     "digest_kind",
     (
@@ -944,6 +1061,89 @@ def test_cancellation_request_before_session_phase_raw_row_is_refused(
             store.load_runtime_state(cas_store)
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("record_kind", ("request", "attempt"))
+def test_post_terminal_cancellation_history_raw_row_is_refused(
+    tmp_path,
+    record_kind: str,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(_session_state(), cas_store)
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+    with sqlite3.connect(db_path) as connection:
+        if record_kind == "request":
+            connection.execute(
+                "DELETE FROM runner_session_cancellation_attempts"
+            )
+            connection.execute(
+                """
+                UPDATE runner_session_completions
+                SET primary_cancellation_request_id = NULL,
+                    cancel_requested_at = NULL
+                WHERE session_id = 'session-1'
+                """
+            )
+            connection.execute(
+                """
+                UPDATE runner_session_cancellation_requests
+                SET requested_at = 151
+                WHERE request_id = 'cancel-1'
+                """
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE runner_session_cancellation_attempts
+                SET completed_at = 151
+                WHERE attempt_id = 'attempt-1'
+                """
+            )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match="ended_at"):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
+def test_terminal_cancellation_history_allows_ended_at_equality(tmp_path) -> None:
+    state = _session_state()
+    request = replace(
+        state.runner_session_cancellation_requests["cancel-1"],
+        requested_at=150,
+    )
+    attempt = replace(
+        state.runner_session_cancellation_attempts["attempt-1"],
+        started_at=150,
+        completed_at=150,
+    )
+    completion = replace(
+        state.runner_session_completions["session-1"],
+        cancel_requested_at=150,
+    )
+    state = replace(
+        state,
+        runner_session_cancellation_requests={request.request_id: request},
+        runner_session_cancellation_attempts={attempt.attempt_id: attempt},
+        runner_session_completions={completion.session_id: completion},
+    )
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(state, cas_store)
+    store = SQLiteRuntimeStore.initialize(tmp_path / "runtime.sqlite3")
+    try:
+        store.persist_runtime_state(state, cas_store)
+        loaded = store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+    assert loaded == state
 
 
 def test_runner_session_schema_rejects_oversized_text(tmp_path) -> None:

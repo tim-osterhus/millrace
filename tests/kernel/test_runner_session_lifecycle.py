@@ -729,6 +729,118 @@ def test_starting_completed_refuses_absent_or_backdated_start_evidence(
     assert decision.refusal.reason == "runner_session_reconciliation_contradiction"
 
 
+@pytest.mark.parametrize(
+    ("prior", "started_at"),
+    (
+        ("cancellation_requested", None),
+        ("cancellation_requested", 105),
+        ("terminating", None),
+        ("terminating", 105),
+    ),
+)
+def test_composed_completed_refuses_absent_or_backdated_start_evidence(
+    prior: str,
+    started_at: int | None,
+) -> None:
+    state = _claimed_state()
+    run_ref = state.runs["run-taskmaster"].run_ref
+    inputs = [
+        CreateRunnerSession(
+            "create-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            session_fencing_token="session-fence-1",
+            created_at=100,
+            explicit_retry_intent=False,
+        ),
+        AdvanceRunnerSession(
+            "start-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="created",
+            next_state="starting",
+            occurred_at=110,
+        ),
+        RequestRunnerSessionCancellation(
+            "cancel-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="starting",
+            request_id="cancel-1",
+            reason="operator_cancel_work",
+            source_kind="operator",
+            actor_id="operator-1",
+            requested_at=115,
+            request_order=1,
+            primary=True,
+        ),
+    ]
+    if prior == "terminating":
+        inputs.append(
+            AdvanceRunnerSession(
+                "terminate-session",
+                run_ref=run_ref,
+                session_id="session-1",
+                dispatch_generation=1,
+                session_fencing_token="session-fence-1",
+                expected_state="cancellation_requested",
+                next_state="terminating",
+                occurred_at=116,
+            )
+        )
+    for transition_input in inputs:
+        decision = decide(
+            state,
+            transition_input,
+            deterministic_context(
+                transition_id=f"transition-{transition_input.input_id}"
+            ),
+        )
+        assert decision.accepted
+        state = apply(state, decision)
+    completion = RunnerSessionCompletionRecord(
+        completion_id="completion-1",
+        session_id="session-1",
+        run_id=run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        terminal_state="completed",
+        exit_kind="success",
+        adapter_outcome_kind="success",
+        adapter_error_kind=None,
+        runner_result_evidence_digest="sha256:" + "a" * 64,
+        primary_cancellation_request_id="cancel-1",
+        cleanup_disposition="complete",
+        started_at=started_at,
+        cancel_requested_at=115,
+        completed_at=130,
+        bounds_summary="bounded",
+        truncation_metadata="none",
+        redaction_policy_id="redaction.default",
+        diagnostic_digest="sha256:" + "b" * 64,
+        application_input_id="cli:run.session-completion:completion-1",
+    )
+
+    decision = decide(
+        state,
+        RecordRunnerSessionCompletion(
+            "complete-session",
+            run_ref=run_ref,
+            expected_state=prior,
+            completion=completion,
+        ),
+        deterministic_context(transition_id="transition-complete-session"),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "runner_session_reconciliation_contradiction"
+
+
 def test_cancellation_request_refuses_time_before_latest_session_phase() -> None:
     state = _claimed_state()
     run = state.runs["run-taskmaster"]

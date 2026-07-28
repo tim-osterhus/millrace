@@ -362,13 +362,12 @@ def completion_refusal(
     ):
         return "invalid_runner_session_transition"
     session = state.runner_sessions[completion.session_id]
-    if (
-        transition_input.expected_state == "starting"
-        and completion.terminal_state == "completed"
-    ):
-        if (
-            completion.started_at is None
-            or session.start_intent_at is None
+    if session.started_at is None:
+        if completion.started_at is None:
+            if completion.terminal_state == "completed":
+                return "runner_session_reconciliation_contradiction"
+        elif (
+            session.start_intent_at is None
             or completion.started_at < session.start_intent_at
         ):
             return "runner_session_reconciliation_contradiction"
