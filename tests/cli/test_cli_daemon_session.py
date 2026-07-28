@@ -144,7 +144,7 @@ class _OrphanSignalWaitHandle(_SignalWaitHandle):
 
 class _OrphanSignalWaitAdapter(_SignalWaitAdapter):
     def start_session(self, request: AdapterInvocationRequest) -> StartedSession:
-        return StartedSession(
+        started = StartedSession(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
@@ -153,6 +153,9 @@ class _OrphanSignalWaitAdapter(_SignalWaitAdapter):
             f"orphan-signal-wait:{request.session_id}",
             {},
         )
+        if self._active is not None:
+            self._active.set()
+        return started
 
 
 class _IndeterminateAdapter:
@@ -181,13 +184,7 @@ class _IndeterminateAdapter:
         )
 
 
-def test_signal_during_active_session_requests_cancellation(tmp_path) -> None:
-    from millrace.adapters.cli import daemon
-
-    state, _ = _ready_state()
-    runtime = _runtime(tmp_path, state)
-    paths = runtime.paths
-    _close(runtime)
+def _run_daemon_after_adapter_start(daemon, paths, adapter_type):
     active = threading.Event()
     stop_signal_worker = threading.Event()
     signal_gate = threading.Lock()
@@ -220,7 +217,7 @@ def test_signal_during_active_session_requests_cancellation(tmp_path) -> None:
                 paths,
                 max_ticks=1,
                 local_config=AdapterLocalConfig(
-                    adapters={"codex": _SignalWaitAdapter(active)}
+                    adapters={"codex": adapter_type(active)}
                 ),
             )
         )
@@ -232,6 +229,17 @@ def test_signal_during_active_session_requests_cancellation(tmp_path) -> None:
     assert not signal_worker.is_alive()
     assert signal_failures == []
     assert active.is_set()
+    return summary
+
+
+def test_signal_during_active_session_requests_cancellation(tmp_path) -> None:
+    from millrace.adapters.cli import daemon
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    paths = runtime.paths
+    _close(runtime)
+    summary = _run_daemon_after_adapter_start(daemon, paths, _SignalWaitAdapter)
     reopened = daemon.open_runtime_context(paths, command="test")
     try:
         after = _load(reopened)
@@ -253,20 +261,11 @@ def test_signal_with_orphan_risk_is_not_reported_as_clean_stop(tmp_path) -> None
     runtime = _runtime(tmp_path, state)
     paths = runtime.paths
     _close(runtime)
-    timer = threading.Timer(0.05, lambda: os.kill(os.getpid(), signal.SIGTERM))
-    timer.start()
-    try:
-        summary = daemon.run_daemon_loop(
-            _daemon_options(
-                paths,
-                max_ticks=1,
-                local_config=AdapterLocalConfig(
-                    adapters={"codex": _OrphanSignalWaitAdapter()}
-                ),
-            )
-        )
-    finally:
-        timer.cancel()
+    summary = _run_daemon_after_adapter_start(
+        daemon,
+        paths,
+        _OrphanSignalWaitAdapter,
+    )
 
     assert summary.stopped_reason == "runner_session_orphan_risk"
     assert daemon._summary_is_success(summary) is False
@@ -341,19 +340,19 @@ def test_runs_cancel_refuses_terminal_session(tmp_path) -> None:
         before_runtime.close()
 
     argv = [
-            "--json",
-            "--workspace",
-            str(paths.workspace_path),
-            "--db",
-            str(paths.db_path),
-            "--cas",
-            str(paths.cas_path),
-            "runs",
-            "cancel",
-            str(result.run_id),
-            "--input-id",
-            "late-cancel-1",
-        ]
+        "--json",
+        "--workspace",
+        str(paths.workspace_path),
+        "--db",
+        str(paths.db_path),
+        "--cas",
+        str(paths.cas_path),
+        "runs",
+        "cancel",
+        str(result.run_id),
+        "--input-id",
+        "late-cancel-1",
+    ]
     code, stdout, stderr = _invoke(argv)
     replay_code, replay_stdout, replay_stderr = _invoke(argv)
 

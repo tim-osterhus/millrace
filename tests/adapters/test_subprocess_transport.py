@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 import logging
 import os
+import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -781,6 +783,154 @@ def test_live_handle_accounts_for_child_after_leader_exits(tmp_path: Path) -> No
     finally:
         handle.kill()
         handle.cleanup()
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+def test_terminal_leader_with_live_child_is_not_reported_complete(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.subprocess_transport import (
+        SubprocessTransport,
+        SubprocessTransportHandle,
+        SubprocessTransportRequest,
+    )
+
+    heartbeat = tmp_path / "terminal-leader-child.txt"
+    child = (
+        "import pathlib,time\n"
+        f"path=pathlib.Path({str(heartbeat)!r})\n"
+        "while True:\n"
+        " path.write_text(str(time.time()))\n"
+        " time.sleep(0.03)\n"
+    )
+    parent = (
+        "import subprocess,sys\n"
+        f"subprocess.Popen([sys.executable,'-c',{child!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL)\n"
+    )
+    handle = SubprocessTransport().start(
+        SubprocessTransportRequest(
+            argv=(sys.executable, "-c", parent),
+            stdin_bytes=b"",
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=5,
+            max_stdin_bytes=64,
+            max_stdout_bytes=128,
+            max_stderr_bytes=128,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+    assert isinstance(handle, SubprocessTransportHandle)
+    try:
+        handle.process.wait(timeout=2)
+        deadline = time.time() + 2
+        while not heartbeat.exists() and time.time() < deadline:
+            time.sleep(0.01)
+        with pytest.raises(RuntimeError, match="owned process group remains"):
+            handle.poll_completion()
+    finally:
+        handle.kill()
+        handle.cleanup()
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+def test_invoke_cleans_child_group_before_returning_success(tmp_path: Path) -> None:
+    from millrace.adapters.subprocess_transport import (
+        SubprocessTransport,
+        SubprocessTransportRequest,
+        SubprocessTransportSuccess,
+    )
+
+    heartbeat = tmp_path / "invoke-child.txt"
+    child_pid = tmp_path / "invoke-child.pid"
+    child = (
+        "import pathlib,time\n"
+        f"path=pathlib.Path({str(heartbeat)!r})\n"
+        "while True:\n"
+        " path.write_text(str(time.time()))\n"
+        " time.sleep(0.03)\n"
+    )
+    parent = (
+        "import pathlib,subprocess,sys,time\n"
+        f"child_process=subprocess.Popen([sys.executable,'-c',{child!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL)\n"
+        f"pathlib.Path({str(child_pid)!r}).write_text(str(child_process.pid))\n"
+        "time.sleep(0.1)\n"
+    )
+    try:
+        result = SubprocessTransport().invoke(
+            SubprocessTransportRequest(
+                argv=(sys.executable, "-c", parent),
+                stdin_bytes=b"",
+                cwd=tmp_path,
+                env_allowlist={},
+                timeout_seconds=5,
+                max_stdin_bytes=64,
+                max_stdout_bytes=128,
+                max_stderr_bytes=128,
+                redaction_policy=RedactionPolicy(policy_id="redact-default"),
+            )
+        )
+
+        assert isinstance(result, SubprocessTransportSuccess)
+        stable = heartbeat.read_text()
+        time.sleep(0.15)
+        assert heartbeat.read_text() == stable
+    finally:
+        if child_pid.exists():
+            try:
+                os.kill(int(child_pid.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_subprocess_start_refuses_without_process_group_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters import subprocess_transport
+    from millrace.adapters.subprocess_transport import (
+        SubprocessTransport,
+        SubprocessTransportError,
+        SubprocessTransportRequest,
+    )
+
+    monkeypatch.setattr(
+        subprocess_transport,
+        "_supports_process_group_ownership",
+        lambda: False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        subprocess.Popen,
+        "__init__",
+        lambda *_args, **_kwargs: pytest.fail("external work was launched"),
+    )
+    result = SubprocessTransport().start(
+        SubprocessTransportRequest(
+            argv=(sys.executable, "-c", "pass"),
+            stdin_bytes=b"",
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=5,
+            max_stdin_bytes=64,
+            max_stdout_bytes=128,
+            max_stderr_bytes=128,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+
+    assert isinstance(result, SubprocessTransportError)
+    assert result.error_kind == "invocation_failed"
 
 
 @pytest.mark.skipif(

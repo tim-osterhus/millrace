@@ -149,6 +149,10 @@ SubprocessTransportOutcome: TypeAlias = (
 )
 
 
+class _SubprocessTransportOwnershipPending(RuntimeError):
+    """The leader exited while owned process-group work remains."""
+
+
 class SubprocessTransport:
     """Launch explicit argv commands with bounded local process mechanics."""
 
@@ -167,7 +171,17 @@ class SubprocessTransport:
             started.kill()
             started.cleanup()
             return SubprocessTransportError(error_kind="timeout")
-        outcome = started.poll_completion()
+        try:
+            outcome = started.poll_completion()
+        except _SubprocessTransportOwnershipPending:
+            started.kill()
+            cleanup = started.cleanup()
+            if cleanup.disposition != "complete":
+                return SubprocessTransportError(
+                    error_kind="invocation_failed",
+                    diagnostics="owned subprocess cleanup was incomplete",
+                )
+            outcome = started.poll_completion()
         if outcome is None:
             return SubprocessTransportError(
                 error_kind="invocation_failed",
@@ -185,6 +199,11 @@ class SubprocessTransport:
             raise TypeError("request must be SubprocessTransportRequest")
         if request.pre_cancelled:
             return SubprocessTransportError(error_kind="cancelled")
+        if not _supports_process_group_ownership():
+            return SubprocessTransportError(
+                error_kind="invocation_failed",
+                diagnostics="process-group ownership is unavailable",
+            )
         if len(request.stdin_bytes) > request.max_stdin_bytes:
             return SubprocessTransportError(error_kind="input_too_large")
         if not request.cwd.is_absolute() or not request.cwd.is_dir():
@@ -300,6 +319,10 @@ class SubprocessTransportHandle:
         if self._outcome is None:
             if self.process.poll() is None:
                 return None
+            if self._process_group_exists():
+                raise _SubprocessTransportOwnershipPending(
+                    "owned process group remains after leader exit"
+                )
             self._join_workers()
             self._outcome = self._completed_outcome()
         self._delivered = True
@@ -505,6 +528,10 @@ def _process_start_marker(pid: int) -> str | None:
         return None
     marker = result.stdout.strip()
     return marker or None
+
+
+def _supports_process_group_ownership() -> bool:
+    return os.name == "posix" and hasattr(os, "killpg") and hasattr(os, "getpgid")
 
 
 def _pid_exists(pid: int) -> bool:

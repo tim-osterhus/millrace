@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
@@ -840,9 +841,14 @@ def _effective_invocation_timeout_seconds(
     adapter = effective_config.adapters.get(selected_kind)
     config = _adapter_config(adapter)
     local = getattr(config, "timeout_seconds", None)
-    if not isinstance(local, (int, float)):
+    if local is None:
         return selected
-    return min(selected, float(local))
+    if type(local) not in {int, float}:
+        raise TypeError("adapter timeout_seconds must be a number")
+    local_value = float(local)
+    if local_value <= 0 or not isfinite(local_value):
+        raise ValueError("adapter timeout_seconds must be finite and positive")
+    return min(selected, local_value)
 
 
 def _codex_adapter_config(adapter: CodexAdapter) -> CodexAdapterConfig | None:

@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from hashlib import sha256
+from math import isfinite
 from typing import cast
 from uuid import uuid4
 
@@ -31,7 +32,6 @@ from millrace.adapters.runner_contract import (
     runner_cancellation_diagnostic_digest,
     runner_evidence_from_adapter_outcome,
     start_refusal_diagnostic_bytes,
-    start_refusal_diagnostic_digest,
 )
 from millrace.contracts.runner import (
     RunnerDispatchEnvelope,
@@ -63,6 +63,7 @@ from millrace.operator.dispatch import (
     DispatchProjectionError,
     build_dispatch_envelope_for_run,
 )
+from millrace.substrate.errors import StorageIntegrityError
 
 _COMMAND = "run.session"
 _POLL_INTERVAL_SECONDS = 0.01
@@ -99,6 +100,16 @@ def execute_runner_session(
 ) -> SessionExecutionResult:
     """Start or replay one durable session attempt for the current run."""
 
+    if effective_timeout_seconds is not None:
+        if type(effective_timeout_seconds) not in {int, float}:
+            raise TypeError("effective_timeout_seconds must be a number")
+        if (
+            effective_timeout_seconds <= 0
+            or not isfinite(float(effective_timeout_seconds))
+        ):
+            raise ValueError(
+                "effective_timeout_seconds must be finite and positive"
+            )
     state = _load(runtime)
     run = state.runs.get(run_ref.run_id)
     if run is None or run.run_ref != run_ref:
@@ -361,13 +372,13 @@ def _start_created_session(
             )
             return SessionExecutionResult("session_reconciliation_required")
         try:
-            diagnostic_bytes = start_refusal_diagnostic_bytes(
-                start_outcome.adapter_error
-            )
-            declared_digest = start_refusal_diagnostic_digest(
-                start_outcome.adapter_error
+            diagnostic_bytes = _adapter_error_diagnostic_bytes(
+                start_outcome.adapter_error,
+                request=request,
             )
         except (TypeError, ValueError):
+            diagnostic_bytes = None
+        if diagnostic_bytes is None:
             _audit_session_refusal(
                 runtime,
                 run_ref=run_ref,
@@ -377,6 +388,7 @@ def _start_created_session(
                 signal_digest=_signal_digest(start_outcome),
             )
             return SessionExecutionResult("session_reconciliation_required")
+        declared_digest = f"sha256:{sha256(diagnostic_bytes).hexdigest()}"
         if declared_digest != start_outcome.diagnostic_digest:
             _audit_session_refusal(
                 runtime,
@@ -459,9 +471,24 @@ def _start_created_session(
         occurred_at=running_at,
         durable_locator_digest=locator_digest,
     )
-    running_state = _persist_transition(runtime, running)
+    try:
+        running_state = _persist_transition(runtime, running)
+    except Exception:
+        return _recover_after_running_persistence_failure(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            handle=start_outcome.handle,
+        )
     if running_state is None:
-        return SessionExecutionResult("session_reconciliation_required")
+        return _recover_after_running_persistence_failure(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            handle=start_outcome.handle,
+        )
     running_session = running_state.runner_sessions[session.session_id]
     cancellation_started = False
     while True:
@@ -567,7 +594,74 @@ def _start_created_session(
         _sleep(min(_POLL_INTERVAL_SECONDS, remaining))
 
 
+def _recover_after_running_persistence_failure(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    request: AdapterInvocationRequest,
+    handle: RunnerSessionHandle,
+) -> SessionExecutionResult:
+    request_id = f"runtime:runner-session-failure:{session.session_id}"
+    try:
+        _request_cancellation(
+            runtime,
+            run_id=run_ref.run_id,
+            request_id=request_id,
+            reason="runtime_failure",
+            source_kind="runtime",
+            actor_id="runtime",
+        )
+        state = _load(runtime)
+        current = state.runner_sessions[session.session_id]
+        primary = _primary_cancellation(state, current)
+        if primary is not None:
+            return _cancel_running_session(
+                runtime,
+                run_ref=run_ref,
+                session=current,
+                request=request,
+                handle=handle,
+                primary=primary,
+            )
+    except Exception:
+        pass
+    _call_cancellation_operation("cooperative_cancel", handle.request_cancel)
+    _call_cancellation_operation("terminate", handle.terminate)
+    _call_cancellation_operation("kill", handle.kill)
+    _call_cleanup(handle.cleanup)
+    return SessionExecutionResult("session_reconciliation_required")
+
+
 def _request_cancellation(
+    runtime: OpenRuntimeContext,
+    *,
+    run_id: str,
+    request_id: str,
+    reason: str,
+    source_kind: str,
+    actor_id: str,
+) -> SessionCancellationRequestResult:
+    for attempt in range(3):
+        try:
+            return _request_cancellation_once(
+                runtime,
+                run_id=run_id,
+                request_id=request_id,
+                reason=reason,
+                source_kind=source_kind,
+                actor_id=actor_id,
+            )
+        except StorageIntegrityError as exc:
+            if (
+                not str(exc).startswith("stale runtime state ")
+                or attempt == 2
+            ):
+                raise
+    raise AssertionError("bounded cancellation retry exhausted")
+
+
+def _request_cancellation_once(
     runtime: OpenRuntimeContext,
     *,
     run_id: str,
@@ -840,23 +934,36 @@ def _cancel_running_session(
                 primary=primary,
             )
         if isinstance(outcome, AdapterErrorResult):
-            diagnostic_digest = runtime.cas_store.put_bytes(
-                start_refusal_diagnostic_bytes(outcome)
+            diagnostic_bytes = _adapter_error_diagnostic_bytes(
+                outcome,
+                request=request,
             )
-            return _persist_adapter_error(
-                runtime,
-                run_ref=run_ref,
-                session=session,
-                outcome=outcome,
-                diagnostic_digest=diagnostic_digest,
-                cleanup_disposition=cleanup.disposition,
-                terminal_state=(
-                    "interrupted"
-                    if outcome.error_kind == "cancelled"
-                    else "failed"
-                ),
-                primary=primary,
-            )
+            if diagnostic_bytes is None:
+                _audit_session_refusal(
+                    runtime,
+                    run_ref=run_ref,
+                    session=session,
+                    reason="runner_session_reconciliation_contradiction",
+                    signal_kind="runner_completion_outcome",
+                    signal_digest=_signal_digest(outcome),
+                )
+                outcome = None
+            else:
+                diagnostic_digest = runtime.cas_store.put_bytes(diagnostic_bytes)
+                return _persist_adapter_error(
+                    runtime,
+                    run_ref=run_ref,
+                    session=session,
+                    outcome=outcome,
+                    diagnostic_digest=diagnostic_digest,
+                    cleanup_disposition=cleanup.disposition,
+                    terminal_state=(
+                        "interrupted"
+                        if outcome.error_kind == "cancelled"
+                        else "failed"
+                    ),
+                    primary=primary,
+                )
     terminal_state = (
         "interrupted"
         if cleanup.disposition in {"not_required", "complete"}
@@ -1150,9 +1257,21 @@ def _persist_completion(
         )
         return SessionExecutionResult("session_reconciliation_required")
     if isinstance(outcome, AdapterErrorResult):
-        diagnostic_digest = runtime.cas_store.put_bytes(
-            start_refusal_diagnostic_bytes(outcome)
+        diagnostic_bytes = _adapter_error_diagnostic_bytes(
+            outcome,
+            request=request,
         )
+        if diagnostic_bytes is None:
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                reason="runner_session_reconciliation_contradiction",
+                signal_kind="runner_completion_outcome",
+                signal_digest=_signal_digest(outcome),
+            )
+            return SessionExecutionResult("session_reconciliation_required")
+        diagnostic_digest = runtime.cas_store.put_bytes(diagnostic_bytes)
         return _persist_adapter_error(
             runtime,
             run_ref=run_ref,
@@ -1587,6 +1706,26 @@ def _bounded_session_diagnostic_bytes(
             "observed_bytes": len(payload),
             "truncated": True,
         }
+    )
+
+
+def _adapter_error_diagnostic_bytes(
+    outcome: AdapterErrorResult,
+    *,
+    request: AdapterInvocationRequest,
+) -> bytes | None:
+    if outcome.redaction_policy_id != request.redaction_policy.policy_id:
+        return None
+    try:
+        redacted = request.redaction_policy.redact_authority_value(
+            outcome.diagnostics
+        )
+    except Exception:
+        redacted = {"redaction_failed": True}
+    if not isinstance(redacted, Mapping):
+        return None
+    return start_refusal_diagnostic_bytes(
+        replace(outcome, diagnostics=redacted)
     )
 
 

@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from cli.test_cli_bounded_execution_unit import (
     _codex_error_config,
     _codex_success_config,
+    _codex_success_wrapper,
     _codex_timeout_config,
     _load,
     _ready_state,
@@ -38,7 +44,10 @@ from millrace.adapters.runner_contract import (
     start_refusal_diagnostic_digest,
 )
 from millrace.contracts.runner import runner_result_evidence_from_payload
-from millrace.contracts.transition import RunnerResultObserved
+from millrace.contracts.transition import (
+    RequestRunnerSessionCancellation,
+    RunnerResultObserved,
+)
 from millrace.operator.prompt_material import SelectedAssetMaterializationError
 
 
@@ -748,11 +757,35 @@ def test_local_timeout_narrows_selected_deadline_and_requests_cancellation(
     )
 
 
+@pytest.mark.parametrize(
+    "timeout",
+    (True, 0, -1, float("inf"), float("nan"), "5"),
+)
+def test_generic_local_timeout_must_be_finite_positive(tmp_path, timeout) -> None:
+    adapter = _RecordingAdapter(_success_start)
+    adapter.config = SimpleNamespace(timeout_seconds=timeout)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+
+    assert result.code == "adapter_failure"
+    assert adapter.requests == []
+
+
 def test_start_succeeds_but_running_write_fails_cannot_permit_another_start(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    adapter = _RecordingAdapter(_success_start)
+    runtime = None
+    handle = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _CancellingHandle(runtime, request)
+        return replace(_success_start(request), handle=handle)
+
+    adapter = _RecordingAdapter(start)
     state, _ = _ready_state()
     runtime = _runtime(tmp_path, state)
     persist = runtime.store.persist_runtime_state
@@ -766,20 +799,346 @@ def test_start_succeeds_but_running_write_fails_cannot_permit_another_start(
         persist(candidate, cas_store)
 
     monkeypatch.setattr(runtime.store, "persist_runtime_state", fail_running)
-    with pytest.raises(RuntimeError, match="running write crash"):
-        run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
     monkeypatch.setattr(runtime.store, "persist_runtime_state", persist)
 
-    retry = run_bounded_execution_unit(
-        runtime,
-        activation_id="activation-taskmaster",
-        local_config=_config(adapter),
-    )
     after = _load(runtime)
 
-    assert retry.code == "session_reconciliation_required"
+    assert result.adapter_error_kind == "cancelled"
     assert len(adapter.requests) == 1
-    assert next(iter(after.runner_sessions.values())).state == "starting"
+    assert handle is not None
+    assert handle.operations == ["cooperative_cancel", "transport_cleanup"]
+    assert next(iter(after.runner_sessions.values())).state == "interrupted"
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+def test_running_write_failure_cleans_real_subprocess(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+    heartbeat = tmp_path / "running-write-failure.txt"
+    process_pid = tmp_path / "running-write-failure.pid"
+    wrapper = (
+        "import os,pathlib,time\n"
+        f"heartbeat=pathlib.Path({str(heartbeat)!r})\n"
+        f"pathlib.Path({str(process_pid)!r}).write_text(str(os.getpid()))\n"
+        "while True:\n"
+        " heartbeat.write_text(str(time.time()))\n"
+        " time.sleep(0.03)\n"
+    )
+    adapter = CodexAdapter(
+        CodexAdapterConfig(
+            adapter_id="codex-default",
+            wrapper_mode="offline_fake",
+            wrapper_argv=(sys.executable, "-c", wrapper),
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=5,
+            max_input_bundle_bytes=16384,
+            max_stdout_bytes=8192,
+            max_stderr_diagnostic_bytes=512,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    persist = runtime.store.persist_runtime_state
+
+    def fail_running(candidate, cas_store) -> None:
+        if any(
+            session.state == "running"
+            for session in candidate.runner_sessions.values()
+        ):
+            raise RuntimeError("simulated running write crash")
+        persist(candidate, cas_store)
+
+    monkeypatch.setattr(runtime.store, "persist_runtime_state", fail_running)
+    try:
+        result = run_bounded_execution_unit(
+            runtime,
+            local_config=AdapterLocalConfig(adapters={"codex": adapter}),
+        )
+        after = _load(runtime)
+
+        assert result.adapter_error_kind == "cancelled"
+        cancellation = next(
+            iter(after.runner_session_cancellation_requests.values())
+        )
+        assert cancellation.reason == "runtime_failure"
+        session = next(iter(after.runner_sessions.values()))
+        assert (session.state, session.cleanup_disposition) == (
+            "interrupted",
+            "complete",
+        )
+        stable = heartbeat.read_text()
+        time.sleep(0.15)
+        assert heartbeat.read_text() == stable
+    finally:
+        if process_pid.exists():
+            try:
+                os.kill(int(process_pid.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_raw_adapter_error_diagnostic_is_coordinator_redacted(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import run
+
+    secret = "RAW_ADAPTER_SECRET"
+    original = run._session_invocation_request
+    monkeypatch.setattr(
+        run,
+        "_session_invocation_request",
+        lambda *args, **kwargs: replace(
+            original(*args, **kwargs),
+            redaction_policy=RedactionPolicy("redact-default", (secret,)),
+        ),
+    )
+
+    def raw_error(request: AdapterInvocationRequest) -> StartedSession:
+        outcome = AdapterErrorResult(
+            adapter_id=request.adapter_id,
+            error_kind="invocation_failed",
+            redaction_policy_id=request.redaction_policy.policy_id,
+            dispatch_echo=DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            diagnostics={"secret": secret, "blob": "x" * 20_000},
+        )
+        return replace(_success_start(request), handle=_ImmediateHandle(outcome))
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(raw_error)),
+    )
+
+    assert result.adapter_error_kind == "invocation_failed"
+    cas_payloads = tuple(
+        path.read_bytes()
+        for path in runtime.paths.cas_path.rglob("*")
+        if path.is_file()
+    )
+    assert cas_payloads
+    assert all(secret.encode() not in payload for payload in cas_payloads)
+    completion = next(iter(_load(runtime).runner_session_completions.values()))
+    diagnostic = runtime.cas_store.get_bytes(completion.diagnostic_digest)
+    assert len(diagnostic) <= START_REFUSAL_DIAGNOSTIC_MAX_BYTES
+    assert json.loads(diagnostic)["diagnostics"]["truncated"] is True
+
+
+def test_adapter_error_redaction_failure_persists_only_safe_diagnostic(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "REDACTION_FAILURE_SECRET"
+
+    class FailingRedactionHandle(_ImmediateHandle):
+        def poll_completion(self):
+            monkeypatch.setattr(
+                RedactionPolicy,
+                "redact_authority_value",
+                lambda _self, _value: (_ for _ in ()).throw(
+                    RuntimeError("redaction failed")
+                ),
+            )
+            return super().poll_completion()
+
+    def raw_error(request: AdapterInvocationRequest) -> StartedSession:
+        outcome = AdapterErrorResult(
+            adapter_id=request.adapter_id,
+            error_kind="invocation_failed",
+            redaction_policy_id=request.redaction_policy.policy_id,
+            dispatch_echo=DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            diagnostics={"secret": secret},
+        )
+        return replace(
+            _success_start(request),
+            handle=FailingRedactionHandle(outcome),
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(raw_error)),
+    )
+    completion = next(iter(_load(runtime).runner_session_completions.values()))
+    diagnostic = runtime.cas_store.get_bytes(completion.diagnostic_digest)
+
+    assert result.adapter_error_kind == "invocation_failed"
+    assert secret.encode() not in diagnostic
+    assert json.loads(diagnostic)["diagnostics"]["redaction_failed"] is True
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+def test_coordinator_cleans_child_group_before_normal_completion(tmp_path) -> None:
+    from millrace.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+    heartbeat = tmp_path / "coordinator-child.txt"
+    child_pid = tmp_path / "coordinator-child.pid"
+    child = (
+        "import pathlib,time\n"
+        f"path=pathlib.Path({str(heartbeat)!r})\n"
+        "while True:\n"
+        " path.write_text(str(time.time()))\n"
+        " time.sleep(0.03)\n"
+    )
+    wrapper = (
+        "import pathlib,subprocess,sys,time\n"
+        f"child_process=subprocess.Popen([sys.executable,'-c',{child!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL)\n"
+        f"pathlib.Path({str(child_pid)!r}).write_text(str(child_process.pid))\n"
+        "time.sleep(0.1)\n"
+        + _codex_success_wrapper("TASK_COMPLETE")
+    )
+    adapter = CodexAdapter(
+        CodexAdapterConfig(
+            adapter_id="codex-default",
+            wrapper_mode="offline_fake",
+            wrapper_argv=(sys.executable, "-c", wrapper),
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=5,
+            max_input_bundle_bytes=16384,
+            max_stdout_bytes=8192,
+            max_stderr_diagnostic_bytes=512,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    try:
+        result = run_bounded_execution_unit(
+            runtime,
+            local_config=AdapterLocalConfig(adapters={"codex": adapter}),
+        )
+        after = _load(runtime)
+
+        assert result.code == "observation_accepted"
+        cancellation = next(
+            iter(after.runner_session_cancellation_requests.values())
+        )
+        assert (cancellation.reason, cancellation.source_kind) == (
+            "runtime_failure",
+            "runtime",
+        )
+        completion = next(iter(after.runner_session_completions.values()))
+        assert (completion.terminal_state, completion.cleanup_disposition) == (
+            "completed",
+            "complete",
+        )
+        stable = heartbeat.read_text()
+        time.sleep(0.15)
+        assert heartbeat.read_text() == stable
+    finally:
+        if child_pid.exists():
+            try:
+                os.kill(int(child_pid.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_raw_start_refusal_secret_is_not_persisted(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import run
+
+    secret = "RAW_START_REFUSAL_SECRET"
+    original = run._session_invocation_request
+    monkeypatch.setattr(
+        run,
+        "_session_invocation_request",
+        lambda *args, **kwargs: replace(
+            original(*args, **kwargs),
+            redaction_policy=RedactionPolicy("redact-default", (secret,)),
+        ),
+    )
+
+    def raw_refusal(
+        request: AdapterInvocationRequest,
+    ) -> StartRefusedBeforeExternalWork:
+        echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        )
+        error = AdapterErrorResult(
+            adapter_id=request.adapter_id,
+            error_kind="invocation_failed",
+            redaction_policy_id=request.redaction_policy.policy_id,
+            dispatch_echo=echo,
+            diagnostics={"secret": secret},
+        )
+        return StartRefusedBeforeExternalWork(
+            echo,
+            error,
+            start_refusal_diagnostic_digest(error),
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(raw_refusal)),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    assert all(
+        secret.encode() not in path.read_bytes()
+        for path in runtime.paths.cas_path.rglob("*")
+        if path.is_file()
+    )
+
+
+def test_adapter_error_policy_mismatch_is_refused_without_diagnostic_cas(
+    tmp_path,
+) -> None:
+    secret = "POLICY_MISMATCH_SECRET"
+
+    def mismatched(request: AdapterInvocationRequest) -> StartedSession:
+        outcome = AdapterErrorResult(
+            adapter_id=request.adapter_id,
+            error_kind="invocation_failed",
+            redaction_policy_id="wrong-policy",
+            dispatch_echo=DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            diagnostics={"secret": secret},
+        )
+        return replace(_success_start(request), handle=_ImmediateHandle(outcome))
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(mismatched)),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    assert all(
+        secret.encode() not in path.read_bytes()
+        for path in runtime.paths.cas_path.rglob("*")
+        if path.is_file()
+    )
 
 
 def test_completion_persists_before_workflow_application(
@@ -1134,6 +1493,113 @@ def test_secondary_cancellation_is_preserved_while_terminating(
         ("operator-cancel-1", True),
         ("operator-cancel-terminating", False),
     ]
+
+
+@pytest.mark.parametrize(
+    "request_ids",
+    (
+        ("concurrent-same", "concurrent-same"),
+        ("concurrent-first", "concurrent-second"),
+    ),
+)
+def test_concurrent_cancellation_requests_retry_stale_snapshots(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    request_ids: tuple[str, str],
+) -> None:
+    from millrace.adapters.cli.context import OpenRuntimeContext
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    def indeterminate(request: AdapterInvocationRequest) -> StartIndeterminate:
+        return StartIndeterminate(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            None,
+            "sha256:" + "a" * 64,
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    started = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(indeterminate)),
+    )
+    paths = runtime.paths
+    runtime.close()
+
+    barrier = threading.Barrier(2)
+    local = threading.local()
+    original = session_coordinator._persist_transition
+
+    def synchronize_first_request(current_runtime, transition):
+        if (
+            isinstance(transition, RequestRunnerSessionCancellation)
+            and not getattr(local, "waited", False)
+        ):
+            local.waited = True
+            barrier.wait(timeout=5)
+        return original(current_runtime, transition)
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_transition",
+        synchronize_first_request,
+    )
+    results = []
+    failures = []
+
+    def request(request_id: str) -> None:
+        worker = OpenRuntimeContext(
+            paths=paths,
+            store=SQLiteRuntimeStore.open(paths.db_path),
+            cas_store=ContentAddressedByteStore(paths.cas_path),
+        )
+        try:
+            results.append(
+                session_coordinator.request_operator_cancellation(
+                    worker,
+                    run_id=started.run_id,
+                    request_id=request_id,
+                    actor_id="operator",
+                )
+            )
+        except Exception as exc:
+            failures.append(exc)
+        finally:
+            worker.close()
+
+    threads = tuple(
+        threading.Thread(target=request, args=(request_id,))
+        for request_id in request_ids
+    )
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert failures == []
+    assert all(result.accepted for result in results)
+    reopened = OpenRuntimeContext(
+        paths=paths,
+        store=SQLiteRuntimeStore.open(paths.db_path),
+        cas_store=ContentAddressedByteStore(paths.cas_path),
+    )
+    try:
+        after = _load(reopened)
+    finally:
+        reopened.close()
+    requests = sorted(
+        after.runner_session_cancellation_requests.values(),
+        key=lambda item: item.request_order,
+    )
+    assert [request.request_order for request in requests] == list(
+        range(1, len(set(request_ids)) + 1)
+    )
+    assert sum(request.primary for request in requests) == 1
 
 
 def test_orphan_risk_cleanup_always_completes_lost(tmp_path) -> None:
@@ -1898,8 +2364,22 @@ def test_adapter_error_persists_terminal_session_without_workflow_progress(
     assert after.activation_routes == ()
 
 
-def test_prestart_refusal_cas_contains_real_redacted_diagnostic(tmp_path) -> None:
+def test_prestart_refusal_cas_contains_real_redacted_diagnostic(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import run
+
     captured_error: AdapterErrorResult | None = None
+    original = run._session_invocation_request
+    monkeypatch.setattr(
+        run,
+        "_session_invocation_request",
+        lambda *args, **kwargs: replace(
+            original(*args, **kwargs),
+            redaction_policy=RedactionPolicy("test", ("secret",)),
+        ),
+    )
 
     def refuse(request: AdapterInvocationRequest) -> StartRefusedBeforeExternalWork:
         nonlocal captured_error
@@ -1911,7 +2391,7 @@ def test_prestart_refusal_cas_contains_real_redacted_diagnostic(tmp_path) -> Non
             adapter_id=request.adapter_id,
             error_kind="selected_authority_refused",
             dispatch_echo=echo,
-            redaction_policy=RedactionPolicy("test", ("secret",)),
+            redaction_policy=request.redaction_policy,
             diagnostics={"reason": "secret is unavailable"},
         )
         return StartRefusedBeforeExternalWork(
