@@ -239,20 +239,21 @@ class MillforgeAdapter:
             if isinstance(prepared, AdapterErrorResult):
                 return _start_refusal(echo, prepared)
             invocation, adapter_provenance = prepared
+            cleanup_state = _ExecutionCleanupState()
             worker = lambda: self._execute_injected(  # noqa: E731
                 request,
                 invocation,
                 adapter_provenance,
                 self._config.facade,
+                cleanup_state,
             )
             owns_facade = False
-            owned_facade_state = None
         else:
             live_preflight = self._prepare_live_config(request, provider)
             if isinstance(live_preflight, AdapterErrorResult):
                 return _start_refusal(echo, live_preflight)
             profile, secret_ref, secret_resolver = live_preflight
-            owned_facade_state = _OwnedFacadeState()
+            cleanup_state = _ExecutionCleanupState()
             worker = lambda: self._execute_live(  # noqa: E731
                 request,
                 provider,
@@ -260,7 +261,7 @@ class MillforgeAdapter:
                 secret_ref,
                 secret_resolver,
                 cancellation,
-                owned_facade_state,
+                cleanup_state,
             )
             owns_facade = True
         try:
@@ -269,7 +270,7 @@ class MillforgeAdapter:
                 cancellation,
                 self._error(request, "invocation_failed", "worker_execution"),
                 owns_facade=owns_facade,
-                owned_facade_state=owned_facade_state,
+                cleanup_state=cleanup_state,
             )
         except Exception as exc:
             return _start_indeterminate(echo, exc)
@@ -342,6 +343,7 @@ class MillforgeAdapter:
         prepared: _PreparedInvocation,
         adapter_provenance: RunnerAdapterProvenance,
         facade: MillforgeFacade,
+        cleanup_state: _ExecutionCleanupState,
     ) -> AdapterInvocationOutcome:
         try:
             result = await asyncio.wait_for(
@@ -349,10 +351,13 @@ class MillforgeAdapter:
                 timeout=min(request.timeout_seconds, self._config.timeout_seconds),
             )
         except TimeoutError:
+            cleanup_state.mark_orphan_risk()
             return self._error(request, "timeout", "provider_timeout")
         except asyncio.CancelledError:
+            cleanup_state.mark_orphan_risk()
             return self._error(request, "cancelled", "provider_cancelled")
         except Exception:
+            cleanup_state.mark_orphan_risk()
             return self._error(request, "invocation_failed", "provider_execution")
         return _translate_result(
             request,
@@ -393,7 +398,7 @@ class MillforgeAdapter:
         secret_ref: object,
         secret_resolver: _EnvironmentSecretResolver,
         cancellation: _MutableCancellationToken,
-        owned_facade_state: _OwnedFacadeState,
+        cleanup_state: _ExecutionCleanupState,
     ) -> AdapterInvocationOutcome:
         pin = request.selected_component_pin
         if pin is None:
@@ -408,7 +413,7 @@ class MillforgeAdapter:
                 workspace_root=self._config.workspace_root,
                 timeout_seconds=self._config.timeout_seconds,
                 cancellation_resolver=_CorrelationCancellationResolver(cancellation),
-                owned_facade_state=owned_facade_state,
+                cleanup_state=cleanup_state,
             )
             try:
                 try:
@@ -464,10 +469,10 @@ class MillforgeAdapter:
                 try:
                     await _close_live_facade(facade)
                 except BaseException:
-                    owned_facade_state.close_failed()
+                    cleanup_state.mark_orphan_risk()
                     raise
                 else:
-                    owned_facade_state.close_completed()
+                    cleanup_state.mark_complete()
         except _LiveConfigError:
             return self._error(request, "invocation_failed", "local_configuration")
         except TimeoutError:
@@ -527,7 +532,7 @@ class _MillforgeSessionHandle:
         fallback_outcome: AdapterErrorResult,
         *,
         owns_facade: bool,
-        owned_facade_state: _OwnedFacadeState | None,
+        cleanup_state: _ExecutionCleanupState,
     ) -> None:
         self._lock = threading.Lock()
         self._completion: AdapterInvocationOutcome | None = None
@@ -536,7 +541,7 @@ class _MillforgeSessionHandle:
         self._cancellation = cancellation
         self._fallback_outcome = fallback_outcome
         self._owns_facade = owns_facade
-        self._owned_facade_state = owned_facade_state
+        self._cleanup_state = cleanup_state
         self._thread = threading.Thread(
             target=self._run,
             args=(worker,),
@@ -612,10 +617,8 @@ class _MillforgeSessionHandle:
         worker_live = self._thread.is_alive()
         if worker_live:
             disposition = "orphan_risk"
-        elif self._owned_facade_state is not None:
-            disposition = self._owned_facade_state.disposition
         else:
-            disposition = "not_required"
+            disposition = self._cleanup_state.disposition
         diagnostic: dict[str, AuthorityValue] = {
             "disposition": disposition,
             "worker_live": worker_live,
@@ -706,7 +709,7 @@ class _LiveConfigError(ValueError):
     pass
 
 
-class _OwnedFacadeState:
+class _ExecutionCleanupState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._disposition = "not_required"
@@ -716,17 +719,13 @@ class _OwnedFacadeState:
         with self._lock:
             return self._disposition
 
-    def acquired(self) -> None:
+    def mark_orphan_risk(self) -> None:
         with self._lock:
             self._disposition = "orphan_risk"
 
-    def close_completed(self) -> None:
+    def mark_complete(self) -> None:
         with self._lock:
             self._disposition = "complete"
-
-    def close_failed(self) -> None:
-        with self._lock:
-            self._disposition = "orphan_risk"
 
 
 class _EnvironmentSecretResolver:
@@ -867,7 +866,7 @@ async def _create_live_facade(
     workspace_root: Path,
     timeout_seconds: float,
     cancellation_resolver: _CorrelationCancellationResolver,
-    owned_facade_state: _OwnedFacadeState,
+    cleanup_state: _ExecutionCleanupState,
 ) -> MillforgeFacade:
     factory = getattr(provider, "create_millforge_base_live_runner", None)
     options_type = getattr(provider, "MillforgeBaseOptions", None)
@@ -895,22 +894,22 @@ async def _create_live_facade(
         raise
     except Exception as exc:
         raise _LiveConfigError("provider factory failed") from exc
-    owned_facade_state.acquired()
+    cleanup_state.mark_orphan_risk()
     if (
         not callable(getattr(facade, "invocation_evidence_for", None))
         or not callable(getattr(facade, "execute", None))
         or not callable(getattr(facade, "aclose", None))
     ):
         if not callable(getattr(facade, "aclose", None)):
-            owned_facade_state.close_failed()
+            cleanup_state.mark_orphan_risk()
         else:
             try:
                 await _close_live_facade(facade)
             except BaseException:
-                owned_facade_state.close_failed()
+                cleanup_state.mark_orphan_risk()
                 raise
             else:
-                owned_facade_state.close_completed()
+                cleanup_state.mark_complete()
         raise _LiveConfigError("provider facade is invalid")
     return cast(MillforgeFacade, facade)
 

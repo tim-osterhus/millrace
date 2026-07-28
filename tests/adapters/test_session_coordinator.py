@@ -1491,6 +1491,60 @@ def test_terminal_completion_with_orphan_cleanup_has_no_runner_result_meaning(
     assert after.runner_observations == {}
 
 
+def test_terminal_error_with_orphan_cleanup_blocks_same_run_retry(tmp_path) -> None:
+    class OrphanErrorHandle(_ImmediateHandle):
+        def cleanup(self) -> RunnerCleanupResult:
+            diagnostic = {"cleanup": "orphan_risk"}
+            return RunnerCleanupResult(
+                "orphan_risk",
+                0,
+                0,
+                diagnostic,
+                runner_cancellation_diagnostic_digest(diagnostic),
+            )
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
+        )
+        outcome = AdapterErrorResult.from_unredacted(
+            adapter_id=request.adapter_id,
+            error_kind="timeout",
+            dispatch_echo=echo,
+            redaction_policy=request.redaction_policy,
+        )
+        return StartedSession(
+            echo,
+            OrphanErrorHandle(outcome),
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+    orphaned = _load(runtime)
+    retry = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(_RecordingAdapter(_success_start)),
+    )
+    after = _load(runtime)
+
+    assert first.code == "runner_session_orphan_risk"
+    assert retry.code == "runner_session_orphan_risk"
+    completion = next(iter(after.runner_session_completions.values()))
+    assert completion.runner_result_evidence_digest is None
+    assert after.runner_observations == {}
+    assert after.runner_sessions == orphaned.runner_sessions
+    assert after.runs == orphaned.runs
+
+
 def test_pending_handle_is_polled_until_terminal_outcome(tmp_path) -> None:
     handle: _SequenceHandle | None = None
 

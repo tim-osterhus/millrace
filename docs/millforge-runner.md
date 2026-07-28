@@ -184,11 +184,15 @@ Factory-created facades receive a cooperative cancellation token and are
 closed by Millrace exactly once when their worker ends. Millrace does not
 invent terminate or kill support that the public facade does not expose.
 Injected facades remain owned by their caller, so Millrace neither closes nor
-claims cooperative cancellation control over them. A worker or owned close
-that remains unresolved is reported as session orphan risk rather than clean
-completion. Restart reconciliation is unsupported for these in-process
-workers; a restart therefore fails closed through the generic lost/orphan
-safety path.
+claims cooperative cancellation control over them. Local worker-thread exit
+alone does not prove external cleanup: if an injected facade times out, is
+cancelled, or raises after execution begins, the session reports orphan risk
+because residual provider work may remain. A normally returned facade result
+proves the call ended and needs no caller-owned facade cleanup. A worker or
+owned close that remains unresolved is likewise reported as orphan risk rather
+than clean completion. Restart reconciliation is unsupported for these
+in-process workers; a restart therefore fails closed through the generic
+lost/orphan safety path.
 
 Millforge output is candidate execution evidence. Millrace validates it
 against the admitted plan and remains responsible for accepted routing, legal

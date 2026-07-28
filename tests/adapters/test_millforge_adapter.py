@@ -2319,6 +2319,95 @@ def test_millforge_worker_translates_execute_exceptions(
     assert facade.close_calls == 0
 
 
+def test_injected_timeout_after_residual_work_reports_orphan_risk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterErrorResult, StartedSession
+
+    residual_work_started = threading.Event()
+
+    class ResidualTimeoutFacade(_FakeFacade):
+        async def execute(self, request: _PublicRecord) -> _PublicRecord:
+            self.calls += 1
+            residual_work_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    facade = ResidualTimeoutFacade()
+    started = _adapter(
+        monkeypatch,
+        tmp_path,
+        facade,
+        timeout_seconds=0.01,
+    ).start_session(_request())
+    assert isinstance(started, StartedSession)
+    deadline = time.monotonic() + 2
+    outcome = None
+    while outcome is None and time.monotonic() < deadline:
+        outcome = started.handle.poll_completion()
+        time.sleep(0.001)
+
+    assert residual_work_started.is_set()
+    assert isinstance(outcome, AdapterErrorResult)
+    assert outcome.error_kind == "timeout"
+    assert started.handle.cleanup().disposition == "orphan_risk"
+    assert facade.close_calls == 0
+
+
+def test_injected_exception_after_residual_work_reports_orphan_risk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterErrorResult, StartedSession
+
+    residual_work_started = threading.Event()
+
+    class ResidualExceptionFacade(_FakeFacade):
+        async def execute(self, request: _PublicRecord) -> _PublicRecord:
+            self.calls += 1
+            residual_work_started.set()
+            raise RuntimeError("external request failed after dispatch")
+
+    facade = ResidualExceptionFacade()
+    started = _adapter(monkeypatch, tmp_path, facade).start_session(_request())
+    assert isinstance(started, StartedSession)
+    deadline = time.monotonic() + 2
+    outcome = None
+    while outcome is None and time.monotonic() < deadline:
+        outcome = started.handle.poll_completion()
+        time.sleep(0.001)
+
+    assert residual_work_started.is_set()
+    assert isinstance(outcome, AdapterErrorResult)
+    assert outcome.error_kind == "invocation_failed"
+    assert started.handle.cleanup().disposition == "orphan_risk"
+    assert facade.close_calls == 0
+
+
+def test_injected_returned_terminal_error_remains_not_required(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterErrorResult, StartedSession
+
+    started = _adapter(
+        monkeypatch,
+        tmp_path,
+        _FakeFacade(result_class="timed_out"),
+    ).start_session(_request())
+    assert isinstance(started, StartedSession)
+    deadline = time.monotonic() + 2
+    outcome = None
+    while outcome is None and time.monotonic() < deadline:
+        outcome = started.handle.poll_completion()
+        time.sleep(0.001)
+
+    assert isinstance(outcome, AdapterErrorResult)
+    assert outcome.error_kind == "timeout"
+    assert started.handle.cleanup().disposition == "not_required"
+
+
 def test_millforge_worker_enforces_selected_local_timeout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
