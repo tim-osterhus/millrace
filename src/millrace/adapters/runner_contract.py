@@ -6,8 +6,10 @@ decide terminal legality and they do not mutate runtime state.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from hashlib import sha256
 from math import isfinite
 from types import MappingProxyType
 from typing import ClassVar, Protocol, TypeAlias, TypeVar, cast
@@ -40,6 +42,7 @@ _ERROR_KINDS = frozenset(
     },
 )
 _RESERVED_UNSUPPORTED_ADAPTER_KINDS = frozenset({"local_subprocess"})
+START_REFUSAL_DIAGNOSTIC_MAX_BYTES = 16 * 1024
 T = TypeVar("T")
 
 
@@ -587,6 +590,35 @@ class AdapterErrorResult:
         )
 
 
+def start_refusal_diagnostic_bytes(outcome: AdapterErrorResult) -> bytes:
+    if not isinstance(outcome, AdapterErrorResult):
+        raise TypeError("outcome must be AdapterErrorResult")
+    payload = _canonical_json_bytes(
+        {
+            "diagnostics": _plain_authority_value(outcome.diagnostics),
+            "error_kind": outcome.error_kind,
+        }
+    )
+    if len(payload) <= START_REFUSAL_DIAGNOSTIC_MAX_BYTES:
+        return payload
+    return _canonical_json_bytes(
+        {
+            "diagnostics": {
+                "full_diagnostic_digest": (
+                    f"sha256:{sha256(payload).hexdigest()}"
+                ),
+                "observed_bytes": len(payload),
+                "truncated": True,
+            },
+            "error_kind": outcome.error_kind,
+        }
+    )
+
+
+def start_refusal_diagnostic_digest(outcome: AdapterErrorResult) -> str:
+    return f"sha256:{sha256(start_refusal_diagnostic_bytes(outcome)).hexdigest()}"
+
+
 AdapterInvocationOutcome: TypeAlias = AdapterSuccessResult | AdapterErrorResult
 
 
@@ -624,6 +656,12 @@ class StartRefusedBeforeExternalWork:
         if not isinstance(self.adapter_error, AdapterErrorResult):
             raise TypeError("adapter_error must be AdapterErrorResult")
         _require_sha256_digest(self.diagnostic_digest, "diagnostic_digest")
+        if self.diagnostic_digest != start_refusal_diagnostic_digest(
+            self.adapter_error
+        ):
+            raise ValueError(
+                "diagnostic_digest must match the bounded adapter error diagnostic"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1100,6 +1138,27 @@ def _require_timestamps(started_at: object, completed_at: object) -> None:
         raise ValueError("operation timestamps must be durable and monotonic")
 
 
+def _plain_authority_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _plain_authority_value(nested)
+            for key, nested in value.items()
+        }
+    if isinstance(value, tuple):
+        return [_plain_authority_value(item) for item in value]
+    return value
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def _require_positive_number(value: object, field_name: str) -> float:
     if type(value) not in {int, float}:
         raise TypeError(f"{field_name} must be a number")
@@ -1112,6 +1171,7 @@ def _require_positive_number(value: object, field_name: str) -> float:
 
 
 __all__ = (
+    "START_REFUSAL_DIAGNOSTIC_MAX_BYTES",
     "AdapterEvidenceConversionError",
     "AdapterErrorResult",
     "AdapterInvocationOutcome",
@@ -1139,4 +1199,6 @@ __all__ = (
     "canonicalize_redaction_policy",
     "resolve_adapter",
     "runner_evidence_from_adapter_outcome",
+    "start_refusal_diagnostic_bytes",
+    "start_refusal_diagnostic_digest",
 )

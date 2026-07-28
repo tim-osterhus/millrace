@@ -487,6 +487,7 @@ __all__ = (
     "is_legal_runner_session_transition",
     "runner_session_for_advance",
     "runner_session_for_creation",
+    "session_authority_refusal",
     "session_for_cancellation_request",
     "session_for_completion",
 )

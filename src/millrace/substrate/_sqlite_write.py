@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
+from millrace.contracts.runner import runner_session_locator_from_bytes
 from millrace.contracts.state import RuntimeState
 from millrace.substrate._sqlite_relations import (
     runner_session_cas_references,
@@ -424,11 +425,18 @@ def _validate_runner_session_cas_references(
 ) -> None:
     for reference_name, digest in runner_session_cas_references(state):
         try:
-            cas_store.get_bytes(digest)
+            payload = cas_store.get_bytes(digest)
         except SubstrateError as exc:
             raise StorageIntegrityError(
                 f"runner session {reference_name} CAS reference is invalid: {digest}"
             ) from exc
+        if reference_name == "locator":
+            try:
+                runner_session_locator_from_bytes(payload)
+            except (TypeError, ValueError) as exc:
+                raise StorageIntegrityError(
+                    f"runner session locator CAS reference is invalid: {digest}"
+                ) from exc
 
 
 def _validate_runner_session_evidence_authority(

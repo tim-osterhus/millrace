@@ -123,6 +123,27 @@ def _require_boolean(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be a boolean")
 
 
+_RUNNER_SESSION_SIGNAL_KINDS = frozenset(
+    {
+        "runner_request",
+        "runner_dispatch_echo",
+        "runner_start_outcome",
+        "runner_session_locator",
+        "runner_completion_poll",
+        "runner_completion_outcome",
+        "runner_result_evidence",
+        "runner_session_deadline",
+        "runner_start_diagnostic",
+    }
+)
+_RUNNER_SESSION_SIGNAL_REFUSAL_REASONS = frozenset(
+    {
+        "runner_session_authority_mismatch",
+        "runner_session_reconciliation_contradiction",
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class TransitionInput:
     input_kind: ClassVar[str] = "transition_input"
@@ -265,6 +286,38 @@ class AdvanceRunnerSession(KernelCommand):
                 "durable_locator_digest",
                 self.durable_locator_digest,
             )
+
+
+@dataclass(frozen=True, slots=True)
+class RefuseRunnerSessionSignal(KernelCommand):
+    input_kind: ClassVar[str] = "workflow.refuse_runner_session_signal"
+
+    run_ref: RunRef
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    expected_state: str
+    signal_kind: str
+    reason: str
+    signal_digest: str
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in (
+            "session_id",
+            "session_fencing_token",
+            "expected_state",
+        ):
+            _require_runner_session_text(field_name, getattr(self, field_name))
+        _require_durable_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        if self.signal_kind not in _RUNNER_SESSION_SIGNAL_KINDS:
+            raise ValueError("unsupported runner session signal kind")
+        if self.reason not in _RUNNER_SESSION_SIGNAL_REFUSAL_REASONS:
+            raise ValueError("unsupported runner session signal refusal reason")
+        _require_runner_session_digest("signal_digest", self.signal_digest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1253,6 +1306,18 @@ def _transition_input_payload(
             "occurred_at": transition_input.occurred_at,
             "durable_locator_digest": transition_input.durable_locator_digest,
         }
+    if isinstance(transition_input, RefuseRunnerSessionSignal):
+        return {
+            "input_kind": input_kind(transition_input),
+            "run_ref": transition_input.run_ref,
+            "session_id": transition_input.session_id,
+            "dispatch_generation": transition_input.dispatch_generation,
+            "session_fencing_token": transition_input.session_fencing_token,
+            "expected_state": transition_input.expected_state,
+            "signal_kind": transition_input.signal_kind,
+            "reason": transition_input.reason,
+            "signal_digest": transition_input.signal_digest,
+        }
     if isinstance(transition_input, RequestRunnerSessionCancellation):
         return {
             "input_kind": input_kind(transition_input),
@@ -1497,6 +1562,7 @@ __all__ = (
     "RecordRunnerSessionCancellationAttemptRecord",
     "RecordRunnerSessionCompletion",
     "RecordRunnerSessionCompletionRecord",
+    "RefuseRunnerSessionSignal",
     "RecordTransition",
     "RecordWorkDependency",
     "RouteActivation",

@@ -127,6 +127,7 @@ from millrace.contracts.transition import (
     RecordRunnerSessionCompletionRecord,
     RecordTransition,
     RecordWorkDependency,
+    RefuseRunnerSessionSignal,
     RequestRunnerSessionCancellation,
     RouteActivation,
     RunnerResultObserved,
@@ -194,6 +195,7 @@ from millrace.kernel.runner_sessions import (
     create_runner_session_refusal,
     runner_session_for_advance,
     runner_session_for_creation,
+    session_authority_refusal,
     session_for_cancellation_request,
     session_for_completion,
 )
@@ -346,6 +348,21 @@ def decide(
                     expected_session_state=transition_input.expected_state,
                 ),
             ),
+        )
+    if isinstance(transition_input, RefuseRunnerSessionSignal):
+        refusal = session_authority_refusal(
+            state,
+            run_ref=transition_input.run_ref,
+            session_id=transition_input.session_id,
+            dispatch_generation=transition_input.dispatch_generation,
+            session_fencing_token=transition_input.session_fencing_token,
+            expected_state=transition_input.expected_state,
+        )
+        return _runner_session_refused_decision(
+            transition_input,
+            context,
+            digest,
+            refusal or transition_input.reason,
         )
     if isinstance(transition_input, RequestRunnerSessionCancellation):
         refusal = cancellation_request_refusal(state, transition_input)

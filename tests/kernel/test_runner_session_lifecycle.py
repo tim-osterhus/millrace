@@ -18,6 +18,7 @@ from millrace.contracts.transition import (
     CreateRunnerSession,
     RecordRunnerSessionCancellationAttempt,
     RecordRunnerSessionCompletion,
+    RefuseRunnerSessionSignal,
     RequestRunnerSessionCancellation,
 )
 from millrace.kernel import StateConcurrencyError, apply, decide
@@ -214,6 +215,98 @@ def test_session_creation_does_not_persist_a_prestart_locator() -> None:
     created = apply(state, decision).runner_sessions["session-1"]
 
     assert created.durable_locator_digest is None
+
+
+def test_runner_session_signal_refusal_is_truthful_replay_safe_and_distinct() -> None:
+    state = _claimed_state()
+    run_ref = state.runs["run-taskmaster"].run_ref
+    state = apply(
+        state,
+        decide(
+            state,
+            CreateRunnerSession(
+                "create-session",
+                run_ref=run_ref,
+                session_id="session-1",
+                session_fencing_token="session-fence-1",
+                created_at=100,
+                explicit_retry_intent=False,
+            ),
+            deterministic_context(transition_id="transition-create-session"),
+        ),
+    )
+
+    def signal(input_id: str, digest_char: str) -> RefuseRunnerSessionSignal:
+        return RefuseRunnerSessionSignal(
+            input_id,
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="created",
+            signal_kind="runner_completion_outcome",
+            reason="runner_session_reconciliation_contradiction",
+            signal_digest="sha256:" + digest_char * 64,
+        )
+
+    first = signal("signal-session-1-completion-a", "a")
+    first_decision = decide(
+        state,
+        first,
+        deterministic_context(transition_id="transition-signal-a"),
+    )
+    assert first_decision.accepted is False
+    assert first_decision.refusal is not None
+    assert (
+        first_decision.refusal.reason
+        == "runner_session_reconciliation_contradiction"
+    )
+    assert first_decision.input_kind == "workflow.refuse_runner_session_signal"
+    after_first = apply(state, first_decision)
+    assert after_first.runner_sessions == state.runner_sessions
+
+    replay = decide(
+        after_first,
+        first,
+        deterministic_context(transition_id="transition-signal-a-replay"),
+    )
+    assert replay.receipt_ref == first_decision.receipt_ref
+    assert replay.mutations == ()
+    assert apply(after_first, replay) == after_first
+
+    second = signal("signal-session-1-completion-b", "b")
+    second_decision = decide(
+        after_first,
+        second,
+        deterministic_context(transition_id="transition-signal-b"),
+    )
+    assert second_decision.disposition == "refused"
+    after_second = apply(after_first, second_decision)
+    assert len(after_second.refusals) == len(after_first.refusals) + 1
+
+
+def test_runner_session_signal_refusal_validates_current_authority() -> None:
+    state = _claimed_state()
+    run_ref = state.runs["run-taskmaster"].run_ref
+    decision = decide(
+        state,
+        RefuseRunnerSessionSignal(
+            "stale-signal",
+            run_ref=run_ref,
+            session_id="missing-session",
+            dispatch_generation=1,
+            session_fencing_token="missing-fence",
+            expected_state="running",
+            signal_kind="runner_dispatch_echo",
+            reason="runner_session_authority_mismatch",
+            signal_digest="sha256:" + "a" * 64,
+        ),
+        deterministic_context(transition_id="transition-stale-signal"),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "stale_runner_session"
 
 
 def test_explicit_retry_keeps_runref_and_advances_session_generation(

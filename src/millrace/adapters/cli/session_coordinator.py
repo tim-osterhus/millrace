@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
+from hashlib import sha256
 from typing import cast
 from uuid import uuid4
 
@@ -24,14 +25,16 @@ from millrace.adapters.runner_contract import (
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
     runner_evidence_from_adapter_outcome,
+    start_refusal_diagnostic_bytes,
+    start_refusal_diagnostic_digest,
 )
-from millrace.contracts.compiled_plan import AuthorityValue
 from millrace.contracts.runner import (
     RunnerDispatchEnvelope,
     RunnerResultEvidence,
     runner_result_evidence_bytes,
     runner_result_evidence_digest,
     runner_result_evidence_from_payload,
+    runner_session_locator_bytes,
 )
 from millrace.contracts.state import (
     RunnerSessionCompletionRecord,
@@ -43,6 +46,7 @@ from millrace.contracts.transition import (
     AdvanceRunnerSession,
     CreateRunnerSession,
     RecordRunnerSessionCompletion,
+    RefuseRunnerSessionSignal,
     RunnerResultObserved,
     TransitionInput,
 )
@@ -53,7 +57,6 @@ from millrace.operator.dispatch import (
 )
 
 _COMMAND = "run.session"
-SESSION_LOCATOR_MAX_BYTES = 16 * 1024
 _POLL_INTERVAL_SECONDS = 0.01
 
 
@@ -172,7 +175,14 @@ def _start_created_session(
         adapter=adapter,
         request=request,
     ):
-        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_authority_mismatch",
+            signal_kind="runner_request",
+            signal_digest=_signal_digest(request),
+        )
         return SessionExecutionResult("session_reconciliation_required")
     deadline = _monotonic() + request.timeout_seconds
     try:
@@ -186,13 +196,27 @@ def _start_created_session(
                 correlation_id=request.correlation_id,
             )
         except (TypeError, ValueError):
-            _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                reason="runner_session_authority_mismatch",
+                signal_kind="runner_dispatch_echo",
+                signal_digest=_signal_digest(start_outcome.dispatch_echo),
+            )
             return SessionExecutionResult("session_reconciliation_required")
         locator = start_outcome.durable_locator_metadata
         if locator is not None:
             locator_digest = _safe_locator_digest(runtime, request, locator)
             if locator_digest is None:
-                _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+                _audit_session_refusal(
+                    runtime,
+                    run_ref=run_ref,
+                    session=session,
+                    reason="runner_session_reconciliation_contradiction",
+                    signal_kind="runner_session_locator",
+                    signal_digest=_signal_digest(locator),
+                )
                 return SessionExecutionResult("session_reconciliation_required")
             enrichment = AdvanceRunnerSession(
                 f"cli:run.session-starting-locator:{session.session_id}",
@@ -210,7 +234,14 @@ def _start_created_session(
     if isinstance(start_outcome, StartRefusedBeforeExternalWork):
         error_echo = start_outcome.adapter_error.dispatch_echo
         if error_echo is None:
-            _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                reason="runner_session_reconciliation_contradiction",
+                signal_kind="runner_start_outcome",
+                signal_digest=_signal_digest(start_outcome),
+            )
             return SessionExecutionResult("session_reconciliation_required")
         try:
             start_outcome.dispatch_echo.validate_against(
@@ -222,20 +253,70 @@ def _start_created_session(
                 correlation_id=request.correlation_id,
             )
         except (AttributeError, TypeError, ValueError):
-            _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                reason="runner_session_authority_mismatch",
+                signal_kind="runner_dispatch_echo",
+                signal_digest=_signal_digest((start_outcome.dispatch_echo, error_echo)),
+            )
+            return SessionExecutionResult("session_reconciliation_required")
+        try:
+            diagnostic_bytes = start_refusal_diagnostic_bytes(
+                start_outcome.adapter_error
+            )
+            declared_digest = start_refusal_diagnostic_digest(
+                start_outcome.adapter_error
+            )
+        except (TypeError, ValueError):
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                reason="runner_session_reconciliation_contradiction",
+                signal_kind="runner_start_diagnostic",
+                signal_digest=_signal_digest(start_outcome),
+            )
+            return SessionExecutionResult("session_reconciliation_required")
+        if declared_digest != start_outcome.diagnostic_digest:
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                reason="runner_session_reconciliation_contradiction",
+                signal_kind="runner_start_diagnostic",
+                signal_digest=_signal_digest(start_outcome),
+            )
+            return SessionExecutionResult("session_reconciliation_required")
+        stored_digest = runtime.cas_store.put_bytes(diagnostic_bytes)
+        if stored_digest != declared_digest:
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                reason="runner_session_reconciliation_contradiction",
+                signal_kind="runner_start_diagnostic",
+                signal_digest=_signal_digest((stored_digest, declared_digest)),
+            )
             return SessionExecutionResult("session_reconciliation_required")
         return _persist_adapter_error(
             runtime,
             run_ref=run_ref,
             session=session,
             outcome=start_outcome.adapter_error,
-            diagnostic_digest=runtime.cas_store.put_bytes(
-                start_outcome.diagnostic_digest.encode("utf-8")
-            ),
+            diagnostic_digest=stored_digest,
             cleanup_disposition="not_required",
         )
     if not isinstance(start_outcome, StartedSession):
-        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_reconciliation_contradiction",
+            signal_kind="runner_start_outcome",
+            signal_digest=_signal_digest(start_outcome),
+        )
         return SessionExecutionResult("session_reconciliation_required")
     try:
         start_outcome.dispatch_echo.validate_against(
@@ -243,7 +324,14 @@ def _start_created_session(
             correlation_id=request.correlation_id,
         )
     except (TypeError, ValueError):
-        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_authority_mismatch",
+            signal_kind="runner_dispatch_echo",
+            signal_digest=_signal_digest(start_outcome.dispatch_echo),
+        )
         return SessionExecutionResult("session_reconciliation_required")
 
     locator_digest = _safe_locator_digest(
@@ -252,7 +340,14 @@ def _start_created_session(
         start_outcome.durable_locator_metadata,
     )
     if locator_digest is None:
-        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_reconciliation_contradiction",
+            signal_kind="runner_session_locator",
+            signal_digest=_signal_digest(start_outcome.durable_locator_metadata),
+        )
         return SessionExecutionResult("session_reconciliation_required")
     running_at = max(_now(), cast(int, session.start_intent_at))
     running = AdvanceRunnerSession(
@@ -273,11 +368,14 @@ def _start_created_session(
     while True:
         try:
             outcome = start_outcome.handle.poll_completion()
-        except Exception:
+        except Exception as exc:
             _audit_session_refusal(
                 runtime,
                 run_ref=run_ref,
                 session=running_session,
+                reason="runner_session_reconciliation_contradiction",
+                signal_kind="runner_completion_poll",
+                signal_digest=_signal_digest(type(exc).__qualname__),
             )
             return SessionExecutionResult("session_reconciliation_required")
         if outcome is not None:
@@ -286,6 +384,9 @@ def _start_created_session(
                     runtime,
                     run_ref=run_ref,
                     session=running_session,
+                    reason="runner_session_reconciliation_contradiction",
+                    signal_kind="runner_completion_outcome",
+                    signal_digest=_signal_digest(outcome),
                 )
                 return SessionExecutionResult("session_reconciliation_required")
             return _persist_completion(
@@ -302,6 +403,9 @@ def _start_created_session(
                 runtime,
                 run_ref=run_ref,
                 session=running_session,
+                reason="runner_session_reconciliation_contradiction",
+                signal_kind="runner_session_deadline",
+                signal_digest=_signal_digest({"deadline_elapsed": True}),
             )
             return SessionExecutionResult("session_reconciliation_required")
         _sleep(min(_POLL_INTERVAL_SECONDS, remaining))
@@ -318,7 +422,14 @@ def _persist_completion(
 ) -> SessionExecutionResult:
     dispatch_echo = outcome.dispatch_echo
     if dispatch_echo is None:
-        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_reconciliation_contradiction",
+            signal_kind="runner_completion_outcome",
+            signal_digest=_signal_digest(outcome),
+        )
         return SessionExecutionResult("session_reconciliation_required")
     try:
         dispatch_echo.validate_against(
@@ -326,7 +437,14 @@ def _persist_completion(
             correlation_id=request.correlation_id,
         )
     except (TypeError, ValueError):
-        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_authority_mismatch",
+            signal_kind="runner_dispatch_echo",
+            signal_digest=_signal_digest(dispatch_echo),
+        )
         return SessionExecutionResult("session_reconciliation_required")
     if isinstance(outcome, AdapterErrorResult):
         diagnostic_digest = runtime.cas_store.put_bytes(
@@ -343,7 +461,14 @@ def _persist_completion(
     try:
         evidence = runner_evidence_from_adapter_outcome(outcome, request)
     except (TypeError, ValueError):
-        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_reconciliation_contradiction",
+            signal_kind="runner_result_evidence",
+            signal_digest=_signal_digest(outcome),
+        )
         return SessionExecutionResult("adapter_conversion_refused")
     state = _load(runtime)
     if not _evidence_matches_current_authority(
@@ -351,7 +476,14 @@ def _persist_completion(
         session=session,
         evidence=evidence,
     ):
-        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_authority_mismatch",
+            signal_kind="runner_result_evidence",
+            signal_digest=_signal_digest(evidence.payload()),
+        )
         return SessionExecutionResult("completion_refused")
     evidence_digest = runtime.cas_store.put_bytes(
         runner_result_evidence_bytes(evidence)
@@ -604,21 +736,24 @@ def _audit_session_refusal(
     *,
     run_ref: RunRef,
     session: RunnerSessionRecord,
+    reason: str,
+    signal_kind: str,
+    signal_digest: str,
 ) -> None:
     _persist_transition(
         runtime,
-        AdvanceRunnerSession(
-            f"cli:run.session-authority-refusal:{session.session_id}",
+        RefuseRunnerSessionSignal(
+            "cli:run.session-signal-refusal:"
+            f"{session.session_id}:{signal_kind}:"
+            f"{signal_digest.removeprefix('sha256:')}",
             run_ref=run_ref,
             session_id=session.session_id,
             dispatch_generation=session.dispatch_generation,
             session_fencing_token=session.session_fencing_token,
             expected_state=session.state,
-            next_state=session.state,
-            occurred_at=max(
-                _now(),
-                session.started_at or session.start_intent_at or session.created_at,
-            ),
+            signal_kind=signal_kind,
+            reason=reason,
+            signal_digest=signal_digest,
         ),
     )
 
@@ -632,10 +767,8 @@ def _safe_locator_digest(
         redacted = request.redaction_policy.redact_authority_value(locator)
         if not isinstance(redacted, Mapping):
             return None
-        payload = _canonical_json_bytes(redacted)
+        payload = runner_session_locator_bytes(redacted)
     except (TypeError, ValueError):
-        return None
-    if len(payload) > SESSION_LOCATOR_MAX_BYTES:
         return None
     return runtime.cas_store.put_bytes(payload)
 
@@ -717,6 +850,38 @@ def _canonical_json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def _signal_digest(value: object) -> str:
+    payload = _canonical_json_bytes(_stable_signal_value(value))
+    return f"sha256:{sha256(payload).hexdigest()}"
+
+
+def _stable_signal_value(value: object) -> object:
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if type(value) is int:
+        return value
+    if isinstance(value, float):
+        return {"float_hex": value.hex()}
+    if isinstance(value, Mapping):
+        return {
+            str(key): _stable_signal_value(nested)
+            for key, nested in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_stable_signal_value(item) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            "record_type": f"{type(value).__module__}.{type(value).__qualname__}",
+            **{
+                item.name: _stable_signal_value(getattr(value, item.name))
+                for item in fields(value)
+            },
+        }
+    return {
+        "value_type": f"{type(value).__module__}.{type(value).__qualname__}",
+    }
+
+
 def _plain_json_value(value: object) -> object:
     if isinstance(value, Mapping):
         return {
@@ -725,7 +890,7 @@ def _plain_json_value(value: object) -> object:
         }
     if isinstance(value, tuple):
         return [_plain_json_value(item) for item in value]
-    return cast(AuthorityValue, value)
+    return value
 
 
 def _now() -> int:

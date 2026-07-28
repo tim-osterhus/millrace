@@ -31,6 +31,7 @@ from millrace.adapters.runner_contract import (
     StartRefusedBeforeExternalWork,
     Unsupported,
     canonicalize_redaction_policy,
+    start_refusal_diagnostic_digest,
 )
 from millrace.contracts.compiled_plan import (
     ArtifactSchemaDeclaration,
@@ -368,7 +369,6 @@ class MillforgeAdapter:
                 correlation_id=request.correlation_id,
             )
         )
-        diagnostic_digest = _session_diagnostic_digest(outcome.outcome_kind)
         if isinstance(outcome, AdapterErrorResult):
             if outcome.error_kind in {
                 "missing_opt_in_config",
@@ -380,9 +380,13 @@ class MillforgeAdapter:
                 return StartRefusedBeforeExternalWork(
                     echo,
                     outcome,
-                    diagnostic_digest,
+                    start_refusal_diagnostic_digest(outcome),
                 )
-            return StartIndeterminate(echo, None, diagnostic_digest)
+            return StartIndeterminate(
+                echo,
+                None,
+                start_refusal_diagnostic_digest(outcome),
+            )
         return StartedSession(
             echo,
             _CompletedMillforgeCompatibilityHandle(outcome),
@@ -450,7 +454,7 @@ class _CompletedMillforgeCompatibilityHandle:
             "not_required",
             0,
             0,
-            _session_diagnostic_digest("not_required"),
+            _session_operation_digest("not_required"),
         )
 
 
@@ -462,11 +466,11 @@ def _unsupported_session_operation(
         "unsupported",
         0,
         0,
-        _session_diagnostic_digest(operation),
+        _session_operation_digest(operation),
     )
 
 
-def _session_diagnostic_digest(value: str) -> str:
+def _session_operation_digest(value: str) -> str:
     return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 

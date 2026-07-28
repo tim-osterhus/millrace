@@ -10,9 +10,11 @@ from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
 from millrace.compiler import compile_workflow
 from millrace.compiler.canonical import authority_fingerprint
 from millrace.contracts.runner import (
+    RUNNER_SESSION_LOCATOR_MAX_BYTES,
     RunnerResultEvidence,
     runner_result_evidence_bytes,
     runner_result_evidence_from_payload,
+    runner_session_locator_bytes,
 )
 from millrace.contracts.state import (
     RunnerSessionCancellationAttemptRecord,
@@ -128,7 +130,9 @@ def _cas_backed_session_state(
 ) -> tuple[RuntimeState, dict[str, str]]:
     completed_evidence = _completed_evidence_bytes(state, "session-1")
     digests = {
-        "locator": cas_store.put_bytes(b"runner locator"),
+        "locator": cas_store.put_bytes(
+            runner_session_locator_bytes({"handle_id": "runner locator"})
+        ),
         "attempt_diagnostic": cas_store.put_bytes(b"attempt diagnostic"),
         "completion_diagnostic": cas_store.put_bytes(b"completion diagnostic"),
         "completed_evidence": cas_store.put_bytes(completed_evidence),
@@ -346,7 +350,9 @@ def test_cancellation_requested_aftermath_round_trips_from_decide_apply(
     )
     run_ref = state.runs["run-taskmaster"].run_ref
     cas_store = ContentAddressedByteStore(tmp_path / "cas")
-    locator_digest = cas_store.put_bytes(b"live runner locator")
+    locator_digest = cas_store.put_bytes(
+        runner_session_locator_bytes({"handle_id": "live runner locator"})
+    )
     inputs = (
         CreateRunnerSession(
             "create-session",
@@ -689,6 +695,57 @@ def test_runner_session_invalid_cas_reference_is_refused_on_reload(
     store = SQLiteRuntimeStore.open(tmp_path / "runtime.sqlite3")
     try:
         with pytest.raises(StorageIntegrityError, match=digest_kind):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("operation", ("persist", "load"))
+@pytest.mark.parametrize(
+    "payload",
+    (
+        b"x" * (RUNNER_SESSION_LOCATOR_MAX_BYTES + 1),
+        b"{",
+        b"[]",
+        b'{"value": 1}',
+        b'{"value":1.5}',
+    ),
+)
+def test_runner_session_locator_codec_is_enforced_by_sqlite_boundaries(
+    tmp_path,
+    operation: str,
+    payload: bytes,
+) -> None:
+    database_path = tmp_path / "runtime.sqlite3"
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(_session_state(), cas_store)
+    invalid_digest = cas_store.put_bytes(payload)
+    invalid_state = _replace_session_digest(state, "locator", invalid_digest)
+    store = SQLiteRuntimeStore.initialize(database_path)
+    if operation == "persist":
+        try:
+            with pytest.raises(StorageIntegrityError, match="locator"):
+                store.persist_runtime_state(invalid_state, cas_store)
+        finally:
+            store.close()
+        return
+
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_sessions
+            SET durable_locator_digest = ?
+            WHERE session_id = 'session-1'
+            """,
+            (invalid_digest,),
+        )
+    store = SQLiteRuntimeStore.open(database_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match="locator"):
             store.load_runtime_state(cas_store)
     finally:
         store.close()

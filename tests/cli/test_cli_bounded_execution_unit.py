@@ -1299,8 +1299,9 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
         AdapterLocalConfig,
         DispatchEcho,
         RedactionPolicy,
-        StartRefusedBeforeExternalWork,
-        Unsupported,
+    StartRefusedBeforeExternalWork,
+    Unsupported,
+    start_refusal_diagnostic_digest,
     )
     from millrace.contracts.compiled_plan import (
         CapabilityDeclaration,
@@ -1330,7 +1331,7 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
             return StartRefusedBeforeExternalWork(
                 error.dispatch_echo,
                 error,
-                "sha256:" + "a" * 64,
+                start_refusal_diagnostic_digest(error),
             )
 
         def reconcile_session(self, request: object) -> object:

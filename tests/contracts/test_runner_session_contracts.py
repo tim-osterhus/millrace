@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from typing import Any, cast
 
 import pytest
 
 from millrace.adapters.runner_contract import (
+    START_REFUSAL_DIAGNOSTIC_MAX_BYTES,
     AdapterErrorResult,
     AdapterInvocationRequest,
     CleanupPending,
@@ -21,8 +23,16 @@ from millrace.adapters.runner_contract import (
     Terminal,
     Unsupported,
     VerifiedLive,
+    start_refusal_diagnostic_bytes,
+    start_refusal_diagnostic_digest,
 )
-from millrace.contracts.runner import RunnerDispatchEnvelope, RunnerResultEvidence
+from millrace.contracts.runner import (
+    RUNNER_SESSION_LOCATOR_MAX_BYTES,
+    RunnerDispatchEnvelope,
+    RunnerResultEvidence,
+    runner_session_locator_bytes,
+    runner_session_locator_from_bytes,
+)
 
 
 class _Handle:
@@ -198,10 +208,11 @@ def test_runner_session_outcomes_are_exact_typed_records() -> None:
     handle = _Handle()
 
     assert StartedSession(echo, handle, "handle-1", {}).outcome_kind == "started"
-    assert (
-        StartRefusedBeforeExternalWork(echo, error, "sha256:" + "a" * 64).outcome_kind
-        == "refused_before_external_work"
-    )
+    assert StartRefusedBeforeExternalWork(
+        echo,
+        error,
+        start_refusal_diagnostic_digest(error),
+    ).outcome_kind == "refused_before_external_work"
     assert StartIndeterminate(echo, None, "sha256:" + "b" * 64).outcome_kind == (
         "indeterminate"
     )
@@ -225,6 +236,71 @@ def test_runner_session_outcomes_are_exact_typed_records() -> None:
         2,
         "sha256:" + "e" * 64,
     ).disposition == "complete"
+
+
+def test_runner_session_locator_codec_is_canonical_bounded_and_mapping_only() -> None:
+    prefix = len(b'{"value":""}')
+    locator = {"value": "x" * (RUNNER_SESSION_LOCATOR_MAX_BYTES - prefix)}
+    payload = runner_session_locator_bytes(locator)
+
+    assert len(payload) == RUNNER_SESSION_LOCATOR_MAX_BYTES
+    assert runner_session_locator_bytes(runner_session_locator_from_bytes(payload)) == (
+        payload
+    )
+    with pytest.raises(ValueError, match="at most"):
+        runner_session_locator_from_bytes(payload + b" ")
+    with pytest.raises(ValueError, match="mapping"):
+        runner_session_locator_from_bytes(b"[]")
+    with pytest.raises(ValueError, match="JSON"):
+        runner_session_locator_from_bytes(b"{")
+    with pytest.raises(ValueError, match="canonical"):
+        runner_session_locator_from_bytes(b'{"value": "x"}')
+    with pytest.raises(ValueError, match="authority"):
+        runner_session_locator_from_bytes(b'{"value":1.5}')
+
+
+def test_start_refusal_diagnostic_owns_real_bounded_redacted_content() -> None:
+    dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch,
+        correlation_id="correlation-1",
+    )
+    error = AdapterErrorResult.from_unredacted(
+        adapter_id="adapter-1",
+        error_kind="invocation_failed",
+        dispatch_echo=echo,
+        redaction_policy=RedactionPolicy("test", ("secret",)),
+        diagnostics={"message": "secret failed", "attempt": 1},
+    )
+    payload = start_refusal_diagnostic_bytes(error)
+    digest = start_refusal_diagnostic_digest(error)
+
+    assert b"secret" not in payload
+    assert b"[REDACTED]" in payload
+    assert b'"error_kind":"invocation_failed"' in payload
+    assert StartRefusedBeforeExternalWork(echo, error, digest).diagnostic_digest == (
+        digest
+    )
+    with pytest.raises(ValueError, match="diagnostic_digest"):
+        StartRefusedBeforeExternalWork(echo, error, "sha256:" + "f" * 64)
+
+    oversized = AdapterErrorResult(
+        adapter_id="adapter-1",
+        error_kind="invocation_failed",
+        redaction_policy_id="test",
+        dispatch_echo=echo,
+        diagnostics={"message": "x" * START_REFUSAL_DIAGNOSTIC_MAX_BYTES},
+    )
+    oversized_payload = start_refusal_diagnostic_bytes(oversized)
+    oversized_summary = json.loads(oversized_payload)
+    assert len(oversized_payload) <= START_REFUSAL_DIAGNOSTIC_MAX_BYTES
+    assert oversized_summary["diagnostics"]["truncated"] is True
+    assert oversized_summary["diagnostics"]["observed_bytes"] > (
+        START_REFUSAL_DIAGNOSTIC_MAX_BYTES
+    )
+    assert oversized_summary["diagnostics"]["full_diagnostic_digest"].startswith(
+        "sha256:"
+    )
 
 
 @pytest.mark.parametrize(

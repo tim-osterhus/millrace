@@ -78,6 +78,7 @@ _RUNNER_ADAPTER_PROVENANCE_REQUIRED_KEYS = frozenset(
     }
 )
 _LOWER_HEX = frozenset("0123456789abcdef")
+RUNNER_SESSION_LOCATOR_MAX_BYTES = 16 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,6 +387,52 @@ def runner_result_evidence_bytes(evidence: RunnerResultEvidence) -> bytes:
 
 def runner_result_evidence_digest(evidence: RunnerResultEvidence) -> str:
     return f"sha256:{sha256(runner_result_evidence_bytes(evidence)).hexdigest()}"
+
+
+def runner_session_locator_bytes(
+    locator: Mapping[str, object],
+) -> bytes:
+    if not isinstance(locator, Mapping):
+        raise ValueError("runner session locator must be a mapping")
+    frozen = _coerce_payload_mapping(locator, "runner session locator")
+    payload = json.dumps(
+        _plain_authority_value(frozen),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(payload) > RUNNER_SESSION_LOCATOR_MAX_BYTES:
+        raise ValueError(
+            "runner session locator must be at most "
+            f"{RUNNER_SESSION_LOCATOR_MAX_BYTES} bytes"
+        )
+    return payload
+
+
+def runner_session_locator_from_bytes(
+    payload: bytes,
+) -> Mapping[str, AuthorityValue]:
+    if not isinstance(payload, bytes):
+        raise TypeError("runner session locator payload must be bytes")
+    if len(payload) > RUNNER_SESSION_LOCATOR_MAX_BYTES:
+        raise ValueError(
+            "runner session locator must be at most "
+            f"{RUNNER_SESSION_LOCATOR_MAX_BYTES} bytes"
+        )
+    try:
+        decoded = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("runner session locator must be valid UTF-8 JSON") from exc
+    if not isinstance(decoded, Mapping):
+        raise ValueError("runner session locator must be a mapping")
+    try:
+        frozen = _coerce_payload_mapping(decoded, "runner session locator")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("runner session locator has invalid authority values") from exc
+    if runner_session_locator_bytes(frozen) != payload:
+        raise ValueError("runner session locator JSON must be canonical")
+    return frozen
 
 
 def runner_result_evidence_from_payload(
@@ -759,6 +806,7 @@ __all__ = (
     "RUNNER_DISPATCH_SCHEMA_VERSION",
     "RUNNER_RESULT_RECORD_KIND",
     "RUNNER_RESULT_SCHEMA_VERSION",
+    "RUNNER_SESSION_LOCATOR_MAX_BYTES",
     "RunnerAdapterProvenance",
     "RunnerDispatchEnvelope",
     "RunnerResultEvidence",
@@ -766,4 +814,6 @@ __all__ = (
     "runner_result_evidence_digest",
     "runner_result_evidence_from_payload",
     "runner_result_payload",
+    "runner_session_locator_bytes",
+    "runner_session_locator_from_bytes",
 )

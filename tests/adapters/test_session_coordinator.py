@@ -18,6 +18,7 @@ from kernel.kernel_ping_scenarios import task_artifact_payload
 from millrace.adapters.cli import session_coordinator
 from millrace.adapters.cli.run import run_bounded_execution_unit
 from millrace.adapters.runner_contract import (
+    START_REFUSAL_DIAGNOSTIC_MAX_BYTES,
     AdapterErrorResult,
     AdapterInvocationOutcome,
     AdapterInvocationRequest,
@@ -31,6 +32,8 @@ from millrace.adapters.runner_contract import (
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
     Unsupported,
+    start_refusal_diagnostic_bytes,
+    start_refusal_diagnostic_digest,
 )
 from millrace.contracts.runner import runner_result_evidence_from_payload
 from millrace.contracts.transition import RunnerResultObserved
@@ -154,7 +157,7 @@ def _refused_start(
     return StartRefusedBeforeExternalWork(
         echo,
         error,
-        "sha256:" + "b" * 64,
+        start_refusal_diagnostic_digest(error),
     )
 
 
@@ -167,6 +170,7 @@ def _assert_single_refusal_audit(
     after,
     *,
     session_state: str,
+    reason: str,
 ) -> None:
     assert len(after.receipts) == len(before.receipts) + 1
     assert len(after.refusals) == len(before.refusals) + 1
@@ -182,6 +186,14 @@ def _assert_single_refusal_audit(
     assert after.activation_routes == before.activation_routes
     assert after.closed_work_items == before.closed_work_items
     assert after.runs == before.runs
+    refusal = next(
+        refusal
+        for refusal in after.refusals
+        if refusal.record_id
+        not in {existing.record_id for existing in before.refusals}
+    )
+    assert refusal.input_kind == "workflow.refuse_runner_session_signal"
+    assert refusal.reason == reason
 
 
 def _mismatched_echo(request: AdapterInvocationRequest) -> DispatchEcho:
@@ -518,7 +530,12 @@ def test_adapter_error_without_dispatch_echo_is_durably_audited(tmp_path) -> Non
     )
 
     assert result.code == "session_reconciliation_required"
-    _assert_single_refusal_audit(before_signal, after, session_state="running")
+    _assert_single_refusal_audit(
+        before_signal,
+        after,
+        session_state="running",
+        reason="runner_session_reconciliation_contradiction",
+    )
 
 
 @pytest.mark.parametrize("outcome_kind", ("success", "error"))
@@ -543,7 +560,12 @@ def test_completion_dispatch_echo_mismatch_is_durably_audited(
     )
 
     assert result.code == "session_reconciliation_required"
-    _assert_single_refusal_audit(before_signal, after, session_state="running")
+    _assert_single_refusal_audit(
+        before_signal,
+        after,
+        session_state="running",
+        reason="runner_session_authority_mismatch",
+    )
 
 
 def test_evidence_conversion_refusal_is_durably_audited(tmp_path) -> None:
@@ -553,7 +575,12 @@ def test_evidence_conversion_refusal_is_durably_audited(tmp_path) -> None:
     )
 
     assert result.code == "adapter_conversion_refused"
-    _assert_single_refusal_audit(before_signal, after, session_state="running")
+    _assert_single_refusal_audit(
+        before_signal,
+        after,
+        session_state="running",
+        reason="runner_session_reconciliation_contradiction",
+    )
 
 
 @pytest.mark.parametrize("malformation", ("missing_error_echo", "mismatched_echo"))
@@ -589,7 +616,7 @@ def test_start_refusal_echo_malformation_is_durably_audited(
                 else _mismatched_echo(request)
             ),
             error,
-            "sha256:" + "b" * 64,
+            start_refusal_diagnostic_digest(error),
         )
 
     adapter = _RecordingAdapter(malformed_refusal)
@@ -601,7 +628,16 @@ def test_start_refusal_echo_malformation_is_durably_audited(
 
     assert result.code == "session_reconciliation_required"
     assert len(snapshots) == 1
-    _assert_single_refusal_audit(snapshots[0], after, session_state="starting")
+    _assert_single_refusal_audit(
+        snapshots[0],
+        after,
+        session_state="starting",
+        reason=(
+            "runner_session_reconciliation_contradiction"
+            if malformation == "missing_error_echo"
+            else "runner_session_authority_mismatch"
+        ),
+    )
 
 
 def test_locator_is_redacted_before_bounded_cas_persistence(
@@ -911,6 +947,133 @@ def test_adapter_error_persists_terminal_session_without_workflow_progress(
     assert after.runner_observations == {}
     assert after.artifacts == {}
     assert after.activation_routes == ()
+
+
+def test_prestart_refusal_cas_contains_real_redacted_diagnostic(tmp_path) -> None:
+    captured_error: AdapterErrorResult | None = None
+
+    def refuse(request: AdapterInvocationRequest) -> StartRefusedBeforeExternalWork:
+        nonlocal captured_error
+        echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        )
+        captured_error = AdapterErrorResult.from_unredacted(
+            adapter_id=request.adapter_id,
+            error_kind="selected_authority_refused",
+            dispatch_echo=echo,
+            redaction_policy=RedactionPolicy("test", ("secret",)),
+            diagnostics={"reason": "secret is unavailable"},
+        )
+        return StartRefusedBeforeExternalWork(
+            echo,
+            captured_error,
+            start_refusal_diagnostic_digest(captured_error),
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(refuse)),
+    )
+    after = _load(runtime)
+    completion = next(iter(after.runner_session_completions.values()))
+
+    assert result.code == "adapter_failure"
+    assert captured_error is not None
+    assert runtime.cas_store.get_bytes(completion.diagnostic_digest) == (
+        start_refusal_diagnostic_bytes(captured_error)
+    )
+    assert b"secret" not in runtime.cas_store.get_bytes(
+        completion.diagnostic_digest
+    )
+
+
+def test_tampered_prestart_refusal_digest_is_durably_refused(tmp_path) -> None:
+    snapshot = None
+    runtime = None
+
+    def tampered(request: AdapterInvocationRequest) -> StartRefusedBeforeExternalWork:
+        nonlocal snapshot
+        outcome = _refused_start(request)
+        object.__setattr__(outcome, "diagnostic_digest", "sha256:" + "f" * 64)
+        snapshot = _load(runtime)
+        return outcome
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(tampered)),
+    )
+    after = _load(runtime)
+
+    assert result.code == "session_reconciliation_required"
+    assert snapshot is not None
+    _assert_single_refusal_audit(
+        snapshot,
+        after,
+        session_state="starting",
+        reason="runner_session_reconciliation_contradiction",
+    )
+    assert after.runner_session_completions == {}
+
+
+def test_oversized_prestart_diagnostic_keeps_proven_refusal_terminal(
+    tmp_path,
+) -> None:
+    def oversized(
+        request: AdapterInvocationRequest,
+    ) -> StartRefusedBeforeExternalWork:
+        echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        )
+        error = AdapterErrorResult(
+            adapter_id=request.adapter_id,
+            error_kind="selected_authority_refused",
+            redaction_policy_id=request.redaction_policy.policy_id,
+            dispatch_echo=echo,
+            diagnostics={
+                "message": "x" * (START_REFUSAL_DIAGNOSTIC_MAX_BYTES * 2)
+            },
+        )
+        return StartRefusedBeforeExternalWork(
+            echo,
+            error,
+            start_refusal_diagnostic_digest(error),
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(oversized)),
+    )
+    after = _load(runtime)
+    session = next(iter(after.runner_sessions.values()))
+    completion = after.runner_session_completions[session.session_id]
+    stored = runtime.cas_store.get_bytes(completion.diagnostic_digest)
+
+    assert result.code == "adapter_failure"
+    assert session.state == "failed"
+    assert completion.cleanup_disposition == "not_required"
+    assert len(stored) <= START_REFUSAL_DIAGNOSTIC_MAX_BYTES
+    assert json.loads(stored)["diagnostics"]["truncated"] is True
+
+
+def test_signal_digest_distinguishes_oversized_signals_with_same_prefix() -> None:
+    common_prefix = "x" * (16 * 1024)
+
+    first = session_coordinator._signal_digest(
+        {"diagnostic": common_prefix + "first"}
+    )
+    second = session_coordinator._signal_digest(
+        {"diagnostic": common_prefix + "second"}
+    )
+
+    assert first != second
 
 
 def test_codex_and_generic_fake_adapters_share_session_lifecycle(tmp_path) -> None:
