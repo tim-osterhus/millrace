@@ -735,9 +735,9 @@ def _millforge_live_config(
             super().__init__(config)
             self.request: AdapterInvocationRequest | None = None
 
-        def invoke(self, request: AdapterInvocationRequest) -> object:
+        def start_session(self, request: AdapterInvocationRequest) -> object:
             self.request = request
-            return super().invoke(request)
+            return super().start_session(request)
 
     secret_ref = millforge.SecretRef(
         secret_id="adapt-0002e-provider-key",
@@ -796,9 +796,9 @@ def _millforge_offline_config(
             super().__init__(config)
             self.request: AdapterInvocationRequest | None = None
 
-        def invoke(self, request: AdapterInvocationRequest) -> object:
+        def start_session(self, request: AdapterInvocationRequest) -> object:
             self.request = request
-            return super().invoke(request)
+            return super().start_session(request)
 
     monkeypatch.setitem(sys.modules, "millforge", _offline_millforge_module())
     adapter = CapturingMillforgeAdapter(

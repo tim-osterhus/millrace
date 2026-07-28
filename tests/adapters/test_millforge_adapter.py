@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 import json
 import sys
+import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -674,6 +676,225 @@ def _adapter(
     )
 
 
+def _drive_session(adapter: object, request: object) -> object:
+    from millrace.adapters.runner_contract import (
+        StartedSession,
+        StartRefusedBeforeExternalWork,
+    )
+
+    started = adapter.start_session(request)
+    if isinstance(started, StartRefusedBeforeExternalWork):
+        return started.adapter_error
+    assert isinstance(started, StartedSession)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        outcome = started.handle.poll_completion()
+        if outcome is not None:
+            return outcome
+        time.sleep(0.001)
+    raise AssertionError("Millforge session did not complete")
+
+
+def test_millforge_starts_live_handle_and_polls_terminal_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterSuccessResult, StartedSession
+
+    release = threading.Event()
+
+    class BlockingFacade(_FakeFacade):
+        async def execute(self, request: _PublicRecord) -> _PublicRecord:
+            await asyncio.to_thread(release.wait)
+            return await super().execute(request)
+
+    facade = BlockingFacade(
+        selected_output=_SelectedOutputPresent({"status": "ok"}),
+    )
+    started = _adapter(monkeypatch, tmp_path, facade).start_session(_request())
+
+    assert isinstance(started, StartedSession)
+    assert started.handle.poll_completion() is None
+    release.set()
+    deadline = time.monotonic() + 2
+    outcome = None
+    while outcome is None and time.monotonic() < deadline:
+        outcome = started.handle.poll_completion()
+        time.sleep(0.001)
+    assert isinstance(outcome, AdapterSuccessResult)
+    assert started.handle.poll_completion() is None
+
+
+def test_live_millforge_cancel_signals_public_token_and_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterErrorResult, StartedSession
+
+    calls: dict[str, object] = {}
+    observed: dict[str, object] = {}
+
+    class CancellationAwareFacade(_FakeFacade):
+        async def execute(self, request: _PublicRecord) -> _PublicRecord:
+            factory = cast(dict[str, object], calls["factory_kwargs"])
+            resolver = factory["cancellation_resolver"]
+            token = resolver.resolve(request.cancellation)
+            observed["token"] = token
+            await token.wait()
+            self.result_class = "cancelled"
+            return await super().execute(request)
+
+    facade = CancellationAwareFacade()
+    adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
+    request = replace(_request(), cancellation_token="cancel-1")
+    started = adapter.start_session(request)
+    assert isinstance(started, StartedSession)
+
+    deadline = time.monotonic() + 2
+    while "token" not in observed and time.monotonic() < deadline:
+        time.sleep(0.001)
+    first = started.handle.request_cancel()
+    second = started.handle.request_cancel()
+    assert first.result == "succeeded"
+    assert second.result == "failed"
+    token = observed["token"]
+    assert token.cancellation_id == "cancel-1"
+    assert token.is_cancelled() is True
+    assert token.reason == "millrace_cooperative_cancel"
+
+    outcome = None
+    while outcome is None and time.monotonic() < deadline:
+        outcome = started.handle.poll_completion()
+        time.sleep(0.001)
+    assert isinstance(outcome, AdapterErrorResult)
+    assert outcome.error_kind == "cancelled"
+    assert facade.close_calls == 1
+    assert started.handle.cleanup().disposition == "complete"
+    assert started.handle.cleanup().disposition == "complete"
+
+
+def test_live_millforge_cancel_loses_truthfully_to_normal_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterSuccessResult, StartedSession
+
+    facade = _FakeFacade(
+        selected_output=_SelectedOutputPresent({"status": "ok"}),
+    )
+    adapter = _live_adapter(monkeypatch, tmp_path, facade, {})
+    started = adapter.start_session(_request())
+    assert isinstance(started, StartedSession)
+    deadline = time.monotonic() + 2
+    outcome = None
+    while outcome is None and time.monotonic() < deadline:
+        outcome = started.handle.poll_completion()
+        time.sleep(0.001)
+
+    assert isinstance(outcome, AdapterSuccessResult)
+    assert started.handle.request_cancel().result == "failed"
+    assert facade.close_calls == 1
+    assert started.handle.cleanup().disposition == "complete"
+
+
+def test_millforge_handle_truthfully_reports_unsupported_escalation_and_orphan_risk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import StartedSession
+
+    release = threading.Event()
+
+    class BlockingFacade(_FakeFacade):
+        async def execute(self, request: _PublicRecord) -> _PublicRecord:
+            await asyncio.to_thread(release.wait)
+            return await super().execute(request)
+
+    started = _adapter(
+        monkeypatch,
+        tmp_path,
+        BlockingFacade(selected_output=_SelectedOutputPresent({"status": "ok"})),
+    ).start_session(_request())
+    assert isinstance(started, StartedSession)
+    assert started.handle.terminate().result == "unsupported"
+    assert started.handle.kill().result == "unsupported"
+    assert started.handle.cleanup().disposition == "orphan_risk"
+    release.set()
+    deadline = time.monotonic() + 2
+    while started.handle.poll_completion() is None and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert started.handle.cleanup().disposition == "not_required"
+
+
+def test_injected_millforge_handle_does_not_claim_cooperative_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import StartedSession
+
+    release = threading.Event()
+
+    class BlockingFacade(_FakeFacade):
+        async def execute(self, request: _PublicRecord) -> _PublicRecord:
+            await asyncio.to_thread(release.wait)
+            return await super().execute(request)
+
+    started = _adapter(monkeypatch, tmp_path, BlockingFacade()).start_session(
+        _request()
+    )
+    assert isinstance(started, StartedSession)
+    assert started.handle.request_cancel().result == "unsupported"
+    release.set()
+
+
+def test_terminal_poll_then_cleanup_never_spuriously_reports_orphan_risk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import StartedSession
+
+    for _ in range(50):
+        started = _adapter(
+            monkeypatch,
+            tmp_path,
+            _FakeFacade(
+                selected_output=_SelectedOutputPresent({"status": "ok"}),
+            ),
+        ).start_session(_request())
+        assert isinstance(started, StartedSession)
+        deadline = time.monotonic() + 2
+        outcome = None
+        while outcome is None and time.monotonic() < deadline:
+            outcome = started.handle.poll_completion()
+            time.sleep(0.001)
+        assert outcome is not None
+        assert started.handle.cleanup().disposition == "not_required"
+
+
+def test_millforge_start_session_works_inside_active_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    facade = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
+    adapter = _adapter(monkeypatch, tmp_path, facade)
+
+    async def start_and_drive() -> object:
+        return await asyncio.to_thread(_drive_session, adapter, _request())
+
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    assert isinstance(asyncio.run(start_and_drive()), AdapterSuccessResult)
+
+
+def test_millforge_adapter_exposes_only_session_lifecycle() -> None:
+    adapter_type, _ = _api()
+    source = Path(sys.modules[adapter_type.__module__].__file__).read_text()
+
+    assert not hasattr(adapter_type, "invoke")
+    assert "_CompletedMillforgeCompatibilityHandle" not in source
+    assert "temporary_synchronous_compatibility_shim" not in source
+
+
 @pytest.mark.parametrize("result_class", ("domain_terminal", "domain_rejected"))
 def test_millforge_adapter_matches_configured_descriptor_and_invokes_once(  # noqa: E501
     monkeypatch: pytest.MonkeyPatch,
@@ -687,7 +908,7 @@ def test_millforge_adapter_matches_configured_descriptor_and_invokes_once(  # no
         result_class=result_class,
     )
     request = _request()
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(request)
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), request)
 
     assert isinstance(result, AdapterSuccessResult)
     assert result.marker == "DONE"
@@ -742,7 +963,7 @@ def test_millforge_adapter_snapshots_invocation_evidence_before_execute(
         evidence_mutator=capture_evidence,
         result_mutator=mutate_evidence_during_execute,
     )
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(_request())
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
 
     assert isinstance(result, AdapterSuccessResult)
     assert result.adapter_provenance is not None
@@ -758,13 +979,13 @@ def test_millforge_adapter_uses_configured_redaction_before_evidence_or_execute(
 ) -> None:
     from millrace.adapters.runner_contract import AdapterErrorResult, RedactionPolicy
 
-    facade = _FakeFacade()
+    facade = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
     request = replace(
         _request(),
         redaction_policy=RedactionPolicy(policy_id="weaker-request"),
     )
 
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(request)
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), request)
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "redaction_refused"
@@ -901,6 +1122,20 @@ def test_millforge_adapter_uses_configured_redaction_before_evidence_or_execute(
         (
             lambda facade, request: (
                 setattr(facade.components.metadata, "context_file_count", 1),
+                request,
+            )[1],
+            0,
+        ),
+        (
+            lambda facade, request: (
+                setattr(facade.components.compiled_plan, "harness_id", "wrong"),
+                request,
+            )[1],
+            0,
+        ),
+        (
+            lambda facade, request: (
+                setattr(facade.components.model_profile, "profile_id", ""),
                 request,
             )[1],
             0,
@@ -1115,7 +1350,7 @@ def test_millforge_adapter_refuses_component_capability_context_and_evidence_dri
 
     facade = _FakeFacade()
     request = mutate(facade, _request())  # type: ignore[operator]
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(request)
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), request)
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "selected_authority_refused"
@@ -1157,7 +1392,10 @@ def test_millforge_adapter_projects_schema_deterministically_and_retains_residua
             {"state": "wrong", "rows": [{"id": 1, "name": "ok"}]}
         )
     )
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(_request(schemas=(schema,)))
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade),
+        _request(schemas=(schema,)),
+    )
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "result_parse_failed"
@@ -1240,7 +1478,8 @@ def test_millforge_adapter_projects_distinct_requirements_for_selected_results( 
         selected_output=_SelectedOutputPresent({"status": "ok"}),
     )
 
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade),
         _request(
             dispatch=dispatch,
             mappings=(
@@ -1249,7 +1488,7 @@ def test_millforge_adapter_projects_distinct_requirements_for_selected_results( 
                 _mapping("ESCALATED", "outcome.escalated"),
             ),
             schemas=(complete_schema, blocked_schema),
-        )
+        ),
     )
 
     assert isinstance(result, AdapterSuccessResult)
@@ -1401,7 +1640,8 @@ def test_kernel_ping_default_bindings_prepare_selected_outputs_offline(
             if option["artifact_schema_id"] is not None
         }
 
-        result = _adapter(monkeypatch, tmp_path, facade).invoke(
+        result = _drive_session(
+            _adapter(monkeypatch, tmp_path, facade),
             _request(
                 dispatch=dispatch,
                 pin=pin,
@@ -1411,7 +1651,7 @@ def test_kernel_ping_default_bindings_prepare_selected_outputs_offline(
                     for schema in schemas
                     if str(schema.id) in terminal_schema_ids
                 ),
-            )
+            ),
         )
 
         assert isinstance(result, AdapterSuccessResult)
@@ -1462,14 +1702,14 @@ def test_millforge_adapter_schema_less_result_has_no_requirement_or_output(
     request = _request(dispatch=dispatch, schemas=())
     facade = _FakeFacade()
 
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(request)
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), request)
 
     assert isinstance(result, AdapterSuccessResult)
     assert result.artifact_payload_candidate is None
     assert facade.requests[0].selected_output_requirements == ()
 
     unexpected = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
-    refused = _adapter(monkeypatch, tmp_path, unexpected).invoke(request)
+    refused = _drive_session(_adapter(monkeypatch, tmp_path, unexpected), request)
     assert isinstance(refused, AdapterErrorResult)
     assert refused.error_kind == "result_parse_failed"
     assert unexpected.calls == 1
@@ -1530,7 +1770,7 @@ def test_millforge_adapter_preserves_public_const_enum_and_full_schema_authority
         )
     )
 
-    result = adapter.invoke(_request(schemas=(schema,)))
+    result = _drive_session(adapter, _request(schemas=(schema,)))
 
     assert isinstance(result, AdapterSuccessResult)
     requirement = facade.requests[0].selected_output_requirements[0].selected_output
@@ -1558,7 +1798,7 @@ def test_millforge_adapter_preserves_public_const_enum_and_full_schema_authority
             ),
         )
     )
-    refused = invalid_adapter.invoke(_request(schemas=(schema,)))
+    refused = _drive_session(invalid_adapter, _request(schemas=(schema,)))
     assert isinstance(refused, AdapterErrorResult)
     assert refused.error_kind == "result_parse_failed"
 
@@ -1589,8 +1829,9 @@ def test_millforge_adapter_partial_mapping_refuses_unmapped_returned_result(
     )
     facade = _FakeFacade(terminal_result="BLOCKED")
 
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(
-        _request(dispatch=dispatch, mappings=(_mapping(),))
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade),
+        _request(dispatch=dispatch, mappings=(_mapping(),)),
     )
 
     assert isinstance(result, AdapterErrorResult)
@@ -1648,7 +1889,10 @@ def test_millforge_adapter_refuses_invalid_selected_schema_authority_before_exec
     from millrace.adapters.runner_contract import AdapterErrorResult
 
     facade = _FakeFacade()
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(_request(schemas=(schema,)))
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade),
+        _request(schemas=(schema,)),
+    )
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "selected_authority_refused"
@@ -1675,12 +1919,13 @@ def test_millforge_adapter_maps_nonlegacy_results_only_through_selected_stage(  
         ),
     )
     facade = _FakeFacade(terminal_result="ESCALATED")
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade),
         _request(
             dispatch=dispatch,
             mappings=(_mapping("ESCALATED", "outcome.escalated"),),
             schemas=(),
-        )
+        ),
     )
 
     assert isinstance(result, AdapterSuccessResult)
@@ -1699,7 +1944,8 @@ def test_millforge_adapter_maps_nonlegacy_results_only_through_selected_stage(  
         ),
     )
     second = _adapter(monkeypatch, tmp_path, _FakeFacade(terminal_result="ESCALATED"))
-    second_result = second.invoke(
+    second_result = _drive_session(
+        second,
         _request(
             dispatch=second_dispatch,
             mappings=(
@@ -1710,7 +1956,7 @@ def test_millforge_adapter_maps_nonlegacy_results_only_through_selected_stage(  
                 ),
             ),
             schemas=(),
-        )
+        ),
     )
     assert isinstance(second_result, AdapterSuccessResult)
     assert second_result.marker == "REVIEW"
@@ -1745,14 +1991,15 @@ def test_millforge_adapter_refuses_unknown_identity_or_selected_output_mismatch(
         ),
     )
     absent_facade = _FakeFacade(terminal_result="ESCALATED")
-    absent_result = _adapter(monkeypatch, tmp_path, absent_facade).invoke(
+    absent_result = _drive_session(
+        _adapter(monkeypatch, tmp_path, absent_facade),
         _request(
             dispatch=optional_dispatch,
             mappings=(
                 _mapping("COMPLETE", "outcome.complete"),
                 _mapping("ESCALATED", "outcome.escalated"),
             ),
-        )
+        ),
     )
     assert isinstance(absent_result, AdapterSuccessResult)
     assert absent_result.marker == "ESCALATE"
@@ -1861,7 +2108,10 @@ def test_millforge_adapter_refuses_unknown_identity_or_selected_output_mismatch(
             selected_output=_SelectedOutputPresent({"status": "ok"}),
             result_mutator=mutator,
         )
-        result = _adapter(monkeypatch, tmp_path, facade).invoke(_request())
+        result = _drive_session(
+            _adapter(monkeypatch, tmp_path, facade),
+            _request(),
+        )
 
         assert isinstance(result, AdapterErrorResult)
         assert result.error_kind == "result_parse_failed"
@@ -1927,7 +2177,7 @@ def test_millforge_adapter_returned_result_selects_only_its_requirement(
         terminal_result="BLOCKED",
         selected_output=_SelectedOutputPresent({"reason": "waiting"}),
     )
-    legal = _adapter(monkeypatch, tmp_path, legal_facade).invoke(request)
+    legal = _drive_session(_adapter(monkeypatch, tmp_path, legal_facade), request)
     assert isinstance(legal, AdapterSuccessResult)
     assert legal.marker == "BLOCKED"
 
@@ -1935,8 +2185,9 @@ def test_millforge_adapter_returned_result_selects_only_its_requirement(
         terminal_result="BLOCKED",
         selected_output=_SelectedOutputPresent({"status": "ok"}),
     )
-    crossed_value = _adapter(monkeypatch, tmp_path, crossed_value_facade).invoke(
-        request
+    crossed_value = _drive_session(
+        _adapter(monkeypatch, tmp_path, crossed_value_facade),
+        request,
     )
     assert isinstance(crossed_value, AdapterErrorResult)
     assert crossed_value.error_kind == "result_parse_failed"
@@ -1959,8 +2210,9 @@ def test_millforge_adapter_returned_result_selects_only_its_requirement(
         selected_output=_SelectedOutputPresent({"reason": "waiting"}),
         result_mutator=cross_digest,
     )
-    crossed_digest = _adapter(monkeypatch, tmp_path, crossed_digest_facade).invoke(
-        request
+    crossed_digest = _drive_session(
+        _adapter(monkeypatch, tmp_path, crossed_digest_facade),
+        request,
     )
     assert isinstance(crossed_digest, AdapterErrorResult)
     assert crossed_digest.error_kind == "result_parse_failed"
@@ -1974,7 +2226,7 @@ def test_millforge_adapter_refuses_missing_required_selected_output(
 
     facade = _FakeFacade(selected_output=None)
 
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(_request())
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "result_parse_failed"
@@ -2008,7 +2260,10 @@ def test_millforge_adapter_refuses_different_result_and_intent_selected_values(
         result_mutator=change_intent_value,
     )
 
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(_request(schemas=(schema,)))
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade),
+        _request(schemas=(schema,)),
+    )
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "result_parse_failed"
@@ -2029,8 +2284,9 @@ def test_millforge_adapter_composes_timeout_and_translates_timeout_or_cancel(  #
     from millrace.adapters.runner_contract import AdapterErrorResult
 
     facade = _FakeFacade(result_class=result_class)
-    result = _adapter(monkeypatch, tmp_path, facade, timeout_seconds=5).invoke(
-        _request()
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade, timeout_seconds=5),
+        _request(),
     )
 
     assert isinstance(result, AdapterErrorResult)
@@ -2039,23 +2295,76 @@ def test_millforge_adapter_composes_timeout_and_translates_timeout_or_cancel(  #
     assert not hasattr(result, "adapter_provenance")
 
 
-def test_millforge_adapter_refuses_active_event_loop_without_execute(
+@pytest.mark.parametrize(
+    ("execute_error", "expected_kind"),
+    (
+        (TimeoutError(), "timeout"),
+        (RuntimeError("execute failed"), "invocation_failed"),
+    ),
+)
+def test_millforge_worker_translates_execute_exceptions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    execute_error: BaseException,
+    expected_kind: str,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    facade = _FakeFacade(execute_error=execute_error)
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == expected_kind
+    assert facade.calls == 1
+    assert facade.close_calls == 0
+
+
+def test_millforge_worker_enforces_selected_local_timeout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     from millrace.adapters.runner_contract import AdapterErrorResult
 
-    facade = _FakeFacade()
+    class NeverCompletesFacade(_FakeFacade):
+        async def execute(self, request: _PublicRecord) -> _PublicRecord:
+            self.calls += 1
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    facade = NeverCompletesFacade()
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade, timeout_seconds=0.01),
+        _request(),
+    )
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "timeout"
+    assert facade.calls == 1
+
+
+def test_millforge_adapter_runs_from_active_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterSuccessResult, StartedSession
+
+    facade = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
     adapter = _adapter(monkeypatch, tmp_path, facade)
 
     async def invoke() -> object:
-        return adapter.invoke(_request())
+        started = adapter.start_session(_request())
+        assert isinstance(started, StartedSession)
+        outcome = None
+        deadline = time.monotonic() + 2
+        while outcome is None and time.monotonic() < deadline:
+            outcome = started.handle.poll_completion()
+            await asyncio.sleep(0.001)
+        return outcome
 
     result = asyncio.run(invoke())
-    assert isinstance(result, AdapterErrorResult)
-    assert result.error_kind == "invocation_failed"
-    assert facade.evidence_calls == 0
-    assert facade.calls == 0
+    assert isinstance(result, AdapterSuccessResult)
+    assert facade.evidence_calls == 1
+    assert facade.calls == 1
 
 
 def test_millforge_adapter_instruction_is_bounded_and_run_path_is_contained(  # noqa: E501
@@ -2065,7 +2374,7 @@ def test_millforge_adapter_instruction_is_bounded_and_run_path_is_contained(  # 
     from millrace.adapters.runner_contract import AdapterErrorResult
 
     facade = _FakeFacade()
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(_request())
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
     assert isinstance(result, AdapterErrorResult)
     assert facade.calls == 1
     provider_request = facade.requests[0]
@@ -2078,8 +2387,9 @@ def test_millforge_adapter_instruction_is_bounded_and_run_path_is_contained(  # 
         _dispatch(work_item_payload={"task": "x" * 65_537}),
     ):
         bounded_facade = _FakeFacade()
-        refused = _adapter(monkeypatch, tmp_path, bounded_facade).invoke(
-            _request(dispatch=dispatch)
+        refused = _drive_session(
+            _adapter(monkeypatch, tmp_path, bounded_facade),
+            _request(dispatch=dispatch),
         )
         assert isinstance(refused, AdapterErrorResult)
         assert refused.error_kind == "input_too_large"
@@ -2113,7 +2423,7 @@ def test_millforge_adapter_redacts_and_never_promotes_summary_or_paths(  # noqa:
 
     facade = _FakeFacade()
     adapter = _adapter(monkeypatch, tmp_path, facade)
-    refused = adapter.invoke(request_factory())  # type: ignore[operator]
+    refused = _drive_session(adapter, request_factory())  # type: ignore[operator]
 
     assert isinstance(refused, AdapterErrorResult)
     assert refused.error_kind == "redaction_refused"
@@ -2122,7 +2432,8 @@ def test_millforge_adapter_redacts_and_never_promotes_summary_or_paths(  # noqa:
 
     facade = _FakeFacade()
     adapter = _adapter(monkeypatch, tmp_path, facade)
-    result = adapter.invoke(
+    result = _drive_session(
+        adapter,
         _request(
             dispatch=_dispatch(
                 terminal_options=(
@@ -2136,7 +2447,7 @@ def test_millforge_adapter_redacts_and_never_promotes_summary_or_paths(  # noqa:
                 )
             ),
             schemas=(),
-        )
+        ),
     )
 
     assert isinstance(result, AdapterSuccessResult)
@@ -2159,11 +2470,12 @@ def test_millforge_live_config_uses_only_public_factory_inputs(
     calls: dict[str, object] = {}
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
 
-    result = adapter.invoke(
+    result = _drive_session(
+        adapter,
         _request(
             pin=_pin(legal_terminal_result_ids=terminal_results),
             mappings=(_mapping("CUSTOM_DONE"),),
-        )
+        ),
     )
 
     from millrace.adapters.runner_contract import AdapterSuccessResult
@@ -2206,7 +2518,7 @@ def test_live_facade_construct_execute_and_close_share_one_sync_bridge(
     calls: dict[str, object] = {}
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
 
-    result = adapter.invoke(_request())
+    result = _drive_session(adapter, _request())
 
     from millrace.adapters.runner_contract import AdapterSuccessResult
 
@@ -2225,7 +2537,7 @@ def test_live_facade_construct_execute_and_close_share_one_sync_bridge(
         failed_facade,
         failed_calls,
     )
-    failed = failed_adapter.invoke(_request())
+    failed = _drive_session(failed_adapter, _request())
 
     from millrace.adapters.runner_contract import AdapterErrorResult
 
@@ -2253,10 +2565,19 @@ def test_live_facade_construct_execute_and_close_share_one_sync_bridge(
         close_failed_calls,
     )
 
-    close_failed = close_failed_adapter.invoke(_request())
+    from millrace.adapters.runner_contract import StartedSession
+
+    close_failed_started = close_failed_adapter.start_session(_request())
+    assert isinstance(close_failed_started, StartedSession)
+    deadline = time.monotonic() + 2
+    close_failed = None
+    while close_failed is None and time.monotonic() < deadline:
+        close_failed = close_failed_started.handle.poll_completion()
+        time.sleep(0.001)
 
     assert isinstance(close_failed, AdapterErrorResult)
     assert close_failed.error_kind == "invocation_failed"
+    assert close_failed_started.handle.cleanup().disposition == "orphan_risk"
     assert close_failed_facade.calls == 1
     assert close_failed_facade.close_calls == 1
     assert close_failed_facade.events == [
@@ -2280,7 +2601,7 @@ def test_live_facade_descriptor_drift_refuses_before_execute(
     calls: dict[str, object] = {}
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
 
-    result = adapter.invoke(_request())
+    result = _drive_session(adapter, _request())
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "selected_authority_refused"
@@ -2290,31 +2611,31 @@ def test_live_facade_descriptor_drift_refuses_before_execute(
     assert facade.events == ["factory", "preflight", "close"]
 
 
-def test_live_millforge_active_event_loop_refuses_before_import_or_factory(
+def test_live_millforge_active_event_loop_starts_worker(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from millrace.adapters import millforge as millforge_module
-    from millrace.adapters.runner_contract import AdapterErrorResult
+    from millrace.adapters.runner_contract import AdapterSuccessResult, StartedSession
 
-    facade = _FakeFacade()
+    facade = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
     calls: dict[str, object] = {}
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
-    monkeypatch.setattr(
-        millforge_module,
-        "_optional_provider",
-        lambda: pytest.fail("active loop must refuse before optional import"),
-    )
 
     async def invoke() -> object:
-        return adapter.invoke(_request())
+        started = adapter.start_session(_request())
+        assert isinstance(started, StartedSession)
+        outcome = None
+        deadline = time.monotonic() + 2
+        while outcome is None and time.monotonic() < deadline:
+            outcome = started.handle.poll_completion()
+            await asyncio.sleep(0.001)
+        return outcome
 
     result = asyncio.run(invoke())
-    assert isinstance(result, AdapterErrorResult)
-    assert result.error_kind == "invocation_failed"
-    assert calls == {}
-    assert facade.calls == 0
-    assert facade.close_calls == 0
+    assert isinstance(result, AdapterSuccessResult)
+    assert calls["factory_calls"] == 1
+    assert facade.calls == 1
+    assert facade.close_calls == 1
 
 
 def test_invalid_live_config_or_factory_failure_has_no_observation(
@@ -2327,7 +2648,7 @@ def test_invalid_live_config_or_factory_failure_has_no_observation(
     calls: dict[str, object] = {"factory_failure": ValueError("local failure")}
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
 
-    result = adapter.invoke(_request())
+    result = _drive_session(adapter, _request())
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "invocation_failed"
@@ -2348,7 +2669,7 @@ def test_missing_live_secret_refuses_before_factory(
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
     monkeypatch.delenv("MILLRACE_TEST_PROVIDER_KEY")
 
-    result = adapter.invoke(_request())
+    result = _drive_session(adapter, _request())
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "invocation_failed"
@@ -2375,7 +2696,7 @@ def test_millforge_invalid_public_profile_refuses_before_secret_or_factory(
         },
     )
 
-    result = adapter.invoke(_request())
+    result = _drive_session(adapter, _request())
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "invocation_failed"
@@ -2393,7 +2714,10 @@ def test_live_millforge_missing_selected_pin_refuses_before_secret_or_factory(
     calls: dict[str, object] = {}
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
 
-    result = adapter.invoke(replace(_request(), selected_component_pin=None))
+    result = _drive_session(
+        adapter,
+        replace(_request(), selected_component_pin=None),
+    )
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "selected_authority_refused"
@@ -2410,7 +2734,7 @@ def test_live_factory_cancellation_bridge_is_non_cancelled_correlation_only(
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
     request = replace(_request(), cancellation_token="cancel-1")
 
-    adapter.invoke(request)
+    _drive_session(adapter, request)
 
     factory = calls["factory_kwargs"]
     assert isinstance(factory, dict)
@@ -2427,7 +2751,7 @@ def test_injected_millforge_facade_remains_caller_owned(
 ) -> None:
     facade = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
 
-    result = _adapter(monkeypatch, tmp_path, facade).invoke(_request())
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
 
     from millrace.adapters.runner_contract import AdapterSuccessResult
 
@@ -2468,7 +2792,7 @@ def test_millforge_live_config_never_enters_request_or_selected_authority(
     )
     request = _request()
 
-    result = adapter.invoke(request)
+    result = _drive_session(adapter, request)
 
     assert isinstance(result, AdapterSuccessResult)
     evidence = runner_evidence_from_adapter_outcome(result, request)
@@ -2548,7 +2872,7 @@ def test_millforge_live_config_snapshots_nested_provider_records(
     cast(dict[str, object], secret_ref["metadata"])["endpoint_ref"] = "mutated"
     secret_ref["env_var"] = "MUTATED"
 
-    result = adapter.invoke(_request())
+    result = _drive_session(adapter, _request())
 
     from millrace.adapters.runner_contract import AdapterSuccessResult
 
@@ -2573,7 +2897,7 @@ def test_invalid_live_facade_is_closed_before_bounded_refusal(
     calls: dict[str, object] = {}
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
 
-    result = adapter.invoke(_request())
+    result = _drive_session(adapter, _request())
 
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "invocation_failed"
@@ -2595,7 +2919,7 @@ def test_python_311_import_without_millforge_preserves_codex(
     adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
     monkeypatch.setattr(millforge_module, "_optional_provider", lambda: None)
 
-    result = adapter.invoke(_request())
+    result = _drive_session(adapter, _request())
 
     assert millrace.__name__ == "millrace"
     assert isinstance(result, AdapterErrorResult)

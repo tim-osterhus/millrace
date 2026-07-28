@@ -15,6 +15,11 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Fixed
 
+- Replaced Millforge's temporary synchronous runner bridge with the generic
+  runner-session lifecycle. Millforge now returns a live session handle,
+  supports truthful cooperative cancellation for factory-created facades,
+  closes owned facades exactly once, and reports orphan risk when execution or
+  owned cleanup remains unresolved. Injected facades remain caller-owned.
 - Hardened runner-session restart reconciliation so adapters must prove the
   complete selected dispatch authority, cleanup can resume only for the
   durably correlated handle, and missing or corrupt restart locators fail

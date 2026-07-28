@@ -7,8 +7,9 @@ import datetime
 import hashlib
 import json
 import os
+import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
@@ -27,7 +28,6 @@ from millrace.adapters.runner_contract import (
     RunnerSessionReconcileRequest,
     RunnerSessionStartOutcome,
     StartedSession,
-    StartIndeterminate,
     StartRefusedBeforeExternalWork,
     Unsupported,
     canonicalize_redaction_policy,
@@ -202,9 +202,84 @@ class MillforgeAdapter:
     def config(self) -> MillforgeAdapterConfig:
         return self._config
 
-    def invoke(self, request: AdapterInvocationRequest) -> AdapterInvocationOutcome:
+    def start_session(
+        self,
+        request: AdapterInvocationRequest,
+    ) -> RunnerSessionStartOutcome:
         if not isinstance(request, AdapterInvocationRequest):
             raise TypeError("request must be AdapterInvocationRequest")
+        echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
+        )
+        refusal = self._preflight_request(request)
+        if refusal is not None:
+            return _start_refusal(echo, refusal)
+        provider = _optional_provider()
+        if provider is None:
+            return _start_refusal(
+                echo,
+                self._error(
+                    request,
+                    "missing_opt_in_config",
+                    "provider_unavailable",
+                ),
+            )
+        cancellation = _MutableCancellationToken(
+            request.cancellation_token or request.correlation_id
+        )
+        if self._config.facade is not None:
+            prepared = self._prepare_injected(
+                request,
+                provider,
+                self._config.facade,
+            )
+            if isinstance(prepared, AdapterErrorResult):
+                return _start_refusal(echo, prepared)
+            invocation, adapter_provenance = prepared
+            worker = lambda: self._execute_injected(  # noqa: E731
+                request,
+                invocation,
+                adapter_provenance,
+                self._config.facade,
+            )
+            owns_facade = False
+            owned_facade_state = None
+        else:
+            live_preflight = self._prepare_live_config(request, provider)
+            if isinstance(live_preflight, AdapterErrorResult):
+                return _start_refusal(echo, live_preflight)
+            profile, secret_ref, secret_resolver = live_preflight
+            owned_facade_state = _OwnedFacadeState()
+            worker = lambda: self._execute_live(  # noqa: E731
+                request,
+                provider,
+                profile,
+                secret_ref,
+                secret_resolver,
+                cancellation,
+                owned_facade_state,
+            )
+            owns_facade = True
+        handle = _MillforgeSessionHandle(
+            worker,
+            cancellation,
+            self._error(request, "invocation_failed", "worker_execution"),
+            owns_facade=owns_facade,
+            owned_facade_state=owned_facade_state,
+        )
+        return StartedSession(
+            echo,
+            handle,
+            f"millforge:{request.session_id}:{request.dispatch_generation}",
+            {},
+        )
+
+    def _preflight_request(
+        self,
+        request: AdapterInvocationRequest,
+    ) -> AdapterErrorResult | None:
         if request.selected_adapter_kind != self.adapter_kind:
             return self._authority_error(request, "adapter_kind")
         if request.adapter_id != self._config.adapter_id:
@@ -221,22 +296,17 @@ class MillforgeAdapter:
             self._config.redaction_policy,
         ):
             return self._error(request, "redaction_refused", "instruction_input")
+        return None
 
-        if _has_running_event_loop():
-            return self._error(request, "invocation_failed", "active_event_loop")
-        provider = _optional_provider()
-        if provider is None:
-            return self._error(request, "missing_opt_in_config", "provider_unavailable")
-        if self._config.facade is not None:
-            return self._invoke_injected(request, provider, self._config.facade)
-        return self._invoke_live(request, provider)
-
-    def _invoke_injected(
+    def _prepare_injected(
         self,
         request: AdapterInvocationRequest,
         provider: object,
         facade: MillforgeFacade,
-    ) -> AdapterInvocationOutcome:
+    ) -> (
+        tuple[_PreparedInvocation, RunnerAdapterProvenance]
+        | AdapterErrorResult
+    ):
         try:
             prepared = _prepare_invocation(request, self._config, provider, facade)
         except _AuthorityRefusal as exc:
@@ -260,23 +330,140 @@ class MillforgeAdapter:
             prepared,
             invocation_evidence_sha256,
         )
+        return prepared, adapter_provenance
+
+    async def _execute_injected(
+        self,
+        request: AdapterInvocationRequest,
+        prepared: _PreparedInvocation,
+        adapter_provenance: RunnerAdapterProvenance,
+        facade: MillforgeFacade,
+    ) -> AdapterInvocationOutcome:
         try:
-            result = asyncio.run(facade.execute(prepared.provider_request))
+            result = await asyncio.wait_for(
+                facade.execute(prepared.provider_request),
+                timeout=min(request.timeout_seconds, self._config.timeout_seconds),
+            )
         except TimeoutError:
             return self._error(request, "timeout", "provider_timeout")
         except asyncio.CancelledError:
             return self._error(request, "cancelled", "provider_cancelled")
         except Exception:
             return self._error(request, "invocation_failed", "provider_execution")
-        return _translate_result(request, prepared, result, adapter_provenance)
+        return _translate_result(
+            request,
+            prepared,
+            result,
+            adapter_provenance,
+        )
 
-    def _invoke_live(
+    def _prepare_live_config(
         self,
         request: AdapterInvocationRequest,
         provider: object,
-    ) -> AdapterInvocationOutcome:
+    ) -> (
+        tuple[object, object, _EnvironmentSecretResolver]
+        | AdapterErrorResult
+    ):
+        live_config = self._config.live_config
+        if live_config is None:
+            return self._error(request, "invocation_failed", "local_configuration")
+        pin = request.selected_component_pin
+        if pin is None:
+            return self._authority_error(request, "component_pin")
         try:
-            return asyncio.run(self._invoke_live_async(request, provider))
+            profile, secret_ref = _live_public_records(provider, live_config)
+            secret_resolver = _EnvironmentSecretResolver(provider, secret_ref)
+            secret_resolver.resolve(secret_ref)
+        except _LiveConfigError:
+            return self._error(request, "invocation_failed", "local_configuration")
+        except Exception:
+            return self._error(request, "invocation_failed", "local_configuration")
+        return profile, secret_ref, secret_resolver
+
+    async def _execute_live(
+        self,
+        request: AdapterInvocationRequest,
+        provider: object,
+        profile: object,
+        secret_ref: object,
+        secret_resolver: _EnvironmentSecretResolver,
+        cancellation: _MutableCancellationToken,
+        owned_facade_state: _OwnedFacadeState,
+    ) -> AdapterInvocationOutcome:
+        pin = request.selected_component_pin
+        if pin is None:
+            return self._authority_error(request, "component_pin")
+        try:
+            facade = await _create_live_facade(
+                provider,
+                legal_terminal_results=tuple(pin.legal_terminal_result_ids),
+                profile=profile,
+                secret_ref=secret_ref,
+                secret_resolver=secret_resolver,
+                workspace_root=self._config.workspace_root,
+                timeout_seconds=self._config.timeout_seconds,
+                cancellation_resolver=_CorrelationCancellationResolver(cancellation),
+                owned_facade_state=owned_facade_state,
+            )
+            try:
+                try:
+                    prepared = _prepare_invocation(
+                        request,
+                        self._config,
+                        provider,
+                        facade,
+                        secret_ref=secret_ref,
+                        expected_profile_id=getattr(profile, "profile_id", None),
+                    )
+                except _AuthorityRefusal as exc:
+                    return self._authority_error(request, exc.reason)
+                except _InputTooLarge:
+                    return self._error(request, "input_too_large", "task_instruction")
+                except Exception:
+                    return self._error(
+                        request,
+                        "invocation_failed",
+                        "request_construction",
+                    )
+                try:
+                    evidence = facade.invocation_evidence_for(
+                        prepared.provider_request
+                    )
+                except Exception:
+                    return self._authority_error(request, "invocation_evidence")
+                invocation_evidence_sha256 = _verified_invocation_evidence_sha256(
+                    evidence,
+                    prepared,
+                )
+                if invocation_evidence_sha256 is None:
+                    return self._authority_error(request, "invocation_evidence")
+                adapter_provenance = _adapter_provenance(
+                    request,
+                    prepared,
+                    invocation_evidence_sha256,
+                )
+                result = await asyncio.wait_for(
+                    facade.execute(prepared.provider_request),
+                    timeout=min(
+                        request.timeout_seconds,
+                        self._config.timeout_seconds,
+                    ),
+                )
+                return _translate_result(
+                    request,
+                    prepared,
+                    result,
+                    adapter_provenance,
+                )
+            finally:
+                try:
+                    await _close_live_facade(facade)
+                except BaseException:
+                    owned_facade_state.close_failed()
+                    raise
+                else:
+                    owned_facade_state.close_completed()
         except _LiveConfigError:
             return self._error(request, "invocation_failed", "local_configuration")
         except TimeoutError:
@@ -285,116 +472,6 @@ class MillforgeAdapter:
             return self._error(request, "cancelled", "provider_cancelled")
         except Exception:
             return self._error(request, "invocation_failed", "provider_execution")
-
-    async def _invoke_live_async(
-        self,
-        request: AdapterInvocationRequest,
-        provider: object,
-    ) -> AdapterInvocationOutcome:
-        live_config = self._config.live_config
-        if live_config is None:
-            raise _LiveConfigError("live configuration is missing")
-        pin = request.selected_component_pin
-        if pin is None:
-            return self._authority_error(request, "component_pin")
-        profile, secret_ref = _live_public_records(provider, live_config)
-        secret_resolver = _EnvironmentSecretResolver(provider, secret_ref)
-        secret_resolver.resolve(secret_ref)
-        cancellation_id = request.cancellation_token or request.correlation_id
-        facade = await _create_live_facade(
-            provider,
-            legal_terminal_results=tuple(pin.legal_terminal_result_ids),
-            profile=profile,
-            secret_ref=secret_ref,
-            secret_resolver=secret_resolver,
-            workspace_root=self._config.workspace_root,
-            timeout_seconds=self._config.timeout_seconds,
-            cancellation_id=cancellation_id,
-        )
-        try:
-            try:
-                prepared = _prepare_invocation(
-                    request,
-                    self._config,
-                    provider,
-                    facade,
-                    secret_ref=secret_ref,
-                )
-            except _AuthorityRefusal as exc:
-                return self._authority_error(request, exc.reason)
-            except _InputTooLarge:
-                return self._error(request, "input_too_large", "task_instruction")
-            except Exception:
-                return self._error(request, "invocation_failed", "request_construction")
-            try:
-                evidence = facade.invocation_evidence_for(prepared.provider_request)
-            except Exception:
-                return self._authority_error(request, "invocation_evidence")
-            invocation_evidence_sha256 = _verified_invocation_evidence_sha256(
-                evidence,
-                prepared,
-            )
-
-            if invocation_evidence_sha256 is None:
-                return self._authority_error(request, "invocation_evidence")
-            adapter_provenance = _adapter_provenance(
-                request,
-                prepared,
-                invocation_evidence_sha256,
-            )
-            result = await facade.execute(prepared.provider_request)
-            return _translate_result(request, prepared, result, adapter_provenance)
-        finally:
-            await _close_live_facade(facade)
-
-    def start_session(
-        self,
-        request: AdapterInvocationRequest,
-    ) -> RunnerSessionStartOutcome:
-        return self._start_session_via_temporary_synchronous_compatibility_shim(
-            request
-        )
-
-    def _start_session_via_temporary_synchronous_compatibility_shim(
-        self,
-        request: AdapterInvocationRequest,
-    ) -> RunnerSessionStartOutcome:
-        """Temporary RS-2 bridge; delete when Millforge gets an RS-5 handle."""
-
-        outcome = self.invoke(request)
-        echo = (
-            outcome.dispatch_echo
-            if outcome.dispatch_echo is not None
-            else DispatchEcho.from_dispatch_envelope(
-                request.dispatch_envelope,
-                correlation_id=request.correlation_id,
-                selected_adapter_kind=request.selected_adapter_kind,
-            )
-        )
-        if isinstance(outcome, AdapterErrorResult):
-            if outcome.error_kind in {
-                "missing_opt_in_config",
-                "unsupported_adapter_kind",
-                "input_too_large",
-                "redaction_refused",
-                "selected_authority_refused",
-            }:
-                return StartRefusedBeforeExternalWork(
-                    echo,
-                    outcome,
-                    start_refusal_diagnostic_digest(outcome),
-                )
-            return StartIndeterminate(
-                echo,
-                None,
-                start_refusal_diagnostic_digest(outcome),
-            )
-        return StartedSession(
-            echo,
-            _CompletedMillforgeCompatibilityHandle(outcome),
-            f"millforge:{request.session_id}:{request.dispatch_generation}",
-            {},
-        )
 
     def reconcile_session(
         self,
@@ -435,17 +512,80 @@ class MillforgeAdapter:
         )
 
 
-class _CompletedMillforgeCompatibilityHandle:
-    def __init__(self, outcome: AdapterInvocationOutcome) -> None:
-        self._outcome: AdapterInvocationOutcome | None = outcome
+class _MillforgeSessionHandle:
+    def __init__(
+        self,
+        worker: Callable[
+            [],
+            Coroutine[Any, Any, AdapterInvocationOutcome],
+        ],
+        cancellation: _MutableCancellationToken,
+        fallback_outcome: AdapterErrorResult,
+        *,
+        owns_facade: bool,
+        owned_facade_state: _OwnedFacadeState | None,
+    ) -> None:
+        self._lock = threading.Lock()
+        self._completion: AdapterInvocationOutcome | None = None
+        self._completion_polled = False
+        self._done = threading.Event()
+        self._cancellation = cancellation
+        self._fallback_outcome = fallback_outcome
+        self._owns_facade = owns_facade
+        self._owned_facade_state = owned_facade_state
+        self._thread = threading.Thread(
+            target=self._run,
+            args=(worker,),
+            name="millrace-millforge-session",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run(
+        self,
+        worker: Callable[
+            [],
+            Coroutine[Any, Any, AdapterInvocationOutcome],
+        ],
+    ) -> None:
+        try:
+            outcome: AdapterInvocationOutcome = asyncio.run(worker())
+        except BaseException:
+            outcome = self._fallback_outcome
+        with self._lock:
+            self._completion = cast(AdapterInvocationOutcome | None, outcome)
+        self._done.set()
 
     def poll_completion(self) -> AdapterInvocationOutcome | None:
-        outcome = self._outcome
-        self._outcome = None
-        return outcome
+        if not self._done.is_set():
+            return None
+        with self._lock:
+            if self._completion_polled:
+                return None
+            self._completion_polled = True
+            return self._completion
 
     def request_cancel(self) -> RunnerCancellationOperationResult:
-        return _unsupported_session_operation("cooperative_cancel")
+        started_at = time.time_ns()
+        supported = self._owns_facade
+        signalled = (
+            supported
+            and not self._done.is_set()
+            and self._cancellation.cancel("millrace_cooperative_cancel")
+        )
+        diagnostic: dict[str, AuthorityValue] = {
+            "operation": "cooperative_cancel",
+            "signalled": signalled,
+            "supported": supported,
+        }
+        return RunnerCancellationOperationResult(
+            "cooperative_cancel",
+            "succeeded" if signalled else ("failed" if supported else "unsupported"),
+            started_at,
+            time.time_ns(),
+            diagnostic,
+            runner_cancellation_diagnostic_digest(diagnostic),
+        )
 
     def terminate(self) -> RunnerCancellationOperationResult:
         return _unsupported_session_operation("terminate")
@@ -454,14 +594,38 @@ class _CompletedMillforgeCompatibilityHandle:
         return _unsupported_session_operation("kill")
 
     def cleanup(self) -> RunnerCleanupResult:
-        diagnostic = {"disposition": "not_required"}
+        started_at = time.time_ns()
+        if self._done.is_set():
+            self._thread.join(timeout=0.1)
+        worker_live = self._thread.is_alive()
+        if worker_live:
+            disposition = "orphan_risk"
+        elif self._owned_facade_state is not None:
+            disposition = self._owned_facade_state.disposition
+        else:
+            disposition = "not_required"
+        diagnostic: dict[str, AuthorityValue] = {
+            "disposition": disposition,
+            "worker_live": worker_live,
+        }
         return RunnerCleanupResult(
-            "not_required",
-            0,
-            0,
+            disposition,
+            started_at,
+            time.time_ns(),
             diagnostic,
             runner_cancellation_diagnostic_digest(diagnostic),
         )
+
+
+def _start_refusal(
+    echo: DispatchEcho,
+    error: AdapterErrorResult,
+) -> StartRefusedBeforeExternalWork:
+    return StartRefusedBeforeExternalWork(
+        echo,
+        error,
+        start_refusal_diagnostic_digest(error),
+    )
 
 
 def _unsupported_session_operation(
@@ -513,6 +677,29 @@ class _LiveConfigError(ValueError):
     pass
 
 
+class _OwnedFacadeState:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._disposition = "not_required"
+
+    @property
+    def disposition(self) -> str:
+        with self._lock:
+            return self._disposition
+
+    def acquired(self) -> None:
+        with self._lock:
+            self._disposition = "orphan_risk"
+
+    def close_completed(self) -> None:
+        with self._lock:
+            self._disposition = "complete"
+
+    def close_failed(self) -> None:
+        with self._lock:
+            self._disposition = "orphan_risk"
+
+
 class _EnvironmentSecretResolver:
     def __init__(self, provider: object, expected_ref: object) -> None:
         self._provider = provider
@@ -544,30 +731,68 @@ class _SystemClock:
         return time.monotonic()
 
 
-class _NonCancelledToken:
+class _MutableCancellationToken:
     def __init__(self, cancellation_id: str) -> None:
         self.cancellation_id = cancellation_id
+        self._lock = threading.Lock()
+        self._cancelled = False
+        self._reason: str | None = None
+        self._waiters: list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
 
     def is_cancelled(self) -> bool:
-        return False
+        with self._lock:
+            return self._cancelled
 
     async def wait(self) -> None:
-        await asyncio.Event().wait()
+        with self._lock:
+            if self._cancelled:
+                return
+            loop = asyncio.get_running_loop()
+            waiter: asyncio.Future[None] = loop.create_future()
+            self._waiters.append((loop, waiter))
+        try:
+            await waiter
+        finally:
+            with self._lock:
+                self._waiters = [
+                    registered
+                    for registered in self._waiters
+                    if registered[1] is not waiter
+                ]
 
     @property
-    def reason(self) -> None:
-        return None
+    def reason(self) -> str | None:
+        with self._lock:
+            return self._reason
+
+    def cancel(self, reason: str) -> bool:
+        bounded_reason = reason[:1024]
+        with self._lock:
+            if self._cancelled:
+                return False
+            self._cancelled = True
+            self._reason = bounded_reason
+            waiters = tuple(self._waiters)
+            self._waiters.clear()
+        for loop, waiter in waiters:
+            loop.call_soon_threadsafe(_finish_cancellation_waiter, waiter)
+        return True
+
+
+def _finish_cancellation_waiter(waiter: asyncio.Future[None]) -> None:
+    if not waiter.done():
+        waiter.set_result(None)
 
 
 class _CorrelationCancellationResolver:
-    def __init__(self, cancellation_id: str) -> None:
-        self._cancellation_id = cancellation_id
+    def __init__(self, token: _MutableCancellationToken) -> None:
+        self._token = token
 
-    def resolve(self, ref: object) -> _NonCancelledToken:
+    def resolve(self, ref: object) -> _MutableCancellationToken:
         reference_id = getattr(ref, "cancellation_id", None)
-        if reference_id != self._cancellation_id:
+        if reference_id != self._token.cancellation_id:
             raise _LiveConfigError("cancellation reference mismatch")
-        return _NonCancelledToken(self._cancellation_id)
+        return self._token
 
 
 def _optional_provider() -> object | None:
@@ -612,7 +837,8 @@ async def _create_live_facade(
     secret_resolver: _EnvironmentSecretResolver,
     workspace_root: Path,
     timeout_seconds: float,
-    cancellation_id: str,
+    cancellation_resolver: _CorrelationCancellationResolver,
+    owned_facade_state: _OwnedFacadeState,
 ) -> MillforgeFacade:
     factory = getattr(provider, "create_millforge_base_live_runner", None)
     options_type = getattr(provider, "MillforgeBaseOptions", None)
@@ -632,7 +858,7 @@ async def _create_live_facade(
             secret_resolver=secret_resolver,
             cwd=workspace_root,
             clock=_SystemClock(),
-            cancellation_resolver=_CorrelationCancellationResolver(cancellation_id),
+            cancellation_resolver=cancellation_resolver,
             timeouts=cast(Any, timeouts_type).uniform(timeout_seconds),
             options=options_type(load_context_files=False),
         )
@@ -640,12 +866,19 @@ async def _create_live_facade(
         raise
     except Exception as exc:
         raise _LiveConfigError("provider factory failed") from exc
+    owned_facade_state.acquired()
     if (
         not callable(getattr(facade, "invocation_evidence_for", None))
         or not callable(getattr(facade, "execute", None))
         or not callable(getattr(facade, "aclose", None))
     ):
-        await _close_live_facade(facade)
+        try:
+            await _close_live_facade(facade)
+        except BaseException:
+            owned_facade_state.close_failed()
+            raise
+        else:
+            owned_facade_state.close_completed()
         raise _LiveConfigError("provider facade is invalid")
     return cast(MillforgeFacade, facade)
 
@@ -664,12 +897,18 @@ def _prepare_invocation(
     facade: MillforgeFacade,
     *,
     secret_ref: object | None = None,
+    expected_profile_id: object | None = None,
 ) -> _PreparedInvocation:
     pin = request.selected_component_pin
     if pin is None:
         raise _AuthorityRefusal("component_pin")
     _verify_descriptor(pin, facade)
-    _verify_components(pin, facade, request)
+    _verify_components(
+        pin,
+        facade,
+        request,
+        expected_profile_id=expected_profile_id,
+    )
     selected_output_present_type, selected_output_absent_type = _selected_output_types(
         provider,
     )
@@ -736,6 +975,8 @@ def _verify_components(
     pin: RunnerComponentPin,
     facade: MillforgeFacade,
     request: AdapterInvocationRequest,
+    *,
+    expected_profile_id: object | None,
 ) -> None:
     components = getattr(facade, "components", None)
     options = getattr(components, "options", None)
@@ -744,6 +985,22 @@ def _verify_components(
         raise _AuthorityRefusal("context_discovery")
     if getattr(metadata, "context_file_count", None) != 0:
         raise _AuthorityRefusal("context_files")
+    compiled = getattr(components, "compiled_plan", None)
+    if (
+        getattr(compiled, "harness_id", None) != pin.component_id
+        or str(getattr(compiled, "harness_version", "")) != pin.component_version
+    ):
+        raise _AuthorityRefusal("compiled_component")
+    profile_id = getattr(getattr(components, "model_profile", None), "profile_id", None)
+    if (
+        not isinstance(profile_id, str)
+        or not profile_id.strip()
+        or (
+            expected_profile_id is not None
+            and profile_id != expected_profile_id
+        )
+    ):
+        raise _AuthorityRefusal("model_profile")
     envelope = getattr(components, "capability_envelope", None)
     grants = getattr(envelope, "grants", ())
     component_capabilities = tuple(
@@ -1343,14 +1600,6 @@ def _selected_output_types(provider: object) -> tuple[type[object], type[object]
     if not isinstance(present_type, type) or not isinstance(absent_type, type):
         raise _AuthorityRefusal("provider_public_contract")
     return cast(type[object], present_type), cast(type[object], absent_type)
-
-
-def _has_running_event_loop() -> bool:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return False
-    return True
 
 
 def _enum_value(value: object) -> object:

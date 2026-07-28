@@ -427,6 +427,13 @@ More specific Millforge diagnostic reason strings are internal and are not
 independently stable codes. Millforge remains a runner adapter: it cannot
 choose legal terminal meaning or mutate runtime state directly.
 
+Factory-created Millforge facades run under a process-local session handle
+with cooperative cancellation and exactly-once owned close. Terminate and kill
+remain unsupported. Injected facades are caller-owned and expose no adapter
+cancellation claim. Unfinished workers or failed owned close report
+`orphan_risk`; process-restart reconciliation remains unsupported and is
+classified by the generic session coordinator.
+
 ## Persistence And Corruption
 
 Externally visible persistence and open-state failures are classified by their

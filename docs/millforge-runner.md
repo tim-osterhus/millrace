@@ -179,6 +179,17 @@ secret, selected component mismatch, requested adapter mismatch, or invalid
 runner evidence is refused. See [Errors and refusals](errors.md) for the public
 failure contract.
 
+Millforge execution uses the same runner-session lifecycle as other adapters.
+Factory-created facades receive a cooperative cancellation token and are
+closed by Millrace exactly once when their worker ends. Millrace does not
+invent terminate or kill support that the public facade does not expose.
+Injected facades remain owned by their caller, so Millrace neither closes nor
+claims cooperative cancellation control over them. A worker or owned close
+that remains unresolved is reported as session orphan risk rather than clean
+completion. Restart reconciliation is unsupported for these in-process
+workers; a restart therefore fails closed through the generic lost/orphan
+safety path.
+
 Millforge output is candidate execution evidence. Millrace validates it
 against the admitted plan and remains responsible for accepted routing, legal
 terminal outcomes, operator waits, and workflow completion.

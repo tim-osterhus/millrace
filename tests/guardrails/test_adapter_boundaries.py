@@ -419,11 +419,9 @@ def test_session_runtime_has_no_synchronous_adapter_invoke_consumer() -> None:
     assert "adapter.invoke(" not in run_source
     assert "adapter.invoke(" not in coordinator_source
     assert "self.invoke(" not in codex_source
-    assert millforge_source.count("self.invoke(request)") == 1
-    assert (
-        "def _start_session_via_temporary_synchronous_compatibility_shim("
-        in millforge_source
-    )
+    assert "def invoke(" not in millforge_source
+    assert "_CompletedMillforgeCompatibilityHandle" not in millforge_source
+    assert "temporary_synchronous_compatibility_shim" not in millforge_source
 
 
 def test_production_modules_do_not_import_testing_or_deterministic_context() -> None:
@@ -510,7 +508,7 @@ def test_millforge_adapter_uses_only_public_optional_millforge_imports() -> None
     )
     source = adapter_path.read_text(encoding="utf-8")
     assert "self._live_runner" not in source
-    assert "Thread" not in source
+    assert source.count("threading.Thread(") == 1
     assert "Executor" not in source
 
 
