@@ -22,7 +22,9 @@ This file starts at `0.13.0`, the current documented public baseline.
   before resuming created work, live reconciled handles receive the same
   emergency-cleanup guard as initial starts, and versioned coordinator locators
   safely recognize pre-envelope locator metadata without granting cleanup
-  authority.
+  authority. Raw handle identity is rejected before locator redaction, and a
+  verified live legacy-running session durably upgrades its exact handle proof
+  before polling or cleanup resumes.
 
 ## [0.22.0] - 2026-07-23
 

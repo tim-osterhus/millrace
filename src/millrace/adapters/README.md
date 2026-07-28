@@ -27,13 +27,17 @@ stage observation.
 Adapter locator metadata is persisted inside the internal
 `runner_session_coordinator_locator` version 1 envelope. The coordinator stores
 only a digest of the owned handle ID; adapter metadata must not contain raw
-`handle_id` fields or selected invocation authority.
+`handle_id` fields or selected invocation authority. Reserved locator keys are
+validated on the original adapter metadata before any redaction can transform
+their names.
 
 Legacy bare locator metadata from the unreleased pre-envelope implementation is
 read with no handle proof. It may support `VerifiedLive`, which establishes a
-new owned handle digest, but cannot authorize `CleanupPending`. Unknown or
-malformed coordinator-envelope versions fail closed before adapter
-reconciliation.
+new owned handle digest. For an already-running session, that versioned proof
+is persisted through the fenced session lifecycle before the live handle is
+polled, so a later restart can authorize cleanup of only that exact handle.
+Bare metadata cannot authorize `CleanupPending`. Unknown or malformed
+coordinator-envelope versions fail closed before adapter reconciliation.
 
 ## Codex
 

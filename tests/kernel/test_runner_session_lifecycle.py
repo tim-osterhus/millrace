@@ -36,6 +36,176 @@ def _claimed_state():
     return bootstrap_to_taskmaster_claim(result.plan, fingerprint)
 
 
+def _state_with_session(
+    session_state: str,
+    *,
+    locator_digest: str | None,
+):
+    state = _claimed_state()
+    run = state.runs["run-taskmaster"]
+    session = RunnerSessionRecord(
+        session_id="session-1",
+        run_id=run.run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        state=session_state,
+        created_at=100,
+        start_intent_at=110,
+        started_at=None if session_state == "starting" else 120,
+        ended_at=130 if session_state == "completed" else None,
+        durable_locator_digest=locator_digest,
+        cleanup_disposition=(
+            "complete" if session_state == "completed" else "pending"
+        ),
+    )
+    return replace(
+        state,
+        runs={
+            **state.runs,
+            run.run_ref.run_id: replace(
+                run,
+                current_session_id=session.session_id,
+                last_dispatch_generation=1,
+            ),
+        },
+        runner_sessions={session.session_id: session},
+    )
+
+
+@pytest.mark.parametrize(
+    "session_state",
+    ("running", "cancellation_requested", "terminating"),
+)
+def test_active_session_locator_refresh_changes_only_locator_digest(
+    session_state: str,
+) -> None:
+    old_digest = "sha256:" + "a" * 64
+    new_digest = "sha256:" + "b" * 64
+    state = _state_with_session(
+        session_state,
+        locator_digest=old_digest,
+    )
+    run_ref = state.runs["run-taskmaster"].run_ref
+    session = state.runner_sessions["session-1"]
+    transition_input = AdvanceRunnerSession(
+        "refresh-session-locator",
+        run_ref=run_ref,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        expected_state=session_state,
+        next_state=session_state,
+        occurred_at=120,
+        durable_locator_digest=new_digest,
+    )
+
+    decision = decide(
+        state,
+        transition_input,
+        deterministic_context(transition_id="transition-refresh-locator"),
+    )
+
+    assert decision.accepted
+    applied = apply(state, decision)
+    assert applied.runner_sessions[session.session_id] == replace(
+        session,
+        durable_locator_digest=new_digest,
+    )
+    assert applied.runs == state.runs
+
+
+@pytest.mark.parametrize(
+    ("override", "expected_reason"),
+    (
+        ({"durable_locator_digest": None}, "invalid_runner_session_transition"),
+        ({"session_id": "stale-session"}, "stale_runner_session"),
+        (
+            {"session_fencing_token": "stale-session-fence"},
+            "stale_runner_session",
+        ),
+    ),
+)
+def test_active_session_locator_refresh_refuses_incomplete_or_stale_authority(
+    override: dict[str, object],
+    expected_reason: str,
+) -> None:
+    state = _state_with_session(
+        "running",
+        locator_digest="sha256:" + "a" * 64,
+    )
+    run_ref = state.runs["run-taskmaster"].run_ref
+    session = state.runner_sessions["session-1"]
+    transition_input = AdvanceRunnerSession(
+        "refuse-session-locator-refresh",
+        run_ref=run_ref,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        expected_state="running",
+        next_state="running",
+        occurred_at=120,
+        durable_locator_digest="sha256:" + "b" * 64,
+    )
+
+    decision = decide(
+        state,
+        replace(transition_input, **override),
+        deterministic_context(
+            transition_id="transition-refuse-locator-refresh"
+        ),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == expected_reason
+
+
+@pytest.mark.parametrize(
+    ("session_state", "locator_digest"),
+    (
+        ("completed", "sha256:" + "a" * 64),
+        ("starting", "sha256:" + "a" * 64),
+        ("running", None),
+    ),
+)
+def test_session_locator_refresh_refuses_non_refresh_states(
+    session_state: str,
+    locator_digest: str,
+) -> None:
+    state = _state_with_session(
+        session_state,
+        locator_digest=locator_digest,
+    )
+    run_ref = state.runs["run-taskmaster"].run_ref
+    session = state.runner_sessions["session-1"]
+
+    decision = decide(
+        state,
+        AdvanceRunnerSession(
+            "refuse-session-locator-overwrite",
+            run_ref=run_ref,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            session_fencing_token=session.session_fencing_token,
+            expected_state=session_state,
+            next_state=session_state,
+            occurred_at=(
+                session.started_at
+                if session.started_at is not None
+                else session.start_intent_at
+            ),
+            durable_locator_digest="sha256:" + "b" * 64,
+        ),
+        deterministic_context(
+            transition_id="transition-refuse-locator-overwrite"
+        ),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "invalid_runner_session_transition"
+
+
 def test_session_creation_refuses_run_authority_drift() -> None:
     state = _claimed_state()
     run = state.runs["run-taskmaster"]

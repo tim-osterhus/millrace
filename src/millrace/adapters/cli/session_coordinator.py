@@ -86,6 +86,7 @@ _COORDINATOR_LOCATOR_KEYS = frozenset(
         "handle_id_digest",
     }
 )
+_RESERVED_ADAPTER_LOCATOR_KEYS = frozenset({"handle_id"})
 SESSION_DIAGNOSTIC_MAX_BYTES = 16 * 1024
 cooperative_cancel_grace_seconds = 5.0
 terminate_grace_seconds = 5.0
@@ -111,6 +112,7 @@ class SessionCancellationRequestResult:
 class _StoredReconciliationLocator:
     handle_id_digest: str | None
     adapter_locator: Mapping[str, AuthorityValue]
+    legacy: bool
 
 
 def execute_runner_session(
@@ -353,6 +355,18 @@ def _reconcile_session(
                     "runner_session_reconciliation_contradiction"
                 )
             session = running_session
+        elif stored_locator.legacy:
+            upgraded_session = _upgrade_legacy_reconciled_locator(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                locator_digest=locator_digest,
+            )
+            if upgraded_session is None:
+                return SessionExecutionResult(
+                    "runner_session_reconciliation_contradiction"
+                )
+            session = upgraded_session
         deadline = _monotonic() + (
             request.timeout_seconds
             if effective_timeout_seconds is None
@@ -418,13 +432,54 @@ def _advance_reconciled_starting_session(
     return persisted.runner_sessions[session.session_id]
 
 
+def _upgrade_legacy_reconciled_locator(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    locator_digest: str,
+) -> RunnerSessionRecord | None:
+    if session.state not in {
+        "running",
+        "cancellation_requested",
+        "terminating",
+    }:
+        return None
+    occurred_at = max(
+        value
+        for value in (
+            session.created_at,
+            session.start_intent_at,
+            session.started_at,
+        )
+        if value is not None
+    )
+    persisted = _persist_transition(
+        runtime,
+        AdvanceRunnerSession(
+            f"cli:run.session-upgrade-locator:{session.session_id}",
+            run_ref=run_ref,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            session_fencing_token=session.session_fencing_token,
+            expected_state=session.state,
+            next_state=session.state,
+            occurred_at=occurred_at,
+            durable_locator_digest=locator_digest,
+        ),
+    )
+    if persisted is None:
+        return None
+    return persisted.runner_sessions[session.session_id]
+
+
 def _load_reconciliation_locator(
     runtime: OpenRuntimeContext,
     session: RunnerSessionRecord,
 ) -> _StoredReconciliationLocator | None:
     if session.durable_locator_digest is None:
         return (
-            _StoredReconciliationLocator(None, {})
+            _StoredReconciliationLocator(None, {}, False)
             if session.state == "starting"
             else None
         )
@@ -439,7 +494,7 @@ def _load_reconciliation_locator(
         or "handle_id_digest" in locator
     )
     if not is_coordinator_locator:
-        return _StoredReconciliationLocator(None, locator)
+        return _StoredReconciliationLocator(None, locator, True)
     if (
         set(locator) != _COORDINATOR_LOCATOR_KEYS
         or locator.get("record_kind") != _COORDINATOR_LOCATOR_RECORD_KIND
@@ -467,7 +522,11 @@ def _load_reconciliation_locator(
             )
         ):
             return None
-    return _StoredReconciliationLocator(handle_id_digest, adapter_locator)
+    return _StoredReconciliationLocator(
+        handle_id_digest,
+        adapter_locator,
+        False,
+    )
 
 
 def _reconciliation_contradiction(
@@ -2153,6 +2212,8 @@ def _safe_coordinator_locator_digest(
         not isinstance(handle_id, str) or not handle_id.strip()
     ):
         return None
+    if _contains_reserved_adapter_locator_key(adapter_locator):
+        return None
     try:
         redacted = request.redaction_policy.redact_authority_value(adapter_locator)
     except (TypeError, ValueError):
@@ -2172,6 +2233,21 @@ def _safe_coordinator_locator_digest(
     except (TypeError, ValueError):
         return None
     return runtime.cas_store.put_bytes(payload)
+
+
+def _contains_reserved_adapter_locator_key(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            key in _RESERVED_ADAPTER_LOCATOR_KEYS
+            or _contains_reserved_adapter_locator_key(nested)
+            for key, nested in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(
+            _contains_reserved_adapter_locator_key(item)
+            for item in value
+        )
+    return False
 
 
 def _handle_id_digest(handle_id: str) -> str:

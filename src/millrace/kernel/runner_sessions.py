@@ -142,15 +142,34 @@ def advance_runner_session_refusal(
     if refusal is not None:
         return refusal
     session = state.runner_sessions[transition_input.session_id]
-    starting_locator_enrichment = (
-        transition_input.expected_state == "starting"
-        and transition_input.next_state == "starting"
+    same_phase_locator_update = (
+        transition_input.expected_state == transition_input.next_state
         and transition_input.durable_locator_digest is not None
-        and session.durable_locator_digest is None
-        and transition_input.occurred_at == session.start_intent_at
+        and transition_input.occurred_at
+        == max(
+            value
+            for value in (
+                session.created_at,
+                session.start_intent_at,
+                session.started_at,
+            )
+            if value is not None
+        )
     )
+    starting_locator_enrichment = (
+        same_phase_locator_update
+        and transition_input.expected_state == "starting"
+        and session.durable_locator_digest is None
+    )
+    active_locator_refresh = (
+        same_phase_locator_update
+        and transition_input.expected_state
+        in {"running", "cancellation_requested", "terminating"}
+        and session.durable_locator_digest is not None
+    )
+    locator_update = starting_locator_enrichment or active_locator_refresh
     if (
-        not starting_locator_enrichment
+        not locator_update
         and (
             not is_legal_runner_session_transition(
                 transition_input.expected_state,
@@ -162,7 +181,7 @@ def advance_runner_session_refusal(
     ):
         return "invalid_runner_session_transition"
     if transition_input.durable_locator_digest is not None and (
-        not starting_locator_enrichment
+        not locator_update
         and (
             transition_input.expected_state != "starting"
             or transition_input.next_state != "running"
@@ -189,8 +208,8 @@ def runner_session_for_advance(
 ) -> RunnerSessionRecord:
     session = state.runner_sessions[transition_input.session_id]
     if (
-        transition_input.expected_state == "starting"
-        and transition_input.next_state == "starting"
+        transition_input.expected_state == transition_input.next_state
+        and transition_input.durable_locator_digest is not None
     ):
         return replace(
             session,

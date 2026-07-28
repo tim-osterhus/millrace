@@ -2718,8 +2718,11 @@ def test_oversized_locator_remains_starting_without_adapter_completion(
 )
 def test_adapter_locator_cannot_persist_raw_handle_identity(
     tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
     adapter_locator: dict[str, object],
 ) -> None:
+    from millrace.adapters.cli import run
+
     adapter = _RecordingAdapter(
         lambda request: replace(
             _success_start(request),
@@ -2728,6 +2731,11 @@ def test_adapter_locator_cannot_persist_raw_handle_identity(
     )
     state, _ = _ready_state()
     runtime = _runtime(tmp_path, state)
+    monkeypatch.setattr(
+        run,
+        "_redaction_policy_for_adapter",
+        lambda *_args: RedactionPolicy("redact-handle-key", ("handle_id",)),
+    )
 
     result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
     after = _load(runtime)
@@ -2742,6 +2750,65 @@ def test_adapter_locator_cannot_persist_raw_handle_identity(
     assert session.state == "starting"
     assert session.durable_locator_digest is None
     assert not any(b"opaque-handle-secret" in payload for payload in cas_payloads)
+    assert after.runner_session_completions == {}
+    assert after.runner_observations == {}
+
+
+@pytest.mark.parametrize(
+    "adapter_locator",
+    (
+        {"handle_id": "opaque-live-handle-123"},
+        {"nested": {"handle_id": "opaque-live-handle-123"}},
+    ),
+)
+def test_reconciled_locator_cannot_redact_away_raw_handle_identity(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_locator: dict[str, object],
+) -> None:
+    from millrace.adapters.cli import run
+
+    def reconcile(request):
+        invocation = request.invocation_request
+        echo = DispatchEcho.from_dispatch_envelope(
+            invocation.dispatch_envelope,
+            correlation_id=invocation.correlation_id,
+            selected_adapter_kind=invocation.selected_adapter_kind,
+        )
+        return VerifiedLive(
+            echo,
+            _ImmediateHandle(_success_outcome(invocation)),
+            "verified-live-handle",
+            adapter_locator,
+        )
+
+    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    monkeypatch.setattr(
+        run,
+        "_redaction_policy_for_adapter",
+        lambda *_args: RedactionPolicy("redact-handle-key", ("handle_id",)),
+    )
+    first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    runtime = _reopen_runtime(runtime)
+
+    result = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+    cas_payloads = [
+        path.read_bytes()
+        for path in runtime.paths.cas_path.rglob("*")
+        if path.is_file()
+    ]
+
+    assert result.code == "runner_session_reconciliation_contradiction"
+    assert not any(
+        b"opaque-live-handle-123" in payload for payload in cas_payloads
+    )
     assert after.runner_session_completions == {}
     assert after.runner_observations == {}
 
@@ -3217,6 +3284,43 @@ def _indeterminate_start(request: AdapterInvocationRequest) -> StartIndeterminat
     )
 
 
+def _replace_running_locator_with_legacy_bare(runtime) -> str:
+    current = _load(runtime)
+    session = next(iter(current.runner_sessions.values()))
+    assert session.start_intent_at is not None
+    assert session.durable_locator_digest is not None
+    persisted = session_coordinator._persist_transition(
+        runtime,
+        AdvanceRunnerSession(
+            f"test:legacy-running:{session.session_id}",
+            run_ref=current.runs[session.run_id].run_ref,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            session_fencing_token=session.session_fencing_token,
+            expected_state="starting",
+            next_state="running",
+            occurred_at=session.start_intent_at,
+            durable_locator_digest=session.durable_locator_digest,
+        ),
+    )
+    assert persisted is not None
+    legacy_digest = runtime.cas_store.put_bytes(
+        runner_session_locator_bytes(
+            {"provider_request_id": "legacy-running-request"}
+        )
+    )
+    with sqlite3.connect(runtime.paths.db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_sessions
+            SET durable_locator_digest = ?
+            WHERE session_id = ?
+            """,
+            (legacy_digest, session.session_id),
+        )
+    return session.session_id
+
+
 @pytest.mark.parametrize(
     "active_activation_id",
     ("activation-1", "activation-taskmaster"),
@@ -3465,6 +3569,171 @@ def test_restart_verified_live_accepts_legacy_bare_locator_without_handle_proof(
     assert restarted.code == "observation_accepted"
     assert len(adapter.reconcile_requests) == 1
     assert next(iter(after.runner_sessions.values())).state == "completed"
+
+
+@pytest.mark.parametrize(
+    ("cleanup_handle_id", "expected_code", "expected_operations"),
+    (
+        (
+            "legacy-upgraded-handle",
+            "adapter_failure",
+            ["transport_cleanup"],
+        ),
+        (
+            "foreign-cleanup-handle",
+            "runner_session_reconciliation_contradiction",
+            [],
+        ),
+    ),
+)
+def test_legacy_running_locator_upgrade_proves_subsequent_cleanup_handle(
+    tmp_path,
+    cleanup_handle_id: str,
+    expected_code: str,
+    expected_operations: list[str],
+) -> None:
+    cleanup_handle = None
+    reconcile_count = 0
+
+    class MalformedLiveHandle(_ImmediateHandle):
+        def poll_completion(self) -> object:
+            return object()
+
+    class CleanupHandle(_ImmediateHandle):
+        def __init__(self, outcome: AdapterInvocationOutcome) -> None:
+            super().__init__(outcome)
+            self.operations: list[str] = []
+
+        def cleanup(self) -> RunnerCleanupResult:
+            self.operations.append("transport_cleanup")
+            diagnostic = {"cleanup": "complete"}
+            return RunnerCleanupResult(
+                "complete",
+                200,
+                200,
+                diagnostic,
+                runner_cancellation_diagnostic_digest(diagnostic),
+            )
+
+    def reconcile(request):
+        nonlocal cleanup_handle, reconcile_count
+        reconcile_count += 1
+        invocation = request.invocation_request
+        echo = DispatchEcho.from_dispatch_envelope(
+            invocation.dispatch_envelope,
+            correlation_id=invocation.correlation_id,
+            selected_adapter_kind=invocation.selected_adapter_kind,
+        )
+        if reconcile_count == 1:
+            return VerifiedLive(
+                echo,
+                MalformedLiveHandle(_success_outcome(invocation)),
+                "legacy-upgraded-handle",
+                {"provider_request_id": "legacy-running-request"},
+            )
+        cleanup_handle = CleanupHandle(
+            AdapterErrorResult.from_unredacted(
+                adapter_id=invocation.adapter_id,
+                error_kind="cancelled",
+                dispatch_echo=echo,
+                redaction_policy=invocation.redaction_policy,
+            )
+        )
+        return CleanupPending(echo, cleanup_handle, cleanup_handle_id)
+
+    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    session_id = _replace_running_locator_with_legacy_bare(runtime)
+    runtime = _reopen_runtime(runtime)
+
+    first_reconcile = reconcile_pending_runner_sessions(
+        runtime,
+        local_config=_config(adapter),
+    )
+    after_first = _load(runtime)
+    upgraded = json.loads(
+        runtime.cas_store.get_bytes(
+            after_first.runner_sessions[session_id].durable_locator_digest
+        )
+    )
+
+    assert first_reconcile.code == "session_reconciliation_required"
+    assert upgraded["record_kind"] == "runner_session_coordinator_locator"
+    assert upgraded["schema_version"] == 1
+    assert upgraded["handle_id_digest"] == (
+        session_coordinator._handle_id_digest("legacy-upgraded-handle")
+    )
+
+    runtime = _reopen_runtime(runtime)
+    second_reconcile = reconcile_pending_runner_sessions(
+        runtime,
+        local_config=_config(adapter),
+    )
+
+    assert second_reconcile.code == expected_code
+    assert cleanup_handle is not None
+    assert cleanup_handle.operations == expected_operations
+
+
+def test_legacy_running_locator_is_upgraded_before_live_completion_poll(
+    tmp_path,
+) -> None:
+    inspected_locators: list[dict[str, object]] = []
+
+    class InspectingHandle(_ImmediateHandle):
+        def poll_completion(self) -> AdapterInvocationOutcome | None:
+            current = _load(runtime)
+            session = next(iter(current.runner_sessions.values()))
+            inspected_locators.append(
+                json.loads(
+                    runtime.cas_store.get_bytes(
+                        session.durable_locator_digest
+                    )
+                )
+            )
+            return super().poll_completion()
+
+    def reconcile(request):
+        invocation = request.invocation_request
+        echo = DispatchEcho.from_dispatch_envelope(
+            invocation.dispatch_envelope,
+            correlation_id=invocation.correlation_id,
+            selected_adapter_kind=invocation.selected_adapter_kind,
+        )
+        return VerifiedLive(
+            echo,
+            InspectingHandle(_success_outcome(invocation)),
+            "legacy-completing-handle",
+            {"provider_request_id": "legacy-running-request"},
+        )
+
+    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    _replace_running_locator_with_legacy_bare(runtime)
+    runtime = _reopen_runtime(runtime)
+
+    result = reconcile_pending_runner_sessions(
+        runtime,
+        local_config=_config(adapter),
+    )
+
+    assert result.code == "observation_accepted"
+    assert inspected_locators == [
+        {
+            "adapter_locator": {
+                "provider_request_id": "legacy-running-request"
+            },
+            "handle_id_digest": session_coordinator._handle_id_digest(
+                "legacy-completing-handle"
+            ),
+            "record_kind": "runner_session_coordinator_locator",
+            "schema_version": 1,
+        }
+    ]
 
 
 def test_restart_legacy_bare_locator_cannot_authorize_cleanup(
