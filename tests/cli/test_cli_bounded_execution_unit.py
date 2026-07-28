@@ -1965,7 +1965,7 @@ def test_bounded_unit_adapter_conversion_refusal_creates_no_evidence(
         "artifacts": 0,
         "routes": 0,
         "closed": 0,
-        "receipts": _observed_counts(state)["receipts"] + 4,
+        "receipts": _observed_counts(state)["receipts"] + 5,
     }
 
 

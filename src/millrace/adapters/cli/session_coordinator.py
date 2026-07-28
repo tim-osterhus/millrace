@@ -210,6 +210,7 @@ def _start_created_session(
     if isinstance(start_outcome, StartRefusedBeforeExternalWork):
         error_echo = start_outcome.adapter_error.dispatch_echo
         if error_echo is None:
+            _audit_session_refusal(runtime, run_ref=run_ref, session=session)
             return SessionExecutionResult("session_reconciliation_required")
         try:
             start_outcome.dispatch_echo.validate_against(
@@ -221,6 +222,7 @@ def _start_created_session(
                 correlation_id=request.correlation_id,
             )
         except (AttributeError, TypeError, ValueError):
+            _audit_session_refusal(runtime, run_ref=run_ref, session=session)
             return SessionExecutionResult("session_reconciliation_required")
         return _persist_adapter_error(
             runtime,
@@ -316,6 +318,7 @@ def _persist_completion(
 ) -> SessionExecutionResult:
     dispatch_echo = outcome.dispatch_echo
     if dispatch_echo is None:
+        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
         return SessionExecutionResult("session_reconciliation_required")
     try:
         dispatch_echo.validate_against(
@@ -323,6 +326,7 @@ def _persist_completion(
             correlation_id=request.correlation_id,
         )
     except (TypeError, ValueError):
+        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
         return SessionExecutionResult("session_reconciliation_required")
     if isinstance(outcome, AdapterErrorResult):
         diagnostic_digest = runtime.cas_store.put_bytes(
@@ -339,6 +343,7 @@ def _persist_completion(
     try:
         evidence = runner_evidence_from_adapter_outcome(outcome, request)
     except (TypeError, ValueError):
+        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
         return SessionExecutionResult("adapter_conversion_refused")
     state = _load(runtime)
     if not _evidence_matches_current_authority(

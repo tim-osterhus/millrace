@@ -79,6 +79,20 @@ class _SequenceHandle(_ImmediateHandle):
         return self._outcomes.pop(0) if self._outcomes else None
 
 
+class _CapturingImmediateHandle(_ImmediateHandle):
+    def __init__(
+        self,
+        outcome: AdapterInvocationOutcome,
+        capture: Callable[[], None],
+    ) -> None:
+        super().__init__(outcome)
+        self._capture = capture
+
+    def poll_completion(self) -> AdapterInvocationOutcome | None:
+        self._capture()
+        return super().poll_completion()
+
+
 class _RecordingAdapter:
     adapter_kind = "codex"
 
@@ -146,6 +160,102 @@ def _refused_start(
 
 def _config(adapter: _RecordingAdapter) -> AdapterLocalConfig:
     return AdapterLocalConfig(adapters={"codex": adapter})
+
+
+def _assert_single_refusal_audit(
+    before,
+    after,
+    *,
+    session_state: str,
+) -> None:
+    assert len(after.receipts) == len(before.receipts) + 1
+    assert len(after.refusals) == len(before.refusals) + 1
+    assert len(after.governance_events) == len(before.governance_events) + 1
+    assert len(after.traces) == len(before.traces) + 1
+    assert after.runner_sessions == before.runner_sessions
+    assert next(iter(after.runner_sessions.values())).state == session_state
+    assert after.runner_session_completions == before.runner_session_completions
+    assert after.runner_observations == before.runner_observations
+    assert after.artifacts == before.artifacts
+    assert after.work_items == before.work_items
+    assert after.activations == before.activations
+    assert after.activation_routes == before.activation_routes
+    assert after.closed_work_items == before.closed_work_items
+    assert after.runs == before.runs
+
+
+def _mismatched_echo(request: AdapterInvocationRequest) -> DispatchEcho:
+    return replace(
+        DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        ),
+        correlation_id="stale-correlation",
+    )
+
+
+def _completion_signal_result(
+    tmp_path,
+    outcome_factory: Callable[
+        [AdapterInvocationRequest],
+        AdapterInvocationOutcome,
+    ],
+):
+    snapshots = []
+    runtime = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        )
+        return StartedSession(
+            echo,
+            _CapturingImmediateHandle(
+                outcome_factory(request),
+                lambda: snapshots.append(_load(runtime)),
+            ),
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    adapter = _RecordingAdapter(start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    assert len(snapshots) == 1
+    return result, snapshots[0], _load(runtime)
+
+
+def _success_outcome(
+    request: AdapterInvocationRequest,
+    *,
+    dispatch_echo: DispatchEcho | None = None,
+) -> AdapterSuccessResult:
+    return AdapterSuccessResult.from_unredacted(
+        adapter_id=request.adapter_id,
+        dispatch_echo=dispatch_echo
+        or DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        ),
+        redaction_policy=request.redaction_policy,
+        marker="TASK_COMPLETE",
+        artifact_payload_candidate=task_artifact_payload(),
+    )
+
+
+def _error_outcome(
+    request: AdapterInvocationRequest,
+    *,
+    dispatch_echo: DispatchEcho | None,
+) -> AdapterErrorResult:
+    return AdapterErrorResult.from_unredacted(
+        adapter_id=request.adapter_id,
+        error_kind="invocation_failed",
+        dispatch_echo=dispatch_echo,
+        redaction_policy=request.redaction_policy,
+    )
 
 
 def test_request_factory_side_effect_occurs_after_start_intent(
@@ -401,6 +511,99 @@ def test_malformed_handle_outcome_remains_running_and_requires_reconciliation(
     assert after.runner_session_completions == {}
 
 
+def test_adapter_error_without_dispatch_echo_is_durably_audited(tmp_path) -> None:
+    result, before_signal, after = _completion_signal_result(
+        tmp_path,
+        lambda request: _error_outcome(request, dispatch_echo=None),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    _assert_single_refusal_audit(before_signal, after, session_state="running")
+
+
+@pytest.mark.parametrize("outcome_kind", ("success", "error"))
+def test_completion_dispatch_echo_mismatch_is_durably_audited(
+    tmp_path,
+    outcome_kind: str,
+) -> None:
+    def mismatched_completion(
+        request: AdapterInvocationRequest,
+    ) -> AdapterInvocationOutcome:
+        echo = _mismatched_echo(request)
+        if outcome_kind == "success":
+            return _success_outcome(request, dispatch_echo=echo)
+        return _error_outcome(
+            request,
+            dispatch_echo=echo,
+        )
+
+    result, before_signal, after = _completion_signal_result(
+        tmp_path,
+        mismatched_completion,
+    )
+
+    assert result.code == "session_reconciliation_required"
+    _assert_single_refusal_audit(before_signal, after, session_state="running")
+
+
+def test_evidence_conversion_refusal_is_durably_audited(tmp_path) -> None:
+    result, before_signal, after = _completion_signal_result(
+        tmp_path,
+        lambda request: replace(_success_outcome(request), marker=None),
+    )
+
+    assert result.code == "adapter_conversion_refused"
+    _assert_single_refusal_audit(before_signal, after, session_state="running")
+
+
+@pytest.mark.parametrize("malformation", ("missing_error_echo", "mismatched_echo"))
+def test_start_refusal_echo_malformation_is_durably_audited(
+    tmp_path,
+    malformation: str,
+) -> None:
+    snapshots = []
+    runtime = None
+
+    def malformed_refusal(
+        request: AdapterInvocationRequest,
+    ) -> StartRefusedBeforeExternalWork:
+        valid_echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        )
+        error = AdapterErrorResult.from_unredacted(
+            adapter_id=request.adapter_id,
+            error_kind="selected_authority_refused",
+            dispatch_echo=(
+                None
+                if malformation == "missing_error_echo"
+                else _mismatched_echo(request)
+            ),
+            redaction_policy=request.redaction_policy,
+        )
+        snapshots.append(_load(runtime))
+        return StartRefusedBeforeExternalWork(
+            (
+                valid_echo
+                if malformation == "missing_error_echo"
+                else _mismatched_echo(request)
+            ),
+            error,
+            "sha256:" + "b" * 64,
+        )
+
+    adapter = _RecordingAdapter(malformed_refusal)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+
+    assert result.code == "session_reconciliation_required"
+    assert len(snapshots) == 1
+    _assert_single_refusal_audit(snapshots[0], after, session_state="starting")
+
+
 def test_locator_is_redacted_before_bounded_cas_persistence(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -484,6 +687,7 @@ def test_indeterminate_start_retains_redacted_safe_locator(
         "_redaction_policy_for_adapter",
         lambda *_args: RedactionPolicy("redact-default", (secret,)),
     )
+    before = _load(runtime)
     result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
     after = _load(runtime)
     session = next(iter(after.runner_sessions.values()))
@@ -491,6 +695,11 @@ def test_indeterminate_start_retains_redacted_safe_locator(
     assert result.code == "session_reconciliation_required"
     assert session.state == "starting"
     assert session.durable_locator_digest is not None
+    assert after.refusals == before.refusals
+    assert not any(
+        event.disposition == "refused"
+        for event in after.governance_events[len(before.governance_events) :]
+    )
     locator = runtime.cas_store.get_bytes(session.durable_locator_digest)
     assert secret.encode() not in locator
 
