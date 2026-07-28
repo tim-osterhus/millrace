@@ -48,6 +48,7 @@ GLOBAL_OPTIONS_WITH_VALUES = {
     "--adapter-kind",
     "--adapter-config-json",
     "--monitor",
+    "--after-sequence",
 }
 GLOBAL_FLAG_OPTIONS = {
     "--json",
@@ -545,6 +546,22 @@ def _add_runs_commands(
     )
     cancel.set_defaults(command="runs.cancel")
     help_parsers["runs.cancel"] = cancel
+
+    follow = subparsers.add_parser(
+        "follow",
+        help="Read a bounded runner-session event projection.",
+    )
+    follow.add_argument("run_id", metavar="RUN_ID")
+    follow.add_argument(
+        "--after-sequence",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Return retained events after this per-session sequence.",
+    )
+    _add_max_events_option(follow)
+    follow.set_defaults(command="runs.follow")
+    help_parsers["runs.follow"] = follow
 
 
 def _add_trace_commands(

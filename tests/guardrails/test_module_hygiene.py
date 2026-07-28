@@ -460,6 +460,7 @@ ALLOWED_SUBSTRATE_INTERNAL_IMPORTS = {
     "millrace.substrate.errors": frozenset[str](),
     "millrace.substrate.package_archives": frozenset[str](),
     "millrace.substrate.records": frozenset({"millrace.substrate.errors"}),
+    "millrace.substrate.runner_session_events": frozenset[str](),
     "millrace.substrate.sqlite": frozenset(
         {
             "millrace.substrate._sqlite_load",

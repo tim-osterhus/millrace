@@ -315,6 +315,10 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
                 ("runs", "cancel", "run.id", "--input-id", "cancel.id"),
                 "_dispatch_status",
             ),
+            (
+                ("runs", "follow", "run.id", "--after-sequence", "0"),
+                "_dispatch_status",
+            ),
         (("trace", "show"), "_dispatch_status"),
         (("waits", "list"), "_dispatch_status"),
         (("waits", "resume", "wait.id"), "_dispatch_intervention"),
@@ -380,7 +384,7 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
         for command in help_parsers
         if command in {"status", "doctor"} or "." in command
     }
-    assert len(command_cases) == 38
+    assert len(command_cases) == 39
     assert registered_leaves == {
         ".".join(argv[:2]) if argv[0] not in {"status", "doctor"} else argv[0]
         for argv, _expected in command_cases

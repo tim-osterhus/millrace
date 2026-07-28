@@ -13,6 +13,15 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Added
+
+- Added a separately versioned, bounded runner-session event sidecar and the
+  finite `millrace runs follow RUN_ID --after-sequence N` projection. Live
+  events are redacted across transport chunks, compact progress under fixed
+  record, byte, stream, page, and rate ceilings, report explicit history gaps,
+  and reconcile final status from durable runner-session completion rather
+  than creating workflow authority.
+
 ### Fixed
 
 - Replaced Millforge's temporary synchronous runner bridge with the generic

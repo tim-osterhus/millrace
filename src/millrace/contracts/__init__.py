@@ -58,6 +58,12 @@ from millrace.contracts.ids import (
     WorkflowId,
     WorkflowVersion,
 )
+from millrace.contracts.runner_events import (
+    RUNNER_SESSION_EVENT_KINDS,
+    RUNNER_SESSION_EVENT_MAX_PAYLOAD_BYTES,
+    RUNNER_SESSION_EVENT_SCHEMA_VERSION,
+    RunnerSessionEvent,
+)
 from millrace.contracts.state import (
     Activation,
     ActivationRouteRecord,
@@ -266,6 +272,10 @@ __all__ = (
     "RunnerSessionCancellationRecord",
     "RunnerSessionCompletionRecord",
     "RunnerSessionRecord",
+    "RunnerSessionEvent",
+    "RUNNER_SESSION_EVENT_KINDS",
+    "RUNNER_SESSION_EVENT_MAX_PAYLOAD_BYTES",
+    "RUNNER_SESSION_EVENT_SCHEMA_VERSION",
     "RunnerBindingDeclaration",
     "RunnerBindingId",
     "RunnerComponentPin",

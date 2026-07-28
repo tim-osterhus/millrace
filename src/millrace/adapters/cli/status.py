@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterable
+from typing import cast
 
 from millrace.adapters.cli.context import (
     CliCommandError,
@@ -35,6 +37,8 @@ def handle_status_command(namespace: object) -> CliSuccess:
         return _runs_show(namespace)
     if command == "runs.cancel":
         return _runs_cancel(namespace)
+    if command == "runs.follow":
+        return _runs_follow(namespace)
     if command == "waits.list":
         return _waits_list(namespace)
     if command == "interventions.list":
@@ -231,6 +235,133 @@ def _runs_cancel(namespace: object) -> CliSuccess:
             "input_id": request_id,
             "reason": "operator_cancel_work",
             "source_kind": "operator",
+        },
+    )
+
+
+def _runs_follow(namespace: object) -> CliSuccess:
+    from millrace.substrate.runner_session_events import (
+        RUNNER_SESSION_EVENT_READ_MAX_RECORDS,
+        RunnerSessionEventStore,
+        runner_session_event_store_path,
+    )
+
+    command = "runs.follow"
+    run_id = require_nonblank(
+        str(getattr(namespace, "run_id")),
+        option="RUN_ID",
+        command=command,
+    )
+    after_sequence = getattr(namespace, "after_sequence", 0)
+    if type(after_sequence) is not int or after_sequence < 0:
+        raise CliCommandError(
+            command=command,
+            code="invalid_after_sequence",
+            message="--after-sequence must be a nonnegative integer.",
+            exit_code=ExitCode.CLI_USAGE,
+            details={"after_sequence": after_sequence},
+        )
+    max_events = min(
+        _max_events(namespace, command=command),
+        RUNNER_SESSION_EVENT_READ_MAX_RECORDS,
+    )
+    runtime = open_runtime_context(namespace, command=command)
+    event_store = None
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        run = state.runs.get(run_id)
+        if run is None:
+            raise CliCommandError(
+                command=command,
+                code="run_not_found",
+                message="Run was not found.",
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+                details={"run_id": run_id},
+            )
+        session = (
+            None
+            if run.current_session_id is None
+            else state.runner_sessions.get(run.current_session_id)
+        )
+        event_path = runner_session_event_store_path(runtime.paths.db_path)
+        events: list[dict[str, object]]
+        gap: object | None
+        if event_path.is_file() and max_events > 0 and session is not None:
+            try:
+                event_store = RunnerSessionEventStore.open(event_path)
+                page = event_store.read(
+                    run_id,
+                    after_sequence=after_sequence,
+                    limit=max_events,
+                    session_id=session.session_id,
+                )
+            except (OSError, sqlite3.Error, TypeError, ValueError):
+                events = []
+                gap = {
+                    "after_sequence": after_sequence,
+                    "resumes_at_sequence": None,
+                    "reason": "history_unavailable",
+                }
+                last_sequence = after_sequence
+            else:
+                if not page.stream_found:
+                    events = []
+                    gap = {
+                        "after_sequence": after_sequence,
+                        "resumes_at_sequence": None,
+                        "reason": "history_unavailable",
+                    }
+                    last_sequence = after_sequence
+                else:
+                    events = [
+                        cast(dict[str, object], json_ready(event.payload()))
+                        for event in page.events
+                    ]
+                    gap = None if page.gap is None else json_ready(page.gap)
+                    last_sequence = page.last_sequence
+        else:
+            events = []
+            gap = None
+            last_sequence = after_sequence
+        completion = (
+            None
+            if session is None
+            else state.runner_session_completions.get(session.session_id)
+        )
+        durable_final = {
+            "session_id": None if session is None else session.session_id,
+            "dispatch_generation": (
+                None if session is None else session.dispatch_generation
+            ),
+            "session_state": None if session is None else session.state,
+            "completion_persisted": completion is not None,
+            "terminal_state": (
+                None if completion is None else completion.terminal_state
+            ),
+            "application_persisted": (
+                completion is not None
+                and completion.application_input_id in state.receipts
+            ),
+        }
+        next_after_sequence = (
+            cast(int, events[-1]["sequence"]) if events else after_sequence
+        )
+    finally:
+        if event_store is not None:
+            event_store.close()
+        runtime.close()
+    return success_result(
+        command=command,
+        code="runner_session_events_followed",
+        message="Runner session events projected.",
+        data={
+            "run_id": run_id,
+            "after_sequence": after_sequence,
+            "events": events,
+            "gap": gap,
+            "last_sequence": last_sequence,
+            "next_after_sequence": next_after_sequence,
+            "durable_final": durable_final,
         },
     )
 

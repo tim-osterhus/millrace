@@ -978,6 +978,15 @@ def _start_created_session(
             handle=start_outcome.handle,
         )
     running_session = running_state.runner_sessions[session.session_id]
+    _record_session_event(
+        runtime,
+        session=running_session,
+        kind="session_started",
+        observed_at=running_at,
+        payload={"state": "running"},
+        replay_key="session-started",
+        redaction_policy=request.redaction_policy,
+    )
     return _drive_owned_live_handle(
         runtime,
         run_ref=run_ref,
@@ -1352,6 +1361,20 @@ def _request_cancellation_once(
         primary=not session_requests,
     )
     persisted = _persist_transition(runtime, transition)
+    if persisted is not None:
+        _record_session_event(
+            runtime,
+            session=persisted.runner_sessions[session.session_id],
+            kind="cancellation_progress",
+            observed_at=requested_at,
+            payload={
+                "state": "cancellation_requested",
+                "reason": reason,
+                "source_kind": source_kind,
+            },
+            replay_key=f"cancellation-request:{request_id}",
+            redaction_policy=RedactionPolicy(policy_id="runtime-session-events"),
+        )
     return SessionCancellationRequestResult(
         "runner_session_cancel_requested"
         if persisted is not None
@@ -2070,7 +2093,7 @@ def _persist_completion_record(
     session: RunnerSessionRecord,
     completion: RunnerSessionCompletionRecord,
 ) -> RuntimeState | None:
-    return _persist_transition(
+    persisted = _persist_transition(
         runtime,
         RecordRunnerSessionCompletion(
             f"cli:run.session-record-completion:{completion.completion_id}",
@@ -2079,6 +2102,23 @@ def _persist_completion_record(
             completion=completion,
         ),
     )
+    if persisted is not None:
+        _record_session_event(
+            runtime,
+            session=persisted.runner_sessions[session.session_id],
+            kind="session_terminal",
+            observed_at=completion.completed_at,
+            payload={
+                "terminal_state": completion.terminal_state,
+                "exit_kind": completion.exit_kind,
+                "cleanup_disposition": completion.cleanup_disposition,
+            },
+            replay_key=f"session-terminal:{completion.completion_id}",
+            redaction_policy=RedactionPolicy(
+                policy_id=completion.redaction_policy_id
+            ),
+        )
+    return persisted
 
 
 def _apply_persisted_completion(
@@ -2193,6 +2233,48 @@ def _persist_transition(
     if not decision.accepted:
         return None
     return next_state
+
+
+def _record_session_event(
+    runtime: OpenRuntimeContext,
+    *,
+    session: RunnerSessionRecord,
+    kind: str,
+    observed_at: int,
+    payload: Mapping[str, object],
+    replay_key: str,
+    redaction_policy: RedactionPolicy,
+) -> None:
+    """Best-effort projection after durable state; never session authority."""
+
+    from millrace.substrate.runner_session_events import (
+        RunnerSessionEventStore,
+        RunnerSessionEventWriter,
+        runner_session_event_store_path,
+    )
+
+    store = None
+    try:
+        store = RunnerSessionEventStore.initialize(
+            runner_session_event_store_path(runtime.paths.db_path)
+        )
+        RunnerSessionEventWriter(
+            store,
+            session_id=session.session_id,
+            run_id=session.run_id,
+            dispatch_generation=session.dispatch_generation,
+            redaction_policy=redaction_policy,
+        ).record(
+            kind,
+            payload,
+            observed_at=observed_at,
+            replay_key=replay_key,
+        )
+    except Exception:
+        return
+    finally:
+        if store is not None:
+            store.close()
 
 
 def _request_matches_current_authority(

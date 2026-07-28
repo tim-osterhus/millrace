@@ -518,3 +518,73 @@ def test_runs_cancel_refuses_terminal_session(tmp_path) -> None:
     assert len(after.traces) == len(before.traces) + 1
     assert after.runner_sessions == before.runner_sessions
     assert after.runner_session_completions == before.runner_session_completions
+
+
+def test_runs_follow_projects_events_but_reconciles_final_from_durable_state(
+    tmp_path,
+) -> None:
+    from millrace.adapters.cli import daemon
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+    from millrace.substrate.runner_session_events import (
+        RunnerSessionEventStore,
+        runner_session_event_store_path,
+    )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_codex_success_config(),
+    )
+    assert result.run_id is not None
+    durable = _load(runtime)
+    run = durable.runs[result.run_id]
+    assert run.current_session_id is not None
+    session = durable.runner_sessions[run.current_session_id]
+    observations_before = durable.runner_observations
+    event_path = runner_session_event_store_path(runtime.paths.db_path)
+    store = RunnerSessionEventStore.open(event_path)
+    store._connection.execute(  # noqa: SLF001 - simulate misleading sidecar data
+        "UPDATE session_events SET payload_json = ? "
+        "WHERE session_id = ? AND kind = 'session_terminal'",
+        (
+            '{"claimed_authority":true,"terminal_state":"lost"}',
+            session.session_id,
+        ),
+    )
+    store._connection.commit()  # noqa: SLF001
+    store.close()
+    paths = runtime.paths
+    _close(runtime)
+
+    code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "follow",
+            result.run_id,
+            "--after-sequence",
+            "0",
+            "--max-events",
+            "1000",
+        ]
+    )
+
+    assert code == 0, stderr
+    payload = json.loads(stdout)["data"]
+    assert len(payload["events"]) <= 100
+    assert payload["durable_final"]["session_state"] == "completed"
+    assert payload["durable_final"]["terminal_state"] == "completed"
+    assert payload["durable_final"]["completion_persisted"] is True
+    assert payload["durable_final"]["application_persisted"] is True
+    reopened = daemon.open_runtime_context(paths, command="test")
+    try:
+        assert _load(reopened).runner_observations == observations_before
+    finally:
+        reopened.close()
