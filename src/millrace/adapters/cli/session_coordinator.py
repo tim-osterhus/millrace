@@ -75,6 +75,7 @@ from millrace.operator.dispatch import (
 from millrace.substrate.errors import StorageIntegrityError
 
 _COMMAND = "run.session"
+_RUNTIME_SESSION_EVENT_POLICY = RedactionPolicy(policy_id="runtime-session-events")
 _POLL_INTERVAL_SECONDS = 0.01
 _COORDINATOR_LOCATOR_RECORD_KIND = "runner_session_coordinator_locator"
 _COORDINATOR_LOCATOR_SCHEMA_VERSION = 1
@@ -574,7 +575,16 @@ def _persist_orphan_risk(
         redaction_policy_id=request.redaction_policy.policy_id,
         primary=_primary_cancellation(_load(runtime), session),
     )
-    if _persist_completion_record(runtime, run_ref, session, completion) is None:
+    if (
+        _persist_completion_record(
+            runtime,
+            run_ref,
+            session,
+            completion,
+            event_redaction_policy=request.redaction_policy,
+        )
+        is None
+    ):
         return SessionExecutionResult(
             "runner_session_reconciliation_contradiction"
         )
@@ -903,6 +913,7 @@ def _start_created_session(
             outcome=start_outcome.adapter_error,
             diagnostic_digest=stored_digest,
             cleanup_disposition="not_required",
+            redaction_policy=request.redaction_policy,
         )
     if not isinstance(start_outcome, StartedSession):
         _audit_session_refusal(
@@ -1548,7 +1559,16 @@ def _cancel_running_session(
             redaction_policy_id=request.redaction_policy.policy_id,
             primary=primary,
         )
-        if _persist_completion_record(runtime, run_ref, session, completion) is None:
+        if (
+            _persist_completion_record(
+                runtime,
+                run_ref,
+                session,
+                completion,
+                event_redaction_policy=request.redaction_policy,
+            )
+            is None
+        ):
             return SessionExecutionResult("completion_refused")
         return SessionExecutionResult(
             "runner_session_orphan_risk",
@@ -1599,7 +1619,16 @@ def _cancel_running_session(
         redaction_policy_id=request.redaction_policy.policy_id,
         primary=primary,
     )
-    if _persist_completion_record(runtime, run_ref, session, completion) is None:
+    if (
+        _persist_completion_record(
+            runtime,
+            run_ref,
+            session,
+            completion,
+            event_redaction_policy=request.redaction_policy,
+        )
+        is None
+    ):
         return SessionExecutionResult("completion_refused")
     return SessionExecutionResult(
         "adapter_failure",
@@ -1903,6 +1932,7 @@ def _persist_completion(
             cleanup_disposition=cleanup_result.disposition,
             terminal_state=adapter_error_terminal_state,
             primary=primary,
+            redaction_policy=request.redaction_policy,
         )
     try:
         evidence = runner_evidence_from_adapter_outcome(outcome, request)
@@ -1967,7 +1997,13 @@ def _persist_completion(
         redaction_policy_id=outcome.redaction_policy_id,
         primary=primary,
     )
-    persisted = _persist_completion_record(runtime, run_ref, session, completion)
+    persisted = _persist_completion_record(
+        runtime,
+        run_ref,
+        session,
+        completion,
+        event_redaction_policy=request.redaction_policy,
+    )
     if persisted is None:
         return SessionExecutionResult("completion_refused")
     return _apply_persisted_completion(runtime, completion)
@@ -2024,6 +2060,7 @@ def _persist_adapter_error(
     cleanup_disposition: str,
     terminal_state: str = "failed",
     primary: RunnerSessionCancellationRecord | None = None,
+    redaction_policy: RedactionPolicy,
 ) -> SessionExecutionResult:
     completion = _completion_record(
         session=session,
@@ -2037,7 +2074,16 @@ def _persist_adapter_error(
         redaction_policy_id=outcome.redaction_policy_id,
         primary=primary,
     )
-    if _persist_completion_record(runtime, run_ref, session, completion) is None:
+    if (
+        _persist_completion_record(
+            runtime,
+            run_ref,
+            session,
+            completion,
+            event_redaction_policy=redaction_policy,
+        )
+        is None
+    ):
         return SessionExecutionResult("completion_refused")
     return SessionExecutionResult(
         "adapter_failure",
@@ -2092,6 +2138,8 @@ def _persist_completion_record(
     run_ref: RunRef,
     session: RunnerSessionRecord,
     completion: RunnerSessionCompletionRecord,
+    *,
+    event_redaction_policy: RedactionPolicy | None = None,
 ) -> RuntimeState | None:
     persisted = _persist_transition(
         runtime,
@@ -2114,8 +2162,10 @@ def _persist_completion_record(
                 "cleanup_disposition": completion.cleanup_disposition,
             },
             replay_key=f"session-terminal:{completion.completion_id}",
-            redaction_policy=RedactionPolicy(
-                policy_id=completion.redaction_policy_id
+            redaction_policy=(
+                _RUNTIME_SESSION_EVENT_POLICY
+                if event_redaction_policy is None
+                else event_redaction_policy
             ),
         )
     return persisted

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 import pytest
@@ -17,6 +18,7 @@ from millrace.substrate.runner_session_events import (
     RUNNER_SESSION_EVENT_STORE_MAX_BYTES,
     RUNNER_SESSION_EVENT_STORE_MAX_RECORDS,
     RUNNER_SESSION_EVENT_STORE_MAX_STREAMS,
+    RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND,
     RunnerSessionEventStore,
     RunnerSessionEventWriter,
     runner_session_event_store_path,
@@ -361,3 +363,180 @@ def test_active_stream_ceiling_refuses_new_stream_without_resetting_sequences(
 
     assert resumed.sequence == 2
     assert store.stats().retained_streams == RUNNER_SESSION_EVENT_STORE_MAX_STREAMS
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ("runner_progress", "tool_activity", "usage_update", "diagnostic"),
+)
+def test_provider_event_rate_is_bounded_per_kind_and_second(
+    tmp_path,
+    kind: str,
+) -> None:
+    writer = _writer(tmp_path)
+    accepted = 0
+    for index in range(RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND + 5):
+        try:
+            writer.record(
+                kind,
+                {"index": index},
+                observed_at=1_000_000_000,
+                replay_key=f"{kind}-{index}",
+            )
+        except ValueError:
+            continue
+        accepted += 1
+
+    retained = writer.store.read("run-1", after_sequence=0).events
+    assert len(retained) <= RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND
+    if kind == "runner_progress":
+        assert accepted == RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND + 5
+    else:
+        assert accepted == RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND
+
+
+def test_provider_event_rate_ceiling_is_aggregate_across_kinds(tmp_path) -> None:
+    writer = _writer(tmp_path)
+    for index in range(10):
+        writer.record(
+            "tool_activity",
+            {"index": index},
+            observed_at=2_000_000_000,
+            replay_key=f"tool-{index}",
+        )
+        writer.record(
+            "usage_update",
+            {"index": index},
+            observed_at=2_000_000_000,
+            replay_key=f"usage-{index}",
+        )
+
+    with pytest.raises(ValueError, match="update-rate ceiling"):
+        writer.record(
+            "diagnostic",
+            {"overflow": True},
+            observed_at=2_000_000_000,
+            replay_key="diagnostic-overflow",
+        )
+
+
+def test_lifecycle_and_terminal_survive_provider_pressure(tmp_path) -> None:
+    writer = _writer(tmp_path)
+    started = writer.record(
+        "session_started",
+        {"state": "running"},
+        observed_at=0,
+        replay_key="started",
+    )
+    cancelled = writer.record(
+        "cancellation_progress",
+        {"state": "requested"},
+        observed_at=1,
+        replay_key="cancelled",
+    )
+    for index in range(300):
+        kind = ("diagnostic", "tool_activity")[index % 2]
+        try:
+            writer.record(
+                kind,
+                {"index": index, "padding": "x" * 4000},
+                observed_at=(index + 1) * 1_000_000_000,
+                replay_key=f"provider-{index}",
+            )
+        except ValueError:
+            pass
+    terminal = writer.record(
+        "session_terminal",
+        {"terminal_state": "completed"},
+        observed_at=400_000_000_000,
+        replay_key="terminal",
+    )
+
+    retained_ids = {
+        str(row[0])
+        for row in writer.store._connection.execute(  # noqa: SLF001
+            "SELECT event_id FROM session_events WHERE session_id = 'session-1'"
+        ).fetchall()
+    }
+    assert {started.event_id, cancelled.event_id, terminal.event_id} <= retained_ids
+
+
+def test_known_stream_with_no_successor_returns_history_unavailable_gap(
+    tmp_path,
+) -> None:
+    writer = _writer(tmp_path)
+    writer.record_progress(
+        {"message": "temporary"},
+        observed_at=1,
+        replay_key="temporary",
+    )
+    writer.store._connection.execute(  # noqa: SLF001 - compaction fixture
+        "DELETE FROM session_events WHERE session_id = 'session-1'"
+    )
+    writer.store._connection.commit()  # noqa: SLF001
+
+    page = writer.store.read(
+        "run-1",
+        after_sequence=0,
+        session_id="session-1",
+    )
+    assert page.stream_found is True
+    assert page.events == ()
+    assert page.gap is not None
+    assert page.gap.resumes_at_sequence is None
+
+
+def test_identical_concurrent_first_append_replays_one_event(tmp_path) -> None:
+    path = tmp_path / "session-events.sqlite3"
+    RunnerSessionEventStore.initialize(path).close()
+
+    def append_once() -> RunnerSessionEvent:
+        store = RunnerSessionEventStore.open(path)
+        try:
+            return RunnerSessionEventWriter(
+                store,
+                session_id="concurrent-session",
+                run_id="concurrent-run",
+                dispatch_generation=1,
+                redaction_policy=RedactionPolicy(policy_id="redaction.default"),
+            ).record_progress(
+                {"message": "same"},
+                observed_at=1,
+                replay_key="same-replay",
+            )
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = tuple(executor.map(lambda _index: append_once(), range(2)))
+
+    assert first == second
+    store = RunnerSessionEventStore.open(path)
+    assert store.stats().retained_records == 1
+    store.close()
+
+
+def test_secret_replay_keys_are_opaque_and_remain_distinct(tmp_path) -> None:
+    secret = "REPLAY_SECRET"
+    writer = _writer(tmp_path, secret_tokens=(secret,))
+    first = writer.record_progress(
+        {"message": "first"},
+        observed_at=1,
+        replay_key=f"key-{secret}-one",
+    )
+    second = writer.record_progress(
+        {"message": "second"},
+        observed_at=2,
+        replay_key=f"key-{secret}-two",
+    )
+
+    assert first.event_id != second.event_id
+    connection = writer.store._connection  # noqa: SLF001
+    identities = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT replay_key FROM session_events ORDER BY sequence"
+        ).fetchall()
+    ]
+    assert all(identity.startswith("sha256:") for identity in identities)
+    assert secret not in repr(identities)

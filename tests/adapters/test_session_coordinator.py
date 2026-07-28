@@ -1456,7 +1456,28 @@ def test_terminal_completion_requires_clean_handle_cleanup(tmp_path) -> None:
 
 def test_terminal_completion_with_orphan_cleanup_has_no_runner_result_meaning(
     tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from millrace.adapters.cli import run
+    from millrace.substrate.runner_session_events import (
+        RunnerSessionEventStore,
+        runner_session_event_store_path,
+    )
+
+    secret = "ORPHAN_TERMINAL_SECRET"
+    original_request = run._session_invocation_request
+    monkeypatch.setattr(
+        run,
+        "_session_invocation_request",
+        lambda *args, **kwargs: replace(
+            original_request(*args, **kwargs),
+            redaction_policy=RedactionPolicy(
+                f"redact-{secret}",
+                (secret,),
+            ),
+        ),
+    )
+
     class OrphanTerminalHandle(_ImmediateHandle):
         def cleanup(self) -> RunnerCleanupResult:
             diagnostic = {"cleanup": "orphan_risk"}
@@ -1470,9 +1491,16 @@ def test_terminal_completion_with_orphan_cleanup_has_no_runner_result_meaning(
 
     def start(request: AdapterInvocationRequest) -> StartedSession:
         started = _success_start(request)
+        outcome = started.handle.poll_completion()
+        assert isinstance(outcome, AdapterSuccessResult)
         return replace(
             started,
-            handle=OrphanTerminalHandle(started.handle.poll_completion()),
+            handle=OrphanTerminalHandle(
+                replace(
+                    outcome,
+                    redaction_policy_id=request.redaction_policy.policy_id,
+                )
+            ),
         )
 
     state, _ = _ready_state()
@@ -1489,6 +1517,24 @@ def test_terminal_completion_with_orphan_cleanup_has_no_runner_result_meaning(
     assert (session.state, session.cleanup_disposition) == ("lost", "orphan_risk")
     assert completion.runner_result_evidence_digest is None
     assert after.runner_observations == {}
+    sidecar_path = runner_session_event_store_path(runtime.paths.db_path)
+    event_store = RunnerSessionEventStore.open(sidecar_path)
+    terminal = event_store.read(
+        session.run_id,
+        after_sequence=0,
+        session_id=session.session_id,
+    ).events[-1]
+    event_store.close()
+    assert terminal.redaction_policy_id == "redact-[REDACTED]"
+    sidecar_bytes = b"".join(
+        candidate.read_bytes()
+        for candidate in (
+            sidecar_path,
+            sidecar_path.with_name(f"{sidecar_path.name}-wal"),
+        )
+        if candidate.is_file()
+    )
+    assert secret.encode() not in sidecar_bytes
 
 
 def test_terminal_error_with_orphan_cleanup_blocks_same_run_retry(tmp_path) -> None:

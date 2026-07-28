@@ -26,6 +26,9 @@ RUNNER_SESSION_EVENT_STORE_MAX_STREAMS: Final = 128
 RUNNER_SESSION_EVENT_READ_MAX_RECORDS: Final = 100
 RUNNER_SESSION_EVENT_READ_MAX_BYTES: Final = 128 * 1024
 RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND: Final = 20
+_PROVIDER_EVENT_KINDS = frozenset(
+    {"runner_progress", "tool_activity", "usage_update", "diagnostic"}
+)
 _EXPECTED_COLUMNS = {
     "session_event_metadata": ("singleton", "schema_version"),
     "session_event_sequences": (
@@ -72,7 +75,8 @@ def runner_session_event_store_path(runtime_db_path: str | Path) -> Path:
 @dataclass(frozen=True, slots=True)
 class RunnerSessionEventGap:
     after_sequence: int
-    resumes_at_sequence: int
+    resumes_at_sequence: int | None
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,32 +189,42 @@ class RunnerSessionEventStore:
         truncation_metadata: Mapping[str, AuthorityValue],
         replay_key: str,
     ) -> RunnerSessionEvent:
-        if not isinstance(replay_key, str):
-            raise TypeError("replay_key must be a string")
-        if not replay_key.strip():
-            raise ValueError("replay_key must be nonblank")
-        if len(replay_key.encode()) > RUNNER_SESSION_EVENT_REPLAY_KEY_MAX_BYTES:
-            raise ValueError("replay_key exceeds the event replay-key ceiling")
-        existing = self._connection.execute(
-            "SELECT * FROM session_events WHERE session_id = ? AND replay_key = ?",
-            (session_id, replay_key),
-        ).fetchone()
-        if existing is not None:
-            replayed = _event_from_row(existing)
-            if (
-                replayed.run_id != run_id
-                or replayed.dispatch_generation != dispatch_generation
-                or replayed.kind != kind
-                or replayed.observed_at != observed_at
-                or _canonical_json(replayed.bounded_payload)
-                != _canonical_json(bounded_payload)
-                or replayed.redaction_policy_id != redaction_policy_id
-                or _canonical_json(replayed.truncation_metadata)
-                != _canonical_json(truncation_metadata)
-            ):
-                raise ValueError("runner-session event replay contradicts prior event")
-            return replayed
-        with self._connection:
+        if (
+            not isinstance(replay_key, str)
+            or not replay_key.startswith("sha256:")
+            or len(replay_key) != 71
+            or any(
+                character not in "0123456789abcdef"
+                for character in replay_key.removeprefix("sha256:")
+            )
+        ):
+            raise ValueError("replay_key must be an opaque sha256 identity")
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self._connection.execute(
+                "SELECT * FROM session_events "
+                "WHERE session_id = ? AND replay_key = ?",
+                (session_id, replay_key),
+            ).fetchone()
+            if existing is not None:
+                replayed = _event_from_row(existing)
+                self._validate_replay(
+                    replayed,
+                    run_id=run_id,
+                    dispatch_generation=dispatch_generation,
+                    kind=kind,
+                    observed_at=observed_at,
+                    bounded_payload=bounded_payload,
+                    redaction_policy_id=redaction_policy_id,
+                    truncation_metadata=truncation_metadata,
+                )
+                self._connection.commit()
+                return replayed
+            self._enforce_update_rate(
+                session_id=session_id,
+                kind=kind,
+                observed_at=observed_at,
+            )
             sequence_row = self._connection.execute(
                 "SELECT run_id, dispatch_generation, last_sequence, "
                 "terminal_recorded FROM session_event_sequences "
@@ -279,7 +293,11 @@ class RunnerSessionEventStore:
                     "WHERE session_id = ?",
                     (session_id,),
                 )
-            self._compact(session_id, kind=kind, observed_at=observed_at)
+            self._enforce_bounds()
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
         return event
 
     def read(
@@ -328,9 +346,24 @@ class RunnerSessionEventStore:
         for row in rows:
             sequence = int(str(row[5]))
             if sequence > expected:
-                gap = RunnerSessionEventGap(expected - 1, sequence)
+                gap = RunnerSessionEventGap(
+                    expected - 1,
+                    sequence,
+                    "compacted",
+                )
                 break
             expected = sequence + 1
+        if (
+            gap is None
+            and not rows
+            and last is not None
+            and int(last) > after_sequence
+        ):
+            gap = RunnerSessionEventGap(
+                after_sequence,
+                None,
+                "history_unavailable",
+            )
         return RunnerSessionEventPage(
             tuple(_event_from_row(row) for row in rows),
             gap,
@@ -358,24 +391,59 @@ class RunnerSessionEventStore:
     def close(self) -> None:
         self._connection.close()
 
-    def _compact(self, session_id: str, *, kind: str, observed_at: int) -> None:
-        if kind == "runner_progress":
-            rate_bucket = observed_at // 1_000_000_000
-            rows = self._connection.execute(
-                "SELECT event_id FROM session_events "
-                "WHERE session_id = ? AND kind = 'runner_progress' "
-                "AND observed_at / 1000000000 = ? "
-                "ORDER BY sequence DESC LIMIT -1 OFFSET ?",
-                (
-                    session_id,
-                    rate_bucket,
-                    RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND,
-                ),
-            ).fetchall()
-            self._connection.executemany(
-                "DELETE FROM session_events WHERE event_id = ?",
-                rows,
-            )
+    @staticmethod
+    def _validate_replay(
+        replayed: RunnerSessionEvent,
+        *,
+        run_id: str,
+        dispatch_generation: int,
+        kind: str,
+        observed_at: int,
+        bounded_payload: Mapping[str, AuthorityValue],
+        redaction_policy_id: str,
+        truncation_metadata: Mapping[str, AuthorityValue],
+    ) -> None:
+        if (
+            replayed.run_id != run_id
+            or replayed.dispatch_generation != dispatch_generation
+            or replayed.kind != kind
+            or replayed.observed_at != observed_at
+            or _canonical_json(replayed.bounded_payload)
+            != _canonical_json(bounded_payload)
+            or replayed.redaction_policy_id != redaction_policy_id
+            or _canonical_json(replayed.truncation_metadata)
+            != _canonical_json(truncation_metadata)
+        ):
+            raise ValueError("runner-session event replay contradicts prior event")
+
+    def _enforce_update_rate(
+        self,
+        *,
+        session_id: str,
+        kind: str,
+        observed_at: int,
+    ) -> None:
+        if kind not in _PROVIDER_EVENT_KINDS:
+            return
+        rate_bucket = observed_at // 1_000_000_000
+        retained = int(
+            self._connection.execute(
+                "SELECT COUNT(*) FROM session_events "
+                "WHERE session_id = ? "
+                "AND kind IN ('runner_progress', 'tool_activity', "
+                "'usage_update', 'diagnostic') "
+                "AND observed_at / 1000000000 = ?",
+                (session_id, rate_bucket),
+            ).fetchone()[0]
+        )
+        if (
+            retained >= RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND
+            and kind != "runner_progress"
+        ):
+            raise ValueError("runner-session event update-rate ceiling reached")
+
+    def _enforce_bounds(self) -> None:
+        self._coalesce_progress_rate()
         while True:
             count, retained_bytes = self._connection.execute(
                 "SELECT COUNT(*), COALESCE(SUM(byte_size), 0) FROM session_events"
@@ -387,19 +455,65 @@ class RunnerSessionEventStore:
                 return
             victim = self._connection.execute(
                 "SELECT event_id FROM session_events "
-                "WHERE kind = 'runner_progress' ORDER BY observed_at, sequence LIMIT 1"
+                "WHERE kind IN ('runner_progress', 'tool_activity', "
+                "'usage_update', 'diagnostic') "
+                "ORDER BY observed_at, sequence LIMIT 1"
             ).fetchone()
             if victim is None:
-                victim = self._connection.execute(
-                    "SELECT event_id FROM session_events "
-                    "ORDER BY observed_at, sequence LIMIT 1"
-                ).fetchone()
-            if victim is None:
-                return
-            self._connection.execute(
+                if not self._evict_oldest_closed_stream():
+                    raise ValueError(
+                        "runner-session event store hard ceiling reached"
+                    )
+            else:
+                self._connection.execute(
+                    "DELETE FROM session_events WHERE event_id = ?",
+                    victim,
+                )
+
+    def _coalesce_progress_rate(self) -> None:
+        overages = self._connection.execute(
+            "SELECT session_id, observed_at / 1000000000 AS bucket, "
+            "COUNT(*) FROM session_events "
+            "WHERE kind IN ('runner_progress', 'tool_activity', "
+            "'usage_update', 'diagnostic') "
+            "GROUP BY session_id, bucket HAVING COUNT(*) > ?",
+            (RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND,),
+        ).fetchall()
+        for session_id, bucket, count in overages:
+            excess = int(count) - RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND
+            progress_rows = self._connection.execute(
+                "SELECT event_id FROM session_events "
+                "WHERE session_id = ? AND kind = 'runner_progress' "
+                "AND observed_at / 1000000000 = ? "
+                "ORDER BY sequence LIMIT ?",
+                (session_id, bucket, excess),
+            ).fetchall()
+            self._connection.executemany(
                 "DELETE FROM session_events WHERE event_id = ?",
-                victim,
+                progress_rows,
             )
+
+    def _evict_oldest_closed_stream(self) -> bool:
+        victim = self._connection.execute(
+            "SELECT sequence.session_id FROM session_event_sequences AS sequence "
+            "LEFT JOIN session_events AS event "
+            "ON event.session_id = sequence.session_id "
+            "WHERE sequence.terminal_recorded = 1 "
+            "GROUP BY sequence.session_id "
+            "ORDER BY COALESCE(MIN(event.observed_at), -1), "
+            "COALESCE(MIN(event.sequence), -1) LIMIT 1"
+        ).fetchone()
+        if victim is None:
+            return False
+        self._connection.execute(
+            "DELETE FROM session_events WHERE session_id = ?",
+            victim,
+        )
+        self._connection.execute(
+            "DELETE FROM session_event_sequences WHERE session_id = ?",
+            victim,
+        )
+        return True
 
     def _make_stream_room(self) -> None:
         stream_count = int(
@@ -463,7 +577,20 @@ class RunnerSessionEventWriter:
         if not isinstance(redacted, Mapping):
             raise TypeError("event payload must redact to a mapping")
         bounded, truncation = _bound_payload(redacted)
-        redacted_replay_key = self.redaction_policy.redact_text(replay_key)
+        if not isinstance(replay_key, str):
+            raise TypeError("replay_key must be a string")
+        if not replay_key.strip():
+            raise ValueError("replay_key must be nonblank")
+        replay_key_bytes = replay_key.encode()
+        if len(replay_key_bytes) > RUNNER_SESSION_EVENT_REPLAY_KEY_MAX_BYTES:
+            raise ValueError("replay_key exceeds the event replay-key ceiling")
+        replay_identity = (
+            "sha256:"
+            + sha256(
+                b"millrace.runner-session-event.replay-key.v1\0"
+                + replay_key_bytes
+            ).hexdigest()
+        )
         return self.store.append(
             session_id=self.session_id,
             run_id=self.run_id,
@@ -475,7 +602,7 @@ class RunnerSessionEventWriter:
                 self.redaction_policy.policy_id
             ),
             truncation_metadata=truncation,
-            replay_key=redacted_replay_key,
+            replay_key=replay_identity,
         )
 
     def record_progress(
