@@ -20,6 +20,11 @@ from millrace.operator import operator_status
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.errors import StorageIntegrityError
 from millrace.substrate.sqlite import SQLiteRuntimeStore
+from millrace.testing import (
+    fake_completed_runner_observation_state,
+    fake_runner_completion_input_id,
+    materialize_fake_runner_session_cas,
+)
 from support.lad_execution import (
     BUILDER_SUMMARY_SCHEMA_ID,
     REPORT_SCHEMA_ID,
@@ -52,20 +57,25 @@ def _decide_observation(
     observed_at: int | None = None,
     observation_payload_overrides: Mapping[str, AuthorityValue] | None = None,
 ):
-    return decide(
+    observation = runner_observation(
+        state=state,
+        plan=plan,
+        fingerprint=fingerprint,
+        run_id=run_id,
+        action_id=action_id,
+        input_id=input_id,
+        marker=marker,
+        observed_at=observed_at,
+        observation_payload_overrides=observation_payload_overrides,
+        artifact_payload=artifact or artifact_payload(schema_id),
+    )
+    state, observation = fake_completed_runner_observation_state(
+        state=state,
+        observation=observation,
+    )
+    return state, decide(
         state,
-        runner_observation(
-            state=state,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id=run_id,
-            action_id=action_id,
-            input_id=input_id,
-            marker=marker,
-            observed_at=observed_at,
-            observation_payload_overrides=observation_payload_overrides,
-            artifact_payload=artifact or artifact_payload(schema_id),
-        ),
+        observation,
         lad_context(
             input_id,
             work_item_id=target_work_item_id,
@@ -89,7 +99,7 @@ def _apply_observation(
     observed_at: int | None = None,
     observation_payload_overrides: Mapping[str, AuthorityValue] | None = None,
 ) -> tuple[RuntimeState, object]:
-    decision = _decide_observation(
+    state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -376,14 +386,19 @@ def _persist_and_load(tmp_path: Path, state: RuntimeState) -> RuntimeState:
     tmp_path.mkdir(parents=True, exist_ok=True)
     db_path = tmp_path / "runtime.sqlite3"
     cas_root = tmp_path / "cas"
+    cas_store = ContentAddressedByteStore(cas_root)
+    state = materialize_fake_runner_session_cas(
+        state=state,
+        cas_store=cas_store,
+    )
     store = SQLiteRuntimeStore.initialize(db_path)
     try:
-        store.persist_runtime_state(state, ContentAddressedByteStore(cas_root))
+        store.persist_runtime_state(state, cas_store)
     finally:
         store.close()
     store = SQLiteRuntimeStore.open(db_path)
     try:
-        return store.load_runtime_state(ContentAddressedByteStore(cas_root))
+        return store.load_runtime_state(cas_store)
     finally:
         store.close()
 
@@ -422,7 +437,8 @@ def _builder_observation(state: RuntimeState):
     return next(
         observation
         for observation in state.runner_observations.values()
-        if observation.created_by_input_id == "observe-builder-blocked"
+        if observation.created_by_input_id
+        == fake_runner_completion_input_id("observe-builder-blocked")
     )
 
 
@@ -436,13 +452,15 @@ def test_observation_authentication_refuses_unreached_selected_threshold_action(
         state,
         governance_events=tuple(
             replace(event, action_id=threshold_action_id)
-            if event.input_id == "observe-builder-blocked"
+            if event.input_id
+            == fake_runner_completion_input_id("observe-builder-blocked")
             else event
             for event in state.governance_events
         ),
         traces=tuple(
             replace(trace, action_id=threshold_action_id)
-            if trace.input_id == "observe-builder-blocked"
+            if trace.input_id
+            == fake_runner_completion_input_id("observe-builder-blocked")
             else trace
             for trace in state.traces
         ),
@@ -724,7 +742,7 @@ def test_consultant_complete_refuses_unselected_dynamic_resume_target() -> None:
         input_id="claim-consultant",
     )
 
-    decision = _decide_observation(
+    _state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -744,7 +762,7 @@ def test_lad_base_refuses_integrator_dynamic_resume_target() -> None:
     plan, fingerprint = compile_lad()
     state = _consultant_claim_after_troubleshooter_blocked(plan, fingerprint)
 
-    decision = _decide_observation(
+    _state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -858,7 +876,7 @@ def test_consultant_complete_refuses_conflicting_dynamic_resume_metadata() -> No
         input_id="claim-consultant",
     )
 
-    decision = _decide_observation(
+    _state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -891,7 +909,7 @@ def test_consultant_complete_refuses_invalid_dynamic_resume_metadata(
     plan, fingerprint = compile_lad()
     state = _consultant_claim_after_troubleshooter_blocked(plan, fingerprint)
 
-    decision = _decide_observation(
+    _state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -1174,7 +1192,7 @@ def test_runtime_failure_recovery_routes_then_threshold_blocks() -> None:
     plan, fingerprint = compile_lad()
     state = bootstrap_builder_claim(plan, fingerprint)
 
-    early = _decide_observation(
+    _state, early = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,

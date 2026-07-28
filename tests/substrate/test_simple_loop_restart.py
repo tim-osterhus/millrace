@@ -32,13 +32,17 @@ from millrace.contracts.transition import (
     TransitionInput,
     input_payload_digest,
 )
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.operator import operator_status
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.codecs import dumps_cas_object, encode_payload
 from millrace.substrate.errors import StorageIntegrityError
 from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
     deterministic_context,
+    fake_runner_completion_input_id,
     fake_runner_dispatch_envelope_for_run,
 )
 from substrate._runtime_store_support import (
@@ -144,6 +148,7 @@ def _active_lineage_quarantine(
 
 
 def _observation_for_input(state: RuntimeState, input_id: str):
+    input_id = fake_runner_completion_input_id(input_id)
     return next(
         observation
         for observation in state.runner_observations.values()

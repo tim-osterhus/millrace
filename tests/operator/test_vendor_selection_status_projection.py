@@ -6,6 +6,7 @@ from typing import Any
 from millrace.contracts.transition import JoinFromArtifact
 from millrace.kernel import apply, decide
 from millrace.operator import operator_status
+from millrace.testing import fake_runner_completion_input_id
 from support import vendor_selection
 
 
@@ -24,6 +25,7 @@ def _stage(status: Any, stage_kind_id: str) -> Any:
 
 
 def _artifact_by_input(status: Any, input_id: str) -> Any:
+    input_id = fake_runner_completion_input_id(input_id)
     return next(
         artifact
         for artifact in status.artifacts
@@ -259,7 +261,8 @@ def test_status_projects_cross_lineage_progress() -> None:
         for join in status.joins
     )
     assert any(
-        artifact.source_input_id == "observe-policy-b"
+        artifact.source_input_id
+        == fake_runner_completion_input_id("observe-policy-b")
         and artifact.source_stage_kind_id == "policy_screener"
         for artifact in status.artifacts
     )
@@ -284,7 +287,8 @@ def test_status_projects_decision_pack_close_evidence() -> None:
     assert decision_pack.payload["selected_plan_fingerprint"] == fingerprint
     assert decision_pack.payload["close_reason"] == "awarded"
     assert any(
-        event.input_id == "observe-decision-packager-a"
+        event.input_id
+        == fake_runner_completion_input_id("observe-decision-packager-a")
         and event.disposition == "accepted"
         and event.action_id == "vendor_selection.decision_packager.decision_pack_ready"
         for event in status.recent_events

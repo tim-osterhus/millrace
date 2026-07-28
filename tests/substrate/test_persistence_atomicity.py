@@ -15,6 +15,10 @@ from millrace.substrate.cas import (
 )
 from millrace.substrate.codecs import dumps_cas_object, encode_payload
 from millrace.substrate.errors import StorageIntegrityError
+from millrace.testing import (
+    fake_runner_completion_input_id,
+    materialize_fake_runner_session_cas,
+)
 from substrate._runtime_store_support import (
     initialize_runtime_store,
     load_runtime_state,
@@ -83,10 +87,14 @@ def test_failed_persist_does_not_advance_loaded_runtime_state(
 
     with sqlite3.connect(db_path) as connection:
         with pytest.raises(sqlite3.OperationalError, match="injected commit failure"):
+            cas_store = ContentAddressedByteStore(cas_root)
             persist_runtime_state_rows(
                 connection,
-                advanced_state,
-                ContentAddressedByteStore(cas_root),
+                materialize_fake_runner_session_cas(
+                    state=advanced_state,
+                    cas_store=cas_store,
+                ),
+                cas_store,
                 _before_sqlite_commit=_raise_injected_commit_failure,
             )
 
@@ -270,7 +278,8 @@ def test_corrupt_runner_observation_persist_preserves_prior_sqlite_authority(
     observation = next(
         candidate
         for candidate in legal_advanced.runner_observations.values()
-        if candidate.created_by_input_id == "observe-worker"
+        if candidate.created_by_input_id
+        == fake_runner_completion_input_id("observe-worker")
     )
     corrupt_payload = {**observation.payload, "marker": "CORRUPT_MARKER"}
     corrupt_state = replace(
@@ -286,6 +295,11 @@ def test_corrupt_runner_observation_persist_preserves_prior_sqlite_authority(
     corrupt_object = dumps_cas_object(encode_payload(corrupt_payload))
     corrupt_digest = storage_digest_for_bytes(corrupt_object)
     persist_runtime_state(db_path, cas_root, durable_state)
+    cas_store = ContentAddressedByteStore(cas_root)
+    materialize_fake_runner_session_cas(
+        state=legal_advanced,
+        cas_store=cas_store,
+    )
     references_before = _authoritative_cas_references(db_path)
 
     with sqlite3.connect(db_path) as connection:
@@ -299,7 +313,7 @@ def test_corrupt_runner_observation_persist_preserves_prior_sqlite_authority(
             persist_runtime_state_rows(
                 connection,
                 corrupt_state,
-                ContentAddressedByteStore(cas_root),
+                cas_store,
             )
 
     assert load_runtime_state(db_path, cas_root) == durable_state
@@ -324,10 +338,14 @@ def test_load_uses_one_sqlite_snapshot_when_store_advances_mid_load(
     def advance_store() -> None:
         with sqlite3.connect(db_path) as writer_connection:
             writer_connection.execute("PRAGMA journal_mode = WAL")
+            cas_store = ContentAddressedByteStore(cas_root)
             persist_runtime_state_rows(
                 writer_connection,
-                advanced_state,
-                ContentAddressedByteStore(cas_root),
+                materialize_fake_runner_session_cas(
+                    state=advanced_state,
+                    cas_store=cas_store,
+                ),
+                cas_store,
             )
 
     with sqlite3.connect(db_path) as reader_connection:

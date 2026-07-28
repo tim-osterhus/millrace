@@ -26,7 +26,7 @@ from millrace.contracts.transition import (
     TimerDue,
     input_payload_digest,
 )
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.kernel.lookups import external_enqueue_routes, plan_ref_for
 from millrace.substrate._sqlite_relations import validate_loaded_runtime_state
 from millrace.substrate.cas import ContentAddressedByteStore
@@ -43,7 +43,15 @@ from millrace.substrate.records import (
     PAYLOAD_OBJECT_KIND,
     SELECTED_COMPILED_PLAN_OBJECT_KIND,
 )
-from millrace.testing import deterministic_context
+from millrace.substrate.sqlite import SQLiteRuntimeStore
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    deterministic_context,
+    fake_runner_completion_input_id,
+    materialize_fake_runner_session_cas,
+)
 from millrace.workflows import kernel_ping
 from substrate._runtime_store_support import (
     load_runtime_state,
@@ -1473,12 +1481,18 @@ def test_persist_refuses_close_only_observation_payload_or_time_drift_without_mu
     state = _kernel_ping_close_only_state()
     corrupt = _with_observation_drift(state, "observe-worker", field=field)
     db_path, cas_root = runtime_store_paths(tmp_path)
+    cas_store = ContentAddressedByteStore(cas_root)
+    materialize_fake_runner_session_cas(state=state, cas_store=cas_store)
 
     with pytest.raises(
         StorageIntegrityError,
         match="runner_observations accepted-input authority invalid: receipt_authority",
     ):
-        persist_runtime_state(db_path, cas_root, corrupt)
+        store = SQLiteRuntimeStore.initialize(db_path)
+        try:
+            store.persist_runtime_state(corrupt, cas_store)
+        finally:
+            store.close()
 
     assert load_runtime_state(db_path, cas_root) == RuntimeState()
 
@@ -3195,7 +3209,8 @@ def test_restart_refuses_incident_route_creator_input_drift(
     artifact = next(
         candidate
         for candidate in state.artifacts.values()
-        if candidate.created_by_input_id == "observe-needs-review"
+        if candidate.created_by_input_id
+        == fake_runner_completion_input_id("observe-needs-review")
     )
     route = next(
         candidate
@@ -3788,6 +3803,7 @@ def _single_text_value(
 
 
 def _observation_for_input(state: RuntimeState, input_id: str):
+    input_id = fake_runner_completion_input_id(input_id)
     return next(
         observation
         for observation in state.runner_observations.values()

@@ -97,6 +97,7 @@ def _runtime(tmp_path: Path, state: RuntimeState | None = None) -> object:
     from millrace.adapters.cli.context import CliWorkspacePaths, OpenRuntimeContext
     from millrace.substrate.cas import ContentAddressedByteStore
     from millrace.substrate.sqlite import SQLiteRuntimeStore
+    from millrace.testing import materialize_fake_runner_session_cas
 
     root = tmp_path / "workspace"
     db_path = root / ".millrace" / "runtime.sqlite3"
@@ -105,7 +106,11 @@ def _runtime(tmp_path: Path, state: RuntimeState | None = None) -> object:
     cas_path.mkdir(parents=True)
     store = SQLiteRuntimeStore.initialize(db_path)
     cas_store = ContentAddressedByteStore(cas_path)
-    store.persist_runtime_state(state or empty_runtime_state(), cas_store)
+    runtime_state = materialize_fake_runner_session_cas(
+        state=state or empty_runtime_state(),
+        cas_store=cas_store,
+    )
+    store.persist_runtime_state(runtime_state, cas_store)
     return OpenRuntimeContext(
         paths=CliWorkspacePaths(root, db_path, cas_path),
         store=store,

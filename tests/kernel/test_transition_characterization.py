@@ -44,6 +44,7 @@ from millrace.kernel import (
     decide,
     empty_runtime_state,
 )
+from millrace.testing import fake_completed_runner_observation_state
 from millrace.workflows import kernel_ping
 from support.kernel_ping import (
     action_by_id,
@@ -53,6 +54,14 @@ from support.kernel_ping import (
     runner_observation,
     task_artifact_payload,
 )
+
+
+def _decide_observation(state, observation, context):
+    seeded, authorized = fake_completed_runner_observation_state(
+        state=state,
+        observation=observation,
+    )
+    return seeded, decide(seeded, authorized, context)
 
 
 def _manual_decision(
@@ -89,7 +98,7 @@ def _taskmaster_route_state(
     fingerprint: str,
 ) -> RuntimeState:
     state = bootstrap_to_taskmaster_claim(plan, fingerprint)
-    decision = decide(
+    state, decision = _decide_observation(
         state,
         runner_observation(
             state=state,
@@ -124,23 +133,26 @@ def test_decide_is_deterministic_and_decide_apply_do_not_mutate_inputs() -> None
     )
     context = kernel_ping_context("observe-taskmaster")
 
-    first_decision = decide(state, observation, context)
-    second_decision = decide(state, observation, context)
+    seeded, first_decision = _decide_observation(state, observation, context)
+    second_seeded, second_decision = _decide_observation(
+        state, observation, context
+    )
 
     assert first_decision == second_decision
+    assert seeded == second_seeded
     assert state == bootstrap_to_taskmaster_claim(plan, fingerprint)
 
-    before_apply = state
-    after_apply = apply(state, first_decision)
+    before_apply = seeded
+    after_apply = apply(seeded, first_decision)
 
-    assert state == before_apply
+    assert seeded == before_apply
     assert after_apply != before_apply
 
 
 def test_route_mutation_order_is_stable() -> None:
     plan, fingerprint = compile_kernel_ping()
     state = bootstrap_to_taskmaster_claim(plan, fingerprint)
-    decision = decide(
+    state, decision = _decide_observation(
         state,
         runner_observation(
             state=state,
@@ -195,7 +207,7 @@ def test_missing_route_contract_refuses_without_workflow_progress() -> None:
         },
     )
 
-    decision = decide(
+    state, decision = _decide_observation(
         state,
         runner_observation(
             state=state,
@@ -242,7 +254,7 @@ def test_missing_incident_projection_source_refuses_without_progress(
 ) -> None:
     plan, fingerprint = compile_kernel_ping()
     state = bootstrap_to_worker_claim(plan, fingerprint)
-    decision = decide(
+    state, decision = _decide_observation(
         state,
         runner_observation(
             state=state,
@@ -296,7 +308,7 @@ def test_observation_root_incident_projection_remains_supported() -> None:
     plan, fingerprint = compile_kernel_ping(source)
     state = bootstrap_to_worker_claim(plan, fingerprint)
 
-    decision = decide(
+    state, decision = _decide_observation(
         state,
         runner_observation(
             state=state,

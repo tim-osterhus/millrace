@@ -18,9 +18,15 @@ from millrace.contracts.transition import (
     EnqueueWork,
     SelectDefaultPlan,
 )
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.operator import OperatorStatus, operator_status
-from millrace.testing import deterministic_context
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    deterministic_context,
+    fake_runner_completion_input_id,
+)
 from millrace.workflows import kernel_ping
 from substrate._runtime_store_support import (
     persist_and_load_runtime_state,
@@ -137,7 +143,7 @@ def test_restarted_component_pinned_run_accepts_legal_runner_observation(
     assert "mutation.create_work_item" in mutation_kinds(decision)
     assert "mutation.create_activation" in mutation_kinds(decision)
     assert continued.work_items["work-task-artifact"].created_by_input_id == (
-        "observe-taskmaster"
+        fake_runner_completion_input_id("observe-taskmaster")
     )
 
 
@@ -263,10 +269,10 @@ def test_loaded_state_can_accept_claimed_run_context_without_default_plan_rebuil
     assert "mutation.create_work_item" in mutation_kinds(decision)
     assert "mutation.create_activation" in mutation_kinds(decision)
     assert after_observation.work_items["work-task-artifact"].created_by_input_id == (
-        "observe-taskmaster"
+        fake_runner_completion_input_id("observe-taskmaster")
     )
     assert after_observation.activations["activation-worker"].created_by_input_id == (
-        "observe-taskmaster"
+        fake_runner_completion_input_id("observe-taskmaster")
     )
 
 
@@ -409,9 +415,12 @@ def test_restart_preserves_worker_close_event_trace_and_transition_history(
     assert reloaded.transitions == closed.transitions
     assert reloaded.governance_events == closed.governance_events
     assert reloaded.traces == closed.traces
-    assert any(record.input_id == "observe-worker" for record in reloaded.transitions)
     assert any(
-        event.input_id == "observe-worker"
+        record.input_id == fake_runner_completion_input_id("observe-worker")
+        for record in reloaded.transitions
+    )
+    assert any(
+        event.input_id == fake_runner_completion_input_id("observe-worker")
         and event.action_id == action_by_id(plan, "kernel_ping.close_worker_success").id
         for event in reloaded.governance_events
     )

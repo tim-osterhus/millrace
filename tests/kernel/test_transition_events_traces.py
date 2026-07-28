@@ -11,8 +11,9 @@ from millrace.contracts.transition import (
     EmitTrace,
     RunnerResultObserved,
 )
-from millrace.kernel import UnsupportedMutationError, apply, decide
-from millrace.testing import deterministic_context
+from millrace.kernel import UnsupportedMutationError, apply
+from millrace.testing import decide_with_fake_runner_completion as decide
+from millrace.testing import deterministic_context, fake_runner_completion_input_id
 from support.kernel_ping import (
     compile_kernel_ping,
     kernel_ping_context,
@@ -53,7 +54,7 @@ def test_accepted_transitions_emit_governance_events_and_trace_mutations() -> No
     assert decision.trace_records
     event = decision.governance_events[0]
     trace = decision.trace_records[0]
-    assert event.input_id == "observe-taskmaster"
+    assert event.input_id == fake_runner_completion_input_id("observe-taskmaster")
     assert event.input_kind == RunnerResultObserved.input_kind
     assert event.disposition == "accepted"
     assert event.plan_fingerprint == fingerprint
@@ -102,7 +103,7 @@ def test_refused_transitions_emit_refusal_events_and_trace_mutations() -> None:
     assert "mutation.emit_trace" in mutation_kinds(decision)
     event = decision.governance_events[0]
     trace = decision.trace_records[0]
-    assert event.input_id == "observe-refused"
+    assert event.input_id == fake_runner_completion_input_id("observe-refused")
     assert event.disposition == "refused"
     assert event.plan_fingerprint == fingerprint
     assert event.work_item_id == "work-prompt"

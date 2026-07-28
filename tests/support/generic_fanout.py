@@ -21,8 +21,15 @@ from millrace.contracts.transition import (
     TransitionContext,
     TransitionInput,
 )
-from millrace.kernel import apply, decide, empty_runtime_state
-from millrace.testing import deterministic_context, fake_runner_observation_payload
+from millrace.kernel import apply, empty_runtime_state
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    deterministic_context,
+    fake_completed_runner_observation_state,
+    fake_runner_observation_payload,
+)
 
 PACKET_SCHEMA_ID = "fanout.packet"
 CHILD_SCHEMA_ID = "fanout.child"
@@ -364,6 +371,11 @@ def apply_accepted_input(
     transition_input: TransitionInput,
     transition_context: TransitionContext,
 ) -> RuntimeState:
+    if isinstance(transition_input, RunnerResultObserved):
+        state, transition_input = fake_completed_runner_observation_state(
+            state=state,
+            observation=transition_input,
+        )
     decision = decide(state, transition_input, transition_context)
     assert decision.accepted is True
     return apply(state, decision)

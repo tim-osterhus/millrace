@@ -20,6 +20,7 @@ from millrace.kernel import apply, decide
 from millrace.operator import OperatorStatus, operator_status
 from millrace.operator.status import ArtifactStatus, QueueFamilyStatus
 from millrace.substrate.errors import StorageIntegrityError
+from millrace.testing import fake_runner_completion_input_id
 from substrate._runtime_store_support import (
     load_runtime_state,
     persist_and_load_runtime_state,
@@ -128,10 +129,12 @@ def _artifact_status_by_input(
     status: OperatorStatus,
     input_id: str,
 ) -> ArtifactStatus:
+    input_id = fake_runner_completion_input_id(input_id)
     return next(row for row in status.artifacts if row.source_input_id == input_id)
 
 
 def _artifact_record_by_input(state: RuntimeState, input_id: str):
+    input_id = fake_runner_completion_input_id(input_id)
     return next(
         artifact
         for artifact in state.artifacts.values()
@@ -140,6 +143,7 @@ def _artifact_record_by_input(state: RuntimeState, input_id: str):
 
 
 def _effect_id_by_input(state: RuntimeState, input_id: str) -> str:
+    input_id = fake_runner_completion_input_id(input_id)
     return next(
         effect.effect_id
         for effect in state.effect_proposals.values()
@@ -236,7 +240,9 @@ def _assert_artifact_context(
     assert artifact.schema_id == schema_id
     assert artifact.source_action_id == source_action_id
     assert artifact.terminal_action_id == source_action_id
-    assert artifact.source_input_id == source_input_id
+    assert artifact.source_input_id == fake_runner_completion_input_id(
+        source_input_id
+    )
     assert artifact.source_run_id == source_run_id
     assert artifact.source_activation_id == source_activation_id
     assert artifact.work_item_id == source_work_item_id
@@ -412,7 +418,9 @@ def test_learning_status_projects_operator_required_wait_and_intervention_rows(
     assert active.source_runner_binding_id == "learning.standard.local_runner"
     assert active.source_artifact_id == wait.source_artifact_id
     assert active.status == "active"
-    assert active.created_input_id == "observe-analyst-blocked"
+    assert active.created_input_id == fake_runner_completion_input_id(
+        "observe-analyst-blocked"
+    )
     assert active.resolved_input_id is None
     assert active.actor_id is None
     assert active.actor_kind is None
@@ -540,7 +548,9 @@ def test_learning_status_projects_effect_pending_applied_noop_and_refused() -> N
     } == {lad_learning.CURATOR_EFFECT_DECLARATION_ID}
     assert applied.source_action_id == "learning.close_curator_complete"
     assert applied.terminal_action_id == "learning.close_curator_complete"
-    assert applied.source_input_id == "observe-curator-complete"
+    assert applied.source_input_id == fake_runner_completion_input_id(
+        "observe-curator-complete"
+    )
     assert applied.provider_ref == lad_learning.FAKE_LOCAL_EFFECT_PROVIDER_REF
     assert applied.capability_policy_ref == (
         lad_learning.FAKE_LOCAL_EFFECT_CAPABILITY_POLICY_REF
@@ -567,7 +577,9 @@ def test_learning_status_projects_trigger_and_concurrency_context() -> None:
     assert generated.fanout_id == "learning.trigger.planning.planner_complete"
     assert generated.target_route_id == "learning.trigger.librarian"
     assert generated.source_action_id == "planning.route_planner_complete"
-    assert generated.source_input_id == "observe-closure-planner-complete"
+    assert generated.source_input_id == fake_runner_completion_input_id(
+        "observe-closure-planner-complete"
+    )
     assert generated.target_queue_family_id == "learning_request"
     assert generated.target_stage_kind_id == "librarian"
     assert generated.target_graph_node_id == "learning.standard.librarian"
@@ -632,7 +644,9 @@ def test_learning_status_projects_generated_work_waiting_while_learning_active_a
     assert generated.fanout_id == "learning.trigger.execution.doublechecker_pass"
     assert generated.target_route_id == "learning.trigger.analyst"
     assert generated.source_action_id == "execution.route_doublechecker_pass"
-    assert generated.source_input_id == "observe-doublecheck"
+    assert generated.source_input_id == fake_runner_completion_input_id(
+        "observe-doublecheck"
+    )
     assert generated.target_queue_family_id == "learning_request"
     assert generated.target_stage_kind_id == "analyst"
     assert generated.target_graph_node_id == "learning.standard.analyst"
@@ -694,14 +708,17 @@ def test_learning_status_projects_terminal_action_source_action_and_input_contex
     artifact = next(
         row
         for row in status.artifacts
-        if row.source_input_id == "observe-analyst-complete"
+        if row.source_input_id
+        == fake_runner_completion_input_id("observe-analyst-complete")
     )
     assert artifact.workflow_id == "lad.full"
     assert artifact.selected_plan_fingerprint == fingerprint
     assert artifact.schema_id == lad_learning.LEARNING_RESEARCH_PACKET_SCHEMA_ID
     assert artifact.source_action_id == "learning.route_analyst_complete"
     assert artifact.terminal_action_id == "learning.route_analyst_complete"
-    assert artifact.source_input_id == "observe-analyst-complete"
+    assert artifact.source_input_id == fake_runner_completion_input_id(
+        "observe-analyst-complete"
+    )
     assert artifact.source_run_id == "run-analyst"
     assert artifact.source_activation_id == "activation-learning-request"
     assert artifact.source_stage_kind_id == "analyst"
@@ -718,7 +735,8 @@ def test_learning_status_refuses_or_excludes_projection_source_drift() -> None:
     artifact = next(
         row
         for row in state.artifacts.values()
-        if row.created_by_input_id == "observe-curator-complete"
+        if row.created_by_input_id
+        == fake_runner_completion_input_id("observe-curator-complete")
     )
     effect = next(iter(state.effect_proposals.values()))
     drifted_artifact = replace(artifact, source_run_id="missing-source-run")
@@ -1025,23 +1043,37 @@ def test_learning_status_projects_c3_family_combined_after_restart(
     assert str(source_close.action_id) == "execution.close_consultant_needs_plan"
     assert generated.fanout_id == "learning.trigger.execution.needs_planning"
     assert generated.source_action_id == "execution.close_consultant_needs_plan"
-    assert generated.source_input_id == "observe-consultant-closed-source"
+    assert generated.source_input_id == fake_runner_completion_input_id(
+        "observe-consultant-closed-source"
+    )
     assert generated.target_stage_kind_id == "analyst"
     assert generated.lineage_id == "work-consultant-closed-source"
-    assert artifacts["observe-consultant-closed-source"].latest_marker == (
+    assert artifacts[
+        fake_runner_completion_input_id("observe-consultant-closed-source")
+    ].latest_marker == (
         "NEEDS_PLANNING"
     )
-    assert artifacts["observe-closed-source-analyst-complete"].latest_marker == (
+    assert artifacts[
+        fake_runner_completion_input_id("observe-closed-source-analyst-complete")
+    ].latest_marker == (
         "ANALYST_COMPLETE"
     )
-    assert artifacts["observe-closed-source-professor-complete"].latest_marker == (
+    assert artifacts[
+        fake_runner_completion_input_id(
+            "observe-closed-source-professor-complete"
+        )
+    ].latest_marker == (
         "PROFESSOR_COMPLETE"
     )
-    assert artifacts["observe-closed-source-curator-complete"].latest_marker == (
+    assert artifacts[
+        fake_runner_completion_input_id("observe-closed-source-curator-complete")
+    ].latest_marker == (
         "CURATOR_COMPLETE"
     )
     assert effect.status == "applied"
-    assert effect.source_input_id == "observe-closed-source-curator-complete"
+    assert effect.source_input_id == fake_runner_completion_input_id(
+        "observe-closed-source-curator-complete"
+    )
     assert effect.lineage_id == generated.lineage_id
     assert effect.reconciliation_id == (
         "transition-reconcile-closed-source-effect-applied:reconciliation"

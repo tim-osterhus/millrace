@@ -7,8 +7,9 @@ from pathlib import Path
 from kernel.kernel_ping_scenarios import bootstrap_to_worker_claim
 from millrace.contracts import ActionId, ArtifactSchemaId, QueueFamilyId
 from millrace.contracts.compiled_plan import AuthorityValue
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.kernel.schema import validate_schema
+from millrace.testing import decide_with_fake_runner_completion as decide
 from support.kernel_ping import (
     action_by_id,
     compile_kernel_ping,

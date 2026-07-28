@@ -12,8 +12,9 @@ from millrace.contracts import ActionId, ArtifactSchemaId, ClaimWork, QueueFamil
 from millrace.contracts.compiled_plan import AuthorityValue
 from millrace.contracts.state import RuntimeState
 from millrace.contracts.transition import TransitionDecision
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.operator import OperatorStatus, operator_status
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import (
     deterministic_context,
     fake_runner_dispatch_envelope_for_run,
@@ -392,7 +393,7 @@ def test_duplicate_reviewer_observations_replay_or_refuse_without_progress() -> 
 
     assert duplicate_decision.accepted is False
     assert duplicate_decision.refusal is not None
-    assert duplicate_decision.refusal.reason == "duplicate_runner_observation"
+    assert duplicate_decision.refusal.reason == "invalid_observation_authority"
     _assert_no_workflow_progress(duplicate_decision)
     assert after_duplicate.runner_observations == closed.runner_observations
     assert after_duplicate.artifacts == closed.artifacts

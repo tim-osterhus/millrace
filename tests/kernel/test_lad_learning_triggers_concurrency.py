@@ -12,8 +12,11 @@ from millrace.contracts import (
     StageKindId,
 )
 from millrace.contracts.state import Activation, WorkItem, WorkItemRef
-from millrace.kernel import decide
-from millrace.testing import fake_runner_dispatch_envelope_for_run
+from millrace.testing import decide_with_fake_runner_completion as decide
+from millrace.testing import (
+    fake_runner_completion_input_id,
+    fake_runner_dispatch_envelope_for_run,
+)
 from support import lad_learning
 
 
@@ -51,7 +54,10 @@ def test_execution_terminal_result_generates_deduped_learning_request() -> None:
     generated = _learning_work_items(state)
     assert len(generated) == 1
     generated_item = next(
-        item for item in generated if item.created_by_input_id == "observe-doublecheck"
+        item
+        for item in generated
+        if item.created_by_input_id
+        == fake_runner_completion_input_id("observe-doublecheck")
     )
     assert generated_item.payload["request_id"] == "generated-learning-1"
     assert generated_item.lineage_id == "work-task"

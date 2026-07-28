@@ -23,7 +23,8 @@ from millrace.contracts.transition import (
     TransitionContext,
     TransitionDecision,
 )
-from millrace.kernel import apply, decide, empty_runtime_state
+from millrace.kernel import apply, empty_runtime_state
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import deterministic_context, fake_runner_observation_payload
 from support.kernel_ping import (
     action_by_id,

@@ -6,8 +6,10 @@ traffic is represented when it reaches kernel decisions.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from hashlib import sha256
 from types import MappingProxyType
 from typing import ClassVar, cast
 
@@ -370,6 +372,22 @@ def runner_result_payload(
     return evidence.payload()
 
 
+def runner_result_evidence_bytes(evidence: RunnerResultEvidence) -> bytes:
+    if not isinstance(evidence, RunnerResultEvidence):
+        raise TypeError("evidence must be RunnerResultEvidence")
+    return json.dumps(
+        _plain_authority_value(evidence.payload()),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def runner_result_evidence_digest(evidence: RunnerResultEvidence) -> str:
+    return f"sha256:{sha256(runner_result_evidence_bytes(evidence)).hexdigest()}"
+
+
 def runner_result_evidence_from_payload(
     payload: Mapping[str, object] | MappingProxyType[str, object],
 ) -> RunnerResultEvidence:
@@ -725,6 +743,17 @@ def _require_int(value: object, field_name: str) -> int:
     return value
 
 
+def _plain_authority_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _plain_authority_value(nested)
+            for key, nested in value.items()
+        }
+    if isinstance(value, tuple):
+        return [_plain_authority_value(item) for item in value]
+    return value
+
+
 __all__ = (
     "RUNNER_DISPATCH_RECORD_KIND",
     "RUNNER_DISPATCH_SCHEMA_VERSION",
@@ -733,6 +762,8 @@ __all__ = (
     "RunnerAdapterProvenance",
     "RunnerDispatchEnvelope",
     "RunnerResultEvidence",
+    "runner_result_evidence_bytes",
+    "runner_result_evidence_digest",
     "runner_result_evidence_from_payload",
     "runner_result_payload",
 )

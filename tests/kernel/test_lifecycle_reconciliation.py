@@ -12,13 +12,16 @@ from millrace.contracts.transition import (
     artifact_payload_digest,
     input_payload_digest,
 )
-from millrace.kernel import decide
 from millrace.kernel.lifecycle import project_next_lifecycle_transition
 from millrace.kernel.observation_policy import (
     ObservationPolicyDiagnostic,
     authenticate_runner_observation,
 )
-from millrace.testing import fake_runner_observation_payload
+from millrace.testing import decide_with_fake_runner_completion as decide
+from millrace.testing import (
+    fake_runner_completion_input_id,
+    fake_runner_observation_payload,
+)
 from support import generic_lifecycle
 
 
@@ -649,7 +652,8 @@ def test_accepted_terminal_fanout_accepts_omitted_optional_payload_fields() -> N
     generated_payloads = tuple(
         item.payload
         for item in state.work_items.values()
-        if item.created_by_input_id == "observe-origin"
+        if item.created_by_input_id
+        == fake_runner_completion_input_id("observe-origin")
     )
 
     assert len(generated_payloads) == 4
@@ -679,7 +683,8 @@ def test_accepted_terminal_fanout_absent_optional_collection_is_zero_item_noop(
     assert len(state.artifacts) == 1
     assert state.fanout_records == {}
     assert not any(
-        item.created_by_input_id == "observe-origin"
+        item.created_by_input_id
+        == fake_runner_completion_input_id("observe-origin")
         for item in state.work_items.values()
     )
     assert projection.candidate is None

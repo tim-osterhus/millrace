@@ -23,8 +23,15 @@ from millrace.contracts.transition import (
     TransitionDecision,
     TransitionInput,
 )
-from millrace.kernel import apply, decide, empty_runtime_state
-from millrace.testing import deterministic_context, fake_runner_observation_payload
+from millrace.kernel import apply, empty_runtime_state
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    deterministic_context,
+    fake_completed_runner_observation_state,
+    fake_runner_observation_payload,
+)
 from millrace.workflows import lad_execution
 
 STAGE_RESULT_SCHEMA_ID = "execution.artifacts.stage_result"
@@ -123,6 +130,11 @@ def apply_accepted_input(
     transition_input: TransitionInput,
     context: TransitionContext,
 ) -> RuntimeState:
+    if isinstance(transition_input, RunnerResultObserved):
+        state, transition_input = fake_completed_runner_observation_state(
+            state=state,
+            observation=transition_input,
+        )
     decision = decide(state, transition_input, context)
     assert decision.accepted is True
     return apply(state, decision)
@@ -256,20 +268,25 @@ def apply_runner_observation(
     observed_at: int | None = None,
     observation_payload_overrides: Mapping[str, AuthorityValue] | None = None,
 ) -> tuple[RuntimeState, TransitionDecision]:
+    observation = runner_observation(
+        state=state,
+        plan=plan,
+        fingerprint=fingerprint,
+        run_id=run_id,
+        action_id=action_id,
+        input_id=input_id,
+        marker=marker,
+        observed_at=observed_at,
+        observation_payload_overrides=observation_payload_overrides,
+        artifact_payload=artifact_payload(schema_id),
+    )
+    state, observation = fake_completed_runner_observation_state(
+        state=state,
+        observation=observation,
+    )
     decision = decide(
         state,
-        runner_observation(
-            state=state,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id=run_id,
-            action_id=action_id,
-            input_id=input_id,
-            marker=marker,
-            observed_at=observed_at,
-            observation_payload_overrides=observation_payload_overrides,
-            artifact_payload=artifact_payload(schema_id),
-        ),
+        observation,
         lad_context(
             input_id,
             work_item_id=target_work_item_id,

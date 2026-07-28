@@ -22,7 +22,7 @@ from millrace.contracts.transition import (
     OperatorResumeWait,
     OperatorReviseWait,
 )
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.operator import (
     OperatorInputError,
     OperatorResumeWaitInput,
@@ -31,6 +31,7 @@ from millrace.operator import (
     build_revise_wait,
     operator_status,
 )
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import deterministic_context
 from support.simple_loop import (
     apply_accepted_input,

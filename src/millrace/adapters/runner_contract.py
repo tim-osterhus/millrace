@@ -600,6 +600,7 @@ class StartedSession:
 
     def __post_init__(self) -> None:
         _require_dispatch_echo(self.dispatch_echo)
+        _require_session_handle(self.handle)
         _require_nonblank_string(self.handle_id, "handle_id")
         object.__setattr__(
             self,
@@ -679,6 +680,7 @@ class VerifiedLive:
 
     def __post_init__(self) -> None:
         _require_dispatch_echo(self.dispatch_echo)
+        _require_session_handle(self.handle)
         _require_nonblank_string(self.handle_id, "handle_id")
         object.__setattr__(
             self,
@@ -717,6 +719,7 @@ class CleanupPending:
 
     def __post_init__(self) -> None:
         _require_dispatch_echo(self.dispatch_echo)
+        _require_session_handle(self.handle)
         _require_nonblank_string(self.handle_id, "handle_id")
 
 
@@ -1062,6 +1065,20 @@ def _require_dispatch_echo(value: object) -> DispatchEcho:
     if not isinstance(value, DispatchEcho):
         raise TypeError("dispatch_echo must be DispatchEcho")
     return value
+
+
+def _require_session_handle(value: object) -> None:
+    for method_name in (
+        "poll_completion",
+        "request_cancel",
+        "terminate",
+        "kill",
+        "cleanup",
+    ):
+        if not callable(getattr(value, method_name, None)):
+            raise TypeError(
+                f"handle must implement RunnerSessionHandle.{method_name}"
+            )
 
 
 def _require_sha256_digest(value: object, field_name: str) -> str:

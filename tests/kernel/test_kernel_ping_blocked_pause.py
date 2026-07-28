@@ -7,7 +7,8 @@ from kernel.kernel_ping_scenarios import (
     bootstrap_two_prompt_state_to_worker_claim,
 )
 from millrace.contracts.transition import ClaimWork
-from millrace.kernel import StateConcurrencyError, apply, decide
+from millrace.kernel import StateConcurrencyError, apply
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import deterministic_context
 from millrace.workflows import kernel_ping
 from support import kernel_ping as kernel_ping_support

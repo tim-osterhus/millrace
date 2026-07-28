@@ -17,11 +17,13 @@ from millrace.operator import (
     build_revise_wait,
     operator_status,
 )
+from millrace.testing import fake_runner_completion_input_id
 from substrate._runtime_store_support import persist_and_load_runtime_state
 from support import vendor_selection
 
 
 def _decision_pack_payload(status: Any, input_id: str) -> Any:
+    input_id = fake_runner_completion_input_id(input_id)
     artifact = next(
         artifact
         for artifact in status.artifacts

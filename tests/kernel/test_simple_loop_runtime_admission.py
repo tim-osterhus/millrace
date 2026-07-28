@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from kernel.simple_loop_scenarios import bootstrap_to_manager_claim
 from millrace.contracts.transition import AdmitPlan, AdmitPlanRef, SelectDefaultPlan
-from millrace.kernel import apply, decide, empty_runtime_state
+from millrace.kernel import apply, empty_runtime_state
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    fake_runner_completion_input_id,
+)
 from support.simple_loop import (
     action_by_id,
     compile_simple_loop,
@@ -127,7 +133,7 @@ def test_observing_manager_detail_action_records_operator_wait() -> None:
 
     assert replay_decision.accepted is True
     assert replay_decision.receipt_ref == waiting.receipts[
-        "observe-manager-detail"
+        fake_runner_completion_input_id("observe-manager-detail")
     ].receipt_ref
     assert replay_decision.refusal is None
     assert replay_decision.mutations == ()

@@ -40,13 +40,15 @@ from millrace.contracts.transition import (
     TransitionDecision,
     TransitionInput,
 )
-from millrace.kernel import StateConcurrencyError, apply, decide
+from millrace.kernel import StateConcurrencyError, apply
 from millrace.operator import operator_status
 from millrace.operator.dispatch import (
     build_dispatch_envelope_for_run as _build_dispatch_envelope_for_run,
 )
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import (
     deterministic_context,
+    fake_runner_completion_input_id,
     fake_runner_dispatch_envelope_for_run,
     fake_runner_session_state,
 )
@@ -138,7 +140,8 @@ def _assert_audit_context(
     fingerprint: str,
     work_item_id: str,
     run_id: str,
-    action_id: ActionId,
+    action_id: ActionId | None,
+    authority_source: str | None = "terminal_action",
     refusal_reason: str | None = None,
 ) -> None:
     assert len(decision.governance_events) == 1
@@ -148,7 +151,7 @@ def _assert_audit_context(
         assert record.work_item_id == work_item_id
         assert record.run_id == run_id
         assert record.action_id == action_id
-        assert record.authority_source == "terminal_action"
+        assert record.authority_source == authority_source
         assert record.refusal_reason == refusal_reason
 
 
@@ -510,8 +513,12 @@ def test_first_recovery_attempt_records_selected_policy_and_source_context() -> 
     assert attempt.latest_recovery_activation_id == "activation-troubleshooter-manager"
     assert attempt.latest_recovery_run_id is None
     assert attempt.latest_return_action_id is None
-    assert attempt.created_by_input_id == "observe-manager-blocked"
-    assert attempt.updated_by_input_id == "observe-manager-blocked"
+    assert attempt.created_by_input_id == fake_runner_completion_input_id(
+        "observe-manager-blocked"
+    )
+    assert attempt.updated_by_input_id == fake_runner_completion_input_id(
+        "observe-manager-blocked"
+    )
 
     status = operator_status(after)
     status_attempt = status.recovery_attempts[0]
@@ -945,7 +952,9 @@ def test_second_repeated_recovery_records_pending_cooldown_without_scheduling() 
         "simple_loop.default_agent_runner"
     )
     assert wait.plan_ref.authority_fingerprint == fingerprint
-    assert wait.created_input_id == "observe-manager-blocked-2"
+    assert wait.created_input_id == fake_runner_completion_input_id(
+        "observe-manager-blocked-2"
+    )
     assert wait.created_at == 1000
     assert wait.due_at == 1000 + policy.default_cooldown_seconds
     assert wait.consumed_input_id is None
@@ -1237,7 +1246,7 @@ def test_due_timer_resumes_declared_recovery_target_and_is_exactly_idempotent(
     assert quarantine.emitting_recovery_run_id == "run-troubleshooter-manager-resumed"
     assert quarantine.action_id == TROUBLESHOOTER_OPERATOR_NEEDED_ACTION_ID
     assert quarantine.attempt_count == 2
-    assert quarantine.created_input_id == (
+    assert quarantine.created_input_id == fake_runner_completion_input_id(
         "observe-troubleshooter-operator-needed-after-cooldown"
     )
     assert quarantine.actor_kind == "runtime"
@@ -1330,7 +1339,9 @@ def test_third_recovery_attempt_records_runtime_lineage_quarantine() -> None:
     assert quarantine.emitting_recovery_run_id == "run-source-retry-3"
     assert quarantine.action_id == TROUBLESHOOTER_OPERATOR_NEEDED_ACTION_ID
     assert quarantine.attempt_count == 3
-    assert quarantine.created_input_id == "observe-manager-blocked-3"
+    assert quarantine.created_input_id == fake_runner_completion_input_id(
+        "observe-manager-blocked-3"
+    )
     assert quarantine.actor_kind == "runtime"
     assert quarantine.status == "active"
     assert quarantine.superseded_input_id is None
@@ -1844,7 +1855,7 @@ def test_operator_resume_superseded_quarantine_allows_new_recovery_episode() -> 
     new_attempt = next(attempt for attempt in attempts if attempt.phase != "resolved")
     assert new_attempt.record_id != old_attempt.record_id
     assert new_attempt.attempt_count == 1
-    assert new_attempt.created_by_input_id == (
+    assert new_attempt.created_by_input_id == fake_runner_completion_input_id(
         "observe-manager-blocked-after-operator-resume"
     )
 
@@ -2031,7 +2042,7 @@ def test_quarantine_lineage_action_from_active_recovery_records_quarantine() -> 
     assert "mutation.record_artifact" in mutation_kinds(decision)
     assert quarantine.action_id == TROUBLESHOOTER_OPERATOR_NEEDED_ACTION_ID
     assert quarantine.attempt_count == 2
-    assert quarantine.created_input_id == (
+    assert quarantine.created_input_id == fake_runner_completion_input_id(
         "observe-troubleshooter-operator-needed-active"
     )
     assert "mutation.record_lineage_quarantine" in mutation_kinds(decision)
@@ -2052,10 +2063,12 @@ def test_quarantined_lineage_fences_claim_and_stale_runner_decisions() -> None:
         plan=plan,
         fingerprint=fingerprint,
     )
+    stale_source = replace(third_source)
+    quarantine_source = replace(third_source)
     stale_packet_ready = decide(
-        third_source,
+        stale_source,
         runner_observation(
-            state=third_source,
+            state=stale_source,
             plan=plan,
             fingerprint=fingerprint,
             run_id="run-source-retry-3",
@@ -2074,9 +2087,9 @@ def test_quarantined_lineage_fences_claim_and_stale_runner_decisions() -> None:
     assert stale_packet_ready.accepted is True
 
     quarantine_decision = decide(
-        third_source,
+        quarantine_source,
         _recovery_observation(
-            state=third_source,
+            state=quarantine_source,
             plan=plan,
             fingerprint=fingerprint,
             run_id="run-source-retry-3",
@@ -2089,7 +2102,7 @@ def test_quarantined_lineage_fences_claim_and_stale_runner_decisions() -> None:
         ),
     )
     assert quarantine_decision.accepted is True
-    quarantined = apply(third_source, quarantine_decision)
+    quarantined = apply(quarantine_source, quarantine_decision)
 
     refused_claim = decide(
         quarantined,
@@ -2287,8 +2300,10 @@ def test_reviewer_blocked_schedules_partitionless_troubleshooter_recovery() -> N
 def test_stale_and_duplicate_recovery_observations_do_not_progress() -> None:
     plan, fingerprint = compile_simple_loop()
     state = bootstrap_to_manager_claim(plan, fingerprint)
+    first_state = replace(state)
+    second_state = replace(state)
     first = runner_observation(
-        state=state,
+        state=first_state,
         plan=plan,
         fingerprint=fingerprint,
         run_id="run-manager",
@@ -2297,14 +2312,14 @@ def test_stale_and_duplicate_recovery_observations_do_not_progress() -> None:
         artifact_payload={},
     )
     first_decision = decide(
-        state,
+        first_state,
         first,
         simple_loop_context("observe-manager-blocked"),
     )
     second_decision = decide(
-        state,
+        second_state,
         runner_observation(
-            state=state,
+            state=second_state,
             plan=plan,
             fingerprint=fingerprint,
             run_id="run-manager",
@@ -2320,7 +2335,7 @@ def test_stale_and_duplicate_recovery_observations_do_not_progress() -> None:
     assert first_decision.accepted is True
     assert second_decision.accepted is True
 
-    after_first = apply(state, first_decision)
+    after_first = apply(first_state, first_decision)
     with pytest.raises(StateConcurrencyError, match="run observation state changed"):
         apply(after_first, second_decision)
 
@@ -2343,7 +2358,7 @@ def test_stale_and_duplicate_recovery_observations_do_not_progress() -> None:
 
     assert duplicate_decision.accepted is False
     assert duplicate_decision.refusal is not None
-    assert duplicate_decision.refusal.reason == "duplicate_runner_observation"
+    assert duplicate_decision.refusal.reason == "invalid_observation_authority"
     _assert_no_workflow_progress(duplicate_decision)
     assert after_duplicate.activations == after_first.activations
     assert after_duplicate.activation_routes == after_first.activation_routes
@@ -2352,8 +2367,9 @@ def test_stale_and_duplicate_recovery_observations_do_not_progress() -> None:
         fingerprint=fingerprint,
         work_item_id="work-prompt",
         run_id="run-manager",
-        action_id=MANAGER_BLOCKED_ACTION_ID,
-        refusal_reason="duplicate_runner_observation",
+        action_id=None,
+        authority_source=None,
+        refusal_reason="invalid_observation_authority",
     )
 
 

@@ -25,7 +25,7 @@ from millrace.contracts.workflow_package import (
     asset_digest_for_bytes,
     manifest_digest_for_manifest,
 )
-from millrace.kernel import apply, decide, empty_runtime_state
+from millrace.kernel import apply, empty_runtime_state
 from millrace.operator.packages import (
     PackageMutationCommand,
     PackageWorkflowSelectionCommand,
@@ -36,6 +36,7 @@ from millrace.operator.packages import (
 )
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.sqlite import SQLiteRuntimeStore
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import deterministic_context, fake_runner_observation_payload
 from support.installed_workflow_packages import (
     DEFAULT_ASSET_PATH,

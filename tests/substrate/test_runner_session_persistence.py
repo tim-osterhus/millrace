@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import replace
 
@@ -8,6 +9,11 @@ import pytest
 from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
 from millrace.compiler import compile_workflow
 from millrace.compiler.canonical import authority_fingerprint
+from millrace.contracts.runner import (
+    RunnerResultEvidence,
+    runner_result_evidence_bytes,
+    runner_result_evidence_from_payload,
+)
 from millrace.contracts.state import (
     RunnerSessionCancellationAttemptRecord,
     RunnerSessionCancellationRecord,
@@ -120,11 +126,12 @@ def _cas_backed_session_state(
     *,
     completed: bool = False,
 ) -> tuple[RuntimeState, dict[str, str]]:
+    completed_evidence = _completed_evidence_bytes(state, "session-1")
     digests = {
         "locator": cas_store.put_bytes(b"runner locator"),
         "attempt_diagnostic": cas_store.put_bytes(b"attempt diagnostic"),
         "completion_diagnostic": cas_store.put_bytes(b"completion diagnostic"),
-        "completed_evidence": cas_store.put_bytes(b"completed evidence"),
+        "completed_evidence": cas_store.put_bytes(completed_evidence),
     }
     session = replace(
         state.runner_sessions["session-1"],
@@ -165,6 +172,94 @@ def _cas_backed_session_state(
         ),
         digests,
     )
+
+
+def _completed_evidence_bytes(state: RuntimeState, session_id: str) -> bytes:
+    run = state.runs["run-taskmaster"]
+    activation = state.activations[run.activation_id]
+    session = state.runner_sessions[session_id]
+    completed_evidence = RunnerResultEvidence(
+        run_id=run.run_ref.run_id,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
+        claim_id=run.run_ref.claim_id,
+        generation=run.run_ref.generation,
+        fencing_token=run.run_ref.fencing_token,
+        stage_kind_id=str(run.stage_kind_id),
+        graph_node_id=activation.graph_node_id,
+        runner_binding_id=str(run.runner_binding_id),
+        marker="TASK_COMPLETE",
+        adapter_provenance=None,
+        observation_payload={},
+        artifact_payload={},
+    )
+    return runner_result_evidence_bytes(completed_evidence)
+
+
+def test_candidate_write_refuses_foreign_session_completed_evidence(tmp_path) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(
+        _session_state(),
+        cas_store,
+        completed=True,
+    )
+    completion = state.runner_session_completions["session-1"]
+    evidence = replace(
+        runner_result_evidence_from_payload(
+            json.loads(
+                cas_store.get_bytes(completion.runner_result_evidence_digest)
+            )
+        ),
+        session_id="session-2",
+    )
+    foreign_digest = cas_store.put_bytes(runner_result_evidence_bytes(evidence))
+    state = replace(
+        state,
+        runner_session_completions={
+            "session-1": replace(
+                completion,
+                runner_result_evidence_digest=foreign_digest,
+            )
+        },
+    )
+    store = SQLiteRuntimeStore.initialize(tmp_path / "runtime.sqlite3")
+    try:
+        with pytest.raises(StorageIntegrityError, match="completed evidence"):
+            store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+
+
+def test_load_refuses_raw_malformed_completed_evidence_cas(tmp_path) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(
+        _session_state(),
+        cas_store,
+        completed=True,
+    )
+    store = SQLiteRuntimeStore.initialize(tmp_path / "runtime.sqlite3")
+    malformed_digest = cas_store.put_bytes(b'{"foreign":"payload"}')
+    try:
+        store.persist_runtime_state(state, cas_store)
+        connection = sqlite3.connect(tmp_path / "runtime.sqlite3")
+        try:
+            connection.execute(
+                """
+                UPDATE runner_session_completions
+                SET runner_result_evidence_digest = ?
+                WHERE session_id = 'session-1'
+                """,
+                (malformed_digest,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        with pytest.raises(StorageIntegrityError, match="completed evidence"):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
 
 
 def _replace_session_digest(
@@ -368,7 +463,9 @@ def test_starting_completion_decides_applies_and_round_trips(tmp_path) -> None:
         exit_kind="success",
         adapter_outcome_kind="success",
         adapter_error_kind=None,
-        runner_result_evidence_digest=cas_store.put_bytes(b"result evidence"),
+        runner_result_evidence_digest=cas_store.put_bytes(
+            _completed_evidence_bytes(state, "session-1")
+        ),
         primary_cancellation_request_id=None,
         cleanup_disposition="complete",
         started_at=120,
@@ -485,7 +582,9 @@ def test_composed_start_completion_decides_applies_and_round_trips(
         exit_kind="success",
         adapter_outcome_kind="success",
         adapter_error_kind=None,
-        runner_result_evidence_digest=cas_store.put_bytes(b"result evidence"),
+        runner_result_evidence_digest=cas_store.put_bytes(
+            _completed_evidence_bytes(state, "session-1")
+        ),
         primary_cancellation_request_id="cancel-1",
         cleanup_disposition="complete",
         started_at=112,

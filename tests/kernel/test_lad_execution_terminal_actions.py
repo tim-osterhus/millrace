@@ -6,7 +6,11 @@ from millrace.contracts.compiled_plan import AuthorityValue, TerminalActionDecla
 from millrace.contracts.ids import ArtifactSchemaId
 from millrace.contracts.transition import artifact_payload_digest
 from millrace.kernel import apply, decide
-from millrace.testing import fake_runner_dispatch_envelope_for_run
+from millrace.testing import (
+    fake_completed_runner_observation_state,
+    fake_runner_completion_input_id,
+    fake_runner_dispatch_envelope_for_run,
+)
 from support.lad_execution import (
     BUILDER_SUMMARY_SCHEMA_ID,
     INCIDENT_REPORT_SCHEMA_ID,
@@ -45,20 +49,25 @@ def _decide_observation(
     overrides: Mapping[str, AuthorityValue] | None = None,
     observation_payload_overrides: Mapping[str, AuthorityValue] | None = None,
 ):
-    return decide(
+    observation = runner_observation(
+        state=state,
+        plan=plan,
+        fingerprint=fingerprint,
+        run_id=run_id,
+        action_id=action_id,
+        input_id=input_id,
+        marker=marker,
+        artifact_payload=artifact_payload(schema_id),
+        overrides=overrides,
+        observation_payload_overrides=observation_payload_overrides,
+    )
+    state, observation = fake_completed_runner_observation_state(
+        state=state,
+        observation=observation,
+    )
+    return state, decide(
         state,
-        runner_observation(
-            state=state,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id=run_id,
-            action_id=action_id,
-            input_id=input_id,
-            marker=marker,
-            artifact_payload=artifact_payload(schema_id),
-            overrides=overrides,
-            observation_payload_overrides=observation_payload_overrides,
-        ),
+        observation,
         lad_context(
             input_id,
             work_item_id=target_work_item_id,
@@ -82,7 +91,7 @@ def _apply_observation(
     overrides: Mapping[str, AuthorityValue] | None = None,
     observation_payload_overrides: Mapping[str, AuthorityValue] | None = None,
 ):
-    decision = _decide_observation(
+    state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -135,7 +144,9 @@ def _assert_artifact_provenance(
     assert artifact.source_stage_kind_id == run.stage_kind_id
     assert artifact.source_graph_node_id == activation.graph_node_id
     assert artifact.payload_digest == artifact_payload_digest(artifact.payload)
-    assert artifact.created_by_input_id == transition_id.removeprefix("transition-")
+    assert artifact.created_by_input_id == fake_runner_completion_input_id(
+        transition_id.removeprefix("transition-")
+    )
     assert artifact.transition_id == transition_id
 
 
@@ -650,7 +661,7 @@ def test_blocked_marker_is_source_scoped_and_runner_override_is_ignored() -> Non
         input_id="claim-consultant",
     )
 
-    wrong_source_decision = _decide_observation(
+    _state, wrong_source_decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -881,7 +892,7 @@ def test_invalid_artifact_payload_refuses_without_workflow_progress() -> None:
     before_routes = state.activation_routes
     before_artifacts = state.artifacts
     before_observations = state.runner_observations
-    decision = _decide_observation(
+    _state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -909,7 +920,7 @@ def test_invalid_artifact_payload_refuses_without_workflow_progress() -> None:
 def test_undeclared_lad_marker_refuses_without_workflow_progress() -> None:
     plan, fingerprint = compile_lad()
     state = bootstrap_builder_claim(plan, fingerprint)
-    decision = _decide_observation(
+    _state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -934,7 +945,7 @@ def test_undeclared_lad_marker_refuses_without_workflow_progress() -> None:
 def test_wrong_lad_graph_evidence_refuses_without_workflow_progress() -> None:
     plan, fingerprint = compile_lad()
     state = bootstrap_builder_claim(plan, fingerprint)
-    decision = _decide_observation(
+    _state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -959,7 +970,7 @@ def test_wrong_lad_graph_evidence_refuses_without_workflow_progress() -> None:
 def test_runner_selected_action_top_level_override_is_invalid_evidence() -> None:
     plan, fingerprint = compile_lad()
     state = bootstrap_builder_claim(plan, fingerprint)
-    decision = _decide_observation(
+    _state, decision = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -995,7 +1006,7 @@ def test_duplicate_lad_observation_refuses_without_second_progress() -> None:
     )
     before_routes = state.activation_routes
 
-    duplicate = _decide_observation(
+    _state, duplicate = _decide_observation(
         state,
         plan=plan,
         fingerprint=fingerprint,
@@ -1009,7 +1020,7 @@ def test_duplicate_lad_observation_refuses_without_second_progress() -> None:
 
     assert duplicate.accepted is False
     assert duplicate.refusal is not None
-    assert duplicate.refusal.reason == "duplicate_runner_observation"
+    assert duplicate.refusal.reason == "invalid_observation_authority"
     after = apply(state, duplicate)
     assert after.activation_routes == before_routes
     assert "work-duplicate" not in after.work_items

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 
 from millrace.contracts import ActionId, ArtifactSchemaId, PartitionId, StageKindId
@@ -19,6 +20,10 @@ from millrace.contracts.compiled_plan import (
     TerminalActionDeclaration,
 )
 from millrace.contracts.operator_waits import _operator_wait_record_id
+from millrace.contracts.runner import (
+    runner_result_evidence_digest,
+    runner_result_evidence_from_payload,
+)
 from millrace.contracts.schema import validate_schema
 from millrace.contracts.state import (
     Activation,
@@ -403,6 +408,53 @@ def runner_session_cas_references(
                 )
             )
     return tuple(references)
+
+
+def validate_completed_runner_evidence(
+    state: RuntimeState,
+    *,
+    session_id: str,
+    payload: bytes,
+) -> None:
+    try:
+        raw = json.loads(payload)
+        evidence = runner_result_evidence_from_payload(raw)
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError, ValueError) as exc:
+        raise StorageIntegrityError(
+            "runner session completed evidence CAS object is malformed"
+        ) from exc
+    completion = state.runner_session_completions.get(session_id)
+    session = state.runner_sessions.get(session_id)
+    run = None if session is None else state.runs.get(session.run_id)
+    activation = None if run is None else state.activations.get(run.activation_id)
+    if (
+        completion is None
+        or session is None
+        or run is None
+        or activation is None
+        or run.current_session_id != session_id
+        or completion.runner_result_evidence_digest is None
+        or runner_result_evidence_digest(evidence)
+        != completion.runner_result_evidence_digest
+        or evidence.run_id != run.run_ref.run_id
+        or evidence.session_id != session.session_id
+        or evidence.dispatch_generation != session.dispatch_generation
+        or evidence.session_fencing_token != session.session_fencing_token
+        or evidence.session_id != completion.session_id
+        or evidence.dispatch_generation != completion.dispatch_generation
+        or evidence.session_fencing_token != completion.session_fencing_token
+        or evidence.plan_fingerprint
+        != run.run_ref.plan_ref.authority_fingerprint
+        or evidence.claim_id != run.run_ref.claim_id
+        or evidence.generation != run.run_ref.generation
+        or evidence.fencing_token != run.run_ref.fencing_token
+        or evidence.stage_kind_id != str(run.stage_kind_id)
+        or evidence.graph_node_id != activation.graph_node_id
+        or evidence.runner_binding_id != str(run.runner_binding_id)
+    ):
+        raise StorageIntegrityError(
+            "runner session completed evidence authority mismatch"
+        )
 
 
 def _recovery_action_matches_policy_source(
@@ -4475,6 +4527,7 @@ def _validate_reference(
 
 __all__ = (
     "runner_session_cas_references",
+    "validate_completed_runner_evidence",
     "validate_audit_transition_rows",
     "validate_loaded_runtime_state",
     "validate_receipt_transition_rows",

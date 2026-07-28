@@ -6,9 +6,15 @@ from pathlib import Path
 import pytest
 
 from millrace.contracts.transition import JoinFromArtifact
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.kernel.lifecycle import project_next_lifecycle_transition
 from millrace.substrate.errors import StorageIntegrityError
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    fake_runner_completion_input_id,
+)
 from substrate._runtime_store_support import (
     persist_and_load_runtime_state,
     persist_runtime_state,
@@ -146,7 +152,8 @@ def test_restart_preserves_optional_omission_fanout_payload(tmp_path: Path) -> N
     generated_payloads = tuple(
         item.payload
         for item in loaded.work_items.values()
-        if item.created_by_input_id == "observe-origin"
+        if item.created_by_input_id
+        == fake_runner_completion_input_id("observe-origin")
     )
     projection = project_next_lifecycle_transition(loaded)
 

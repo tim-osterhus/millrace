@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import fields
+from dataclasses import fields, replace
 
 import pytest
 
@@ -20,7 +20,8 @@ from millrace.contracts import (
 from millrace.contracts.compiled_plan import AuthorityValue
 from millrace.contracts.state import RuntimeState
 from millrace.contracts.transition import TransitionDecision
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import (
     deterministic_context,
     fake_runner_dispatch_envelope_for_run,
@@ -579,10 +580,11 @@ def test_reviewer_counter_accepts_fourth_incident_and_refuses_fourth_gap() -> No
         **counter_context,
     }
 
+    incident_state = replace(state)
     fourth_gap = decide(
-        state,
+        incident_state,
         runner_observation(
-            state=state,
+            state=incident_state,
             plan=plan,
             fingerprint=fingerprint,
             run_id="run-reviewer-after-gap-3",

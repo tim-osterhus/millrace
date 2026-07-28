@@ -20,11 +20,16 @@ from millrace.contracts.transition import (
     RunnerResultObserved,
     SelectDefaultPlan,
 )
-from millrace.kernel import StateConcurrencyError, apply, decide, empty_runtime_state
+from millrace.kernel import StateConcurrencyError, apply, empty_runtime_state
 from millrace.operator import operator_status
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.sqlite import SQLiteRuntimeStore
-from millrace.testing import deterministic_context, fake_runner_observation_payload
+from millrace.testing import decide_with_fake_runner_completion as decide
+from millrace.testing import (
+    deterministic_context,
+    fake_runner_observation_payload,
+    materialize_fake_runner_session_cas,
+)
 from millrace.workflows import kernel_ping
 from support import kernel_ping as kernel_ping_support
 
@@ -204,7 +209,12 @@ def _persist_and_load_state(tmp_path: Path, state: RuntimeState) -> RuntimeState
     cas_root = tmp_path / "cas"
     store = SQLiteRuntimeStore.initialize(db_path)
     try:
-        store.persist_runtime_state(state, ContentAddressedByteStore(cas_root))
+        cas_store = ContentAddressedByteStore(cas_root)
+        state = materialize_fake_runner_session_cas(
+            state=state,
+            cas_store=cas_store,
+        )
+        store.persist_runtime_state(state, cas_store)
     finally:
         store.close()
     store = SQLiteRuntimeStore.open(db_path)

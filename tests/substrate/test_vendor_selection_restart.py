@@ -9,7 +9,7 @@ import pytest
 from millrace.contracts import QueueFamilyId
 from millrace.contracts.compiled_plan import canonical_authority_bytes
 from millrace.contracts.transition import artifact_payload_digest
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.operator import operator_status
 from millrace.operator.dispatch import (
     DispatchProjectionError,
@@ -21,7 +21,13 @@ from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.codecs import dumps_cas_object, encode_payload
 from millrace.substrate.errors import StorageIntegrityError
 from millrace.substrate.records import ARTIFACT_PAYLOAD_OBJECT_KIND
-from millrace.testing import fake_runner_session_state
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    fake_runner_completion_input_id,
+    fake_runner_session_state,
+)
 from substrate._runtime_store_support import (
     load_runtime_state,
     persist_and_load_runtime_state,
@@ -305,6 +311,7 @@ def _join_dispatch_state_with_observed_at():
 
 
 def _observation_for_input(state, input_id: str):
+    input_id = fake_runner_completion_input_id(input_id)
     return next(
         observation
         for observation in state.runner_observations.values()
@@ -1018,7 +1025,8 @@ def test_restart_preserves_open_wait_computed_join_and_close_projection(
     decision_pack = next(
         artifact
         for artifact in close_status.artifacts
-        if artifact.source_input_id == "observe-decision-packager-a"
+        if artifact.source_input_id
+        == fake_runner_completion_input_id("observe-decision-packager-a")
     )
     assert decision_pack.payload["selected_plan_fingerprint"] == fingerprint
     assert decision_pack.payload["close_reason"] == "awarded"

@@ -14,7 +14,13 @@ from millrace.contracts.transition import (
     OperatorResumeWait,
     OperatorReviseWait,
 )
-from millrace.kernel import apply, decide, empty_runtime_state
+from millrace.kernel import apply, empty_runtime_state
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    fake_runner_completion_input_id,
+)
 from support import lad_learning
 
 
@@ -131,7 +137,9 @@ def test_learning_blocked_operator_wait_records_full_source_context() -> None:
     receipt = after.receipts[wait.created_input_id]
 
     assert wait.source_action_id == ActionId("learning.close_analyst_blocked")
-    assert wait.created_input_id == "observe-analyst-blocked"
+    assert wait.created_input_id == fake_runner_completion_input_id(
+        "observe-analyst-blocked"
+    )
     assert wait.created_input_payload_digest == receipt.receipt_ref.input_payload_digest
     assert source_run.work_item_id == wait.source_work_item_id
     assert source_run.activation_id == wait.source_activation_id
@@ -241,7 +249,9 @@ def test_learning_resume_then_later_close_preserves_original_wait_provenance() -
     assert resolved_wait.source_action_id == wait.source_action_id
     assert close.source_run_id == "run-learning-resumed-for-close"
     assert str(close.action_id) == "learning.close_analyst_noop"
-    assert close.created_by_input_id == "observe-resumed-learning-noop-close"
+    assert close.created_by_input_id == fake_runner_completion_input_id(
+        "observe-resumed-learning-noop-close"
+    )
 
 
 def test_learning_close_supersedes_blocked_work_and_audits_operator() -> None:
@@ -543,7 +553,9 @@ def test_learning_recovery_after_closed_source_preserves_trigger_provenance() ->
 
     assert str(source_close.action_id) == "execution.close_consultant_needs_plan"
     assert source_close.source_run_id == "run-consultant-closed-source"
-    assert source_close.created_by_input_id == "observe-consultant-closed-source"
+    assert source_close.created_by_input_id == fake_runner_completion_input_id(
+        "observe-consultant-closed-source"
+    )
     assert fanout.source_work_item_id == source_close.work_item_id
     assert fanout.source_run_id == source_close.source_run_id
     assert fanout.source_action_id == source_close.action_id

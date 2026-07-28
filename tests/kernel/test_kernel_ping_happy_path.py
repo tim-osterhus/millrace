@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
 from millrace.contracts.transition import ClaimWork
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
+from millrace.testing import decide_with_fake_runner_completion as decide
+from millrace.testing import fake_runner_completion_input_id
 from support.kernel_ping import (
     action_by_id,
     apply_accepted_input,
@@ -76,20 +78,20 @@ def test_prompt_to_taskmaster_to_worker_closes_without_pause_or_quarantine() -> 
     assert {
         "enqueue",
         "claim-taskmaster",
-        "observe-taskmaster",
+        fake_runner_completion_input_id("observe-taskmaster"),
         "claim-worker",
-        "observe-worker",
+        fake_runner_completion_input_id("observe-worker"),
     } <= {record.input_id for record in closed.transitions}
     assert {event.input_id for event in closed.governance_events} >= {
-        "observe-taskmaster",
-        "observe-worker",
+        fake_runner_completion_input_id("observe-taskmaster"),
+        fake_runner_completion_input_id("observe-worker"),
     }
     assert {trace.input_id for trace in closed.traces} >= {
-        "observe-taskmaster",
-        "observe-worker",
+        fake_runner_completion_input_id("observe-taskmaster"),
+        fake_runner_completion_input_id("observe-worker"),
     }
     assert any(
-        event.input_id == "observe-worker"
+        event.input_id == fake_runner_completion_input_id("observe-worker")
         and event.disposition == "accepted"
         and event.action_id == close_action.id
         for event in closed.governance_events

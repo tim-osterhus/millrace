@@ -6,6 +6,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
+from millrace.contracts.state import RuntimeState
+
 
 def _invoke(argv: list[str]) -> tuple[int, str, str]:
     from millrace.adapters.cli.main import main
@@ -44,16 +46,22 @@ def _state(workspace: Path):
     return store.load_runtime_state(cas_store)
 
 
-def _persist_state(workspace: Path, state: object) -> None:
+def _persist_state(workspace: Path, state: RuntimeState) -> None:
     from millrace.substrate.cas import ContentAddressedByteStore
     from millrace.substrate.sqlite import SQLiteRuntimeStore
+    from millrace.testing import materialize_fake_runner_session_cas
 
     db_path = workspace / ".millrace" / "runtime.sqlite3"
     cas_path = workspace / ".millrace" / "cas"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     cas_path.mkdir(parents=True, exist_ok=True)
     store = SQLiteRuntimeStore.initialize(db_path)
-    store.persist_runtime_state(state, ContentAddressedByteStore(cas_path))
+    cas_store = ContentAddressedByteStore(cas_path)
+    state = materialize_fake_runner_session_cas(
+        state=state,
+        cas_store=cas_store,
+    )
+    store.persist_runtime_state(state, cas_store)
 
 
 def _workspace_with_default_kernel_ping(tmp_path: Path) -> tuple[Path, str]:

@@ -16,7 +16,8 @@ from millrace.contracts.transition import (
     RunnerResultObserved,
     TransitionDecision,
 )
-from millrace.kernel import StateConcurrencyError, apply, decide
+from millrace.kernel import StateConcurrencyError, apply
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import deterministic_context
 from support.kernel_ping import (
     compile_kernel_ping,
@@ -452,7 +453,7 @@ def test_same_runner_result_new_input_after_terminal_state_is_refused() -> None:
 
     assert duplicate_decision.accepted is False
     assert duplicate_decision.refusal is not None
-    assert duplicate_decision.refusal.reason == "duplicate_runner_observation"
+    assert duplicate_decision.refusal.reason == "invalid_observation_authority"
     _assert_no_workflow_progress(duplicate_decision)
     assert after_duplicate.closed_work_items == closed.closed_work_items
     assert after_duplicate.activation_routes == closed.activation_routes
@@ -482,15 +483,21 @@ def test_stale_duplicate_runner_observation_decision_is_rejected_at_apply() -> N
         artifact_payload={},
     )
 
-    first_decision = decide(state, first, kernel_ping_context("observe-worker-success"))
+    first_state = replace(state)
+    second_state = replace(state)
+    first_decision = decide(
+        first_state,
+        first,
+        kernel_ping_context("observe-worker-success"),
+    )
     stale_second_decision = decide(
-        state,
+        second_state,
         second,
         deterministic_context(transition_id="transition-stale-second"),
     )
     assert first_decision.accepted is True
     assert stale_second_decision.accepted is True
 
-    after_first = apply(state, first_decision)
+    after_first = apply(first_state, first_decision)
     with pytest.raises(StateConcurrencyError, match="run observation state changed"):
         apply(after_first, stale_second_decision)

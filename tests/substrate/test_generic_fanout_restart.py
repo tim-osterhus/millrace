@@ -9,7 +9,7 @@ import pytest
 from millrace.compiler.canonical import authority_fingerprint
 from millrace.contracts.state import FanoutRecord, RuntimeState
 from millrace.contracts.transition import FanoutFromArtifact
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.codecs import (
     dumps_cas_object,
@@ -17,6 +17,7 @@ from millrace.substrate.codecs import (
     encode_selected_compiled_plan,
 )
 from millrace.substrate.errors import StorageIntegrityError
+from millrace.testing import decide_with_fake_runner_completion as decide
 from substrate._runtime_store_support import (
     load_runtime_state,
     persist_runtime_state,

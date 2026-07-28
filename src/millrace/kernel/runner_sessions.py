@@ -141,21 +141,34 @@ def advance_runner_session_refusal(
     )
     if refusal is not None:
         return refusal
+    session = state.runner_sessions[transition_input.session_id]
+    starting_locator_enrichment = (
+        transition_input.expected_state == "starting"
+        and transition_input.next_state == "starting"
+        and transition_input.durable_locator_digest is not None
+        and session.durable_locator_digest is None
+        and transition_input.occurred_at == session.start_intent_at
+    )
     if (
-        not is_legal_runner_session_transition(
-            transition_input.expected_state,
-            transition_input.next_state,
+        not starting_locator_enrichment
+        and (
+            not is_legal_runner_session_transition(
+                transition_input.expected_state,
+                transition_input.next_state,
+            )
+            or transition_input.next_state
+            in {"completed", "interrupted", "failed", "lost"}
         )
-        or transition_input.next_state
-        in {"completed", "interrupted", "failed", "lost"}
     ):
         return "invalid_runner_session_transition"
     if transition_input.durable_locator_digest is not None and (
-        transition_input.expected_state != "starting"
-        or transition_input.next_state != "running"
+        not starting_locator_enrichment
+        and (
+            transition_input.expected_state != "starting"
+            or transition_input.next_state != "running"
+        )
     ):
         return "invalid_runner_session_transition"
-    session = state.runner_sessions[transition_input.session_id]
     latest = max(
         value
         for value in (
@@ -175,6 +188,14 @@ def runner_session_for_advance(
     transition_input: AdvanceRunnerSession,
 ) -> RunnerSessionRecord:
     session = state.runner_sessions[transition_input.session_id]
+    if (
+        transition_input.expected_state == "starting"
+        and transition_input.next_state == "starting"
+    ):
+        return replace(
+            session,
+            durable_locator_digest=transition_input.durable_locator_digest,
+        )
     if transition_input.next_state == "starting":
         return replace(
             session,

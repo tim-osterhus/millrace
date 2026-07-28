@@ -20,14 +20,20 @@ from millrace.contracts.state import (
     RuntimeState,
 )
 from millrace.contracts.transition import AdmitPlan, SelectDefaultPlan
-from millrace.kernel import apply, decide, empty_runtime_state
+from millrace.kernel import apply, empty_runtime_state
 from millrace.operator import OperatorStatus, operator_status
 from millrace.operator.status import (
     QueueFamilyStatus,
     RecentEventStatus,
     StageKindStatus,
 )
-from millrace.testing import deterministic_context
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    deterministic_context,
+    fake_runner_completion_input_id,
+)
 from millrace.workflows import simple_loop
 from support.simple_loop import (
     apply_accepted_input,
@@ -73,6 +79,7 @@ def _events_by_input_id(
     events: Sequence[RecentEventStatus],
     input_id: str,
 ) -> tuple[RecentEventStatus, ...]:
+    input_id = fake_runner_completion_input_id(input_id)
     return tuple(event for event in events if event.input_id == input_id)
 
 
@@ -214,7 +221,9 @@ def test_operator_status_projects_cooldown_waits() -> None:
     assert wait.target_stage_kind_id == "simple_loop.troubleshooter"
     assert wait.target_graph_node_id == "simple_loop.troubleshooter.start"
     assert wait.target_runner_binding_id == "simple_loop.default_agent_runner"
-    assert wait.created_input_id == "observe-manager-blocked-2"
+    assert wait.created_input_id == fake_runner_completion_input_id(
+        "observe-manager-blocked-2"
+    )
     assert wait.created_at == 1000
     assert wait.due_at == 1900
     assert wait.consumed_input_id is None
@@ -386,17 +395,17 @@ def test_operator_status_recent_events_include_accepted_and_refused_context() ->
         (
             "governance_event",
             "refused",
-            "simple_loop.reviewer.accepted",
-            "terminal_action",
-            "duplicate_runner_observation",
+            None,
+            None,
+            "invalid_observation_authority",
             fingerprint,
         ),
         (
             "trace",
             "refused",
-            "simple_loop.reviewer.accepted",
-            "terminal_action",
-            "duplicate_runner_observation",
+            None,
+            None,
+            "invalid_observation_authority",
             fingerprint,
         ),
     }

@@ -18,10 +18,12 @@ from millrace.contracts import (
     QueueFamilyId,
     SelectDefaultPlan,
 )
-from millrace.kernel import apply, decide, empty_runtime_state
+from millrace.kernel import apply, empty_runtime_state
 from millrace.operator import operator_status
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.testing import (
     deterministic_context,
+    fake_runner_completion_input_id,
     fake_runner_dispatch_envelope_for_run,
 )
 from support.simple_loop import (
@@ -341,7 +343,9 @@ def test_packet_ready_missing_completion_definition_refuses_without_route() -> N
     assert after.pause == state.pause
     assert after.quarantines == state.quarantines
 
-    receipt = after.receipts["observe-manager-missing-completion"]
+    receipt = after.receipts[
+        fake_runner_completion_input_id("observe-manager-missing-completion")
+    ]
     assert receipt.accepted is False
     assert receipt.refusal_reason == "invalid_artifact_payload"
     assert len(decision.governance_events) == 1

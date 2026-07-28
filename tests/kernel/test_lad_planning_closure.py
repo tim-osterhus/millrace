@@ -25,8 +25,9 @@ from millrace.contracts.transition import (
     SelectDefaultPlan,
     TransitionDecision,
 )
-from millrace.kernel import apply, decide, empty_runtime_state
+from millrace.kernel import apply, empty_runtime_state
 from millrace.substrate.errors import StorageIntegrityError
+from millrace.testing import decide_with_fake_runner_completion as decide
 from millrace.workflows import lad_planning
 from substrate._runtime_store_support import (
     load_runtime_state,

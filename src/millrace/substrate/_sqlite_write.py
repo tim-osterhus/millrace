@@ -9,6 +9,7 @@ from millrace.contracts.state import RuntimeState
 from millrace.substrate._sqlite_relations import (
     runner_session_cas_references,
     validate_audit_transition_rows,
+    validate_completed_runner_evidence,
     validate_loaded_runtime_state,
     validate_receipt_transition_rows,
     validate_trace_governance_rows,
@@ -308,6 +309,7 @@ def persist_runtime_state_rows(
         _replace_runtime_rows(
             connection,
             state=state,
+            cas_store=cas_store,
             admitted_plan_rows=admitted_plan_rows,
             default_plan_row=default_plan_row,
             receipt_rows=receipt_rows,
@@ -355,6 +357,7 @@ def persist_runtime_state_rows(
         _replace_runtime_rows(
             connection,
             state=state,
+            cas_store=cas_store,
             admitted_plan_rows=admitted_plan_rows,
             default_plan_row=default_plan_row,
             receipt_rows=receipt_rows,
@@ -426,6 +429,20 @@ def _validate_runner_session_cas_references(
             raise StorageIntegrityError(
                 f"runner session {reference_name} CAS reference is invalid: {digest}"
             ) from exc
+
+
+def _validate_runner_session_evidence_authority(
+    state: RuntimeState,
+    cas_store: ContentAddressedByteStore,
+) -> None:
+    for completion in state.runner_session_completions.values():
+        evidence_digest = completion.runner_result_evidence_digest
+        if evidence_digest is not None:
+            validate_completed_runner_evidence(
+                state,
+                session_id=completion.session_id,
+                payload=cas_store.get_bytes(evidence_digest),
+            )
 
 
 def _put_work_item_payload_objects(
@@ -1441,6 +1458,7 @@ def _replace_runtime_rows(
     connection: sqlite3.Connection,
     *,
     state: RuntimeState,
+    cas_store: ContentAddressedByteStore,
     admitted_plan_rows: tuple[AdmittedPlanPinRow, ...],
     default_plan_row: DefaultPlanRow | None,
     receipt_rows: tuple[InputReceiptRow, ...],
@@ -1528,6 +1546,7 @@ def _replace_runtime_rows(
         refusal_rows=refusal_rows,
     )
     validate_loaded_runtime_state(state)
+    _validate_runner_session_evidence_authority(state, cas_store)
     for table_name in (
         "refusals",
         "traces",

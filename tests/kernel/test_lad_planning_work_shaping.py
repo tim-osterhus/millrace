@@ -9,7 +9,8 @@ from millrace.contracts.compiled_plan import AuthorityValue, SelectedCompiledPla
 from millrace.contracts.ids import ArtifactSchemaId, QueueFamilyId
 from millrace.contracts.state import RuntimeState
 from millrace.contracts.transition import TransitionDecision, artifact_payload_digest
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
+from millrace.testing import decide_with_fake_runner_completion as decide
 from substrate._runtime_store_support import persist_and_load_runtime_state
 from support.lad_planning import (
     REPORT_SCHEMA_ID,

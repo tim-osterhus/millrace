@@ -6,7 +6,13 @@ import pytest
 
 from millrace.contracts.compiled_plan import AuthorityValue, SelectedCompiledPlan
 from millrace.contracts.state import ArtifactRecord, RuntimeState
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    fake_runner_completion_input_id,
+)
 from support import lad_learning
 
 
@@ -48,20 +54,22 @@ def _apply_observation(
 
 
 def _artifact_for_input(state: RuntimeState, input_id: str) -> ArtifactRecord:
+    completion_input_id = fake_runner_completion_input_id(input_id)
     artifacts = tuple(
         artifact
         for artifact in state.artifacts.values()
-        if artifact.created_by_input_id == input_id
+        if artifact.created_by_input_id == completion_input_id
     )
     assert len(artifacts) == 1
     return artifacts[0]
 
 
 def _effect_proposal_for_input(state: RuntimeState, input_id: str):
+    completion_input_id = fake_runner_completion_input_id(input_id)
     proposals = tuple(
         proposal
         for proposal in state.effect_proposals.values()
-        if proposal.created_input_id == input_id
+        if proposal.created_input_id == completion_input_id
     )
     assert len(proposals) == 1
     return proposals[0]
@@ -436,7 +444,7 @@ def test_curator_records_selected_fake_local_effect_proposal(
     assert proposal.artifact_payload_digest == artifact.payload_digest
     assert proposal.source_run_id == run_id
     assert str(proposal.source_action_id) == action_id
-    assert proposal.source_input_id == input_id
+    assert proposal.source_input_id == fake_runner_completion_input_id(input_id)
     assert proposal.source_work_item_id == work_item_id
     assert proposal.source_activation_id == run.activation_id
     assert proposal.source_graph_node_id == activation.graph_node_id
@@ -450,7 +458,7 @@ def test_curator_records_selected_fake_local_effect_proposal(
     assert proposal.target_ref_schema == effect_declaration.target_ref_schema
     assert proposal.target_skill_id == artifact.payload["target_skill_id"]
     assert proposal.status == "pending"
-    assert proposal.created_input_id == input_id
+    assert proposal.created_input_id == fake_runner_completion_input_id(input_id)
     assert proposal.created_transition_id == f"transition-{input_id}"
     close = after.closed_work_items[work_item_id]
     assert str(close.action_id) == action_id
@@ -649,7 +657,9 @@ def test_learning_effect_after_closed_source_preserves_trigger_provenance() -> N
 
     assert str(source_close.action_id) == "execution.close_consultant_needs_plan"
     assert source_close.source_run_id == "run-consultant-closed-source"
-    assert source_close.created_by_input_id == "observe-consultant-closed-source"
+    assert source_close.created_by_input_id == fake_runner_completion_input_id(
+        "observe-consultant-closed-source"
+    )
     assert source_close.close_kind == "terminal_action"
     assert fanout.source_work_item_id == source_close.work_item_id
     assert fanout.source_run_id == source_close.source_run_id
@@ -662,7 +672,9 @@ def test_learning_effect_after_closed_source_preserves_trigger_provenance() -> N
     assert proposal.source_work_item_id == "work-closed-source-curator"
     assert proposal.lineage_id == fanout.lineage_id
     assert str(proposal.source_action_id) == "learning.close_curator_complete"
-    assert proposal.source_input_id == "observe-closed-source-curator-complete"
+    assert proposal.source_input_id == fake_runner_completion_input_id(
+        "observe-closed-source-curator-complete"
+    )
     assert proposal.status == "pending"
     assert reconciliation.effect_id == proposal.effect_id
     assert reconciliation.status == "applied"

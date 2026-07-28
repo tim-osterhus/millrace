@@ -21,11 +21,17 @@ from millrace.contracts import (
 )
 from millrace.contracts.operator_waits import _operator_wait_record_id
 from millrace.contracts.state import Activation, WorkItem, WorkItemRef
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.operator import operator_status
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.codecs import dumps_cas_object, encode_selected_compiled_plan
 from millrace.substrate.errors import StorageIntegrityError
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    fake_runner_completion_input_id,
+)
 from substrate._runtime_store_support import (
     load_runtime_state,
     persist_and_load_runtime_state,
@@ -769,7 +775,9 @@ def test_restart_preserves_learning_status_source_rows(tmp_path: Path) -> None:
     effect = next(iter(status.effects))
     assert effect.selected_plan_fingerprint == fingerprint
     assert effect.status == "applied"
-    assert effect.source_input_id == "observe-curator-complete"
+    assert effect.source_input_id == fake_runner_completion_input_id(
+        "observe-curator-complete"
+    )
     assert effect.source_action_id == "learning.close_curator_complete"
     assert effect.terminal_action_id == "learning.close_curator_complete"
     assert effect.source_work_item_id == "work-curator"
@@ -1033,7 +1041,9 @@ def test_restart_refuses_c3_family_cross_record_drift(
                 """,
                 (
                     "execution.route_doublechecker_pass",
-                    "observe-consultant-closed-source",
+                    fake_runner_completion_input_id(
+                        "observe-consultant-closed-source"
+                    ),
                 ),
             )
         elif drift == "fanout_target_lineage":
@@ -1079,7 +1089,9 @@ def test_restart_refuses_c3_family_cross_record_drift(
                 """,
                 (
                     lad_learning.LEARNING_STAGE_RESULT_SCHEMA_ID,
-                    "observe-closed-source-curator-complete",
+                    fake_runner_completion_input_id(
+                        "observe-closed-source-curator-complete"
+                    ),
                 ),
             )
         elif drift == "artifact_source_input":
@@ -1091,7 +1103,9 @@ def test_restart_refuses_c3_family_cross_record_drift(
                 """,
                 (
                     "claim-closed-source-curator",
-                    "observe-closed-source-curator-complete",
+                    fake_runner_completion_input_id(
+                        "observe-closed-source-curator-complete"
+                    ),
                 ),
             )
         elif drift == "artifact_payload_digest":
@@ -1103,7 +1117,9 @@ def test_restart_refuses_c3_family_cross_record_drift(
                 """,
                 (
                     f"sha256:{'1' * 64}",
-                    "observe-closed-source-curator-complete",
+                    fake_runner_completion_input_id(
+                        "observe-closed-source-curator-complete"
+                    ),
                 ),
             )
         elif drift == "artifact_source_run":
@@ -1115,7 +1131,9 @@ def test_restart_refuses_c3_family_cross_record_drift(
                 """,
                 (
                     "missing-run",
-                    "observe-closed-source-curator-complete",
+                    fake_runner_completion_input_id(
+                        "observe-closed-source-curator-complete"
+                    ),
                 ),
             )
         elif drift == "effect_plan_id":
@@ -1425,6 +1443,10 @@ def test_restart_preserves_learning_stage_artifact_route_close_and_block(
         plan,
         fingerprint,
         aftermath,
+    )
+    expected_input_ids = frozenset(
+        fake_runner_completion_input_id(input_id)
+        for input_id in expected_input_ids
     )
 
     loaded = persist_and_load_runtime_state(tmp_path, state)
@@ -1840,7 +1862,10 @@ def test_restart_refuses_learning_effect_reconciliation_authority_drift(
                 SET created_input_id = ?
                 WHERE reconciliation_id = ?
                 """,
-                ("observe-curator-complete", reconciliation_id),
+                (
+                    fake_runner_completion_input_id("observe-curator-complete"),
+                    reconciliation_id,
+                ),
             )
 
     with pytest.raises(StorageIntegrityError, match=match):

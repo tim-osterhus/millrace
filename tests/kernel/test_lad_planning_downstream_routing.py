@@ -6,7 +6,8 @@ import pytest
 
 from millrace.contracts import QueueFamilyId
 from millrace.contracts.transition import FanoutFromArtifact
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
+from millrace.testing import decide_with_fake_runner_completion as decide
 from substrate._runtime_store_support import persist_and_load_runtime_state
 from support.lad_planning import (
     apply_runner_observation,

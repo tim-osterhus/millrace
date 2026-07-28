@@ -11,6 +11,7 @@ from kernel.kernel_ping_scenarios import (
 from millrace.contracts.state import RuntimeState
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.sqlite import SQLiteRuntimeStore
+from millrace.testing import materialize_fake_runner_session_cas
 from support.kernel_ping import compile_kernel_ping
 
 
@@ -40,7 +41,12 @@ def persist_runtime_state(
 ) -> None:
     store = SQLiteRuntimeStore.initialize(db_path)
     try:
-        store.persist_runtime_state(state, ContentAddressedByteStore(cas_root))
+        cas_store = ContentAddressedByteStore(cas_root)
+        state = materialize_fake_runner_session_cas(
+            state=state,
+            cas_store=cas_store,
+        )
+        store.persist_runtime_state(state, cas_store)
     finally:
         store.close()
 

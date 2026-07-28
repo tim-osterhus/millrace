@@ -7,7 +7,13 @@ import pytest
 
 from millrace.contracts import QueueFamilyId
 from millrace.contracts.transition import EnqueueWork
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    fake_runner_completion_input_id,
+)
 from support import vendor_selection
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -107,10 +113,10 @@ def test_vendor_selection_happy_path_reaches_candidate_packager() -> None:
         "candidate_bundle"
     )
     assert {
-        "observe-request-intake-a",
-        "observe-policy-a",
-        "observe-freezer-a",
-        "observe-sourcer-a",
+        fake_runner_completion_input_id("observe-request-intake-a"),
+        fake_runner_completion_input_id("observe-policy-a"),
+        fake_runner_completion_input_id("observe-freezer-a"),
+        fake_runner_completion_input_id("observe-sourcer-a"),
     } <= set(after.receipts)
 
 

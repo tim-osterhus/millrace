@@ -9,11 +9,16 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import uuid4
 
-from millrace.adapters.cli.context import OpenRuntimeContext, transition_context
+from millrace.adapters.cli.context import (
+    OpenRuntimeContext,
+    refusal_is_pre_persist,
+    transition_context,
+)
 from millrace.adapters.runner_contract import (
     AdapterErrorResult,
     AdapterInvocationOutcome,
     AdapterInvocationRequest,
+    AdapterSuccessResult,
     RunnerAdapter,
     StartedSession,
     StartIndeterminate,
@@ -22,7 +27,10 @@ from millrace.adapters.runner_contract import (
 )
 from millrace.contracts.compiled_plan import AuthorityValue
 from millrace.contracts.runner import (
+    RunnerDispatchEnvelope,
     RunnerResultEvidence,
+    runner_result_evidence_bytes,
+    runner_result_evidence_digest,
     runner_result_evidence_from_payload,
 )
 from millrace.contracts.state import (
@@ -39,8 +47,14 @@ from millrace.contracts.transition import (
     TransitionInput,
 )
 from millrace.kernel import apply, decide
+from millrace.operator.dispatch import (
+    DispatchProjectionError,
+    build_dispatch_envelope_for_run,
+)
 
 _COMMAND = "run.session"
+SESSION_LOCATOR_MAX_BYTES = 16 * 1024
+_POLL_INTERVAL_SECONDS = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +151,6 @@ def _start_created_session(
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
 ) -> SessionExecutionResult:
-    request = request_factory(session)
     starting = AdvanceRunnerSession(
         f"cli:run.session-start-intent:{session.session_id}",
         run_ref=run_ref,
@@ -152,6 +165,16 @@ def _start_created_session(
     if persisted is None:
         return SessionExecutionResult("session_start_intent_refused")
     session = persisted.runner_sessions[session.session_id]
+    request = request_factory(session)
+    if not _request_matches_current_authority(
+        runtime,
+        session=session,
+        adapter=adapter,
+        request=request,
+    ):
+        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        return SessionExecutionResult("session_reconciliation_required")
+    deadline = _monotonic() + request.timeout_seconds
     try:
         start_outcome = adapter.start_session(request)
     except Exception:
@@ -163,7 +186,26 @@ def _start_created_session(
                 correlation_id=request.correlation_id,
             )
         except (TypeError, ValueError):
-            pass
+            _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+            return SessionExecutionResult("session_reconciliation_required")
+        locator = start_outcome.durable_locator_metadata
+        if locator is not None:
+            locator_digest = _safe_locator_digest(runtime, request, locator)
+            if locator_digest is None:
+                _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+                return SessionExecutionResult("session_reconciliation_required")
+            enrichment = AdvanceRunnerSession(
+                f"cli:run.session-starting-locator:{session.session_id}",
+                run_ref=run_ref,
+                session_id=session.session_id,
+                dispatch_generation=session.dispatch_generation,
+                session_fencing_token=session.session_fencing_token,
+                expected_state="starting",
+                next_state="starting",
+                occurred_at=cast(int, session.start_intent_at),
+                durable_locator_digest=locator_digest,
+            )
+            _persist_transition(runtime, enrichment)
         return SessionExecutionResult("session_reconciliation_required")
     if isinstance(start_outcome, StartRefusedBeforeExternalWork):
         error_echo = start_outcome.adapter_error.dispatch_echo
@@ -191,6 +233,7 @@ def _start_created_session(
             cleanup_disposition="not_required",
         )
     if not isinstance(start_outcome, StartedSession):
+        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
         return SessionExecutionResult("session_reconciliation_required")
     try:
         start_outcome.dispatch_echo.validate_against(
@@ -198,11 +241,17 @@ def _start_created_session(
             correlation_id=request.correlation_id,
         )
     except (TypeError, ValueError):
+        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
         return SessionExecutionResult("session_reconciliation_required")
 
-    locator_digest = runtime.cas_store.put_bytes(
-        _canonical_json_bytes(start_outcome.durable_locator_metadata)
+    locator_digest = _safe_locator_digest(
+        runtime,
+        request,
+        start_outcome.durable_locator_metadata,
     )
+    if locator_digest is None:
+        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        return SessionExecutionResult("session_reconciliation_required")
     running_at = max(_now(), cast(int, session.start_intent_at))
     running = AdvanceRunnerSession(
         f"cli:run.session-running:{session.session_id}",
@@ -219,20 +268,41 @@ def _start_created_session(
     if running_state is None:
         return SessionExecutionResult("session_reconciliation_required")
     running_session = running_state.runner_sessions[session.session_id]
-    try:
-        outcome = start_outcome.handle.poll_completion()
-    except Exception:
-        return SessionExecutionResult("session_reconciliation_required")
-    if outcome is None:
-        return SessionExecutionResult("session_running")
-    return _persist_completion(
-        runtime,
-        run_ref=run_ref,
-        session=running_session,
-        request=request,
-        outcome=outcome,
-        cleanup_disposition="not_required",
-    )
+    while True:
+        try:
+            outcome = start_outcome.handle.poll_completion()
+        except Exception:
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=running_session,
+            )
+            return SessionExecutionResult("session_reconciliation_required")
+        if outcome is not None:
+            if not isinstance(outcome, (AdapterSuccessResult, AdapterErrorResult)):
+                _audit_session_refusal(
+                    runtime,
+                    run_ref=run_ref,
+                    session=running_session,
+                )
+                return SessionExecutionResult("session_reconciliation_required")
+            return _persist_completion(
+                runtime,
+                run_ref=run_ref,
+                session=running_session,
+                request=request,
+                outcome=outcome,
+                cleanup_disposition="not_required",
+            )
+        remaining = deadline - _monotonic()
+        if remaining <= 0:
+            _audit_session_refusal(
+                runtime,
+                run_ref=run_ref,
+                session=running_session,
+            )
+            return SessionExecutionResult("session_reconciliation_required")
+        _sleep(min(_POLL_INTERVAL_SECONDS, remaining))
 
 
 def _persist_completion(
@@ -270,8 +340,16 @@ def _persist_completion(
         evidence = runner_evidence_from_adapter_outcome(outcome, request)
     except (TypeError, ValueError):
         return SessionExecutionResult("adapter_conversion_refused")
+    state = _load(runtime)
+    if not _evidence_matches_current_authority(
+        state,
+        session=session,
+        evidence=evidence,
+    ):
+        _audit_session_refusal(runtime, run_ref=run_ref, session=session)
+        return SessionExecutionResult("completion_refused")
     evidence_digest = runtime.cas_store.put_bytes(
-        _canonical_json_bytes(evidence.payload())
+        runner_result_evidence_bytes(evidence)
     )
     diagnostic_digest = runtime.cas_store.put_bytes(
         _canonical_json_bytes(outcome.evidence_construction_diagnostics)
@@ -407,7 +485,20 @@ def _apply_persisted_completion(
     digest = completion.runner_result_evidence_digest
     if digest is None:
         return SessionExecutionResult("ready_state_corrupt")
-    evidence = _load_evidence(runtime, digest)
+    try:
+        evidence = _load_evidence(runtime, digest)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return SessionExecutionResult("completion_refused")
+    if (
+        runner_result_evidence_digest(evidence) != digest
+        or not _evidence_matches_current_authority(
+            state,
+            session=session,
+            evidence=evidence,
+            completion=completion,
+        )
+    ):
+        return SessionExecutionResult("completion_refused")
     observation = RunnerResultObserved(
         completion.application_input_id,
         run_id=completion.run_id,
@@ -423,6 +514,9 @@ def _apply_persisted_completion(
         ),
     )
     if not decision.accepted:
+        if not refusal_is_pre_persist(decision):
+            next_state = apply(state, decision)
+            runtime.store.persist_runtime_state(next_state, runtime.cas_store)
         return SessionExecutionResult(
             "observation_refused",
             observation_refusal_reason=(
@@ -464,11 +558,135 @@ def _persist_transition(
             input_id_value=transition_input.input_id,
         ),
     )
-    if not decision.accepted:
+    if not decision.accepted and refusal_is_pre_persist(decision):
         return None
     next_state = apply(state, decision)
     runtime.store.persist_runtime_state(next_state, runtime.cas_store)
+    if not decision.accepted:
+        return None
     return next_state
+
+
+def _request_matches_current_authority(
+    runtime: OpenRuntimeContext,
+    *,
+    session: RunnerSessionRecord,
+    adapter: RunnerAdapter,
+    request: object,
+) -> bool:
+    if not isinstance(request, AdapterInvocationRequest):
+        return False
+    try:
+        expected_dispatch = build_dispatch_envelope_for_run(
+            state=_load(runtime),
+            run_id=session.run_id,
+        )
+    except (DispatchProjectionError, TypeError, ValueError):
+        return False
+    return (
+        request.dispatch_envelope == expected_dispatch
+        and request.session_id == session.session_id
+        and request.dispatch_generation == session.dispatch_generation
+        and request.session_fencing_token == session.session_fencing_token
+        and request.selected_adapter_kind == adapter.adapter_kind
+        and request.correlation_id == session_correlation_id(session)
+        and request.cancellation_token == session_cancellation_token(session)
+    )
+
+
+def _audit_session_refusal(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+) -> None:
+    _persist_transition(
+        runtime,
+        AdvanceRunnerSession(
+            f"cli:run.session-authority-refusal:{session.session_id}",
+            run_ref=run_ref,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            session_fencing_token=session.session_fencing_token,
+            expected_state=session.state,
+            next_state=session.state,
+            occurred_at=max(
+                _now(),
+                session.started_at or session.start_intent_at or session.created_at,
+            ),
+        ),
+    )
+
+
+def _safe_locator_digest(
+    runtime: OpenRuntimeContext,
+    request: AdapterInvocationRequest,
+    locator: object,
+) -> str | None:
+    try:
+        redacted = request.redaction_policy.redact_authority_value(locator)
+        if not isinstance(redacted, Mapping):
+            return None
+        payload = _canonical_json_bytes(redacted)
+    except (TypeError, ValueError):
+        return None
+    if len(payload) > SESSION_LOCATOR_MAX_BYTES:
+        return None
+    return runtime.cas_store.put_bytes(payload)
+
+
+def _evidence_matches_current_authority(
+    state: RuntimeState,
+    *,
+    session: RunnerSessionRecord,
+    evidence: RunnerResultEvidence,
+    completion: RunnerSessionCompletionRecord | None = None,
+) -> bool:
+    run = state.runs.get(session.run_id)
+    if (
+        run is None
+        or run.current_session_id != session.session_id
+        or state.runner_sessions.get(session.session_id) != session
+    ):
+        return False
+    try:
+        dispatch = build_dispatch_envelope_for_run(
+            state=state,
+            run_id=session.run_id,
+        )
+    except (DispatchProjectionError, TypeError, ValueError):
+        return False
+    if not _evidence_matches_dispatch(evidence, dispatch):
+        return False
+    if completion is None:
+        return True
+    return (
+        completion.session_id == evidence.session_id
+        and completion.run_id == evidence.run_id
+        and completion.dispatch_generation == evidence.dispatch_generation
+        and completion.session_fencing_token == evidence.session_fencing_token
+        and completion.runner_result_evidence_digest
+        == runner_result_evidence_digest(evidence)
+    )
+
+
+def _evidence_matches_dispatch(
+    evidence: RunnerResultEvidence,
+    dispatch: RunnerDispatchEnvelope,
+) -> bool:
+    return (
+        evidence.run_id == dispatch.run_id
+        and evidence.session_id == dispatch.session_id
+        and evidence.dispatch_generation == dispatch.dispatch_generation
+        and evidence.session_fencing_token == dispatch.session_fencing_token
+        and evidence.plan_fingerprint == dispatch.plan_fingerprint
+        and evidence.claim_id == dispatch.claim_id
+        and evidence.generation == dispatch.generation
+        and evidence.fencing_token == dispatch.fencing_token
+        and evidence.stage_kind_id == dispatch.stage_kind_id
+        and evidence.graph_node_id == dispatch.graph_node_id
+        and evidence.runner_binding_id == dispatch.runner_binding_id
+    )
 
 
 def _current_session(
@@ -507,6 +725,14 @@ def _plain_json_value(value: object) -> object:
 
 def _now() -> int:
     return time.time_ns()
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 __all__ = (

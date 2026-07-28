@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
@@ -22,12 +24,15 @@ from millrace.adapters.runner_contract import (
     AdapterLocalConfig,
     AdapterSuccessResult,
     DispatchEcho,
+    RedactionPolicy,
     RunnerCancellationOperationResult,
     RunnerCleanupResult,
     StartedSession,
+    StartIndeterminate,
     StartRefusedBeforeExternalWork,
     Unsupported,
 )
+from millrace.contracts.runner import runner_result_evidence_from_payload
 from millrace.contracts.transition import RunnerResultObserved
 from millrace.operator.prompt_material import SelectedAssetMaterializationError
 
@@ -62,6 +67,16 @@ class _ImmediateHandle:
             0,
             "sha256:" + "a" * 64,
         )
+
+
+class _SequenceHandle(_ImmediateHandle):
+    def __init__(self, outcomes: list[AdapterInvocationOutcome | None]) -> None:
+        self._outcomes = outcomes
+        self.polls = 0
+
+    def poll_completion(self) -> AdapterInvocationOutcome | None:
+        self.polls += 1
+        return self._outcomes.pop(0) if self._outcomes else None
 
 
 class _RecordingAdapter:
@@ -133,7 +148,7 @@ def _config(adapter: _RecordingAdapter) -> AdapterLocalConfig:
     return AdapterLocalConfig(adapters={"codex": adapter})
 
 
-def test_crash_before_start_intent_proves_no_adapter_call(
+def test_request_factory_side_effect_occurs_after_start_intent(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,6 +157,8 @@ def test_crash_before_start_intent_proves_no_adapter_call(
     runtime = _runtime(tmp_path, state)
 
     def fail_materialization(**_kwargs: object) -> object:
+        current = _load(runtime)
+        assert next(iter(current.runner_sessions.values())).state == "starting"
         raise SelectedAssetMaterializationError("pre-start crash")
 
     monkeypatch.setattr(
@@ -154,8 +171,59 @@ def test_crash_before_start_intent_proves_no_adapter_call(
     assert result.code == "asset_material_refused"
     assert adapter.requests == []
     session = next(iter(after.runner_sessions.values()))
-    assert session.state == "created"
-    assert session.start_intent_at is None
+    assert session.state == "starting"
+    assert session.start_intent_at is not None
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda request: replace(
+            request,
+            correlation_id="arbitrary-correlation",
+        ),
+        lambda request: replace(
+            request,
+            cancellation_token="arbitrary-cancel-token",
+        ),
+        lambda request: replace(
+            request,
+            selected_adapter_kind="millforge",
+        ),
+        lambda request: replace(
+            request,
+            dispatch_envelope=replace(
+                request.dispatch_envelope,
+                work_item_payload={"foreign": True},
+            ),
+        ),
+    ),
+)
+def test_request_identity_mismatch_is_audited_before_adapter_call(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate: Callable[[AdapterInvocationRequest], AdapterInvocationRequest],
+) -> None:
+    from millrace.adapters.cli import run
+
+    adapter = _RecordingAdapter(_success_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    original = run._session_invocation_request
+
+    def stale_request(*args: object, **kwargs: object) -> AdapterInvocationRequest:
+        request = original(*args, **kwargs)
+        return mutate(request)
+
+    monkeypatch.setattr(run, "_session_invocation_request", stale_request)
+    before = _load(runtime)
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+
+    assert result.code == "session_reconciliation_required"
+    assert adapter.requests == []
+    assert len(after.refusals) == len(before.refusals) + 1
+    assert next(iter(after.runner_sessions.values())).state == "starting"
 
 
 def test_indeterminate_start_exception_stays_starting(tmp_path) -> None:
@@ -253,6 +321,180 @@ def test_completion_persists_before_workflow_application(
     assert observed_completion is True
 
 
+def test_pending_handle_is_polled_until_terminal_outcome(tmp_path) -> None:
+    handle: _SequenceHandle | None = None
+
+    def pending_then_success(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        started = _success_start(request)
+        handle = _SequenceHandle([None, started.handle.poll_completion()])
+        return replace(started, handle=handle)
+
+    adapter = _RecordingAdapter(pending_then_success)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+
+    assert result.code == "observation_accepted"
+    assert handle is not None
+    assert handle.polls == 2
+
+
+def test_forever_pending_handle_is_owned_until_selected_deadline(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handle: _SequenceHandle | None = None
+
+    def pending(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        started = _success_start(request)
+        handle = _SequenceHandle([])
+        return replace(started, handle=handle)
+
+    monotonic_values = iter((10.0, 10.0, 1_000_000_000.0))
+    monkeypatch.setattr(
+        session_coordinator,
+        "_monotonic",
+        lambda: next(monotonic_values),
+    )
+    monkeypatch.setattr(session_coordinator, "_sleep", lambda _value: None)
+    adapter = _RecordingAdapter(pending)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+
+    assert result.code == "session_reconciliation_required"
+    assert handle is not None
+    assert handle.polls >= 1
+    assert next(iter(after.runner_sessions.values())).state == "running"
+
+
+def test_malformed_handle_outcome_remains_running_and_requires_reconciliation(
+    tmp_path,
+) -> None:
+    class _MalformedOutcomeHandle(_ImmediateHandle):
+        def __init__(self) -> None:
+            pass
+
+        def poll_completion(self) -> object:
+            return object()
+
+    def malformed_outcome(request: AdapterInvocationRequest) -> StartedSession:
+        return replace(
+            _success_start(request),
+            handle=_MalformedOutcomeHandle(),
+        )
+
+    adapter = _RecordingAdapter(malformed_outcome)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+
+    assert result.code == "session_reconciliation_required"
+    assert next(iter(after.runner_sessions.values())).state == "running"
+    assert after.runner_session_completions == {}
+
+
+def test_locator_is_redacted_before_bounded_cas_persistence(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import run
+
+    secret = "locator-secret"
+
+    def start_with_secret(request: AdapterInvocationRequest) -> StartedSession:
+        return replace(
+            _success_start(request),
+            durable_locator_metadata={"provider_request": secret},
+        )
+
+    adapter = _RecordingAdapter(start_with_secret)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    config = AdapterLocalConfig(
+        adapters={"codex": adapter},
+    )
+    monkeypatch.setattr(
+        run,
+        "_redaction_policy_for_adapter",
+        lambda *_args: RedactionPolicy("redact-default", (secret,)),
+    )
+    result = run_bounded_execution_unit(runtime, local_config=config)
+    after = _load(runtime)
+    session = next(iter(after.runner_sessions.values()))
+    assert result.code == "observation_accepted"
+    assert session.durable_locator_digest is not None
+    locator = runtime.cas_store.get_bytes(session.durable_locator_digest)
+    assert secret.encode() not in locator
+    assert b"[REDACTED]" in locator
+
+
+def test_oversized_locator_remains_starting_without_adapter_completion(
+    tmp_path,
+) -> None:
+    adapter = _RecordingAdapter(
+        lambda request: replace(
+            _success_start(request),
+            durable_locator_metadata={"oversized": "x" * 20000},
+        )
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+    session = next(iter(after.runner_sessions.values()))
+
+    assert result.code == "session_reconciliation_required"
+    assert session.state == "starting"
+    assert session.durable_locator_digest is None
+
+
+def test_indeterminate_start_retains_redacted_safe_locator(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import run
+
+    secret = "locator-secret"
+
+    def indeterminate(request: AdapterInvocationRequest) -> StartIndeterminate:
+        echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        )
+        return StartIndeterminate(
+            echo,
+            {"provider_request": secret},
+            "sha256:" + "d" * 64,
+        )
+
+    adapter = _RecordingAdapter(indeterminate)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    monkeypatch.setattr(
+        run,
+        "_redaction_policy_for_adapter",
+        lambda *_args: RedactionPolicy("redact-default", (secret,)),
+    )
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+    session = next(iter(after.runner_sessions.values()))
+
+    assert result.code == "session_reconciliation_required"
+    assert session.state == "starting"
+    assert session.durable_locator_digest is not None
+    locator = runtime.cas_store.get_bytes(session.durable_locator_digest)
+    assert secret.encode() not in locator
+
+
 def test_crash_after_completion_persistence_replays_without_adapter_invocation(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -285,6 +527,73 @@ def test_crash_after_completion_persistence_replays_without_adapter_invocation(
     assert replay.code == "observation_accepted"
     assert len(adapter.requests) == 1
     assert len(after.runner_observations) == 1
+
+
+def test_v3_observation_requires_exact_completion_session_and_application_id(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    original_decide = session_coordinator.decide
+
+    def crash_before_application(current, transition_input, context):
+        if isinstance(transition_input, RunnerResultObserved):
+            raise RuntimeError("application crash")
+        return original_decide(current, transition_input, context)
+
+    monkeypatch.setattr(session_coordinator, "decide", crash_before_application)
+    with pytest.raises(RuntimeError, match="application crash"):
+        run_bounded_execution_unit(runtime, local_config=_codex_success_config())
+    monkeypatch.setattr(session_coordinator, "decide", original_decide)
+    persisted = _load(runtime)
+    completion = next(iter(persisted.runner_session_completions.values()))
+    evidence = runner_result_evidence_from_payload(
+        json.loads(runtime.cas_store.get_bytes(completion.runner_result_evidence_digest))
+    )
+
+    stale_payload = dict(evidence.payload())
+    stale_payload["session_id"] = "session-foreign"
+    stale = RunnerResultObserved(
+        completion.application_input_id,
+        run_id=completion.run_id,
+        payload=stale_payload,
+        observed_at=None,
+    )
+    stale_decision = original_decide(
+        persisted,
+        stale,
+        session_coordinator.transition_context(
+            command="test",
+            input_id_value=stale.input_id,
+        ),
+    )
+    arbitrary_input = replace(
+        stale,
+        input_id="arbitrary-input",
+        payload=evidence.payload(),
+    )
+    arbitrary_decision = original_decide(
+        persisted,
+        arbitrary_input,
+        session_coordinator.transition_context(
+            command="test",
+            input_id_value=arbitrary_input.input_id,
+        ),
+    )
+    exact = replace(stale, payload=evidence.payload())
+    exact_decision = original_decide(
+        persisted,
+        exact,
+        session_coordinator.transition_context(
+            command="test",
+            input_id_value=exact.input_id,
+        ),
+    )
+
+    assert stale_decision.accepted is False
+    assert arbitrary_decision.accepted is False
+    assert exact_decision.accepted is True
 
 
 def test_same_run_retry_changes_correlation_and_cancellation_ids(tmp_path) -> None:
@@ -368,6 +677,10 @@ def test_old_session_completion_after_same_run_retry_refuses(tmp_path) -> None:
     assert result.code == "completion_refused"
     assert after.runner_observations == before.runner_observations == {}
     assert after.runner_session_completions == before.runner_session_completions
+    assert after.runner_sessions == before.runner_sessions
+    assert after.runs == before.runs
+    assert len(after.receipts) == len(before.receipts) + 1
+    assert len(after.refusals) == len(before.refusals) + 1
 
 
 def test_adapter_error_persists_terminal_session_without_workflow_progress(

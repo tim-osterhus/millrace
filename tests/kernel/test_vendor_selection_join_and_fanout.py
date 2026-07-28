@@ -13,8 +13,9 @@ from millrace.contracts.transition import (
     JoinFromArtifact,
     TransitionContext,
 )
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
 from millrace.kernel.lifecycle import project_next_lifecycle_transition
+from millrace.testing import decide_with_fake_runner_completion as decide
 from support import vendor_selection
 
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import millrace.operator as operator_api
-from millrace.kernel import apply, decide
+from millrace.kernel import apply
+from millrace.testing import decide_with_fake_runner_completion as decide
 from support.lad_planning import (
     REPORT_SCHEMA_ID,
     apply_runner_observation,

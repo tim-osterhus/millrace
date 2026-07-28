@@ -61,6 +61,7 @@ from millrace.contracts.state import (
 from millrace.substrate._sqlite_relations import (
     runner_session_cas_references,
     validate_audit_transition_rows,
+    validate_completed_runner_evidence,
     validate_loaded_runtime_state,
     validate_receipt_transition_rows,
     validate_trace_governance_rows,
@@ -248,6 +249,7 @@ def _load_runtime_state_rows_in_transaction(
     )
     _validate_runner_session_cas_references(state, cas_store)
     validate_loaded_runtime_state(state)
+    _validate_runner_session_evidence_authority(state, cas_store)
     return state
 
 
@@ -263,6 +265,20 @@ def _validate_runner_session_cas_references(
                 f"runner session {reference_name}",
                 digest,
                 exc,
+            )
+
+
+def _validate_runner_session_evidence_authority(
+    state: RuntimeState,
+    cas_store: ContentAddressedByteStore,
+) -> None:
+    for completion in state.runner_session_completions.values():
+        evidence_digest = completion.runner_result_evidence_digest
+        if evidence_digest is not None:
+            validate_completed_runner_evidence(
+                state,
+                session_id=completion.session_id,
+                payload=cas_store.get_bytes(evidence_digest),
             )
 
 

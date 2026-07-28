@@ -25,6 +25,23 @@ from millrace.adapters.runner_contract import (
 from millrace.contracts.runner import RunnerDispatchEnvelope, RunnerResultEvidence
 
 
+class _Handle:
+    def poll_completion(self) -> None:
+        return None
+
+    def request_cancel(self) -> RunnerCancellationOperationResult:
+        raise NotImplementedError
+
+    def terminate(self) -> RunnerCancellationOperationResult:
+        raise NotImplementedError
+
+    def kill(self) -> RunnerCancellationOperationResult:
+        raise NotImplementedError
+
+    def cleanup(self) -> RunnerCleanupResult:
+        raise NotImplementedError
+
+
 def _dispatch_values() -> dict[str, object]:
     return {
         "run_id": "run-1",
@@ -178,7 +195,7 @@ def test_runner_session_outcomes_are_exact_typed_records() -> None:
         dispatch_echo=echo,
         redaction_policy=RedactionPolicy("test"),
     )
-    handle = object()
+    handle = _Handle()
 
     assert StartedSession(echo, handle, "handle-1", {}).outcome_kind == "started"
     assert (
@@ -208,3 +225,24 @@ def test_runner_session_outcomes_are_exact_typed_records() -> None:
         2,
         "sha256:" + "e" * 64,
     ).disposition == "complete"
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    (
+        lambda echo: StartedSession(echo, object(), "handle-1", {}),
+        lambda echo: VerifiedLive(echo, object(), "handle-1", {}),
+        lambda echo: CleanupPending(echo, object(), "handle-1"),
+    ),
+)
+def test_live_session_records_require_complete_handle_protocol(
+    constructor: Any,
+) -> None:
+    dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch,
+        correlation_id="correlation-1",
+    )
+
+    with pytest.raises(TypeError, match="handle"):
+        constructor(echo)

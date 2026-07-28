@@ -47,6 +47,7 @@ from millrace.contracts.operator_waits import (
 )
 from millrace.contracts.runner import (
     RunnerResultEvidence,
+    runner_result_evidence_digest,
     runner_result_evidence_from_payload,
 )
 from millrace.contracts.state import (
@@ -4465,6 +4466,34 @@ def _decide_runner_result(
             reason="unknown_run",
         )
     if evidence.run_id != transition_input.run_id:
+        return _runner_refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="invalid_observation_authority",
+            run=run,
+            work_item=state.work_items.get(run.work_item_id),
+        )
+
+    session = state.runner_sessions.get(evidence.session_id)
+    completion = state.runner_session_completions.get(evidence.session_id)
+    if (
+        session is None
+        or completion is None
+        or run.current_session_id != evidence.session_id
+        or session.run_id != run.run_ref.run_id
+        or session.state != "completed"
+        or session.dispatch_generation != evidence.dispatch_generation
+        or session.session_fencing_token != evidence.session_fencing_token
+        or completion.session_id != evidence.session_id
+        or completion.run_id != evidence.run_id
+        or completion.dispatch_generation != evidence.dispatch_generation
+        or completion.session_fencing_token != evidence.session_fencing_token
+        or completion.terminal_state != "completed"
+        or completion.application_input_id != transition_input.input_id
+        or completion.runner_result_evidence_digest
+        != runner_result_evidence_digest(evidence)
+    ):
         return _runner_refused_decision(
             transition_input=transition_input,
             context=context,

@@ -33,8 +33,16 @@ from millrace.contracts.transition import (
     TransitionInput,
     artifact_payload_digest,
 )
-from millrace.kernel import apply, decide, empty_runtime_state
-from millrace.testing import deterministic_context, fake_runner_observation_payload
+from millrace.kernel import apply, empty_runtime_state
+from millrace.testing import (
+    decide_with_fake_runner_completion as decide,
+)
+from millrace.testing import (
+    deterministic_context,
+    fake_completed_runner_observation_state,
+    fake_runner_completion_input_id,
+    fake_runner_observation_payload,
+)
 
 SOURCE_SCHEMA_ID = "LifecycleSourceBundle"
 _CODEX_POLICY = SelectedRunnerAdapterPolicy(
@@ -691,6 +699,11 @@ def apply_accepted_input(
     transition_input: TransitionInput,
     transition_context: TransitionContext,
 ) -> RuntimeState:
+    if isinstance(transition_input, RunnerResultObserved):
+        state, transition_input = fake_completed_runner_observation_state(
+            state=state,
+            observation=transition_input,
+        )
     decision = decide(state, transition_input, transition_context)
     assert decision.accepted is True, decision.refusal
     return apply(state, decision)
@@ -1513,7 +1526,8 @@ def fanout_integrity_state(case: str) -> RuntimeState:
                     transition,
                     input_kind=FanoutFromArtifact.input_kind,
                 )
-                if transition.input_id == "observe-origin"
+                if transition.input_id
+                == fake_runner_completion_input_id("observe-origin")
                 else transition
                 for transition in state.transitions
             ),
