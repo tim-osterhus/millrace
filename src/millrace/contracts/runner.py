@@ -420,6 +420,7 @@ _LOCATOR_SELECTED_AUTHORITY_FIELDS = frozenset(
         "cancellation_token",
         "correlation_id",
         "environment_policy_ref",
+        "handle_id",
         "local_config_ref",
         "plan_ref",
         "selected_adapter_kind",

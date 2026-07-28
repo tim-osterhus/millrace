@@ -131,7 +131,9 @@ def _cas_backed_session_state(
     completed_evidence = _completed_evidence_bytes(state, "session-1")
     digests = {
         "locator": cas_store.put_bytes(
-            runner_session_locator_bytes({"handle_id": "runner locator"})
+            runner_session_locator_bytes(
+                {"provider_request_id": "runner locator"}
+            )
         ),
         "attempt_diagnostic": cas_store.put_bytes(b"attempt diagnostic"),
         "completion_diagnostic": cas_store.put_bytes(b"completion diagnostic"),
@@ -351,7 +353,9 @@ def test_cancellation_requested_aftermath_round_trips_from_decide_apply(
     run_ref = state.runs["run-taskmaster"].run_ref
     cas_store = ContentAddressedByteStore(tmp_path / "cas")
     locator_digest = cas_store.put_bytes(
-        runner_session_locator_bytes({"handle_id": "live runner locator"})
+        runner_session_locator_bytes(
+            {"provider_request_id": "live runner locator"}
+        )
     )
     inputs = (
         CreateRunnerSession(

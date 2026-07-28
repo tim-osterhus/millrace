@@ -427,6 +427,7 @@ def test_runner_session_locator_codec_is_canonical_bounded_and_mapping_only() ->
         "correlation_id",
         "cancellation_token",
         "adapter_id",
+        "handle_id",
     ),
 )
 def test_runner_session_locator_rejects_every_invocation_authority_key(

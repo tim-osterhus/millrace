@@ -18,7 +18,11 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Hardened runner-session restart reconciliation so adapters must prove the
   complete selected dispatch authority, cleanup can resume only for the
   durably correlated handle, and missing or corrupt restart locators fail
-  closed without mutating runtime state.
+  closed without mutating runtime state. Startup now classifies active sessions
+  before resuming created work, live reconciled handles receive the same
+  emergency-cleanup guard as initial starts, and versioned coordinator locators
+  safely recognize pre-envelope locator metadata without granting cleanup
+  authority.
 
 ## [0.22.0] - 2026-07-23
 

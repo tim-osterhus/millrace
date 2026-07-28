@@ -76,6 +76,16 @@ from millrace.substrate.errors import StorageIntegrityError
 
 _COMMAND = "run.session"
 _POLL_INTERVAL_SECONDS = 0.01
+_COORDINATOR_LOCATOR_RECORD_KIND = "runner_session_coordinator_locator"
+_COORDINATOR_LOCATOR_SCHEMA_VERSION = 1
+_COORDINATOR_LOCATOR_KEYS = frozenset(
+    {
+        "record_kind",
+        "schema_version",
+        "adapter_locator",
+        "handle_id_digest",
+    }
+)
 SESSION_DIAGNOSTIC_MAX_BYTES = 16 * 1024
 cooperative_cancel_grace_seconds = 5.0
 terminate_grace_seconds = 5.0
@@ -348,7 +358,7 @@ def _reconcile_session(
             if effective_timeout_seconds is None
             else min(request.timeout_seconds, effective_timeout_seconds)
         )
-        return _drive_running_session(
+        return _drive_owned_live_handle(
             runtime,
             run_ref=run_ref,
             session=session,
@@ -423,7 +433,19 @@ def _load_reconciliation_locator(
         locator = runner_session_locator_from_bytes(payload)
     except (OSError, TypeError, ValueError):
         return None
-    if set(locator) - {"handle_id_digest", "adapter_locator"}:
+    is_coordinator_locator = (
+        locator.get("record_kind") == _COORDINATOR_LOCATOR_RECORD_KIND
+        or "adapter_locator" in locator
+        or "handle_id_digest" in locator
+    )
+    if not is_coordinator_locator:
+        return _StoredReconciliationLocator(None, locator)
+    if (
+        set(locator) != _COORDINATOR_LOCATOR_KEYS
+        or locator.get("record_kind") != _COORDINATOR_LOCATOR_RECORD_KIND
+        or type(locator.get("schema_version")) is not int
+        or locator.get("schema_version") != _COORDINATOR_LOCATOR_SCHEMA_VERSION
+    ):
         return None
     handle_id_digest = locator.get("handle_id_digest")
     adapter_locator = locator.get("adapter_locator")
@@ -892,45 +914,64 @@ def _start_created_session(
             handle=start_outcome.handle,
         )
     running_session = running_state.runner_sessions[session.session_id]
+    return _drive_owned_live_handle(
+        runtime,
+        run_ref=run_ref,
+        session=running_session,
+        request=request,
+        handle=start_outcome.handle,
+        deadline=deadline,
+        daemon_stop_requested=daemon_stop_requested,
+    )
+
+
+def _drive_owned_live_handle(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    request: AdapterInvocationRequest,
+    handle: RunnerSessionHandle,
+    deadline: float,
+    daemon_stop_requested: Callable[[], bool] | None,
+) -> SessionExecutionResult:
     try:
         result = _drive_running_session(
             runtime,
             run_ref=run_ref,
-            session=running_session,
+            session=session,
             request=request,
-            handle=start_outcome.handle,
+            handle=handle,
             deadline=deadline,
             daemon_stop_requested=daemon_stop_requested,
         )
     except Exception:
-        try:
-            completion_persisted = (
-                session.session_id in _load(runtime).runner_session_completions
-            )
-        except Exception:
-            completion_persisted = False
-        if completion_persisted:
+        if _session_completion_persisted(runtime, session.session_id):
             raise
         return _emergency_cleanup_live_handle(
             runtime,
             run_ref=run_ref,
-            session=running_session,
-            handle=start_outcome.handle,
+            session=session,
+            handle=handle,
         )
-    try:
-        completion_persisted = (
-            session.session_id in _load(runtime).runner_session_completions
-        )
-    except Exception:
-        completion_persisted = False
-    if completion_persisted:
+    if _session_completion_persisted(runtime, session.session_id):
         return result
     return _emergency_cleanup_live_handle(
         runtime,
         run_ref=run_ref,
-        session=running_session,
-        handle=start_outcome.handle,
+        session=session,
+        handle=handle,
     )
+
+
+def _session_completion_persisted(
+    runtime: OpenRuntimeContext,
+    session_id: str,
+) -> bool:
+    try:
+        return session_id in _load(runtime).runner_session_completions
+    except Exception:
+        return False
 
 
 def _drive_running_session(
@@ -2118,9 +2159,14 @@ def _safe_coordinator_locator_digest(
         return None
     if not isinstance(redacted, Mapping):
         return None
-    locator: dict[str, object] = {"adapter_locator": redacted}
-    if handle_id is not None:
-        locator["handle_id_digest"] = _handle_id_digest(handle_id)
+    locator: dict[str, object] = {
+        "record_kind": _COORDINATOR_LOCATOR_RECORD_KIND,
+        "schema_version": _COORDINATOR_LOCATOR_SCHEMA_VERSION,
+        "adapter_locator": redacted,
+        "handle_id_digest": (
+            _handle_id_digest(handle_id) if handle_id is not None else None
+        ),
+    }
     try:
         payload = runner_session_locator_bytes(locator)
     except (TypeError, ValueError):

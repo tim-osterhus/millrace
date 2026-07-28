@@ -212,7 +212,9 @@ def reconcile_pending_runner_sessions(
     """Reconcile durable session work before selecting new daemon work."""
 
     state = runtime.store.load_runtime_state(runtime.cas_store)
-    candidates: list[tuple[int, str, str]] = []
+    terminal_replays: list[tuple[str, str]] = []
+    active_sessions: list[tuple[str, str]] = []
+    created_sessions: list[tuple[str, str]] = []
     for run in state.runs.values():
         session_id = run.current_session_id
         if session_id is None:
@@ -226,21 +228,20 @@ def reconcile_pending_runner_sessions(
             and completion.terminal_state == "completed"
             and completion.application_input_id not in state.receipts
         )
-        if session.state in {
-            "created",
+        candidate = (run.run_ref.run_id, run.activation_id)
+        if needs_replay:
+            terminal_replays.append(candidate)
+        elif session.state == "created":
+            created_sessions.append(candidate)
+        elif session.state in {
             "starting",
             "running",
             "cancellation_requested",
             "terminating",
             "lost",
-        } or needs_replay:
-            priority = (
-                0
-                if needs_replay
-                else 1 if session.state == "created" else 2
-            )
-            candidates.append((priority, run.run_ref.run_id, run.activation_id))
-    if not candidates:
+        }:
+            active_sessions.append(candidate)
+    if not (terminal_replays or active_sessions or created_sessions):
         return BoundedExecutionUnitResult(
             code="no_runner_session_reconciliation"
         )
@@ -249,7 +250,9 @@ def reconcile_pending_runner_sessions(
         code="no_runner_session_reconciliation"
     )
     blocker: BoundedExecutionUnitResult | None = None
-    for _priority, _run_id, activation_id in sorted(candidates):
+
+    def reconcile_candidate(activation_id: str) -> None:
+        nonlocal latest, blocker
         latest = run_bounded_execution_unit(
             runtime,
             activation_id=activation_id,
@@ -258,12 +261,35 @@ def reconcile_pending_runner_sessions(
             actor_id=actor_id,
             daemon_stop_requested=daemon_stop_requested,
         )
-        if latest.code not in {
-            "observation_accepted",
-            "adapter_failure",
-        } and blocker is None:
+        if (
+            _runner_reconciliation_blocker_priority(latest.code)
+            > _runner_reconciliation_blocker_priority(
+                blocker.code if blocker is not None else None
+            )
+        ):
             blocker = latest
-    return blocker or latest
+
+    for _run_id, activation_id in sorted(terminal_replays):
+        reconcile_candidate(activation_id)
+    for _run_id, activation_id in sorted(active_sessions):
+        reconcile_candidate(activation_id)
+    if blocker is not None:
+        return blocker
+    for _run_id, activation_id in sorted(created_sessions):
+        reconcile_candidate(activation_id)
+        if blocker is not None:
+            return blocker
+    return latest
+
+
+def _runner_reconciliation_blocker_priority(code: str | None) -> int:
+    if code in {None, "observation_accepted", "adapter_failure"}:
+        return 0
+    if code == "runner_session_reconciliation_contradiction":
+        return 3
+    if code == "runner_session_orphan_risk":
+        return 2
+    return 1
 
 
 def load_adapter_local_config(path: Path) -> AdapterLocalConfig:

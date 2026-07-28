@@ -22,6 +22,19 @@ Only an authenticated success result can become runner evidence. A process
 error remains an adapter error and cannot be presented to the kernel as a
 stage observation.
 
+## Restart Reconciliation
+
+Adapter locator metadata is persisted inside the internal
+`runner_session_coordinator_locator` version 1 envelope. The coordinator stores
+only a digest of the owned handle ID; adapter metadata must not contain raw
+`handle_id` fields or selected invocation authority.
+
+Legacy bare locator metadata from the unreleased pre-envelope implementation is
+read with no handle proof. It may support `VerifiedLive`, which establishes a
+new owned handle digest, but cannot authorize `CleanupPending`. Unknown or
+malformed coordinator-envelope versions fail closed before adapter
+reconciliation.
+
 ## Codex
 
 `codex.py` implements the selected `codex` runner kind. It materializes the
