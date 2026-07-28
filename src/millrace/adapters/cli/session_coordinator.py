@@ -553,9 +553,14 @@ def _persist_orphan_risk(
     run_ref: RunRef,
     session: RunnerSessionRecord,
     request: AdapterInvocationRequest,
+    diagnostic: Mapping[str, object] | None = None,
 ) -> SessionExecutionResult:
     diagnostic_digest = runtime.cas_store.put_bytes(
-        _canonical_json_bytes({"reconciliation": "unsupported"})
+        _canonical_json_bytes(
+            {"reconciliation": "unsupported"}
+            if diagnostic is None
+            else diagnostic
+        )
     )
     completion = _completion_record(
         session=session,
@@ -994,6 +999,14 @@ def _drive_owned_live_handle(
     deadline: float,
     daemon_stop_requested: Callable[[], bool] | None,
 ) -> SessionExecutionResult:
+    terminal_cleanup_disposition: str | None = None
+
+    def terminal_cleanup() -> RunnerCleanupResult:
+        nonlocal terminal_cleanup_disposition
+        cleanup = _call_cleanup(handle.cleanup)
+        terminal_cleanup_disposition = cleanup.disposition
+        return cleanup
+
     try:
         result = _drive_running_session(
             runtime,
@@ -1003,6 +1016,7 @@ def _drive_owned_live_handle(
             handle=handle,
             deadline=deadline,
             daemon_stop_requested=daemon_stop_requested,
+            terminal_cleanup=terminal_cleanup,
         )
     except Exception:
         if _session_completion_persisted(runtime, session.session_id):
@@ -1015,6 +1029,8 @@ def _drive_owned_live_handle(
         )
     if _session_completion_persisted(runtime, session.session_id):
         return result
+    if terminal_cleanup_disposition in {"not_required", "complete"}:
+        return SessionExecutionResult("session_reconciliation_required")
     return _emergency_cleanup_live_handle(
         runtime,
         run_ref=run_ref,
@@ -1042,6 +1058,7 @@ def _drive_running_session(
     handle: RunnerSessionHandle,
     deadline: float,
     daemon_stop_requested: Callable[[], bool] | None,
+    terminal_cleanup: Callable[[], RunnerCleanupResult],
 ) -> SessionExecutionResult:
     while True:
         if daemon_stop_requested is not None and daemon_stop_requested():
@@ -1116,7 +1133,8 @@ def _drive_running_session(
                 session=session,
                 request=request,
                 outcome=outcome,
-                cleanup_disposition="not_required",
+                cleanup_disposition=None,
+                cleanup_call=terminal_cleanup,
             )
         remaining = deadline - _monotonic()
         if remaining <= 0:
@@ -1796,7 +1814,8 @@ def _persist_completion(
     session: RunnerSessionRecord,
     request: AdapterInvocationRequest,
     outcome: AdapterInvocationOutcome,
-    cleanup_disposition: str,
+    cleanup_disposition: str | None,
+    cleanup_call: Callable[[], RunnerCleanupResult] | None = None,
     primary: RunnerSessionCancellationRecord | None = None,
     adapter_error_terminal_state: str = "failed",
 ) -> SessionExecutionResult:
@@ -1836,6 +1855,21 @@ def _persist_completion(
                 signal_digest=_signal_digest(outcome),
             )
             return SessionExecutionResult("session_reconciliation_required")
+        cleanup_result = _terminal_cleanup_result(
+            cleanup_call,
+            cleanup_disposition,
+        )
+        if cleanup_result.disposition == "orphan_risk":
+            return _persist_orphan_risk(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                request=request,
+                diagnostic={
+                    "cleanup_disposition": "orphan_risk",
+                    "adapter_outcome_present": True,
+                },
+            )
         diagnostic_digest = runtime.cas_store.put_bytes(diagnostic_bytes)
         return _persist_adapter_error(
             runtime,
@@ -1843,7 +1877,7 @@ def _persist_completion(
             session=session,
             outcome=outcome,
             diagnostic_digest=diagnostic_digest,
-            cleanup_disposition=cleanup_disposition,
+            cleanup_disposition=cleanup_result.disposition,
             terminal_state=adapter_error_terminal_state,
             primary=primary,
         )
@@ -1874,6 +1908,21 @@ def _persist_completion(
             signal_digest=_signal_digest(evidence.payload()),
         )
         return SessionExecutionResult("completion_refused")
+    cleanup_result = _terminal_cleanup_result(
+        cleanup_call,
+        cleanup_disposition,
+    )
+    if cleanup_result.disposition == "orphan_risk":
+        return _persist_orphan_risk(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            diagnostic={
+                "cleanup_disposition": "orphan_risk",
+                "adapter_outcome_present": True,
+            },
+        )
     evidence_digest = runtime.cas_store.put_bytes(
         runner_result_evidence_bytes(evidence)
     )
@@ -1891,7 +1940,7 @@ def _persist_completion(
         adapter_error_kind=None,
         evidence_digest=evidence_digest,
         diagnostic_digest=diagnostic_digest,
-        cleanup_disposition=cleanup_disposition,
+        cleanup_disposition=cleanup_result.disposition,
         redaction_policy_id=outcome.redaction_policy_id,
         primary=primary,
     )
@@ -1899,6 +1948,24 @@ def _persist_completion(
     if persisted is None:
         return SessionExecutionResult("completion_refused")
     return _apply_persisted_completion(runtime, completion)
+
+
+def _terminal_cleanup_result(
+    cleanup_call: Callable[[], RunnerCleanupResult] | None,
+    cleanup_disposition: str | None,
+) -> RunnerCleanupResult:
+    if cleanup_call is not None:
+        return _call_cleanup(cleanup_call)
+    if cleanup_disposition not in {"not_required", "complete"}:
+        raise ValueError("clean terminal completion requires cleanup proof")
+    diagnostic = {"disposition": cleanup_disposition}
+    return RunnerCleanupResult(
+        cleanup_disposition,
+        0,
+        0,
+        diagnostic,
+        runner_cancellation_diagnostic_digest(diagnostic),
+    )
 
 
 def _adapter_outcome_matches_request(

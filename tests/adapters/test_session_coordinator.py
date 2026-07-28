@@ -1423,6 +1423,74 @@ def test_completion_persists_before_workflow_application(
     assert observed_completion is True
 
 
+def test_terminal_completion_requires_clean_handle_cleanup(tmp_path) -> None:
+    cleaned = 0
+
+    class CleanTerminalHandle(_ImmediateHandle):
+        def cleanup(self) -> RunnerCleanupResult:
+            nonlocal cleaned
+            cleaned += 1
+            return super().cleanup()
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        started = _success_start(request)
+        return replace(
+            started,
+            handle=CleanTerminalHandle(started.handle.poll_completion()),
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+    after = _load(runtime)
+
+    assert result.code == "observation_accepted"
+    assert cleaned == 1
+    completion = next(iter(after.runner_session_completions.values()))
+    assert completion.cleanup_disposition == "not_required"
+    assert len(after.runner_observations) == 1
+
+
+def test_terminal_completion_with_orphan_cleanup_has_no_runner_result_meaning(
+    tmp_path,
+) -> None:
+    class OrphanTerminalHandle(_ImmediateHandle):
+        def cleanup(self) -> RunnerCleanupResult:
+            diagnostic = {"cleanup": "orphan_risk"}
+            return RunnerCleanupResult(
+                "orphan_risk",
+                0,
+                0,
+                diagnostic,
+                runner_cancellation_diagnostic_digest(diagnostic),
+            )
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        started = _success_start(request)
+        return replace(
+            started,
+            handle=OrphanTerminalHandle(started.handle.poll_completion()),
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+    after = _load(runtime)
+
+    assert result.code == "runner_session_orphan_risk"
+    session = next(iter(after.runner_sessions.values()))
+    completion = next(iter(after.runner_session_completions.values()))
+    assert (session.state, session.cleanup_disposition) == ("lost", "orphan_risk")
+    assert completion.runner_result_evidence_digest is None
+    assert after.runner_observations == {}
+
+
 def test_pending_handle_is_polled_until_terminal_outcome(tmp_path) -> None:
     handle: _SequenceHandle | None = None
 
@@ -2286,16 +2354,9 @@ def test_terminal_completion_persistence_refusal_cleans_handle(
 
     assert result.code == "session_reconciliation_required"
     assert handle is not None
-    assert handle.operations == [
-        "cooperative_cancel",
-        "terminate",
-        "kill",
-        "transport_cleanup",
-    ]
+    assert handle.operations == ["transport_cleanup"]
     after = _load(runtime)
-    assert next(iter(after.runner_sessions.values())).state == (
-        "cancellation_requested"
-    )
+    assert next(iter(after.runner_sessions.values())).state == "running"
     assert after.runner_session_completions == {}
     assert after.runner_observations == {}
 
@@ -2488,6 +2549,7 @@ def test_nonterminal_return_fault_cleans_live_subprocess_before_return(
         assert session.state == (
             "running"
             if fault_kind.startswith("poll_exception")
+            or fault_kind == "completion_persistence_refusal"
             else "cancellation_requested"
         )
         assert after.runner_session_completions == {}
@@ -2887,7 +2949,7 @@ def test_crash_after_completion_persistence_replays_without_adapter_invocation(
         run_bounded_execution_unit(runtime, local_config=_config(adapter))
     persisted = _load(runtime)
     assert handle is not None
-    assert handle.operations == []
+    assert handle.operations == ["transport_cleanup"]
     assert len(persisted.runner_session_completions) == 1
     assert persisted.runner_observations == {}
 
@@ -4007,7 +4069,7 @@ def test_restart_verified_live_fault_cleans_real_subprocess_before_return(
                 pass
 
 
-def test_restart_verified_live_application_crash_after_completion_does_not_cleanup(
+def test_restart_verified_live_application_crash_after_completion_cleans_once(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4060,7 +4122,7 @@ def test_restart_verified_live_application_crash_after_completion_does_not_clean
     persisted = _load(runtime)
 
     assert handle is not None
-    assert handle.operations == []
+    assert handle.operations == ["transport_cleanup"]
     assert len(persisted.runner_session_completions) == 1
     assert persisted.runner_observations == {}
 
@@ -4072,7 +4134,7 @@ def test_restart_verified_live_application_crash_after_completion_does_not_clean
     )
 
     assert replay.code == "observation_accepted"
-    assert handle.operations == []
+    assert handle.operations == ["transport_cleanup"]
     assert len(adapter.reconcile_requests) == 1
 
 

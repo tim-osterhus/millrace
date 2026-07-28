@@ -2906,6 +2906,53 @@ def test_invalid_live_facade_is_closed_before_bounded_refusal(
     assert facade.events == ["factory", "close"]
 
 
+def test_invalid_live_facade_without_close_reports_orphan_risk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterErrorResult, StartedSession
+
+    facade = _FakeFacade()
+    facade.aclose = None  # type: ignore[method-assign]
+    calls: dict[str, object] = {}
+    adapter = _live_adapter(monkeypatch, tmp_path, facade, calls)
+
+    started = adapter.start_session(_request())
+    assert isinstance(started, StartedSession)
+    deadline = time.monotonic() + 2
+    outcome = None
+    while outcome is None and time.monotonic() < deadline:
+        outcome = started.handle.poll_completion()
+        time.sleep(0.001)
+
+    assert isinstance(outcome, AdapterErrorResult)
+    assert outcome.error_kind == "invocation_failed"
+    assert started.handle.cleanup().disposition == "orphan_risk"
+
+
+def test_millforge_thread_start_failure_is_indeterminate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters import millforge as millforge_module
+    from millrace.adapters.runner_contract import StartIndeterminate
+
+    facade = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
+    adapter = _adapter(monkeypatch, tmp_path, facade)
+
+    def fail_start(_thread: object) -> None:
+        raise RuntimeError("thread start failed")
+
+    monkeypatch.setattr(millforge_module.threading.Thread, "start", fail_start)
+    outcome = adapter.start_session(_request())
+
+    assert isinstance(outcome, StartIndeterminate)
+    assert outcome.durable_locator_metadata is None
+    assert outcome.diagnostic_digest.startswith("sha256:")
+    assert outcome.dispatch_echo.session_id == "session-1"
+    assert facade.calls == 0
+
+
 def test_python_311_import_without_millforge_preserves_codex(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

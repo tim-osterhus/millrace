@@ -28,6 +28,7 @@ from millrace.adapters.runner_contract import (
     RunnerSessionReconcileRequest,
     RunnerSessionStartOutcome,
     StartedSession,
+    StartIndeterminate,
     StartRefusedBeforeExternalWork,
     Unsupported,
     canonicalize_redaction_policy,
@@ -262,13 +263,16 @@ class MillforgeAdapter:
                 owned_facade_state,
             )
             owns_facade = True
-        handle = _MillforgeSessionHandle(
-            worker,
-            cancellation,
-            self._error(request, "invocation_failed", "worker_execution"),
-            owns_facade=owns_facade,
-            owned_facade_state=owned_facade_state,
-        )
+        try:
+            handle = _MillforgeSessionHandle(
+                worker,
+                cancellation,
+                self._error(request, "invocation_failed", "worker_execution"),
+                owns_facade=owns_facade,
+                owned_facade_state=owned_facade_state,
+            )
+        except Exception as exc:
+            return _start_indeterminate(echo, exc)
         return StartedSession(
             echo,
             handle,
@@ -559,6 +563,11 @@ class _MillforgeSessionHandle:
     def poll_completion(self) -> AdapterInvocationOutcome | None:
         if not self._done.is_set():
             return None
+        if threading.current_thread() is self._thread:
+            return None
+        self._thread.join(timeout=0.1)
+        if self._thread.is_alive():
+            return None
         with self._lock:
             if self._completion_polled:
                 return None
@@ -595,7 +604,10 @@ class _MillforgeSessionHandle:
 
     def cleanup(self) -> RunnerCleanupResult:
         started_at = time.time_ns()
-        if self._done.is_set():
+        if (
+            self._done.is_set()
+            and threading.current_thread() is not self._thread
+        ):
             self._thread.join(timeout=0.1)
         worker_live = self._thread.is_alive()
         if worker_live:
@@ -625,6 +637,23 @@ def _start_refusal(
         echo,
         error,
         start_refusal_diagnostic_digest(error),
+    )
+
+
+def _start_indeterminate(
+    echo: DispatchEcho,
+    error: Exception,
+) -> StartIndeterminate:
+    diagnostic = _canonical_json_bytes(
+        {
+            "error": type(error).__qualname__,
+            "reason": "worker_start",
+        }
+    )
+    return StartIndeterminate(
+        echo,
+        None,
+        f"sha256:{hashlib.sha256(diagnostic).hexdigest()}",
     )
 
 
@@ -872,13 +901,16 @@ async def _create_live_facade(
         or not callable(getattr(facade, "execute", None))
         or not callable(getattr(facade, "aclose", None))
     ):
-        try:
-            await _close_live_facade(facade)
-        except BaseException:
+        if not callable(getattr(facade, "aclose", None)):
             owned_facade_state.close_failed()
-            raise
         else:
-            owned_facade_state.close_completed()
+            try:
+                await _close_live_facade(facade)
+            except BaseException:
+                owned_facade_state.close_failed()
+                raise
+            else:
+                owned_facade_state.close_completed()
         raise _LiveConfigError("provider facade is invalid")
     return cast(MillforgeFacade, facade)
 
