@@ -420,6 +420,92 @@ def test_provider_event_rate_ceiling_is_aggregate_across_kinds(tmp_path) -> None
         )
 
 
+def test_backdated_provider_events_cannot_reset_admission_after_compaction(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.substrate import runner_session_events
+
+    monkeypatch.setattr(runner_session_events, "_admission_second", lambda: 42)
+    writer = _writer(tmp_path)
+    accepted = 0
+    kinds = ("tool_activity", "usage_update", "diagnostic")
+    for index in range(RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND):
+        writer.record(
+            kinds[index % len(kinds)],
+            {"index": index},
+            observed_at=index,
+            replay_key=f"backdated-{index}",
+        )
+        accepted += 1
+    for stream_index in range(40):
+        filler = RunnerSessionEventWriter(
+            writer.store,
+            session_id=f"filler-session-{stream_index}",
+            run_id=f"filler-run-{stream_index}",
+            dispatch_generation=1,
+            redaction_policy=RedactionPolicy(policy_id="redaction.default"),
+        )
+        for index in range(10):
+            filler.record(
+                "diagnostic",
+                {"index": index},
+                observed_at=1_000_000_000_000 + stream_index * 10 + index,
+                replay_key=f"filler-{stream_index}-{index}",
+            )
+    assert (
+        len(
+            writer.store.read(
+                "run-1",
+                after_sequence=0,
+                session_id="session-1",
+            ).events
+        )
+        < accepted
+    )
+    for index in range(
+        RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND,
+        30,
+    ):
+        try:
+            writer.record(
+                kinds[index % len(kinds)],
+                {"index": index},
+                observed_at=(10_000 - index) * 1_000_000_000,
+                replay_key=f"backdated-{index}",
+            )
+        except ValueError:
+            continue
+        accepted += 1
+
+    assert accepted == RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND
+
+
+def test_alternating_observed_timestamps_share_store_admission_bucket(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.substrate import runner_session_events
+
+    monkeypatch.setattr(runner_session_events, "_admission_second", lambda: 7)
+    writer = _writer(tmp_path)
+    for index in range(RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND):
+        writer.record(
+            "tool_activity" if index % 2 else "usage_update",
+            {"index": index},
+            observed_at=(index % 2) * 9_000_000_000_000,
+            replay_key=f"alternating-{index}",
+        )
+
+    with pytest.raises(ValueError, match="update-rate ceiling"):
+        writer.record(
+            "diagnostic",
+            {"overflow": True},
+            observed_at=123,
+            replay_key="alternating-overflow",
+        )
+
+
 def test_lifecycle_and_terminal_survive_provider_pressure(tmp_path) -> None:
     writer = _writer(tmp_path)
     started = writer.record(

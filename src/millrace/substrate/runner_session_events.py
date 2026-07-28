@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
@@ -37,6 +38,8 @@ _EXPECTED_COLUMNS = {
         "dispatch_generation",
         "last_sequence",
         "terminal_recorded",
+        "admission_second",
+        "admission_count",
     ),
     "session_events": (
         "event_id",
@@ -70,6 +73,10 @@ class _RedactionPolicy(Protocol):
 def runner_session_event_store_path(runtime_db_path: str | Path) -> Path:
     path = Path(runtime_db_path)
     return path.with_name(f"{path.name}.runner-session-events.sqlite3")
+
+
+def _admission_second() -> int:
+    return time.time_ns() // 1_000_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +128,9 @@ class RunnerSessionEventStore:
                 last_sequence INTEGER NOT NULL,
                 terminal_recorded INTEGER NOT NULL CHECK (
                     terminal_recorded IN (0, 1)
-                )
+                ),
+                admission_second INTEGER NOT NULL,
+                admission_count INTEGER NOT NULL CHECK (admission_count >= 0)
             );
             CREATE TABLE IF NOT EXISTS session_events (
                 event_id TEXT PRIMARY KEY,
@@ -220,11 +229,6 @@ class RunnerSessionEventStore:
                 )
                 self._connection.commit()
                 return replayed
-            self._enforce_update_rate(
-                session_id=session_id,
-                kind=kind,
-                observed_at=observed_at,
-            )
             sequence_row = self._connection.execute(
                 "SELECT run_id, dispatch_generation, last_sequence, "
                 "terminal_recorded FROM session_event_sequences "
@@ -235,8 +239,15 @@ class RunnerSessionEventStore:
                 self._make_stream_room()
                 sequence = 1
                 self._connection.execute(
-                    "INSERT INTO session_event_sequences VALUES (?, ?, ?, ?, 0)",
-                    (session_id, run_id, dispatch_generation, sequence),
+                    "INSERT INTO session_event_sequences "
+                    "VALUES (?, ?, ?, ?, 0, ?, 0)",
+                    (
+                        session_id,
+                        run_id,
+                        dispatch_generation,
+                        sequence,
+                        _admission_second(),
+                    ),
                 )
             elif sequence_row[:2] != (run_id, dispatch_generation):
                 raise ValueError("session event authority changed")
@@ -249,6 +260,10 @@ class RunnerSessionEventStore:
                     "WHERE session_id = ?",
                     (sequence, session_id),
                 )
+            drop_progress = self._enforce_update_rate(
+                session_id=session_id,
+                kind=kind,
+            )
             event_id = _event_id(session_id, dispatch_generation, replay_key)
             event = RunnerSessionEvent(
                 event_id=event_id,
@@ -293,6 +308,8 @@ class RunnerSessionEventStore:
                     "WHERE session_id = ?",
                     (session_id,),
                 )
+            if drop_progress:
+                self._drop_oldest_progress(session_id)
             self._enforce_bounds()
             self._connection.commit()
         except Exception:
@@ -421,29 +438,31 @@ class RunnerSessionEventStore:
         *,
         session_id: str,
         kind: str,
-        observed_at: int,
-    ) -> None:
+    ) -> bool:
         if kind not in _PROVIDER_EVENT_KINDS:
-            return
-        rate_bucket = observed_at // 1_000_000_000
-        retained = int(
-            self._connection.execute(
-                "SELECT COUNT(*) FROM session_events "
-                "WHERE session_id = ? "
-                "AND kind IN ('runner_progress', 'tool_activity', "
-                "'usage_update', 'diagnostic') "
-                "AND observed_at / 1000000000 = ?",
-                (session_id, rate_bucket),
-            ).fetchone()[0]
+            return False
+        now_second = _admission_second()
+        rate_second, rate_count = self._connection.execute(
+            "SELECT admission_second, admission_count "
+            "FROM session_event_sequences WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        admitted = int(rate_count) if int(rate_second) == now_second else 0
+        if admitted >= RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND:
+            if kind != "runner_progress":
+                raise ValueError(
+                    "runner-session event update-rate ceiling reached"
+                )
+            return True
+        self._connection.execute(
+            "UPDATE session_event_sequences "
+            "SET admission_second = ?, admission_count = ? "
+            "WHERE session_id = ?",
+            (now_second, admitted + 1, session_id),
         )
-        if (
-            retained >= RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND
-            and kind != "runner_progress"
-        ):
-            raise ValueError("runner-session event update-rate ceiling reached")
+        return False
 
     def _enforce_bounds(self) -> None:
-        self._coalesce_progress_rate()
         while True:
             count, retained_bytes = self._connection.execute(
                 "SELECT COUNT(*), COALESCE(SUM(byte_size), 0) FROM session_events"
@@ -470,27 +489,17 @@ class RunnerSessionEventStore:
                     victim,
                 )
 
-    def _coalesce_progress_rate(self) -> None:
-        overages = self._connection.execute(
-            "SELECT session_id, observed_at / 1000000000 AS bucket, "
-            "COUNT(*) FROM session_events "
-            "WHERE kind IN ('runner_progress', 'tool_activity', "
-            "'usage_update', 'diagnostic') "
-            "GROUP BY session_id, bucket HAVING COUNT(*) > ?",
-            (RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND,),
-        ).fetchall()
-        for session_id, bucket, count in overages:
-            excess = int(count) - RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND
-            progress_rows = self._connection.execute(
-                "SELECT event_id FROM session_events "
-                "WHERE session_id = ? AND kind = 'runner_progress' "
-                "AND observed_at / 1000000000 = ? "
-                "ORDER BY sequence LIMIT ?",
-                (session_id, bucket, excess),
-            ).fetchall()
-            self._connection.executemany(
+    def _drop_oldest_progress(self, session_id: str) -> None:
+        victim = self._connection.execute(
+            "SELECT event_id FROM session_events "
+            "WHERE session_id = ? AND kind = 'runner_progress' "
+            "ORDER BY sequence LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if victim is not None:
+            self._connection.execute(
                 "DELETE FROM session_events WHERE event_id = ?",
-                progress_rows,
+                victim,
             )
 
     def _evict_oldest_closed_stream(self) -> bool:
