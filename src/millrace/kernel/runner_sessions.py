@@ -235,6 +235,18 @@ def cancellation_request_refusal(
         return "runner_session_reconciliation_contradiction"
     if requests and transition_input.requested_at < requests[-1].requested_at:
         return "runner_session_reconciliation_contradiction"
+    session = state.runner_sessions[transition_input.session_id]
+    latest_phase_at = max(
+        timestamp
+        for timestamp in (
+            session.created_at,
+            session.start_intent_at,
+            session.started_at,
+        )
+        if timestamp is not None
+    )
+    if transition_input.requested_at < latest_phase_at:
+        return "runner_session_reconciliation_contradiction"
     try:
         cancellation_record(transition_input)
     except ValueError:
@@ -350,7 +362,17 @@ def completion_refusal(
     ):
         return "invalid_runner_session_transition"
     session = state.runner_sessions[completion.session_id]
-    if session.started_at != completion.started_at:
+    if (
+        transition_input.expected_state == "starting"
+        and completion.terminal_state == "completed"
+    ):
+        if (
+            completion.started_at is None
+            or session.start_intent_at is None
+            or completion.started_at < session.start_intent_at
+        ):
+            return "runner_session_reconciliation_contradiction"
+    elif session.started_at != completion.started_at:
         return "runner_session_reconciliation_contradiction"
     primary_request_id = completion.primary_cancellation_request_id
     if primary_request_id is None:
@@ -375,6 +397,7 @@ def session_for_completion(
     return replace(
         state.runner_sessions[completion.session_id],
         state=completion.terminal_state,
+        started_at=completion.started_at,
         ended_at=completion.completed_at,
         cleanup_disposition=completion.cleanup_disposition,
     )

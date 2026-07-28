@@ -21,6 +21,8 @@ from millrace.contracts.transition import (
 )
 from millrace.kernel import StateConcurrencyError, apply, decide
 from millrace.kernel.runner_sessions import is_legal_runner_session_transition
+from millrace.substrate.cas import ContentAddressedByteStore
+from millrace.substrate.sqlite import SQLiteRuntimeStore
 from millrace.testing import deterministic_context
 from millrace.workflows import kernel_ping
 
@@ -213,7 +215,9 @@ def test_session_creation_does_not_persist_a_prestart_locator() -> None:
     assert created.durable_locator_digest is None
 
 
-def test_explicit_retry_keeps_runref_and_advances_session_generation() -> None:
+def test_explicit_retry_keeps_runref_and_advances_session_generation(
+    tmp_path,
+) -> None:
     state = _claimed_state()
     original_run_ref = state.runs["run-taskmaster"].run_ref
     first = CreateRunnerSession(
@@ -232,16 +236,47 @@ def test_explicit_retry_keeps_runref_and_advances_session_generation() -> None:
             deterministic_context(transition_id="transition-create-session-1"),
         ),
     )
-    first_session = replace(
-        state.runner_sessions["session-1"],
-        state="failed",
-        ended_at=150,
-        cleanup_disposition="complete",
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    completion = RunnerSessionCompletionRecord(
+        completion_id="completion-1",
+        session_id="session-1",
+        run_id=original_run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        terminal_state="failed",
+        exit_kind="error",
+        adapter_outcome_kind=None,
+        adapter_error_kind="invocation_failed",
+        runner_result_evidence_digest=None,
+        primary_cancellation_request_id=None,
+        cleanup_disposition="not_required",
+        started_at=None,
+        cancel_requested_at=None,
+        completed_at=150,
+        bounds_summary="bounded",
+        truncation_metadata="none",
+        redaction_policy_id="redaction.default",
+        diagnostic_digest=cas_store.put_bytes(b"failure diagnostic"),
+        application_input_id="cli:run.session-completion:completion-1",
     )
-    state = replace(
+    completion_decision = decide(
         state,
-        runner_sessions={"session-1": first_session},
+        RecordRunnerSessionCompletion(
+            "complete-session-1",
+            run_ref=original_run_ref,
+            expected_state="created",
+            completion=completion,
+        ),
+        deterministic_context(transition_id="transition-complete-session-1"),
     )
+    assert completion_decision.accepted
+    state = apply(state, completion_decision)
+    store = SQLiteRuntimeStore.initialize(tmp_path / "runtime.sqlite3")
+    try:
+        store.persist_runtime_state(state, cas_store)
+        state = store.load_runtime_state(cas_store)
+    finally:
+        store.close()
 
     retry = CreateRunnerSession(
         "create-session-2",
@@ -297,6 +332,176 @@ def test_runner_session_legal_state_transitions(
     next_state: str,
 ) -> None:
     assert is_legal_runner_session_transition(prior, next_state)
+
+
+@pytest.mark.parametrize(
+    ("prior", "next_state"),
+    (
+        ("created", "starting"),
+        ("created", "cancellation_requested"),
+        ("created", "failed"),
+        ("starting", "running"),
+        ("starting", "completed"),
+        ("starting", "failed"),
+        ("starting", "cancellation_requested"),
+        ("starting", "lost"),
+        ("running", "completed"),
+        ("running", "failed"),
+        ("running", "cancellation_requested"),
+        ("running", "lost"),
+        ("cancellation_requested", "terminating"),
+        ("cancellation_requested", "completed"),
+        ("cancellation_requested", "interrupted"),
+        ("cancellation_requested", "failed"),
+        ("cancellation_requested", "lost"),
+        ("terminating", "completed"),
+        ("terminating", "interrupted"),
+        ("terminating", "failed"),
+        ("terminating", "lost"),
+    ),
+)
+def test_every_legal_runner_session_edge_decides_and_applies(
+    prior: str,
+    next_state: str,
+) -> None:
+    state = _claimed_state()
+    run = state.runs["run-taskmaster"]
+    start_intent_at = None if prior == "created" else 110
+    started_at = (
+        120
+        if prior in {"running", "cancellation_requested", "terminating"}
+        else None
+    )
+    session = RunnerSessionRecord(
+        session_id="session-1",
+        run_id=run.run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        state=prior,
+        created_at=100,
+        start_intent_at=start_intent_at,
+        started_at=started_at,
+        ended_at=None,
+        durable_locator_digest=None,
+        cleanup_disposition="pending",
+    )
+    requests = {}
+    if prior in {"cancellation_requested", "terminating"}:
+        request = RunnerSessionCancellationRecord(
+            request_id="cancel-1",
+            session_id=session.session_id,
+            dispatch_generation=1,
+            reason="operator_cancel_work",
+            source_kind="operator",
+            actor_id="operator-1",
+            requested_at=130,
+            request_order=1,
+            primary=True,
+        )
+        requests = {request.request_id: request}
+    state = replace(
+        state,
+        runs={
+            **state.runs,
+            run.run_ref.run_id: replace(
+                run,
+                current_session_id=session.session_id,
+                last_dispatch_generation=1,
+            ),
+        },
+        runner_sessions={session.session_id: session},
+        runner_session_cancellation_requests=requests,
+    )
+    terminal_states = {"completed", "interrupted", "failed", "lost"}
+    if next_state in terminal_states:
+        completion_started_at = started_at
+        if prior == "starting" and next_state == "completed":
+            completion_started_at = 120
+        cleanup = "orphan_risk" if next_state == "lost" else "complete"
+        completion = RunnerSessionCompletionRecord(
+            completion_id="completion-1",
+            session_id=session.session_id,
+            run_id=run.run_ref.run_id,
+            dispatch_generation=1,
+            session_fencing_token=session.session_fencing_token,
+            terminal_state=next_state,
+            exit_kind="success" if next_state == "completed" else "error",
+            adapter_outcome_kind=(
+                "success" if next_state == "completed" else None
+            ),
+            adapter_error_kind=(
+                None if next_state == "completed" else "invocation_failed"
+            ),
+            runner_result_evidence_digest=(
+                "sha256:" + "a" * 64 if next_state == "completed" else None
+            ),
+            primary_cancellation_request_id=(
+                "cancel-1"
+                if prior in {"cancellation_requested", "terminating"}
+                else None
+            ),
+            cleanup_disposition=cleanup,
+            started_at=completion_started_at,
+            cancel_requested_at=(
+                130
+                if prior in {"cancellation_requested", "terminating"}
+                else None
+            ),
+            completed_at=150,
+            bounds_summary="bounded",
+            truncation_metadata="none",
+            redaction_policy_id="redaction.default",
+            diagnostic_digest="sha256:" + "b" * 64,
+            application_input_id="cli:run.session-completion:completion-1",
+        )
+        transition_input = RecordRunnerSessionCompletion(
+            "complete-session",
+            run_ref=run.run_ref,
+            expected_state=prior,
+            completion=completion,
+        )
+    elif next_state == "cancellation_requested":
+        transition_input = RequestRunnerSessionCancellation(
+            "cancel-session",
+            run_ref=run.run_ref,
+            session_id=session.session_id,
+            dispatch_generation=1,
+            session_fencing_token=session.session_fencing_token,
+            expected_state=prior,
+            request_id="cancel-1",
+            reason="operator_cancel_work",
+            source_kind="operator",
+            actor_id="operator-1",
+            requested_at=130,
+            request_order=1,
+            primary=True,
+        )
+    else:
+        transition_input = AdvanceRunnerSession(
+            "advance-session",
+            run_ref=run.run_ref,
+            session_id=session.session_id,
+            dispatch_generation=1,
+            session_fencing_token=session.session_fencing_token,
+            expected_state=prior,
+            next_state=next_state,
+            occurred_at=140,
+        )
+
+    decision = decide(
+        state,
+        transition_input,
+        deterministic_context(
+            transition_id=f"transition-{prior}-{next_state}"
+        ),
+    )
+
+    assert decision.accepted
+    next_runtime_state = apply(state, decision)
+    assert next_runtime_state.runner_sessions[session.session_id].state == next_state
+    assert (
+        session.session_id in next_runtime_state.runner_session_completions
+    ) == (next_state in terminal_states)
 
 
 @pytest.mark.parametrize(
@@ -452,6 +657,130 @@ def test_completion_cancel_time_requires_primary_request_id() -> None:
             diagnostic_digest="sha256:" + "a" * 64,
             application_input_id="cli:run.session-completion:completion-1",
         )
+
+
+@pytest.mark.parametrize("started_at", (None, 105))
+def test_starting_completed_refuses_absent_or_backdated_start_evidence(
+    started_at: int | None,
+) -> None:
+    state = _claimed_state()
+    run = state.runs["run-taskmaster"]
+    session = RunnerSessionRecord(
+        session_id="session-1",
+        run_id=run.run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        state="starting",
+        created_at=100,
+        start_intent_at=110,
+        started_at=None,
+        ended_at=None,
+        durable_locator_digest=None,
+        cleanup_disposition="pending",
+    )
+    state = replace(
+        state,
+        runs={
+            **state.runs,
+            run.run_ref.run_id: replace(
+                run,
+                current_session_id=session.session_id,
+                last_dispatch_generation=1,
+            ),
+        },
+        runner_sessions={session.session_id: session},
+    )
+    completion = RunnerSessionCompletionRecord(
+        completion_id="completion-1",
+        session_id=session.session_id,
+        run_id=run.run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token=session.session_fencing_token,
+        terminal_state="completed",
+        exit_kind="success",
+        adapter_outcome_kind="success",
+        adapter_error_kind=None,
+        runner_result_evidence_digest="sha256:" + "a" * 64,
+        primary_cancellation_request_id=None,
+        cleanup_disposition="complete",
+        started_at=started_at,
+        cancel_requested_at=None,
+        completed_at=130,
+        bounds_summary="bounded",
+        truncation_metadata="none",
+        redaction_policy_id="redaction.default",
+        diagnostic_digest="sha256:" + "b" * 64,
+        application_input_id="cli:run.session-completion:completion-1",
+    )
+
+    decision = decide(
+        state,
+        RecordRunnerSessionCompletion(
+            "complete-starting",
+            run_ref=run.run_ref,
+            expected_state="starting",
+            completion=completion,
+        ),
+        deterministic_context(transition_id="transition-complete-starting"),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "runner_session_reconciliation_contradiction"
+
+
+def test_cancellation_request_refuses_time_before_latest_session_phase() -> None:
+    state = _claimed_state()
+    run = state.runs["run-taskmaster"]
+    session = RunnerSessionRecord(
+        session_id="session-1",
+        run_id=run.run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        state="running",
+        created_at=100,
+        start_intent_at=110,
+        started_at=120,
+        ended_at=None,
+        durable_locator_digest=None,
+        cleanup_disposition="pending",
+    )
+    state = replace(
+        state,
+        runs={
+            **state.runs,
+            run.run_ref.run_id: replace(
+                run,
+                current_session_id=session.session_id,
+                last_dispatch_generation=1,
+            ),
+        },
+        runner_sessions={session.session_id: session},
+    )
+
+    decision = decide(
+        state,
+        RequestRunnerSessionCancellation(
+            "cancel-before-start",
+            run_ref=run.run_ref,
+            session_id=session.session_id,
+            dispatch_generation=1,
+            session_fencing_token=session.session_fencing_token,
+            expected_state="running",
+            request_id="cancel-1",
+            reason="operator_cancel_work",
+            source_kind="operator",
+            actor_id="operator-1",
+            requested_at=119,
+            request_order=1,
+            primary=True,
+        ),
+        deterministic_context(transition_id="transition-cancel-before-start"),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "runner_session_reconciliation_contradiction"
 
 
 def test_runner_session_variable_text_is_bounded_by_utf8_bytes() -> None:

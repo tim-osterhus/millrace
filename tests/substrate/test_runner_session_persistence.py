@@ -18,6 +18,7 @@ from millrace.contracts.state import (
 from millrace.contracts.transition import (
     AdvanceRunnerSession,
     CreateRunnerSession,
+    RecordRunnerSessionCompletion,
     RequestRunnerSessionCancellation,
 )
 from millrace.kernel import apply, decide
@@ -317,6 +318,90 @@ def test_cancellation_requested_aftermath_round_trips_from_decide_apply(
 
     assert loaded == state
     assert loaded.runner_sessions["session-1"].state == "cancellation_requested"
+
+
+def test_starting_completion_decides_applies_and_round_trips(tmp_path) -> None:
+    result = compile_workflow(kernel_ping.workflow_source())
+    assert result.plan is not None
+    state = bootstrap_to_taskmaster_claim(
+        result.plan,
+        authority_fingerprint(result.plan),
+    )
+    run_ref = state.runs["run-taskmaster"].run_ref
+    for transition_input in (
+        CreateRunnerSession(
+            "create-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            session_fencing_token="session-fence-1",
+            created_at=100,
+            explicit_retry_intent=False,
+        ),
+        AdvanceRunnerSession(
+            "start-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="created",
+            next_state="starting",
+            occurred_at=110,
+        ),
+    ):
+        decision = decide(
+            state,
+            transition_input,
+            deterministic_context(
+                transition_id=f"transition-{transition_input.input_id}"
+            ),
+        )
+        assert decision.accepted
+        state = apply(state, decision)
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    completion = RunnerSessionCompletionRecord(
+        completion_id="completion-1",
+        session_id="session-1",
+        run_id=run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        terminal_state="completed",
+        exit_kind="success",
+        adapter_outcome_kind="success",
+        adapter_error_kind=None,
+        runner_result_evidence_digest=cas_store.put_bytes(b"result evidence"),
+        primary_cancellation_request_id=None,
+        cleanup_disposition="complete",
+        started_at=120,
+        cancel_requested_at=None,
+        completed_at=130,
+        bounds_summary="bounded",
+        truncation_metadata="none",
+        redaction_policy_id="redaction.default",
+        diagnostic_digest=cas_store.put_bytes(b"completion diagnostic"),
+        application_input_id="cli:run.session-completion:completion-1",
+    )
+    decision = decide(
+        state,
+        RecordRunnerSessionCompletion(
+            "complete-session",
+            run_ref=run_ref,
+            expected_state="starting",
+            completion=completion,
+        ),
+        deterministic_context(transition_id="transition-complete-session"),
+    )
+
+    assert decision.accepted
+    state = apply(state, decision)
+    assert state.runner_sessions["session-1"].started_at == 120
+    store = SQLiteRuntimeStore.initialize(tmp_path / "runtime.sqlite3")
+    try:
+        store.persist_runtime_state(state, cas_store)
+        loaded = store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+    assert loaded == state
 
 
 @pytest.mark.parametrize(
@@ -771,6 +856,91 @@ def test_runner_session_completion_phase_raw_row_is_refused(
     store = SQLiteRuntimeStore.open(db_path)
     try:
         with pytest.raises(StorageIntegrityError, match=message):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("started_at", (None, 105))
+def test_starting_completed_start_evidence_raw_row_is_refused(
+    tmp_path,
+    started_at: int | None,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(
+        _session_state(),
+        cas_store,
+        completed=True,
+    )
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            """
+            UPDATE runner_sessions
+            SET started_at = ?
+            WHERE session_id = 'session-1'
+            """,
+            (started_at,),
+        )
+        connection.execute(
+            """
+            UPDATE runner_session_completions
+            SET started_at = ?
+            WHERE session_id = 'session-1'
+            """,
+            (started_at,),
+        )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match="start|timestamp"):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
+def test_cancellation_request_before_session_phase_raw_row_is_refused(
+    tmp_path,
+) -> None:
+    state = _session_state()
+    session = replace(
+        state.runner_sessions["session-1"],
+        state="cancellation_requested",
+        ended_at=None,
+        durable_locator_digest=None,
+        cleanup_disposition="pending",
+    )
+    state = replace(
+        state,
+        runner_sessions={session.session_id: session},
+        runner_session_cancellation_attempts={},
+        runner_session_completions={},
+    )
+    db_path = tmp_path / "runtime.sqlite3"
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_session_cancellation_requests
+            SET requested_at = 119
+            WHERE request_id = 'cancel-1'
+            """
+        )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match="predates session phase"):
             store.load_runtime_state(cas_store)
     finally:
         store.close()

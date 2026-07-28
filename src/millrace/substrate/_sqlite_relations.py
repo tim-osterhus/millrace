@@ -191,6 +191,19 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             raise StorageIntegrityError(
                 "runner session cancellation dispatch generation mismatch"
             )
+        latest_phase_at = max(
+            timestamp
+            for timestamp in (
+                request_session.created_at,
+                request_session.start_intent_at,
+                request_session.started_at,
+            )
+            if timestamp is not None
+        )
+        if request.requested_at < latest_phase_at:
+            raise StorageIntegrityError(
+                "runner session cancellation request predates session phase"
+            )
         requests_by_session.setdefault(request.session_id, []).append(request)
     for requests in requests_by_session.values():
         ordered = sorted(requests, key=lambda record: record.request_order)
