@@ -18,6 +18,7 @@ from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId
 from millrace.contracts.state import (
     DURABLE_INT64_MAX,
+    RUNNER_SESSION_TEXT_MAX_BYTES,
     Activation,
     ActivationRouteRecord,
     ArtifactRecord,
@@ -79,6 +80,29 @@ def _freeze_expectation_mapping(value: Mapping[str, T]) -> Mapping[str, T]:
 def _require_non_blank_protocol_id(field_name: str, value: object) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be non-blank")
+
+
+def _require_runner_session_text(field_name: str, value: object) -> None:
+    _require_non_blank_protocol_id(field_name, value)
+    assert isinstance(value, str)
+    if len(value.encode("utf-8")) > RUNNER_SESSION_TEXT_MAX_BYTES:
+        raise ValueError(
+            f"{field_name} must be at most "
+            f"{RUNNER_SESSION_TEXT_MAX_BYTES} UTF-8 bytes"
+        )
+
+
+def _require_runner_session_digest(field_name: str, digest: str) -> None:
+    if (
+        not digest.startswith("sha256:")
+        or len(digest.encode("ascii", errors="ignore")) != 71
+        or len(digest.removeprefix("sha256:")) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in digest.removeprefix("sha256:")
+        )
+    ):
+        raise ValueError(f"{field_name} must be a sha256 digest")
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +210,7 @@ class CreateRunnerSession(KernelCommand):
     def __post_init__(self) -> None:
         TransitionInput.__post_init__(self)
         for field_name in ("session_id", "session_fencing_token"):
-            _require_non_blank_protocol_id(field_name, getattr(self, field_name))
+            _require_runner_session_text(field_name, getattr(self, field_name))
         if type(self.created_at) is not int or self.created_at < 0:
             raise ValueError("created_at must be a non-negative integer")
 
@@ -212,22 +236,16 @@ class AdvanceRunnerSession(KernelCommand):
             "expected_state",
             "next_state",
         ):
-            _require_non_blank_protocol_id(field_name, getattr(self, field_name))
+            _require_runner_session_text(field_name, getattr(self, field_name))
         if type(self.dispatch_generation) is not int or self.dispatch_generation < 1:
             raise ValueError("dispatch_generation must be a positive integer")
         if type(self.occurred_at) is not int or self.occurred_at < 0:
             raise ValueError("occurred_at must be a non-negative integer")
         if self.durable_locator_digest is not None:
-            digest = self.durable_locator_digest
-            if (
-                not digest.startswith("sha256:")
-                or len(digest.removeprefix("sha256:")) != 64
-                or any(
-                    character not in "0123456789abcdef"
-                    for character in digest.removeprefix("sha256:")
-                )
-            ):
-                raise ValueError("durable_locator_digest must be a sha256 digest")
+            _require_runner_session_digest(
+                "durable_locator_digest",
+                self.durable_locator_digest,
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +264,28 @@ class RequestRunnerSessionCancellation(KernelCommand):
     requested_at: int
     request_order: int
     primary: bool
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in (
+            "session_id",
+            "session_fencing_token",
+            "expected_state",
+            "request_id",
+            "reason",
+            "source_kind",
+            "actor_id",
+        ):
+            _require_runner_session_text(field_name, getattr(self, field_name))
+        if self.reason not in {
+            "operator_cancel_work",
+            "daemon_shutdown",
+            "runner_timeout",
+            "runtime_failure",
+        }:
+            raise ValueError("unsupported runner session cancellation reason")
+        if self.source_kind not in {"operator", "daemon", "runtime"}:
+            raise ValueError("unsupported runner session cancellation source")
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +306,37 @@ class RecordRunnerSessionCancellationAttempt(KernelCommand):
     completed_at: int
     bounded_diagnostic_digest: str
 
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in (
+            "session_id",
+            "session_fencing_token",
+            "expected_state",
+            "attempt_id",
+            "request_id",
+            "operation",
+            "result",
+        ):
+            _require_runner_session_text(field_name, getattr(self, field_name))
+        _require_runner_session_digest(
+            "bounded_diagnostic_digest",
+            self.bounded_diagnostic_digest,
+        )
+        if self.operation not in {
+            "cooperative_cancel",
+            "terminate",
+            "kill",
+            "transport_cleanup",
+        }:
+            raise ValueError("unsupported runner session cancellation operation")
+        if self.result not in {
+            "succeeded",
+            "failed",
+            "timed_out",
+            "unsupported",
+        }:
+            raise ValueError("unsupported runner session cancellation result")
+
 
 @dataclass(frozen=True, slots=True)
 class RecordRunnerSessionCompletion(KernelCommand):
@@ -274,6 +345,10 @@ class RecordRunnerSessionCompletion(KernelCommand):
     run_ref: RunRef
     expected_state: str
     completion: RunnerSessionCompletionRecord
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        _require_runner_session_text("expected_state", self.expected_state)
 
 
 @dataclass(frozen=True, slots=True)

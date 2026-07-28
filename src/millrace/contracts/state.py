@@ -31,6 +31,7 @@ from millrace.contracts.ids import (
 K = TypeVar("K")
 T = TypeVar("T")
 DURABLE_INT64_MAX = 2**63 - 1
+RUNNER_SESSION_TEXT_MAX_BYTES = 4096
 _RUNNER_SESSION_STATES = frozenset(
     {
         "created",
@@ -161,6 +162,15 @@ class RunRecord:
     current_session_id: str | None = None
     last_dispatch_generation: int = 0
 
+    def __post_init__(self) -> None:
+        if self.current_session_id is not None:
+            if not self.current_session_id.strip():
+                raise ValueError("current_session_id must be non-blank")
+            _validate_bounded_runner_session_text(
+                "current_session_id",
+                self.current_session_id,
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class RunnerSessionRecord:
@@ -184,6 +194,7 @@ class RunnerSessionRecord:
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{field_name} must be non-blank")
+            _validate_bounded_runner_session_text(field_name, value)
         if type(self.dispatch_generation) is not int or self.dispatch_generation < 1:
             raise ValueError("dispatch_generation must be a positive integer")
         for field_name in (
@@ -236,6 +247,10 @@ class RunnerSessionRecord:
             self.start_intent_at is None or self.started_at is None
         ):
             raise ValueError("running runner session requires start timestamps")
+        if self.state == "completed" and (
+            self.start_intent_at is None or self.started_at is None
+        ):
+            raise ValueError("completed runner session requires start timestamps")
         if self.state in _RUNNER_SESSION_TERMINAL_STATES:
             if self.ended_at is None:
                 raise ValueError("terminal runner session must have ended_at")
@@ -283,6 +298,14 @@ class RunnerSessionCancellationRecord:
             raise ValueError("unsupported runner session cancellation reason")
         if self.source_kind not in {"operator", "daemon", "runtime"}:
             raise ValueError("unsupported runner session cancellation source")
+        expected_source = {
+            "operator_cancel_work": "operator",
+            "daemon_shutdown": "daemon",
+            "runner_timeout": "runtime",
+            "runtime_failure": "runtime",
+        }[self.reason]
+        if self.source_kind != expected_source:
+            raise ValueError("runner session cancellation reason and source mismatch")
         if type(self.primary) is not bool:
             raise ValueError("primary must be a boolean")
 
@@ -365,8 +388,19 @@ class RunnerSessionCompletionRecord:
                 "bounds_summary",
                 "truncation_metadata",
                 "redaction_policy_id",
+                "application_input_id",
             ),
         )
+        for field_name in (
+            "adapter_outcome_kind",
+            "adapter_error_kind",
+            "primary_cancellation_request_id",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                if not value.strip():
+                    raise ValueError(f"{field_name} must be non-blank")
+                _validate_bounded_runner_session_text(field_name, value)
         _validate_positive_integer(
             "dispatch_generation",
             self.dispatch_generation,
@@ -399,6 +433,12 @@ class RunnerSessionCompletionRecord:
             and self.runner_result_evidence_digest is None
         ):
             raise ValueError("completed runner session requires result evidence")
+        if (self.primary_cancellation_request_id is None) != (
+            self.cancel_requested_at is None
+        ):
+            raise ValueError(
+                "runner session cancellation request id and time must be paired"
+            )
         for field_name in (
             "runner_result_evidence_digest",
             "diagnostic_digest",
@@ -418,6 +458,18 @@ def _validate_non_blank_fields(record: object, field_names: tuple[str, ...]) -> 
         value = getattr(record, field_name)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field_name} must be non-blank")
+        _validate_bounded_runner_session_text(field_name, value)
+
+
+def _validate_bounded_runner_session_text(
+    field_name: str,
+    value: str,
+) -> None:
+    if len(value.encode("utf-8")) > RUNNER_SESSION_TEXT_MAX_BYTES:
+        raise ValueError(
+            f"{field_name} must be at most "
+            f"{RUNNER_SESSION_TEXT_MAX_BYTES} UTF-8 bytes"
+        )
 
 
 def _validate_positive_integer(field_name: str, value: object) -> None:

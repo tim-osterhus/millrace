@@ -290,7 +290,11 @@ def cancellation_attempt_refusal(
     request = state.runner_session_cancellation_requests.get(
         transition_input.request_id
     )
-    if request is None or request.session_id != transition_input.session_id:
+    if (
+        request is None
+        or request.session_id != transition_input.session_id
+        or not request.primary
+    ):
         return "runner_session_reconciliation_contradiction"
     attempts = tuple(
         attempt

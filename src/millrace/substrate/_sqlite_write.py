@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 from millrace.contracts.state import RuntimeState
 from millrace.substrate._sqlite_relations import (
+    runner_session_cas_references,
     validate_audit_transition_rows,
     validate_loaded_runtime_state,
     validate_receipt_transition_rows,
@@ -91,7 +92,7 @@ from millrace.substrate.codecs import (
     encode_payload,
     encode_selected_compiled_plan,
 )
-from millrace.substrate.errors import StorageIntegrityError
+from millrace.substrate.errors import StorageIntegrityError, SubstrateError
 from millrace.substrate.records import ARTIFACT_PAYLOAD_OBJECT_KIND
 
 
@@ -102,6 +103,7 @@ def persist_runtime_state_rows(
     *,
     _before_sqlite_commit: Callable[[], None] | None = None,
 ) -> None:
+    _validate_runner_session_cas_references(state, cas_store)
     selected_plan_digests = _put_selected_plan_objects(state, cas_store)
     payload_digests = _put_work_item_payload_objects(state, cas_store)
     observation_payload_digests = _put_runner_observation_payload_objects(
@@ -411,6 +413,19 @@ def _put_selected_plan_objects(
         )
         for admitted_plan in state.admitted_plans.values()
     }
+
+
+def _validate_runner_session_cas_references(
+    state: RuntimeState,
+    cas_store: ContentAddressedByteStore,
+) -> None:
+    for reference_name, digest in runner_session_cas_references(state):
+        try:
+            cas_store.get_bytes(digest)
+        except SubstrateError as exc:
+            raise StorageIntegrityError(
+                f"runner session {reference_name} CAS reference is invalid: {digest}"
+            ) from exc
 
 
 def _put_work_item_payload_objects(

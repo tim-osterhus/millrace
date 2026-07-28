@@ -59,6 +59,7 @@ from millrace.contracts.state import (
     WorkItemRef,
 )
 from millrace.substrate._sqlite_relations import (
+    runner_session_cas_references,
     validate_audit_transition_rows,
     validate_loaded_runtime_state,
     validate_receipt_transition_rows,
@@ -245,8 +246,24 @@ def _load_runtime_state_rows_in_transaction(
         transitions=_load_transitions(connection),
         refusals=_load_refusals(connection),
     )
+    _validate_runner_session_cas_references(state, cas_store)
     validate_loaded_runtime_state(state)
     return state
+
+
+def _validate_runner_session_cas_references(
+    state: RuntimeState,
+    cas_store: ContentAddressedByteStore,
+) -> None:
+    for reference_name, digest in runner_session_cas_references(state):
+        try:
+            cas_store.get_bytes(digest)
+        except SubstrateError as exc:
+            _raise_cas_reference_integrity_error(
+                f"runner session {reference_name}",
+                digest,
+                exc,
+            )
 
 
 def _load_admitted_plans(

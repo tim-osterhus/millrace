@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import TypeAlias
 
 from millrace.contracts.compiled_plan import SelectedCompiledPlan
+from millrace.contracts.state import RUNNER_SESSION_TEXT_MAX_BYTES
 from millrace.substrate.errors import (
     StoreNotInitialized,
     StoreSchemaUpgradeRequired,
@@ -128,7 +129,11 @@ _RUNTIME_TABLE_SQL = (
         stage_kind_id TEXT NOT NULL,
         runner_binding_id TEXT NOT NULL,
         created_by_input_id TEXT NOT NULL,
-        current_session_id TEXT,
+        current_session_id TEXT CHECK (
+            current_session_id IS NULL
+            OR length(CAST(current_session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         last_dispatch_generation INTEGER NOT NULL CHECK (
             last_dispatch_generation >= 0
         ),
@@ -136,13 +141,22 @@ _RUNTIME_TABLE_SQL = (
         UNIQUE (activation_id)
     )
     """,
-    """
+    f"""
     CREATE TABLE IF NOT EXISTS runner_sessions (
         schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-        session_id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL,
+        session_id TEXT PRIMARY KEY CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        run_id TEXT NOT NULL CHECK (
+            length(CAST(run_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         dispatch_generation INTEGER NOT NULL CHECK (dispatch_generation >= 1),
-        session_fencing_token TEXT NOT NULL,
+        session_fencing_token TEXT NOT NULL CHECK (
+            length(CAST(session_fencing_token AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         state TEXT NOT NULL CHECK (
             state IN (
                 'created',
@@ -162,7 +176,15 @@ _RUNTIME_TABLE_SQL = (
         ),
         started_at INTEGER CHECK (started_at IS NULL OR started_at >= 0),
         ended_at INTEGER CHECK (ended_at IS NULL OR ended_at >= 0),
-        durable_locator_digest TEXT,
+        durable_locator_digest TEXT CHECK (
+            durable_locator_digest IS NULL
+            OR (
+                length(CAST(durable_locator_digest AS BLOB)) = 71
+                AND substr(durable_locator_digest, 1, 7) = 'sha256:'
+                AND substr(durable_locator_digest, 8)
+                    NOT GLOB '*[^0-9a-f]*'
+            )
+        ),
         cleanup_disposition TEXT NOT NULL CHECK (
             cleanup_disposition IN (
                 'pending',
@@ -174,11 +196,17 @@ _RUNTIME_TABLE_SQL = (
         UNIQUE (run_id, dispatch_generation)
     )
     """,
-    """
+    f"""
     CREATE TABLE IF NOT EXISTS runner_session_cancellation_requests (
         schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-        request_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
+        request_id TEXT PRIMARY KEY CHECK (
+            length(CAST(request_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        session_id TEXT NOT NULL CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         dispatch_generation INTEGER NOT NULL CHECK (dispatch_generation >= 1),
         reason TEXT NOT NULL CHECK (
             reason IN (
@@ -191,19 +219,39 @@ _RUNTIME_TABLE_SQL = (
         source_kind TEXT NOT NULL CHECK (
             source_kind IN ('operator', 'daemon', 'runtime')
         ),
-        actor_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL CHECK (
+            length(CAST(actor_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         requested_at INTEGER NOT NULL CHECK (requested_at >= 0),
         request_order INTEGER NOT NULL CHECK (request_order >= 1),
         primary_request INTEGER NOT NULL CHECK (primary_request IN (0, 1)),
+        CHECK (
+            (reason = 'operator_cancel_work' AND source_kind = 'operator')
+            OR (reason = 'daemon_shutdown' AND source_kind = 'daemon')
+            OR (
+                reason IN ('runner_timeout', 'runtime_failure')
+                AND source_kind = 'runtime'
+            )
+        ),
         UNIQUE (session_id, request_order)
     )
     """,
-    """
+    f"""
     CREATE TABLE IF NOT EXISTS runner_session_cancellation_attempts (
         schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-        attempt_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        request_id TEXT NOT NULL,
+        attempt_id TEXT PRIMARY KEY CHECK (
+            length(CAST(attempt_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        session_id TEXT NOT NULL CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        request_id TEXT NOT NULL CHECK (
+            length(CAST(request_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         sequence INTEGER NOT NULL CHECK (sequence >= 1),
         operation TEXT NOT NULL CHECK (
             operation IN (
@@ -218,26 +266,66 @@ _RUNTIME_TABLE_SQL = (
         ),
         started_at INTEGER NOT NULL CHECK (started_at >= 0),
         completed_at INTEGER NOT NULL CHECK (completed_at >= 0),
-        bounded_diagnostic_digest TEXT NOT NULL,
+        bounded_diagnostic_digest TEXT NOT NULL CHECK (
+            length(CAST(bounded_diagnostic_digest AS BLOB)) = 71
+            AND substr(bounded_diagnostic_digest, 1, 7) = 'sha256:'
+            AND substr(bounded_diagnostic_digest, 8)
+                NOT GLOB '*[^0-9a-f]*'
+        ),
         UNIQUE (session_id, sequence)
     )
     """,
-    """
+    f"""
     CREATE TABLE IF NOT EXISTS runner_session_completions (
         schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-        completion_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL UNIQUE,
-        run_id TEXT NOT NULL,
+        completion_id TEXT PRIMARY KEY CHECK (
+            length(CAST(completion_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        session_id TEXT NOT NULL UNIQUE CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        run_id TEXT NOT NULL CHECK (
+            length(CAST(run_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         dispatch_generation INTEGER NOT NULL CHECK (dispatch_generation >= 1),
-        session_fencing_token TEXT NOT NULL,
+        session_fencing_token TEXT NOT NULL CHECK (
+            length(CAST(session_fencing_token AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         terminal_state TEXT NOT NULL CHECK (
             terminal_state IN ('completed', 'interrupted', 'failed', 'lost')
         ),
-        exit_kind TEXT NOT NULL,
-        adapter_outcome_kind TEXT,
-        adapter_error_kind TEXT,
-        runner_result_evidence_digest TEXT,
-        primary_cancellation_request_id TEXT,
+        exit_kind TEXT NOT NULL CHECK (
+            length(CAST(exit_kind AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        adapter_outcome_kind TEXT CHECK (
+            adapter_outcome_kind IS NULL
+            OR length(CAST(adapter_outcome_kind AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        adapter_error_kind TEXT CHECK (
+            adapter_error_kind IS NULL
+            OR length(CAST(adapter_error_kind AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        runner_result_evidence_digest TEXT CHECK (
+            runner_result_evidence_digest IS NULL
+            OR (
+                length(CAST(runner_result_evidence_digest AS BLOB)) = 71
+                AND substr(runner_result_evidence_digest, 1, 7) = 'sha256:'
+                AND substr(runner_result_evidence_digest, 8)
+                    NOT GLOB '*[^0-9a-f]*'
+            )
+        ),
+        primary_cancellation_request_id TEXT CHECK (
+            primary_cancellation_request_id IS NULL
+            OR length(CAST(primary_cancellation_request_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
         cleanup_disposition TEXT NOT NULL CHECK (
             cleanup_disposition IN ('not_required', 'complete', 'orphan_risk')
         ),
@@ -246,11 +334,31 @@ _RUNTIME_TABLE_SQL = (
             cancel_requested_at IS NULL OR cancel_requested_at >= 0
         ),
         completed_at INTEGER NOT NULL CHECK (completed_at >= 0),
-        bounds_summary TEXT NOT NULL,
-        truncation_metadata TEXT NOT NULL,
-        redaction_policy_id TEXT NOT NULL,
-        diagnostic_digest TEXT NOT NULL,
-        application_input_id TEXT NOT NULL UNIQUE
+        bounds_summary TEXT NOT NULL CHECK (
+            length(CAST(bounds_summary AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        truncation_metadata TEXT NOT NULL CHECK (
+            length(CAST(truncation_metadata AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        redaction_policy_id TEXT NOT NULL CHECK (
+            length(CAST(redaction_policy_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        diagnostic_digest TEXT NOT NULL CHECK (
+            length(CAST(diagnostic_digest AS BLOB)) = 71
+            AND substr(diagnostic_digest, 1, 7) = 'sha256:'
+            AND substr(diagnostic_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        ),
+        application_input_id TEXT NOT NULL UNIQUE CHECK (
+            length(CAST(application_input_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        CHECK (
+            (primary_cancellation_request_id IS NULL)
+            = (cancel_requested_at IS NULL)
+        )
     )
     """,
     """

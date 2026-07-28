@@ -230,9 +230,10 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
         if (
             attempt_request is None
             or attempt_request.session_id != attempt.session_id
+            or not attempt_request.primary
         ):
             raise StorageIntegrityError(
-                "runner session cancellation attempt request is invalid"
+                "runner session cancellation attempt requires primary request"
             )
         if attempt.started_at < attempt_request.requested_at:
             raise StorageIntegrityError(
@@ -269,12 +270,13 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             or completion.session_fencing_token
             != completion_session.session_fencing_token
             or completion.terminal_state != completion_session.state
+            or completion.started_at != completion_session.started_at
             or completion.completed_at != completion_session.ended_at
             or completion.cleanup_disposition
             != completion_session.cleanup_disposition
         ):
             raise StorageIntegrityError(
-                "runner session completion contradicts session"
+                "runner session completion started or terminal facts contradict session"
             )
         if completion.application_input_id in application_input_ids:
             raise StorageIntegrityError(
@@ -303,6 +305,34 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             raise StorageIntegrityError(
                 "runner session terminal state and completion must be paired"
             )
+
+
+def runner_session_cas_references(
+    state: RuntimeState,
+) -> tuple[tuple[str, str], ...]:
+    references: list[tuple[str, str]] = []
+    for session in state.runner_sessions.values():
+        if session.durable_locator_digest is not None:
+            references.append(("locator", session.durable_locator_digest))
+    references.extend(
+        (
+            "attempt_diagnostic",
+            attempt.bounded_diagnostic_digest,
+        )
+        for attempt in state.runner_session_cancellation_attempts.values()
+    )
+    for completion in state.runner_session_completions.values():
+        references.append(
+            ("completion_diagnostic", completion.diagnostic_digest)
+        )
+        if completion.runner_result_evidence_digest is not None:
+            references.append(
+                (
+                    "completed_evidence",
+                    completion.runner_result_evidence_digest,
+                )
+            )
+    return tuple(references)
 
 
 def _recovery_action_matches_policy_source(
@@ -4374,6 +4404,7 @@ def _validate_reference(
 
 
 __all__ = (
+    "runner_session_cas_references",
     "validate_audit_transition_rows",
     "validate_loaded_runtime_state",
     "validate_receipt_transition_rows",
