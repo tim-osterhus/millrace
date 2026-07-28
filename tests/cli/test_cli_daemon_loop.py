@@ -161,6 +161,67 @@ def test_daemon_max_ticks_bounds_execution_and_rejects_invalid(
     assert _json(invalid_stderr)["code"] == "invalid_max_ticks"
 
 
+def test_daemon_retry_refusal_is_domain_refusal_in_json_and_human_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import daemon
+
+    runtime = _runtime(tmp_path)
+    paths = runtime.paths
+    _close(runtime)
+    summary = daemon.DaemonRunSummary(
+        iterations=1,
+        units_started=1,
+        units_succeeded=0,
+        units_refused=1,
+        adapter_failures=0,
+        idle_iterations=0,
+        lifecycle_transitions_applied=0,
+        stopped_reason="runner_session_retry_refused",
+        workspace=str(paths.workspace_path),
+        db_path=str(paths.db_path),
+        cas_path=str(paths.cas_path),
+    )
+    monkeypatch.setattr(
+        daemon,
+        "run_daemon_loop",
+        lambda _options, *, progress_stream=None: summary,
+    )
+
+    json_exit, json_stdout, json_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "daemon",
+            "--max-ticks",
+            "1",
+        ]
+    )
+    human_exit, human_stdout, human_stderr = _invoke(
+        [
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "daemon",
+            "--max-ticks",
+            "1",
+        ]
+    )
+
+    assert json_exit == human_exit == 3
+    assert json_stdout == human_stdout == ""
+    error = _json(json_stderr)
+    assert error["code"] == "runner_session_retry_refused"
+    assert error["message"] == "Daemon stopped before successful completion."
+    assert human_stderr == (
+        "runner_session_retry_refused: "
+        "Daemon stopped before successful completion.\n"
+    )
+
+
 def test_daemon_rejects_negative_idle_sleep_before_lock_or_state_open(
     tmp_path: Path,
 ) -> None:

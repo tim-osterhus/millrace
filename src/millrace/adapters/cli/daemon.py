@@ -56,6 +56,7 @@ _DOMAIN_REFUSAL_REASONS = frozenset(
         "asset_material_refused",
         "lifecycle_transition_refused",
         "observation_refused",
+        "runner_session_retry_refused",
     }
 )
 _PERSISTENCE_FAILURE_REASONS = frozenset(
