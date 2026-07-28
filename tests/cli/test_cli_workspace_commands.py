@@ -6,6 +6,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 def _invoke(argv: list[str]) -> tuple[int, str, str]:
     from millrace.adapters.cli.main import main
@@ -242,6 +244,122 @@ def test_workspace_check_maps_exact_v6_to_upgrade_required_json_and_human(
         human_stderr
         == "workspace_upgrade_required: Workspace schema upgrade is required.\n"
     )
+    assert _directory_bytes(workspace) == before
+
+
+def test_daemon_maps_exact_v6_to_upgrade_required_without_mutation(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    workspace = tmp_path / "workspace"
+    init_code, _stdout, init_stderr = _invoke(
+        [
+            "--workspace",
+            str(workspace),
+            "workspace",
+            "init",
+            "--input-id",
+            "init-workspace",
+        ]
+    )
+    assert init_code == 0, init_stderr
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE store_metadata SET store_schema_version = 6 WHERE id = 1"
+        )
+    before = _directory_bytes(workspace)
+
+    json_exit, json_stdout, json_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "run",
+            "daemon",
+            "--max-ticks",
+            "1",
+        ]
+    )
+    human_exit, human_stdout, human_stderr = _invoke(
+        [
+            "--workspace",
+            str(workspace),
+            "run",
+            "daemon",
+            "--max-ticks",
+            "1",
+        ]
+    )
+
+    assert json_exit == human_exit == 4
+    assert json_stdout == human_stdout == ""
+    assert _json(json_stderr) == {
+        "ok": False,
+        "command": "run.daemon",
+        "code": "workspace_upgrade_required",
+        "message": "Workspace schema upgrade is required.",
+        "details": {
+            "current_schema_version": 6,
+            "required_schema_version": 7,
+        },
+    }
+    assert human_stderr == (
+        "workspace_upgrade_required: Workspace schema upgrade is required.\n"
+    )
+    assert _directory_bytes(workspace) == before
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        ("status",),
+        ("runs", "list"),
+        ("runs", "show", "run-unknown"),
+        ("runs", "cancel", "run-unknown", "--input-id", "cancel-v6"),
+        ("runs", "follow", "run-unknown", "--after-sequence", "0"),
+        ("trace", "show", "run-unknown"),
+        ("doctor",),
+    ),
+)
+def test_session_projection_commands_refuse_exact_v6_without_mutation(
+    tmp_path: Path,
+    command: tuple[str, ...],
+) -> None:
+    import sqlite3
+
+    workspace = tmp_path / "workspace"
+    init_code, _stdout, init_stderr = _invoke(
+        [
+            "--workspace",
+            str(workspace),
+            "workspace",
+            "init",
+            "--input-id",
+            "init-workspace",
+        ]
+    )
+    assert init_code == 0, init_stderr
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE store_metadata SET store_schema_version = 6 WHERE id = 1"
+        )
+    before = _directory_bytes(workspace)
+
+    exit_code, stdout, stderr = _invoke(
+        ["--json", "--workspace", str(workspace), *command]
+    )
+
+    assert exit_code == 4
+    assert stdout == ""
+    error = _json(stderr)
+    assert error["code"] == "workspace_upgrade_required"
+    assert error["details"] == {
+        "current_schema_version": 6,
+        "required_schema_version": 7,
+    }
     assert _directory_bytes(workspace) == before
 
 

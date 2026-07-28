@@ -30,6 +30,8 @@ PUBLIC_DOCS = {
     "docs/v0.22-compatibility.md",
     "docs/errors.md",
     "docs/how-millrace-works.md",
+    "docs/runner-session-architecture.md",
+    "docs/daemon-lifecycle.md",
     "docs/workflow-packages.md",
     "docs/millforge-runner.md",
     "docs/codex-runner.md",
@@ -47,6 +49,57 @@ FORBIDDEN_ARTIFACT_TEXT = (
     "after the v0.22 distributions are " + "published",
     "transitional " + "source fixtures",
 )
+
+
+def test_runner_session_release_docs_cover_public_and_compatibility_contracts() -> None:
+    architecture = PROJECT_ROOT / "docs" / "runner-session-architecture.md"
+    daemon = PROJECT_ROOT / "docs" / "daemon-lifecycle.md"
+    assert architecture.is_file()
+    assert daemon.is_file()
+
+    architecture_text = architecture.read_text(encoding="utf-8")
+    daemon_text = daemon.read_text(encoding="utf-8")
+    errors_text = (PROJECT_ROOT / "docs" / "errors.md").read_text(encoding="utf-8")
+    compatibility_text = (
+        PROJECT_ROOT / "docs" / "v0.22-compatibility.md"
+    ).read_text(encoding="utf-8")
+    readme_text = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    for required in (
+        "millrace runs cancel RUN_ID --input-id ID",
+        "millrace runs follow RUN_ID --after-sequence N",
+        "session_fencing_token",
+        "non-authoritative",
+    ):
+        assert required in architecture_text
+    for required in (
+        "SIGINT",
+        "SIGTERM",
+        "daemon_shutdown",
+        "orphan_risk",
+        "diagnostic-only",
+    ):
+        assert required in daemon_text
+    for required in (
+        "invalid_runner_session_transition",
+        "stale_runner_session",
+        "duplicate_runner_session_completion",
+        "runner_session_authority_mismatch",
+        "runner_session_retry_forbidden",
+        "runner_session_cleanup_incomplete",
+        "runner_session_reconciliation_contradiction",
+        "runner_session_cancel_requested",
+        "runner_session_cancel_refused",
+        "runner_session_retry_refused",
+        "runner_session_orphan_risk",
+        "workspace_upgrade_required",
+    ):
+        assert required in errors_text
+    assert "schema-version-6" in compatibility_text
+    assert "no automatic migration" in compatibility_text
+    assert "v0.22 runtime" in compatibility_text
+    assert "Runner-session architecture" in readme_text
+    assert "Daemon lifecycle" in readme_text
 
 
 def _run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:

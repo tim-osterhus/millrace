@@ -142,3 +142,45 @@ def test_doctor_is_minimal_generic_read_only_projection(tmp_path: Path) -> None:
     assert "mailbox" not in json.dumps(data)
     assert "reload_config" not in json.dumps(data)
     assert _state(workspace) == before
+
+
+def test_runner_session_doctor_diagnostics_are_bounded(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from millrace.adapters.cli import doctor
+
+    sessions = {
+        f"session-{index}": SimpleNamespace(
+            session_id=f"session-{index}",
+            run_id=f"run-{index}",
+            state="lost",
+            cleanup_disposition="orphan_risk",
+        )
+        for index in range(75)
+    }
+    state = SimpleNamespace(
+        runner_sessions=sessions,
+        runner_session_completions={},
+    )
+    monkeypatch.setattr(
+        doctor,
+        "runner_session_projection",
+        lambda _state, run_id: {
+            "session_id": run_id.replace("run-", "session-"),
+            "run_id": run_id,
+        },
+    )
+
+    projected = doctor._runner_session_diagnostics(state)
+
+    assert projected["diagnostic_counts"] == {
+        "runner_session_lost": 75,
+        "runner_session_orphan_risk": 75,
+    }
+    assert len(projected["diagnostics"]) == 100
+    assert projected["truncation"] == {
+        "retained_count": 100,
+        "omitted_count": 50,
+    }

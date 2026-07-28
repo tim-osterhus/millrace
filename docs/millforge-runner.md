@@ -197,3 +197,10 @@ lost/orphan safety path.
 Millforge output is candidate execution evidence. Millrace validates it
 against the admitted plan and remains responsible for accepted routing, legal
 terminal outcomes, operator waits, and workflow completion.
+
+Inspect durable Millforge session identity, cancellation, cleanup,
+completion/application status, and orphan risk with `runs show`, `trace show
+RUN_ID`, `status`, and `doctor`. `runs follow RUN_ID --after-sequence N`
+returns a finite bounded event page and durable final status. See
+[Runner-session architecture](runner-session-architecture.md) and
+[Daemon lifecycle](daemon-lifecycle.md).

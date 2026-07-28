@@ -259,6 +259,16 @@ def test_signal_during_active_session_requests_cancellation(tmp_path) -> None:
     session = after.runner_sessions[request.session_id]
     assert session.state == "interrupted"
     assert session.cleanup_disposition == "complete"
+    stopped_session = summary.data()["runner_session"]
+    assert stopped_session["session_id"] == session.session_id
+    assert stopped_session["adapter_kind"] == "codex"
+    assert stopped_session["primary_cancellation_reason"] == "daemon_shutdown"
+    assert stopped_session["cleanup_disposition"] == "complete"
+    assert stopped_session["completion_persisted"] is True
+    assert stopped_session["application_persisted"] is False
+    assert stopped_session["application_status"] == "not_applicable"
+    assert stopped_session["cancellation_last_operation"] == "transport_cleanup"
+    assert stopped_session["cancellation_last_result"] == "succeeded"
 
 
 def test_signal_with_orphan_risk_is_not_reported_as_clean_stop(tmp_path) -> None:
@@ -361,6 +371,21 @@ def test_daemon_reconciles_restart_sessions_before_new_dispatch(tmp_path) -> Non
         "runner_session_orphan_risk": 1,
         "runner_session_reconciliation_unsupported": 1,
     }
+    assert {
+        item["code"] for item in doctor["diagnostics"]
+    } == {
+        "runner_session_lost",
+        "runner_session_orphan_risk",
+        "runner_session_reconciliation_unsupported",
+    }
+    for diagnostic in doctor["diagnostics"]:
+        assert diagnostic["session_id"] == session.session_id
+        assert diagnostic["adapter_kind"] == "codex"
+        assert diagnostic["state"] == "lost"
+        assert diagnostic["cleanup_disposition"] == "orphan_risk"
+        assert diagnostic["orphan_risk"] is True
+        assert diagnostic["completion_persisted"] is True
+        assert diagnostic["application_persisted"] is False
     traced = json.loads(trace_stdout)["data"]["runner_session"]
     assert traced["session_id"] == session.session_id
     assert traced["state"] == "lost"
@@ -467,6 +492,80 @@ def test_runs_cancel_persists_fixed_operator_reason_and_replays(tmp_path) -> Non
     )
 
 
+def test_runner_session_public_projections_include_selected_authority_and_cancellation(
+    tmp_path,
+) -> None:
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=AdapterLocalConfig(adapters={"codex": _IndeterminateAdapter()}),
+    )
+    paths = runtime.paths
+    _close(runtime)
+    cancel_argv = [
+        "--workspace",
+        str(paths.workspace_path),
+        "--db",
+        str(paths.db_path),
+        "--cas",
+        str(paths.cas_path),
+        "runs",
+        "cancel",
+        str(result.run_id),
+        "--input-id",
+        "operator-cancel-projection-1",
+    ]
+
+    human_code, human_stdout, human_stderr = _invoke(cancel_argv)
+    assert human_code == 0
+    assert human_stdout == "Runner session cancellation requested.\n"
+    assert human_stderr == ""
+
+    projected: list[dict[str, object]] = []
+    for command in (
+        ("runs", "list"),
+        ("runs", "show", str(result.run_id)),
+        ("trace", "show", str(result.run_id)),
+        ("status",),
+    ):
+        code, stdout, stderr = _invoke(
+            [
+                "--json",
+                "--workspace",
+                str(paths.workspace_path),
+                "--db",
+                str(paths.db_path),
+                "--cas",
+                str(paths.cas_path),
+                *command,
+            ]
+        )
+        assert code == 0, stderr
+        assert stderr == ""
+        data = json.loads(stdout)["data"]
+        if command[:2] == ("runs", "list"):
+            projected.append(data["runs"][0]["runner_session"])
+        elif command[:2] == ("runs", "show"):
+            projected.append(data["run"]["runner_session"])
+        elif command[:2] == ("trace", "show"):
+            projected.append(data["runner_session"])
+        else:
+            projected.append(data["runner_sessions"][0])
+
+    for session in projected:
+        assert session["adapter_kind"] == "codex"
+        assert session["primary_cancellation_reason"] == "operator_cancel_work"
+        assert session["cancellation_phase"] == "cancellation_requested"
+        assert session["cleanup_disposition"] == "pending"
+        assert session["completion_persisted"] is False
+        assert session["application_persisted"] is False
+        assert session["application_status"] == "not_completed"
+        assert session["orphan_risk"] is False
+
+
 def test_runs_cancel_refuses_terminal_session(tmp_path) -> None:
     from millrace.adapters.cli import daemon
     from millrace.adapters.cli.run import run_bounded_execution_unit
@@ -518,6 +617,42 @@ def test_runs_cancel_refuses_terminal_session(tmp_path) -> None:
     assert len(after.traces) == len(before.traces) + 1
     assert after.runner_sessions == before.runner_sessions
     assert after.runner_session_completions == before.runner_session_completions
+
+
+def test_runs_cancel_human_refusal_uses_stable_public_code(tmp_path) -> None:
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_codex_success_config(),
+    )
+    paths = runtime.paths
+    _close(runtime)
+
+    code, stdout, stderr = _invoke(
+        [
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "cancel",
+            str(result.run_id),
+            "--input-id",
+            "late-human-cancel-1",
+        ]
+    )
+
+    assert code == 3
+    assert stdout == ""
+    assert stderr == (
+        "runner_session_cancel_refused: "
+        "Runner session cancellation was refused.\n"
+    )
 
 
 def test_runs_follow_projects_events_but_reconciles_final_from_durable_state(
@@ -588,3 +723,22 @@ def test_runs_follow_projects_events_but_reconciles_final_from_durable_state(
         assert _load(reopened).runner_observations == observations_before
     finally:
         reopened.close()
+
+    human_code, human_stdout, human_stderr = _invoke(
+        [
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "follow",
+            result.run_id,
+            "--after-sequence",
+            "0",
+        ]
+    )
+    assert human_code == 0
+    assert human_stdout == "Runner session events projected.\n"
+    assert human_stderr == ""

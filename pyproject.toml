@@ -42,6 +42,8 @@ source-include = [
     "docs/v0.22-compatibility.md",
     "docs/errors.md",
     "docs/how-millrace-works.md",
+    "docs/runner-session-architecture.md",
+    "docs/daemon-lifecycle.md",
     "docs/workflow-packages.md",
     "docs/millforge-runner.md",
     "docs/codex-runner.md",

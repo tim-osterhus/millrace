@@ -187,3 +187,24 @@ millrace --workspace /absolute/path/to/workspace run daemon \
 
 Add `--max-ticks N` for a bounded validation run. Omit it for a daemon that
 continues polling until stopped.
+
+## Session Lifecycle And Cancellation
+
+Codex uses the generic durable runner-session lifecycle. The wrapper bundle
+remains schema 2, while its schema-5 dispatch envelope and dispatch echo carry
+the required `session_id`, `dispatch_generation`, and
+`session_fencing_token`. Millrace derives the session-unique correlation and
+cancellation identities; once a session is active they are non-null and may
+not be supplied as alternate authority by wrapper output.
+
+`millrace runs cancel RUN_ID --input-id ID` records a durable operator request.
+The coordinator signals only the exact owned subprocess session, then records
+cooperative, terminate, kill, and transport-cleanup evidence as applicable.
+Restart reattachment for a local subprocess is unsupported, so potentially
+live work after process restart becomes lost/orphan risk instead of being
+restarted or reported clean.
+
+Use `runs show`, `trace show RUN_ID`, `status`, `doctor`, and the finite
+`runs follow RUN_ID --after-sequence N` projection to inspect the session.
+See [Runner-session architecture](runner-session-architecture.md) and
+[Daemon lifecycle](daemon-lifecycle.md).

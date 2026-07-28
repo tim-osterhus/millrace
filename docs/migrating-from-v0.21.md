@@ -69,6 +69,11 @@ millrace --workspace "$WORKSPACE" doctor
 Then run a bounded daemon session with explicit adapter configuration and
 inspect status and trace output before leaving it active.
 
+If a v0.22 schema-version-6 workspace contains active work, finish or retire
+that work with the v0.22 runtime. The session-capable schema-7 runtime refuses
+it unchanged as `workspace_upgrade_required`; it does not automatically
+migrate the database/CAS or infer sessions for active runs.
+
 For the complete removed and deferred inventory, read
 [v0.22 compatibility](v0.22-compatibility.md). For stable error families and
 operator actions, read [Errors and refusals](errors.md).

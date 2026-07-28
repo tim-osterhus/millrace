@@ -95,6 +95,7 @@ class DaemonRunSummary:
     cas_path: str
     last_result: dict[str, object] = field(default_factory=dict)
     diagnostics: tuple[dict[str, object], ...] = ()
+    runner_session: dict[str, object] | None = None
 
     def data(self) -> dict[str, object]:
         return {
@@ -111,6 +112,9 @@ class DaemonRunSummary:
             "cas_path": self.cas_path,
             "last_result": self.last_result,
             "diagnostics": [dict(item) for item in self.diagnostics],
+            "runner_session": (
+                None if self.runner_session is None else dict(self.runner_session)
+            ),
         }
 
 
@@ -485,7 +489,15 @@ def _preflight_state_load(options: DaemonRunOptions) -> DaemonRunSummary | None:
             runtime.store.load_runtime_state(runtime.cas_store)
         finally:
             runtime.close()
-    except (CliCommandError, OSError, SubstrateError) as exc:
+    except CliCommandError as exc:
+        if exc.code == "workspace_upgrade_required":
+            raise
+        return _summary(
+            options,
+            stopped_reason="state_open_failed",
+            diagnostics=(_exception_diagnostic(exc),),
+        )
+    except (OSError, SubstrateError) as exc:
         return _summary(
             options,
             stopped_reason="state_open_failed",
@@ -648,6 +660,7 @@ def _summary(
     last_result: dict[str, object] | None = None,
     diagnostics: tuple[dict[str, object], ...] = (),
 ) -> DaemonRunSummary:
+    result_data = last_result or {}
     return DaemonRunSummary(
         iterations=iterations,
         units_started=units_started,
@@ -660,9 +673,33 @@ def _summary(
         workspace=str(options.paths.workspace_path),
         db_path=str(options.paths.db_path),
         cas_path=str(options.paths.cas_path),
-        last_result=last_result or {},
+        last_result=result_data,
         diagnostics=diagnostics,
+        runner_session=_summary_runner_session(options, result_data),
     )
+
+
+def _summary_runner_session(
+    options: DaemonRunOptions,
+    last_result: dict[str, object],
+) -> dict[str, object] | None:
+    from millrace.adapters.cli.status import runner_session_projection
+
+    run_id = last_result.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    try:
+        runtime = open_runtime_context(options.paths, command=_COMMAND)
+        try:
+            state = runtime.store.load_runtime_state(runtime.cas_store)
+        finally:
+            runtime.close()
+    except (CliCommandError, OSError, SubstrateError):
+        return None
+    projection = runner_session_projection(state, run_id)
+    if projection is None:
+        return None
+    return projection
 
 
 def _exception_diagnostic(exc: Exception) -> dict[str, object]:

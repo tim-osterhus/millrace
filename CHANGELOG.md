@@ -15,6 +15,11 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Added
 
+- Added durable, fenced runner sessions with replay-safe operator
+  cancellation, restart reconciliation, bounded run/status/trace/doctor and
+  daemon-stop projections, stable session refusal/diagnostic codes, and an
+  explicit schema-6-to-7 `workspace_upgrade_required` boundary that leaves
+  old database and CAS bytes unchanged.
 - Added a separately versioned, bounded runner-session event sidecar and the
   finite `millrace runs follow RUN_ID --after-sequence N` projection. Live
   events are redacted across transport chunks, compact progress under fixed
@@ -24,6 +29,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Fixed
 
+- Preserved the exact `workspace_upgrade_required` public refusal when the
+  daemon opens a schema-version-6 workspace instead of rewriting it as a
+  generic daemon state-open failure.
 - Replaced Millforge's temporary synchronous runner bridge with the generic
   runner-session lifecycle. Millforge now returns a live session handle,
   supports truthful cooperative cancellation for factory-created facades,

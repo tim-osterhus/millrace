@@ -71,6 +71,11 @@ first requests cooperative cancellation, waits 5.0 seconds, then terminates
 owned work and waits another 5.0 seconds before using a hard kill when needed.
 These two finite grace periods are local runtime safety mechanics, not compiled
 workflow policy. `millrace doctor` projects their effective values.
+The durable ordering, completion fencing, public projections, and finite event
+follow contract are described in
+[Runner-session architecture](runner-session-architecture.md). Startup,
+restart, daemon-lock, and signal behavior are described in
+[Daemon lifecycle](daemon-lifecycle.md).
 
 ## One Stage At A Time
 

@@ -10,7 +10,11 @@ from millrace.adapters.cli.session_coordinator import (
     cooperative_cancel_grace_seconds,
     terminate_grace_seconds,
 )
+from millrace.adapters.cli.status import runner_session_projection
+from millrace.contracts.state import RuntimeState
 from millrace.operator.dispatch import list_ready_dispatch_candidates
+
+_RUNNER_SESSION_DIAGNOSTIC_MAX_ITEMS = 100
 
 
 def handle_doctor_command(namespace: object) -> CliSuccess:
@@ -35,39 +39,7 @@ def handle_doctor_command(namespace: object) -> CliSuccess:
     severity_counts = Counter(
         diagnostic.severity for diagnostic in ready.diagnostics
     )
-    session_diagnostic_items: list[dict[str, str]] = []
-    for session in state.runner_sessions.values():
-        base = {"session_id": session.session_id, "run_id": session.run_id}
-        if session.state == "lost":
-            session_diagnostic_items.append(
-                {"code": "runner_session_lost", **base}
-            )
-        completion = state.runner_session_completions.get(session.session_id)
-        if (
-            completion is not None
-            and completion.adapter_outcome_kind == "unsupported"
-        ):
-            session_diagnostic_items.append(
-                {
-                    "code": "runner_session_reconciliation_unsupported",
-                    **base,
-                }
-            )
-        if session.cleanup_disposition == "orphan_risk":
-            session_diagnostic_items.append(
-                {"code": "runner_session_orphan_risk", **base}
-            )
-        if (
-            session.cleanup_disposition == "pending"
-            and session.state in {"cancellation_requested", "terminating"}
-        ):
-            session_diagnostic_items.append(
-                {"code": "runner_session_cleanup_pending", **base}
-            )
-    session_diagnostics = tuple(session_diagnostic_items)
-    session_diagnostic_counts = Counter(
-        str(item["code"]) for item in session_diagnostics
-    )
+    session_diagnostics = _runner_session_diagnostics(state)
     default_plan = (
         None
         if state.default_plan_ref is None
@@ -108,10 +80,7 @@ def handle_doctor_command(namespace: object) -> CliSuccess:
                 ),
                 "terminate_grace_seconds": terminate_grace_seconds,
             },
-            "runner_session_diagnostics": {
-                "diagnostic_counts": dict(sorted(session_diagnostic_counts.items())),
-                "diagnostics": list(session_diagnostics),
-            },
+            "runner_session_diagnostics": session_diagnostics,
             "required_paths": {
                 "workspace_path": {
                     "path": str(runtime.paths.workspace_path),
@@ -128,3 +97,45 @@ def handle_doctor_command(namespace: object) -> CliSuccess:
             },
         },
     )
+
+
+def _runner_session_diagnostics(state: RuntimeState) -> dict[str, object]:
+    items: list[dict[str, object]] = []
+    counts: Counter[str] = Counter()
+
+    def record(code: str, base: dict[str, object]) -> None:
+        counts[code] += 1
+        if len(items) < _RUNNER_SESSION_DIAGNOSTIC_MAX_ITEMS:
+            items.append({"code": code, **base})
+
+    for session in state.runner_sessions.values():
+        projection = runner_session_projection(state, session.run_id)
+        if projection is None:
+            continue
+        base = dict(projection)
+        if session.state == "lost":
+            record("runner_session_lost", base)
+        completion = state.runner_session_completions.get(session.session_id)
+        if (
+            completion is not None
+            and completion.adapter_outcome_kind == "unsupported"
+        ):
+            record("runner_session_reconciliation_unsupported", base)
+        if session.cleanup_disposition == "orphan_risk":
+            record("runner_session_orphan_risk", base)
+        if (
+            session.cleanup_disposition == "pending"
+            and session.state in {"cancellation_requested", "terminating"}
+        ):
+            record("runner_session_cleanup_pending", base)
+    result: dict[str, object] = {
+        "diagnostic_counts": dict(sorted(counts.items())),
+        "diagnostics": items,
+    }
+    omitted = sum(counts.values()) - len(items)
+    if omitted:
+        result["truncation"] = {
+            "retained_count": len(items),
+            "omitted_count": omitted,
+        }
+    return result

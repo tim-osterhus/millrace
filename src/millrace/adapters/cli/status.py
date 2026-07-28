@@ -82,14 +82,23 @@ def _runs_list(namespace: object) -> CliSuccess:
     command = "runs.list"
     runtime = open_runtime_context(namespace, command=command)
     try:
-        status = operator_status(runtime.store.load_runtime_state(runtime.cas_store))
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        status = operator_status(state)
     finally:
         runtime.close()
+    runs: list[dict[str, object]] = []
+    for run in status.active_runs:
+        projected = cast(dict[str, object], json_ready(run))
+        projected["runner_session"] = runner_session_projection(
+            state,
+            str(projected["run_id"]),
+        )
+        runs.append(projected)
     return success_result(
         command=command,
         code="runs_listed",
         message="Runs listed.",
-        data={"runs": [json_ready(run) for run in status.active_runs]},
+        data={"runs": runs},
     )
 
 
@@ -116,26 +125,6 @@ def _runs_show(namespace: object) -> CliSuccess:
         observation.run_id == run_id
         for observation in state.runner_observations.values()
     )
-    session = (
-        None
-        if run.current_session_id is None
-        else state.runner_sessions.get(run.current_session_id)
-    )
-    cancellation = None
-    if session is not None:
-        cancellation = next(
-            (
-                item
-                for item in state.runner_session_cancellation_requests.values()
-                if item.session_id == session.session_id and item.primary
-            ),
-            None,
-        )
-    completion = (
-        None
-        if session is None
-        else state.runner_session_completions.get(session.session_id)
-    )
     return success_result(
         command=command,
         code="run_shown",
@@ -159,32 +148,7 @@ def _runs_show(namespace: object) -> CliSuccess:
                 ),
                 "observed": observed,
                 "closed": run.work_item_id in state.closed_work_items,
-                "runner_session": (
-                    None
-                    if session is None
-                    else {
-                        "session_id": session.session_id,
-                        "dispatch_generation": session.dispatch_generation,
-                        "state": session.state,
-                        "cleanup_disposition": session.cleanup_disposition,
-                        "orphan_risk": (
-                            session.state == "lost"
-                            or session.cleanup_disposition == "orphan_risk"
-                        ),
-                        "primary_cancellation_reason": (
-                            None if cancellation is None else cancellation.reason
-                        ),
-                        "completion_persisted": completion is not None,
-                        "application_persisted": (
-                            completion is not None
-                            and completion.application_input_id in state.receipts
-                        ),
-                        "cooperative_cancel_grace_seconds": (
-                            cooperative_cancel_grace_seconds
-                        ),
-                        "terminate_grace_seconds": terminate_grace_seconds,
-                    }
-                ),
+                "runner_session": runner_session_projection(state, run_id),
             }
         },
     )
@@ -454,7 +418,7 @@ def _trace_show(namespace: object) -> CliSuccess:
             "runner_session": (
                 None
                 if run_id is None
-                else _runner_session_projection(state, str(run_id))
+                else runner_session_projection(state, str(run_id))
             ),
         },
     )
@@ -479,7 +443,7 @@ def _status_projection(
             projection
             for run_id in sorted(state.runs)
             if (
-                projection := _runner_session_projection(state, run_id)
+                projection := runner_session_projection(state, run_id)
             )
             is not None
         ]
@@ -536,7 +500,7 @@ def _status_projection(
     }
 
 
-def _runner_session_projection(
+def runner_session_projection(
     state: RuntimeState,
     run_id: str,
 ) -> dict[str, object] | None:
@@ -547,22 +511,88 @@ def _runner_session_projection(
     if session is None:
         return None
     completion = state.runner_session_completions.get(session.session_id)
+    cancellation = next(
+        (
+            item
+            for item in state.runner_session_cancellation_requests.values()
+            if item.session_id == session.session_id and item.primary
+        ),
+        None,
+    )
+    attempts = sorted(
+        (
+            item
+            for item in state.runner_session_cancellation_attempts.values()
+            if item.session_id == session.session_id
+        ),
+        key=lambda item: item.sequence,
+    )
+    last_attempt = attempts[-1] if attempts else None
+    application_status = "not_completed"
+    if completion is not None:
+        if completion.runner_result_evidence_digest is None:
+            application_status = "not_applicable"
+        elif completion.application_input_id in state.receipts:
+            application_status = "applied"
+        else:
+            application_status = "pending"
     return {
         "session_id": session.session_id,
         "run_id": session.run_id,
         "dispatch_generation": session.dispatch_generation,
         "state": session.state,
+        "adapter_kind": _selected_adapter_kind(state, run_id),
+        "primary_cancellation_reason": (
+            None if cancellation is None else cancellation.reason
+        ),
+        "cancellation_phase": (
+            None
+            if cancellation is None
+            else (last_attempt.operation if last_attempt is not None else session.state)
+        ),
+        "cancellation_last_operation": (
+            None if last_attempt is None else last_attempt.operation
+        ),
+        "cancellation_last_result": (
+            None if last_attempt is None else last_attempt.result
+        ),
         "cleanup_disposition": session.cleanup_disposition,
         "orphan_risk": (
             session.state == "lost"
             or session.cleanup_disposition == "orphan_risk"
         ),
         "completion_persisted": completion is not None,
+        "completion_terminal_state": (
+            None if completion is None else completion.terminal_state
+        ),
+        "completion_exit_kind": (
+            None if completion is None else completion.exit_kind
+        ),
         "application_persisted": (
             completion is not None
             and completion.application_input_id in state.receipts
         ),
+        "application_status": application_status,
+        "cooperative_cancel_grace_seconds": cooperative_cancel_grace_seconds,
+        "terminate_grace_seconds": terminate_grace_seconds,
     }
+
+
+def _selected_adapter_kind(state: RuntimeState, run_id: str) -> str | None:
+    run = state.runs.get(run_id)
+    if run is None:
+        return None
+    admitted = state.admitted_plans.get(
+        run.run_ref.plan_ref.authority_fingerprint
+    )
+    if admitted is None:
+        return None
+    matches = tuple(
+        binding.adapter_kind
+        for binding in admitted.selected_plan.runner_bindings
+        if binding.id == run.runner_binding_id
+    )
+    return matches[0] if len(matches) == 1 else None
 
 
 def _event_rows(

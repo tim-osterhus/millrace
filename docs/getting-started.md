@@ -113,13 +113,24 @@ explicit alternative when selected by the plan; see
 ```bash
 millrace --workspace "$WORKSPACE" status
 millrace --workspace "$WORKSPACE" runs list
+millrace --workspace "$WORKSPACE" runs show RUN_ID
 millrace --workspace "$WORKSPACE" trace show
+millrace --workspace "$WORKSPACE" trace show RUN_ID
 millrace --workspace "$WORKSPACE" waits list
 millrace --workspace "$WORKSPACE" interventions list
 millrace --workspace "$WORKSPACE" doctor
 ```
 
+For an active session, request replay-safe operator cancellation with
+`millrace --workspace "$WORKSPACE" runs cancel RUN_ID --input-id ID`. This
+records a durable request; it does not signal a process directly. Read a
+finite bounded event page with
+`millrace --workspace "$WORKSPACE" runs follow RUN_ID --after-sequence N`.
+Status, run, trace, follow, and doctor projections are read-only.
+
 Use `millrace <group> --help` for exact arguments. The
 [system overview](how-millrace-works.md) explains the authority boundaries
 between packages, selected plans, runners, runtime transitions, and operator
-commands.
+commands. See [Runner-session architecture](runner-session-architecture.md)
+and [Daemon lifecycle](daemon-lifecycle.md) for cancellation, restart, and
+signal behavior.
