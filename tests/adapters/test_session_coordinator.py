@@ -82,6 +82,130 @@ class _SequenceHandle(_ImmediateHandle):
         return self._outcomes.pop(0) if self._outcomes else None
 
 
+class _CancellingHandle(_ImmediateHandle):
+    def __init__(
+        self,
+        runtime,
+        request: AdapterInvocationRequest,
+        *,
+        cooperative_result: str = "succeeded",
+    ) -> None:
+        self._runtime = runtime
+        self._request = request
+        self._requested = False
+        self.operations: list[str] = []
+        self._cooperative_result = cooperative_result
+
+    def poll_completion(self) -> AdapterInvocationOutcome | None:
+        if not self._requested:
+            self._requested = True
+            result = session_coordinator.request_operator_cancellation(
+                self._runtime,
+                run_id=self._request.dispatch_envelope.run_id,
+                request_id="operator-cancel-1",
+                actor_id="operator",
+            )
+            assert result.code == "runner_session_cancel_requested"
+            return None
+        return AdapterErrorResult.from_unredacted(
+            adapter_id=self._request.adapter_id,
+            error_kind="cancelled",
+            dispatch_echo=DispatchEcho.from_dispatch_envelope(
+                self._request.dispatch_envelope,
+                correlation_id=self._request.correlation_id,
+            ),
+            redaction_policy=self._request.redaction_policy,
+        )
+
+    def request_cancel(self) -> RunnerCancellationOperationResult:
+        self.operations.append("cooperative_cancel")
+        return RunnerCancellationOperationResult(
+            "cooperative_cancel",
+            self._cooperative_result,
+            100,
+            100,
+            "sha256:" + "b" * 64,
+        )
+
+    def terminate(self) -> RunnerCancellationOperationResult:
+        self.operations.append("terminate")
+        return RunnerCancellationOperationResult(
+            "terminate",
+            "succeeded",
+            101,
+            101,
+            "sha256:" + "c" * 64,
+        )
+
+    def kill(self) -> RunnerCancellationOperationResult:
+        self.operations.append("kill")
+        return RunnerCancellationOperationResult(
+            "kill",
+            "succeeded",
+            102,
+            102,
+            "sha256:" + "d" * 64,
+        )
+
+    def cleanup(self) -> RunnerCleanupResult:
+        self.operations.append("transport_cleanup")
+        return RunnerCleanupResult(
+            "complete",
+            103,
+            103,
+            "sha256:" + "e" * 64,
+        )
+
+
+class _EscalatingCancellingHandle(_CancellingHandle):
+    def __init__(
+        self,
+        runtime,
+        request: AdapterInvocationRequest,
+        *,
+        ready_after: str,
+    ) -> None:
+        super().__init__(runtime, request, cooperative_result="timed_out")
+        self._ready_after = ready_after
+
+    def poll_completion(self) -> AdapterInvocationOutcome | None:
+        if not self._requested:
+            return super().poll_completion()
+        if self._ready_after not in self.operations:
+            return None
+        return super().poll_completion()
+
+    def terminate(self) -> RunnerCancellationOperationResult:
+        self.operations.append("terminate")
+        return RunnerCancellationOperationResult(
+            "terminate",
+            "succeeded" if self._ready_after == "terminate" else "timed_out",
+            101,
+            101,
+            "sha256:" + "c" * 64,
+        )
+
+
+class _CompletionRaceHandle(_CancellingHandle):
+    def poll_completion(self) -> AdapterInvocationOutcome | None:
+        if not self._requested:
+            super().poll_completion()
+            return None
+        return _success_outcome(self._request)
+
+
+class _SecondaryRaceHandle(_CancellingHandle):
+    def request_cancel(self) -> RunnerCancellationOperationResult:
+        secondary = session_coordinator.request_operator_cancellation(
+            self._runtime,
+            run_id=self._request.dispatch_envelope.run_id,
+            request_id="operator-cancel-2",
+            actor_id="second-operator",
+        )
+        assert secondary.accepted
+        return super().request_cancel()
+
+
 class _CapturingImmediateHandle(_ImmediateHandle):
     def __init__(
         self,
@@ -297,6 +421,28 @@ def test_request_factory_side_effect_occurs_after_start_intent(
     assert session.start_intent_at is not None
 
 
+def test_daemon_stop_before_external_start_prevents_adapter_call(
+    tmp_path,
+) -> None:
+    adapter = _RecordingAdapter(_success_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(adapter),
+        daemon_stop_requested=lambda: True,
+    )
+    after = _load(runtime)
+
+    assert result.adapter_error_kind == "cancelled"
+    assert adapter.requests == []
+    session = next(iter(after.runner_sessions.values()))
+    assert session.state == "interrupted"
+    assert session.start_intent_at is None
+    assert session.cleanup_disposition == "not_required"
+
+
 @pytest.mark.parametrize(
     "mutate",
     (
@@ -366,7 +512,7 @@ def test_indeterminate_start_exception_stays_starting(tmp_path) -> None:
     assert session.session_id not in after.runner_session_completions
 
 
-def test_timeout_after_external_side_effect_stays_reconcile_required(
+def test_wrapper_completion_after_external_side_effect_is_terminal(
     tmp_path,
 ) -> None:
     state, _ = _ready_state()
@@ -378,10 +524,10 @@ def test_timeout_after_external_side_effect_stays_reconcile_required(
     )
     after = _load(runtime)
 
-    assert result.code == "session_reconciliation_required"
+    assert result.code == "adapter_failure"
+    assert result.adapter_error_kind in {"cancelled", "result_parse_failed"}
     session = next(iter(after.runner_sessions.values()))
-    assert session.state == "starting"
-    assert session.session_id not in after.runner_session_completions
+    assert session.state in {"interrupted", "failed"}
 
 
 def test_start_succeeds_but_running_write_fails_cannot_permit_another_start(
@@ -463,7 +609,266 @@ def test_pending_handle_is_polled_until_terminal_outcome(tmp_path) -> None:
     assert handle.polls == 2
 
 
-def test_forever_pending_handle_is_owned_until_selected_deadline(
+def test_durable_operator_cancellation_is_observed_and_cleaned_up(
+    tmp_path,
+) -> None:
+    runtime = None
+    handle: _CancellingHandle | None = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _CancellingHandle(runtime, request)
+        return StartedSession(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            handle,
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    adapter = _RecordingAdapter(start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+
+    assert result.code == "adapter_failure"
+    assert result.adapter_error_kind == "cancelled"
+    assert handle is not None
+    assert handle.operations == ["cooperative_cancel", "transport_cleanup"]
+    request = next(iter(after.runner_session_cancellation_requests.values()))
+    assert (request.reason, request.source_kind, request.primary) == (
+        "operator_cancel_work",
+        "operator",
+        True,
+    )
+    attempts = sorted(
+        after.runner_session_cancellation_attempts.values(),
+        key=lambda item: item.sequence,
+    )
+    assert [attempt.operation for attempt in attempts] == [
+        "cooperative_cancel",
+        "transport_cleanup",
+    ]
+    session = next(iter(after.runner_sessions.values()))
+    assert session.state == "interrupted"
+    assert session.cleanup_disposition == "complete"
+    completion = after.runner_session_completions[session.session_id]
+    assert completion.primary_cancellation_request_id == request.request_id
+    assert completion.cancel_requested_at == request.requested_at
+
+
+@pytest.mark.parametrize(
+    ("ready_after", "expected_operations"),
+    (
+        ("terminate", ["cooperative_cancel", "terminate", "transport_cleanup"]),
+        (
+            "kill",
+            ["cooperative_cancel", "terminate", "kill", "transport_cleanup"],
+        ),
+    ),
+)
+def test_cancellation_escalates_in_order(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    ready_after: str,
+    expected_operations: list[str],
+) -> None:
+    runtime = None
+    handle: _EscalatingCancellingHandle | None = None
+    monotonic_value = 0.0
+
+    def monotonic() -> float:
+        nonlocal monotonic_value
+        monotonic_value += 10.0
+        return monotonic_value
+
+    monkeypatch.setattr(session_coordinator, "_monotonic", monotonic)
+    monkeypatch.setattr(session_coordinator, "_sleep", lambda _value: None)
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _EscalatingCancellingHandle(
+            runtime,
+            request,
+            ready_after=ready_after,
+        )
+        return StartedSession(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            handle,
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    adapter = _RecordingAdapter(start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+
+    assert result.adapter_error_kind == "cancelled"
+    assert handle is not None
+    assert handle.operations == expected_operations
+
+
+def test_normal_completion_can_win_after_durable_cancellation(tmp_path) -> None:
+    runtime = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        return StartedSession(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            _CompletionRaceHandle(runtime, request),
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    adapter = _RecordingAdapter(start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+
+    assert result.code == "observation_accepted"
+    session = next(iter(after.runner_sessions.values()))
+    assert session.state == "completed"
+    completion = after.runner_session_completions[session.session_id]
+    primary = next(iter(after.runner_session_cancellation_requests.values()))
+    assert completion.primary_cancellation_request_id == primary.request_id
+
+
+def test_unsupported_cooperative_cancel_can_still_finish_cleanly(
+    tmp_path,
+) -> None:
+    runtime = None
+    handle: _CancellingHandle | None = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _CancellingHandle(
+            runtime,
+            request,
+            cooperative_result="unsupported",
+        )
+        return StartedSession(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            handle,
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    adapter = _RecordingAdapter(start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    after = _load(runtime)
+
+    attempt = min(
+        after.runner_session_cancellation_attempts.values(),
+        key=lambda item: item.sequence,
+    )
+    assert (attempt.operation, attempt.result) == (
+        "cooperative_cancel",
+        "unsupported",
+    )
+    assert next(iter(after.runner_sessions.values())).cleanup_disposition == (
+        "complete"
+    )
+
+
+def test_stale_prior_session_cancellation_cannot_cancel_retry(tmp_path) -> None:
+    runtime = None
+
+    def first_start(request: AdapterInvocationRequest) -> StartedSession:
+        return StartedSession(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            _CancellingHandle(runtime, request),
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(first_start)),
+    )
+    second = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(_RecordingAdapter(_success_start)),
+    )
+    after = _load(runtime)
+
+    assert second.code == "observation_accepted"
+    sessions = sorted(
+        after.runner_sessions.values(),
+        key=lambda item: item.dispatch_generation,
+    )
+    assert [item.state for item in sessions] == ["interrupted", "completed"]
+    cancellation = next(
+        iter(after.runner_session_cancellation_requests.values())
+    )
+    assert cancellation.session_id == sessions[0].session_id
+
+
+def test_racing_cancellation_requests_keep_first_request_primary(
+    tmp_path,
+) -> None:
+    runtime = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        return StartedSession(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            ),
+            _SecondaryRaceHandle(runtime, request),
+            f"fake:{request.session_id}",
+            {},
+        )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+    after = _load(runtime)
+
+    requests = sorted(
+        after.runner_session_cancellation_requests.values(),
+        key=lambda item: item.request_order,
+    )
+    assert [(item.request_id, item.primary) for item in requests] == [
+        ("operator-cancel-1", True),
+        ("operator-cancel-2", False),
+    ]
+    completion = next(iter(after.runner_session_completions.values()))
+    assert completion.primary_cancellation_request_id == "operator-cancel-1"
+    assert {
+        attempt.request_id
+        for attempt in after.runner_session_cancellation_attempts.values()
+    } == {"operator-cancel-1"}
+
+
+def test_forever_pending_handle_times_out_then_cleans_up(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -475,11 +880,17 @@ def test_forever_pending_handle_is_owned_until_selected_deadline(
         handle = _SequenceHandle([])
         return replace(started, handle=handle)
 
-    monotonic_values = iter((10.0, 10.0, 1_000_000_000.0))
+    monotonic_value = 0.0
+
+    def advancing_monotonic() -> float:
+        nonlocal monotonic_value
+        monotonic_value += 10.0
+        return monotonic_value
+
     monkeypatch.setattr(
         session_coordinator,
         "_monotonic",
-        lambda: next(monotonic_values),
+        advancing_monotonic,
     )
     monkeypatch.setattr(session_coordinator, "_sleep", lambda _value: None)
     adapter = _RecordingAdapter(pending)
@@ -489,10 +900,18 @@ def test_forever_pending_handle_is_owned_until_selected_deadline(
     result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
     after = _load(runtime)
 
-    assert result.code == "session_reconciliation_required"
+    assert result.code == "adapter_failure"
+    assert result.adapter_error_kind == "cancelled"
     assert handle is not None
     assert handle.polls >= 1
-    assert next(iter(after.runner_sessions.values())).state == "running"
+    assert next(iter(after.runner_sessions.values())).state == "interrupted"
+    cancellation = next(
+        iter(after.runner_session_cancellation_requests.values())
+    )
+    assert (cancellation.reason, cancellation.source_kind) == (
+        "runner_timeout",
+        "runtime",
+    )
 
 
 def test_malformed_handle_outcome_remains_running_and_requires_reconciliation(

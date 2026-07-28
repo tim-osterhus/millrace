@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -99,6 +99,7 @@ def run_bounded_execution_unit(
     local_config: AdapterLocalConfig | None = None,
     local_config_path: Path | None = None,
     actor_id: str = "local_operator",
+    daemon_stop_requested: Callable[[], bool] | None = None,
 ) -> BoundedExecutionUnitResult:
     if not isinstance(runtime, OpenRuntimeContext):
         raise TypeError("runtime must be OpenRuntimeContext")
@@ -161,6 +162,7 @@ def run_bounded_execution_unit(
                 session=session,
             ),
             explicit_retry_intent=normalized_activation_id is not None,
+            daemon_stop_requested=daemon_stop_requested,
         )
     except SelectedAssetMaterializationError as exc:
         return _with_active_ids(

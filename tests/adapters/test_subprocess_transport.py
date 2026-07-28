@@ -665,6 +665,41 @@ def test_subprocess_transport_timeout_kills_process_group_child(
     assert heartbeat.read_text() == stable_value
 
 
+def test_live_subprocess_handle_terminates_group_and_joins_readers(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.subprocess_transport import (
+        SubprocessTransport,
+        SubprocessTransportHandle,
+        SubprocessTransportRequest,
+    )
+
+    handle = SubprocessTransport().start(
+        SubprocessTransportRequest(
+            argv=(
+                sys.executable,
+                "-c",
+                "import sys,time; print('started', flush=True); time.sleep(30)",
+            ),
+            stdin_bytes=b"",
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=30,
+            max_stdin_bytes=64,
+            max_stdout_bytes=128,
+            max_stderr_bytes=128,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+
+    assert isinstance(handle, SubprocessTransportHandle)
+    assert handle.poll_completion() is None
+    assert handle.terminate().operation == "terminate"
+    cleanup = handle.cleanup()
+    assert cleanup.disposition == "complete"
+    assert handle.readers_joined
+
+
 def test_subprocess_transport_production_imports_stay_below_runtime_authority() -> None:
     module_path = Path("src/millrace/adapters/subprocess_transport.py")
     tree = ast.parse(module_path.read_text())

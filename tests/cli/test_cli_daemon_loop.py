@@ -377,10 +377,10 @@ def test_daemon_refuses_exact_fake_local_selected_authority_without_remap(
 
 @pytest.mark.parametrize(
         ("local_config", "stopped_reason"),
-        (
-            (_codex_error_config(), "adapter_failure"),
-            (_codex_mismatch_config(), "session_reconciliation_required"),
-        ),
+            (
+                (_codex_error_config(), "adapter_failure"),
+                (_codex_mismatch_config(), "adapter_failure"),
+            ),
     )
 def test_daemon_adapter_failures_stop_without_runtime_evidence(
     tmp_path: Path,

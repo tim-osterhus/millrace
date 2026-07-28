@@ -66,6 +66,12 @@ cannot enlarge the selected capabilities, timeout, routes, or assets. This is
 not an operating-system sandbox: a local runner wrapper still executes with
 the permissions of the operator account that launched it.
 
+Runner-session cancellation is durable and coordinator-owned. The coordinator
+first requests cooperative cancellation, waits 5.0 seconds, then terminates
+owned work and waits another 5.0 seconds before using a hard kill when needed.
+These two finite grace periods are local runtime safety mechanics, not compiled
+workflow policy. `millrace doctor` projects their effective values.
+
 ## One Stage At A Time
 
 For a normal agent stage, the daemon:

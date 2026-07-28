@@ -11,6 +11,11 @@ from millrace.adapters.cli.output import (
     json_ready,
     success_result,
 )
+from millrace.adapters.cli.session_coordinator import (
+    cooperative_cancel_grace_seconds,
+    request_operator_cancellation,
+    terminate_grace_seconds,
+)
 from millrace.operator.intake import OperatorInputError
 from millrace.operator.status import operator_status
 
@@ -23,6 +28,8 @@ def handle_status_command(namespace: object) -> CliSuccess:
         return _runs_list(namespace)
     if command == "runs.show":
         return _runs_show(namespace)
+    if command == "runs.cancel":
+        return _runs_cancel(namespace)
     if command == "waits.list":
         return _waits_list(namespace)
     if command == "interventions.list":
@@ -100,6 +107,26 @@ def _runs_show(namespace: object) -> CliSuccess:
         observation.run_id == run_id
         for observation in state.runner_observations.values()
     )
+    session = (
+        None
+        if run.current_session_id is None
+        else state.runner_sessions.get(run.current_session_id)
+    )
+    cancellation = None
+    if session is not None:
+        cancellation = next(
+            (
+                item
+                for item in state.runner_session_cancellation_requests.values()
+                if item.session_id == session.session_id and item.primary
+            ),
+            None,
+        )
+    completion = (
+        None
+        if session is None
+        else state.runner_session_completions.get(session.session_id)
+    )
     return success_result(
         command=command,
         code="run_shown",
@@ -123,7 +150,66 @@ def _runs_show(namespace: object) -> CliSuccess:
                 ),
                 "observed": observed,
                 "closed": run.work_item_id in state.closed_work_items,
+                "runner_session": (
+                    None
+                    if session is None
+                    else {
+                        "session_id": session.session_id,
+                        "dispatch_generation": session.dispatch_generation,
+                        "state": session.state,
+                        "cleanup_disposition": session.cleanup_disposition,
+                        "primary_cancellation_reason": (
+                            None if cancellation is None else cancellation.reason
+                        ),
+                        "completion_persisted": completion is not None,
+                        "application_persisted": (
+                            completion is not None
+                            and completion.application_input_id in state.receipts
+                        ),
+                        "cooperative_cancel_grace_seconds": (
+                            cooperative_cancel_grace_seconds
+                        ),
+                        "terminate_grace_seconds": terminate_grace_seconds,
+                    }
+                ),
             }
+        },
+    )
+
+
+def _runs_cancel(namespace: object) -> CliSuccess:
+    command = "runs.cancel"
+    run_id = str(getattr(namespace, "run_id"))
+    request_id = str(getattr(namespace, "input_id"))
+    actor_id = str(getattr(namespace, "actor_id", "local_operator"))
+    runtime = open_runtime_context(namespace, command=command)
+    try:
+        result = request_operator_cancellation(
+            runtime,
+            run_id=run_id,
+            request_id=request_id,
+            actor_id=actor_id,
+        )
+    finally:
+        runtime.close()
+    if not result.accepted:
+        raise CliCommandError(
+            command=command,
+            code="runner_session_cancel_refused",
+            message="Runner session cancellation was refused.",
+            exit_code=ExitCode.DOMAIN_REFUSAL,
+            details={"run_id": run_id, "input_id": request_id},
+        )
+    return success_result(
+        command=command,
+        code="runner_session_cancel_requested",
+        message="Runner session cancellation requested.",
+        data={
+            "run_id": run_id,
+            "session_id": result.session_id,
+            "input_id": request_id,
+            "reason": "operator_cancel_work",
+            "source_kind": "operator",
         },
     )
 

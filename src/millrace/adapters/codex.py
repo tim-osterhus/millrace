@@ -38,6 +38,7 @@ from millrace.adapters.runner_contract import (
 from millrace.adapters.subprocess_transport import (
     SubprocessTransport,
     SubprocessTransportError,
+    SubprocessTransportHandle,
     SubprocessTransportRequest,
     SubprocessTransportSuccess,
 )
@@ -199,17 +200,13 @@ class CodexAdapter:
         self,
         request: AdapterInvocationRequest,
     ) -> RunnerSessionStartOutcome:
-        outcome = self._invoke_bounded(request)
-        echo = (
-            outcome.dispatch_echo
-            if outcome.dispatch_echo is not None
-            else DispatchEcho.from_dispatch_envelope(
-                request.dispatch_envelope,
-                correlation_id=request.correlation_id,
-            )
+        prepared = self._transport_request(request)
+        echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
         )
-        if isinstance(outcome, AdapterErrorResult):
-            if outcome.error_kind in {
+        if isinstance(prepared, AdapterErrorResult):
+            if prepared.error_kind in {
                 "missing_opt_in_config",
                 "unsupported_adapter_kind",
                 "input_too_large",
@@ -218,9 +215,21 @@ class CodexAdapter:
             }:
                 return StartRefusedBeforeExternalWork(
                     echo,
-                    outcome,
-                    start_refusal_diagnostic_digest(outcome),
+                    prepared,
+                    start_refusal_diagnostic_digest(prepared),
                 )
+            return StartIndeterminate(
+                echo,
+                None,
+                start_refusal_diagnostic_digest(prepared),
+            )
+        started = self._transport.start(prepared)
+        if isinstance(started, SubprocessTransportError):
+            outcome = self._transport_error(
+                request,
+                started,
+                dispatch_echo=echo,
+            )
             return StartIndeterminate(
                 echo,
                 None,
@@ -228,9 +237,17 @@ class CodexAdapter:
             )
         return StartedSession(
             echo,
-            _CompletedCodexSessionHandle(outcome),
+            _LiveCodexSessionHandle(
+                adapter=self,
+                request=request,
+                transport_handle=started,
+                expected_echo=echo,
+            ),
             f"codex:{request.session_id}:{request.dispatch_generation}",
-            {"wrapper_mode": self._config.wrapper_mode},
+            {
+                "wrapper_mode": self._config.wrapper_mode,
+                "pid": started.process.pid,
+            },
         )
 
     def reconcile_session(
@@ -249,6 +266,32 @@ class CodexAdapter:
         self,
         request: AdapterInvocationRequest,
     ) -> AdapterInvocationOutcome:
+        if not isinstance(request, AdapterInvocationRequest):
+            raise TypeError("request must be AdapterInvocationRequest")
+        prepared = self._transport_request(request)
+        if isinstance(prepared, AdapterErrorResult):
+            return prepared
+        dispatch_echo = DispatchEcho.from_dispatch_envelope(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+        )
+        transport_outcome = self._transport.invoke(prepared)
+        if isinstance(transport_outcome, SubprocessTransportError):
+            return self._transport_error(
+                request,
+                transport_outcome,
+                dispatch_echo=dispatch_echo,
+            )
+        return self._success_from_transport(
+            request,
+            transport_outcome,
+            expected_echo=dispatch_echo,
+        )
+
+    def _transport_request(
+        self,
+        request: AdapterInvocationRequest,
+    ) -> SubprocessTransportRequest | AdapterErrorResult:
         if not isinstance(request, AdapterInvocationRequest):
             raise TypeError("request must be AdapterInvocationRequest")
         dispatch_echo = DispatchEcho.from_dispatch_envelope(
@@ -317,33 +360,20 @@ class CodexAdapter:
                 diagnostics={"input_bytes": len(stdin_bytes)},
             )
 
-        transport_outcome = self._transport.invoke(
-            SubprocessTransportRequest(
-                argv=self._config.wrapper_argv,
-                stdin_bytes=stdin_bytes,
-                cwd=self._config.cwd,
-                env_allowlist=self._config.env_allowlist,
-                timeout_seconds=min(
-                    self._config.timeout_seconds,
-                    request.timeout_seconds,
-                ),
-                max_stdin_bytes=self._config.max_input_bundle_bytes,
-                max_stdout_bytes=self._config.max_stdout_bytes,
-                max_stderr_bytes=self._config.max_stderr_diagnostic_bytes,
-                redaction_policy=self._config.redaction_policy,
-                pre_cancelled=self._config.pre_cancelled,
+        return SubprocessTransportRequest(
+            argv=self._config.wrapper_argv,
+            stdin_bytes=stdin_bytes,
+            cwd=self._config.cwd,
+            env_allowlist=self._config.env_allowlist,
+            timeout_seconds=min(
+                self._config.timeout_seconds,
+                request.timeout_seconds,
             ),
-        )
-        if isinstance(transport_outcome, SubprocessTransportError):
-            return self._transport_error(
-                request,
-                transport_outcome,
-                dispatch_echo=dispatch_echo,
-            )
-        return self._success_from_transport(
-            request,
-            transport_outcome,
-            expected_echo=dispatch_echo,
+            max_stdin_bytes=self._config.max_input_bundle_bytes,
+            max_stdout_bytes=self._config.max_stdout_bytes,
+            max_stderr_bytes=self._config.max_stderr_diagnostic_bytes,
+            redaction_policy=self._config.redaction_policy,
+            pre_cancelled=self._config.pre_cancelled,
         )
 
     def _success_from_transport(
@@ -508,31 +538,47 @@ class CodexAdapter:
             )
 
 
-class _CompletedCodexSessionHandle:
-    def __init__(self, outcome: AdapterInvocationOutcome) -> None:
-        self._outcome: AdapterInvocationOutcome | None = outcome
+class _LiveCodexSessionHandle:
+    def __init__(
+        self,
+        *,
+        adapter: CodexAdapter,
+        request: AdapterInvocationRequest,
+        transport_handle: SubprocessTransportHandle,
+        expected_echo: DispatchEcho,
+    ) -> None:
+        self._adapter = adapter
+        self._request = request
+        self._transport_handle = transport_handle
+        self._expected_echo = expected_echo
 
     def poll_completion(self) -> AdapterInvocationOutcome | None:
-        outcome = self._outcome
-        self._outcome = None
-        return outcome
+        outcome = self._transport_handle.poll_completion()
+        if outcome is None:
+            return None
+        if isinstance(outcome, SubprocessTransportError):
+            return self._adapter._transport_error(
+                self._request,
+                outcome,
+                dispatch_echo=self._expected_echo,
+            )
+        return self._adapter._success_from_transport(
+            self._request,
+            outcome,
+            expected_echo=self._expected_echo,
+        )
 
     def request_cancel(self) -> RunnerCancellationOperationResult:
-        return _unsupported_session_operation("cooperative_cancel")
+        return self._transport_handle.request_cancel()
 
     def terminate(self) -> RunnerCancellationOperationResult:
-        return _unsupported_session_operation("terminate")
+        return self._transport_handle.terminate()
 
     def kill(self) -> RunnerCancellationOperationResult:
-        return _unsupported_session_operation("kill")
+        return self._transport_handle.kill()
 
     def cleanup(self) -> RunnerCleanupResult:
-        return RunnerCleanupResult(
-            "not_required",
-            0,
-            0,
-            _session_operation_digest("not_required"),
-        )
+        return self._transport_handle.cleanup()
 
 
 def _unsupported_session_operation(

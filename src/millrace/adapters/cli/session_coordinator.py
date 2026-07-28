@@ -20,7 +20,11 @@ from millrace.adapters.runner_contract import (
     AdapterInvocationOutcome,
     AdapterInvocationRequest,
     AdapterSuccessResult,
+    RedactionPolicy,
     RunnerAdapter,
+    RunnerCancellationOperationResult,
+    RunnerCleanupResult,
+    RunnerSessionHandle,
     StartedSession,
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
@@ -37,6 +41,7 @@ from millrace.contracts.runner import (
     runner_session_locator_bytes,
 )
 from millrace.contracts.state import (
+    RunnerSessionCancellationRecord,
     RunnerSessionCompletionRecord,
     RunnerSessionRecord,
     RunRef,
@@ -45,8 +50,10 @@ from millrace.contracts.state import (
 from millrace.contracts.transition import (
     AdvanceRunnerSession,
     CreateRunnerSession,
+    RecordRunnerSessionCancellationAttempt,
     RecordRunnerSessionCompletion,
     RefuseRunnerSessionSignal,
+    RequestRunnerSessionCancellation,
     RunnerResultObserved,
     TransitionInput,
 )
@@ -58,6 +65,9 @@ from millrace.operator.dispatch import (
 
 _COMMAND = "run.session"
 _POLL_INTERVAL_SECONDS = 0.01
+SESSION_DIAGNOSTIC_MAX_BYTES = 16 * 1024
+cooperative_cancel_grace_seconds = 5.0
+terminate_grace_seconds = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +79,13 @@ class SessionExecutionResult:
     transition_disposition: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SessionCancellationRequestResult:
+    code: str
+    accepted: bool
+    session_id: str | None = None
+
+
 def execute_runner_session(
     runtime: OpenRuntimeContext,
     *,
@@ -76,6 +93,7 @@ def execute_runner_session(
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
     explicit_retry_intent: bool,
+    daemon_stop_requested: Callable[[], bool] | None = None,
 ) -> SessionExecutionResult:
     """Start or replay one durable session attempt for the current run."""
 
@@ -99,6 +117,8 @@ def execute_runner_session(
             return SessionExecutionResult("session_reconciliation_required")
         elif current.state == "running":
             return SessionExecutionResult("session_running")
+        elif current.state in {"cancellation_requested", "terminating"}:
+            return SessionExecutionResult("session_running")
         elif current.state == "created":
             return _start_created_session(
                 runtime,
@@ -106,6 +126,7 @@ def execute_runner_session(
                 session=current,
                 adapter=adapter,
                 request_factory=request_factory,
+                daemon_stop_requested=daemon_stop_requested,
             )
 
     session_id = f"session-{uuid4().hex}"
@@ -129,6 +150,26 @@ def execute_runner_session(
         session=session,
         adapter=adapter,
         request_factory=request_factory,
+        daemon_stop_requested=daemon_stop_requested,
+    )
+
+
+def request_operator_cancellation(
+    runtime: OpenRuntimeContext,
+    *,
+    run_id: str,
+    request_id: str,
+    actor_id: str,
+) -> SessionCancellationRequestResult:
+    """Persist the fixed operator cancellation request for the current session."""
+
+    return _request_cancellation(
+        runtime,
+        run_id=run_id,
+        request_id=request_id,
+        reason="operator_cancel_work",
+        source_kind="operator",
+        actor_id=actor_id,
     )
 
 
@@ -153,7 +194,26 @@ def _start_created_session(
     session: RunnerSessionRecord,
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
+    daemon_stop_requested: Callable[[], bool] | None,
 ) -> SessionExecutionResult:
+    if daemon_stop_requested is not None and daemon_stop_requested():
+        _request_cancellation(
+            runtime,
+            run_id=run_ref.run_id,
+            request_id=f"daemon:runner-session-cancel:{session.session_id}",
+            reason="daemon_shutdown",
+            source_kind="daemon",
+            actor_id="daemon",
+        )
+    durable_session = _load(runtime).runner_sessions[session.session_id]
+    primary = _primary_cancellation(_load(runtime), durable_session)
+    if primary is not None:
+        return _cancel_before_external_start(
+            runtime,
+            run_ref=run_ref,
+            session=durable_session,
+            primary=primary,
+        )
     starting = AdvanceRunnerSession(
         f"cli:run.session-start-intent:{session.session_id}",
         run_ref=run_ref,
@@ -365,7 +425,31 @@ def _start_created_session(
     if running_state is None:
         return SessionExecutionResult("session_reconciliation_required")
     running_session = running_state.runner_sessions[session.session_id]
+    cancellation_started = False
     while True:
+        if daemon_stop_requested is not None and daemon_stop_requested():
+            _request_cancellation(
+                runtime,
+                run_id=run_ref.run_id,
+                request_id=(
+                    "daemon:runner-session-cancel:"
+                    f"{running_session.session_id}"
+                ),
+                reason="daemon_shutdown",
+                source_kind="daemon",
+                actor_id="daemon",
+            )
+        primary = _primary_cancellation(_load(runtime), running_session)
+        if primary is not None and not cancellation_started:
+            cancellation_started = True
+            return _cancel_running_session(
+                runtime,
+                run_ref=run_ref,
+                session=running_session,
+                request=request,
+                handle=start_outcome.handle,
+                primary=primary,
+            )
         try:
             outcome = start_outcome.handle.poll_completion()
         except Exception as exc:
@@ -377,7 +461,28 @@ def _start_created_session(
                 signal_kind="runner_completion_poll",
                 signal_digest=_signal_digest(type(exc).__qualname__),
             )
-            return SessionExecutionResult("session_reconciliation_required")
+            _request_cancellation(
+                runtime,
+                run_id=run_ref.run_id,
+                request_id=(
+                    "runtime:runner-session-failure:"
+                    f"{running_session.session_id}"
+                ),
+                reason="runtime_failure",
+                source_kind="runtime",
+                actor_id="runtime",
+            )
+            primary = _primary_cancellation(_load(runtime), running_session)
+            if primary is None:
+                return SessionExecutionResult("session_reconciliation_required")
+            return _cancel_running_session(
+                runtime,
+                run_ref=run_ref,
+                session=running_session,
+                request=request,
+                handle=start_outcome.handle,
+                primary=primary,
+            )
         if outcome is not None:
             if not isinstance(outcome, (AdapterSuccessResult, AdapterErrorResult)):
                 _audit_session_refusal(
@@ -399,16 +504,441 @@ def _start_created_session(
             )
         remaining = deadline - _monotonic()
         if remaining <= 0:
-            _audit_session_refusal(
+            _request_cancellation(
+                runtime,
+                run_id=run_ref.run_id,
+                request_id=(
+                    "runtime:runner-session-timeout:"
+                    f"{running_session.session_id}"
+                ),
+                reason="runner_timeout",
+                source_kind="runtime",
+                actor_id="runtime",
+            )
+            primary = _primary_cancellation(_load(runtime), running_session)
+            if primary is None:
+                return SessionExecutionResult("session_reconciliation_required")
+            return _cancel_running_session(
                 runtime,
                 run_ref=run_ref,
                 session=running_session,
-                reason="runner_session_reconciliation_contradiction",
-                signal_kind="runner_session_deadline",
-                signal_digest=_signal_digest({"deadline_elapsed": True}),
+                request=request,
+                handle=start_outcome.handle,
+                primary=primary,
             )
-            return SessionExecutionResult("session_reconciliation_required")
         _sleep(min(_POLL_INTERVAL_SECONDS, remaining))
+
+
+def _request_cancellation(
+    runtime: OpenRuntimeContext,
+    *,
+    run_id: str,
+    request_id: str,
+    reason: str,
+    source_kind: str,
+    actor_id: str,
+) -> SessionCancellationRequestResult:
+    state = _load(runtime)
+    existing = state.runner_session_cancellation_requests.get(request_id)
+    if existing is not None:
+        run = state.runs.get(run_id)
+        replayed = (
+            run is not None
+            and run.current_session_id == existing.session_id
+            and existing.reason == reason
+            and existing.source_kind == source_kind
+            and existing.actor_id == actor_id
+        )
+        return SessionCancellationRequestResult(
+            "runner_session_cancel_requested"
+            if replayed
+            else "runner_session_cancel_refused",
+            replayed,
+            existing.session_id if replayed else None,
+        )
+    run = state.runs.get(run_id)
+    if run is None or run.current_session_id is None:
+        return SessionCancellationRequestResult(
+            "runner_session_cancel_refused", False
+        )
+    session = state.runner_sessions.get(run.current_session_id)
+    if (
+        session is None
+        or session.run_id != run_id
+        or session.state
+        in {"completed", "interrupted", "failed", "lost"}
+        or session.session_id in state.runner_session_completions
+    ):
+        return SessionCancellationRequestResult(
+            "runner_session_cancel_refused", False
+        )
+    session_requests = tuple(
+        item
+        for item in state.runner_session_cancellation_requests.values()
+        if item.session_id == session.session_id
+    )
+    requested_at = max(
+        _now(),
+        session.started_at or session.start_intent_at or session.created_at,
+        *(item.requested_at for item in session_requests),
+    )
+    transition = RequestRunnerSessionCancellation(
+        request_id,
+        run_ref=run.run_ref,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        expected_state=session.state,
+        request_id=request_id,
+        reason=reason,
+        source_kind=source_kind,
+        actor_id=actor_id,
+        requested_at=requested_at,
+        request_order=len(session_requests) + 1,
+        primary=not session_requests,
+    )
+    persisted = _persist_transition(runtime, transition)
+    return SessionCancellationRequestResult(
+        "runner_session_cancel_requested"
+        if persisted is not None
+        else "runner_session_cancel_refused",
+        persisted is not None,
+        session.session_id if persisted is not None else None,
+    )
+
+
+def _primary_cancellation(
+    state: RuntimeState,
+    session: RunnerSessionRecord,
+) -> RunnerSessionCancellationRecord | None:
+    matches = tuple(
+        item
+        for item in state.runner_session_cancellation_requests.values()
+        if item.session_id == session.session_id
+        and item.dispatch_generation == session.dispatch_generation
+        and item.primary
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def _cancel_running_session(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    request: AdapterInvocationRequest,
+    handle: RunnerSessionHandle,
+    primary: RunnerSessionCancellationRecord,
+) -> SessionExecutionResult:
+    session = _load(runtime).runner_sessions[session.session_id]
+    sequence = 0
+    outcome: AdapterInvocationOutcome | None = None
+
+    operation = _call_cancellation_operation(
+        "cooperative_cancel",
+        handle.request_cancel,
+    )
+    sequence = _persist_cancellation_operation(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        primary=primary,
+        sequence=sequence,
+        operation=operation,
+    )
+    outcome = _wait_for_completion(
+        handle,
+        seconds=cooperative_cancel_grace_seconds,
+    )
+
+    if outcome is None:
+        state = _load(runtime)
+        current = state.runner_sessions[session.session_id]
+        if current.state == "cancellation_requested":
+            terminating = AdvanceRunnerSession(
+                f"cli:run.session-terminating:{session.session_id}",
+                run_ref=run_ref,
+                session_id=session.session_id,
+                dispatch_generation=session.dispatch_generation,
+                session_fencing_token=session.session_fencing_token,
+                expected_state="cancellation_requested",
+                next_state="terminating",
+                occurred_at=max(_now(), primary.requested_at),
+            )
+            persisted = _persist_transition(runtime, terminating)
+            if persisted is not None:
+                session = persisted.runner_sessions[session.session_id]
+        operation = _call_cancellation_operation(
+            "terminate",
+            handle.terminate,
+        )
+        sequence = _persist_cancellation_operation(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            primary=primary,
+            sequence=sequence,
+            operation=operation,
+        )
+        outcome = _wait_for_completion(
+            handle,
+            seconds=terminate_grace_seconds,
+        )
+
+    if outcome is None:
+        operation = _call_cancellation_operation("kill", handle.kill)
+        sequence = _persist_cancellation_operation(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            primary=primary,
+            sequence=sequence,
+            operation=operation,
+        )
+        outcome = _poll_handle(handle)
+
+    cleanup = _call_cleanup(handle.cleanup)
+    _persist_cleanup_operation(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        primary=primary,
+        sequence=sequence,
+        cleanup=cleanup,
+    )
+    state = _load(runtime)
+    session = state.runner_sessions[session.session_id]
+    if outcome is not None:
+        if isinstance(outcome, AdapterSuccessResult):
+            return _persist_completion(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                request=request,
+                outcome=outcome,
+                cleanup_disposition=cleanup.disposition,
+                primary=primary,
+            )
+        if isinstance(outcome, AdapterErrorResult):
+            diagnostic_digest = runtime.cas_store.put_bytes(
+                start_refusal_diagnostic_bytes(outcome)
+            )
+            return _persist_adapter_error(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                outcome=outcome,
+                diagnostic_digest=diagnostic_digest,
+                cleanup_disposition=cleanup.disposition,
+                terminal_state=(
+                    "interrupted"
+                    if outcome.error_kind == "cancelled"
+                    else "failed"
+                ),
+                primary=primary,
+            )
+    terminal_state = (
+        "interrupted"
+        if cleanup.disposition in {"not_required", "complete"}
+        else "lost"
+    )
+    diagnostic_digest = runtime.cas_store.put_bytes(
+        _canonical_json_bytes(
+            {
+                "cleanup_disposition": cleanup.disposition,
+                "outcome": "no_terminal_adapter_outcome",
+            }
+        )
+    )
+    completion = _completion_record(
+        session=session,
+        terminal_state=terminal_state,
+        exit_kind="cancelled" if terminal_state == "interrupted" else "lost",
+        adapter_outcome_kind="error",
+        adapter_error_kind="cancelled",
+        evidence_digest=None,
+        diagnostic_digest=diagnostic_digest,
+        cleanup_disposition=cleanup.disposition,
+        redaction_policy_id=request.redaction_policy.policy_id,
+        primary=primary,
+    )
+    if _persist_completion_record(runtime, run_ref, session, completion) is None:
+        return SessionExecutionResult("completion_refused")
+    return SessionExecutionResult(
+        "adapter_failure",
+        adapter_error_kind="cancelled",
+    )
+
+
+def _cancel_before_external_start(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    primary: RunnerSessionCancellationRecord,
+) -> SessionExecutionResult:
+    diagnostic_digest = runtime.cas_store.put_bytes(
+        _canonical_json_bytes({"external_start": False})
+    )
+    completion = _completion_record(
+        session=session,
+        terminal_state="interrupted",
+        exit_kind="cancelled",
+        adapter_outcome_kind="error",
+        adapter_error_kind="cancelled",
+        evidence_digest=None,
+        diagnostic_digest=diagnostic_digest,
+        cleanup_disposition="not_required",
+        redaction_policy_id="runner-session-default",
+        primary=primary,
+    )
+    if _persist_completion_record(runtime, run_ref, session, completion) is None:
+        return SessionExecutionResult("completion_refused")
+    return SessionExecutionResult(
+        "adapter_failure",
+        adapter_error_kind="cancelled",
+    )
+
+
+def _wait_for_completion(
+    handle: RunnerSessionHandle,
+    *,
+    seconds: float,
+) -> AdapterInvocationOutcome | None:
+    deadline = _monotonic() + seconds
+    while True:
+        outcome = _poll_handle(handle)
+        if outcome is not None or _monotonic() >= deadline:
+            return outcome
+        _sleep(min(_POLL_INTERVAL_SECONDS, deadline - _monotonic()))
+
+
+def _poll_handle(handle: RunnerSessionHandle) -> AdapterInvocationOutcome | None:
+    try:
+        outcome = handle.poll_completion()
+    except Exception:
+        return None
+    if outcome is None or isinstance(
+        outcome, (AdapterSuccessResult, AdapterErrorResult)
+    ):
+        return outcome
+    raise TypeError("runner session handle returned malformed completion")
+
+
+def _call_cancellation_operation(
+    operation: str,
+    call: Callable[[], RunnerCancellationOperationResult],
+) -> RunnerCancellationOperationResult:
+    try:
+        result = call()
+        if not isinstance(result, RunnerCancellationOperationResult):
+            raise TypeError("invalid cancellation operation result")
+        return result
+    except Exception as exc:
+        now = _now()
+        return RunnerCancellationOperationResult(
+            operation,
+            "failed",
+            now,
+            now,
+            _signal_digest(type(exc).__qualname__),
+        )
+
+
+def _call_cleanup(
+    call: Callable[[], RunnerCleanupResult],
+) -> RunnerCleanupResult:
+    try:
+        result = call()
+        if not isinstance(result, RunnerCleanupResult):
+            raise TypeError("invalid cleanup result")
+        return result
+    except Exception as exc:
+        now = _now()
+        return RunnerCleanupResult(
+            "orphan_risk",
+            now,
+            now,
+            _signal_digest(type(exc).__qualname__),
+        )
+
+
+def _persist_cancellation_operation(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    primary: RunnerSessionCancellationRecord,
+    sequence: int,
+    operation: RunnerCancellationOperationResult,
+) -> int:
+    if not isinstance(operation, RunnerCancellationOperationResult):
+        raise TypeError("cancellation operation returned an invalid result")
+    started_at = max(primary.requested_at, operation.started_at)
+    completed_at = max(started_at, operation.completed_at)
+    diagnostic = _canonical_json_bytes(
+        {
+            "operation": operation.operation,
+            "result": operation.result,
+            "reported_diagnostic_digest": operation.diagnostic_digest,
+        }
+    )
+    digest = runtime.cas_store.put_bytes(diagnostic)
+    next_sequence = sequence + 1
+    persisted = _persist_transition(
+        runtime,
+        RecordRunnerSessionCancellationAttempt(
+            f"cli:run.session-cancel-attempt:{session.session_id}:{next_sequence}",
+            run_ref=run_ref,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            session_fencing_token=session.session_fencing_token,
+            expected_state=session.state,
+            attempt_id=f"{session.session_id}:cancel-attempt:{next_sequence}",
+            request_id=primary.request_id,
+            sequence=next_sequence,
+            operation=operation.operation,
+            result=operation.result,
+            started_at=started_at,
+            completed_at=completed_at,
+            bounded_diagnostic_digest=digest,
+        ),
+    )
+    if persisted is None:
+        raise RuntimeError("runner cancellation attempt persistence refused")
+    return next_sequence
+
+
+def _persist_cleanup_operation(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    primary: RunnerSessionCancellationRecord,
+    sequence: int,
+    cleanup: RunnerCleanupResult,
+) -> None:
+    if not isinstance(cleanup, RunnerCleanupResult):
+        raise TypeError("cleanup returned an invalid result")
+    operation = RunnerCancellationOperationResult(
+        "transport_cleanup",
+        (
+            "succeeded"
+            if cleanup.disposition in {"not_required", "complete"}
+            else "failed"
+        ),
+        cleanup.started_at,
+        cleanup.completed_at,
+        cleanup.diagnostic_digest,
+    )
+    _persist_cancellation_operation(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        primary=primary,
+        sequence=sequence,
+        operation=operation,
+    )
 
 
 def _persist_completion(
@@ -419,6 +949,7 @@ def _persist_completion(
     request: AdapterInvocationRequest,
     outcome: AdapterInvocationOutcome,
     cleanup_disposition: str,
+    primary: RunnerSessionCancellationRecord | None = None,
 ) -> SessionExecutionResult:
     dispatch_echo = outcome.dispatch_echo
     if dispatch_echo is None:
@@ -448,7 +979,7 @@ def _persist_completion(
         return SessionExecutionResult("session_reconciliation_required")
     if isinstance(outcome, AdapterErrorResult):
         diagnostic_digest = runtime.cas_store.put_bytes(
-            _canonical_json_bytes(outcome.diagnostics)
+            start_refusal_diagnostic_bytes(outcome)
         )
         return _persist_adapter_error(
             runtime,
@@ -489,7 +1020,10 @@ def _persist_completion(
         runner_result_evidence_bytes(evidence)
     )
     diagnostic_digest = runtime.cas_store.put_bytes(
-        _canonical_json_bytes(outcome.evidence_construction_diagnostics)
+        _bounded_session_diagnostic_bytes(
+            outcome.evidence_construction_diagnostics,
+            redaction_policy=request.redaction_policy,
+        )
     )
     completion = _completion_record(
         session=session,
@@ -501,6 +1035,7 @@ def _persist_completion(
         diagnostic_digest=diagnostic_digest,
         cleanup_disposition=cleanup_disposition,
         redaction_policy_id=outcome.redaction_policy_id,
+        primary=primary,
     )
     persisted = _persist_completion_record(runtime, run_ref, session, completion)
     if persisted is None:
@@ -516,17 +1051,20 @@ def _persist_adapter_error(
     outcome: AdapterErrorResult,
     diagnostic_digest: str,
     cleanup_disposition: str,
+    terminal_state: str = "failed",
+    primary: RunnerSessionCancellationRecord | None = None,
 ) -> SessionExecutionResult:
     completion = _completion_record(
         session=session,
-        terminal_state="failed",
-        exit_kind="error",
+        terminal_state=terminal_state,
+        exit_kind="cancelled" if terminal_state == "interrupted" else "error",
         adapter_outcome_kind="error",
         adapter_error_kind=outcome.error_kind,
         evidence_digest=None,
         diagnostic_digest=diagnostic_digest,
         cleanup_disposition=cleanup_disposition,
         redaction_policy_id=outcome.redaction_policy_id,
+        primary=primary,
     )
     if _persist_completion_record(runtime, run_ref, session, completion) is None:
         return SessionExecutionResult("completion_refused")
@@ -547,6 +1085,7 @@ def _completion_record(
     diagnostic_digest: str,
     cleanup_disposition: str,
     redaction_policy_id: str,
+    primary: RunnerSessionCancellationRecord | None = None,
 ) -> RunnerSessionCompletionRecord:
     completion_id = f"completion-{uuid4().hex}"
     return RunnerSessionCompletionRecord(
@@ -560,10 +1099,14 @@ def _completion_record(
         adapter_outcome_kind=adapter_outcome_kind,
         adapter_error_kind=adapter_error_kind,
         runner_result_evidence_digest=evidence_digest,
-        primary_cancellation_request_id=None,
+        primary_cancellation_request_id=(
+            None if primary is None else primary.request_id
+        ),
         cleanup_disposition=cleanup_disposition,
         started_at=session.started_at,
-        cancel_requested_at=None,
+        cancel_requested_at=(
+            None if primary is None else primary.requested_at
+        ),
         completed_at=max(_now(), session.started_at or session.created_at),
         bounds_summary="bounded",
         truncation_metadata="none",
@@ -850,6 +1393,24 @@ def _canonical_json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def _bounded_session_diagnostic_bytes(
+    value: object,
+    *,
+    redaction_policy: RedactionPolicy,
+) -> bytes:
+    redacted = redaction_policy.redact_authority_value(value)
+    payload = _canonical_json_bytes(redacted)
+    if len(payload) <= SESSION_DIAGNOSTIC_MAX_BYTES:
+        return payload
+    return _canonical_json_bytes(
+        {
+            "full_diagnostic_digest": f"sha256:{sha256(payload).hexdigest()}",
+            "observed_bytes": len(payload),
+            "truncated": True,
+        }
+    )
+
+
 def _signal_digest(value: object) -> str:
     payload = _canonical_json_bytes(_stable_signal_value(value))
     return f"sha256:{sha256(payload).hexdigest()}"
@@ -906,6 +1467,7 @@ def _sleep(seconds: float) -> None:
 
 
 __all__ = (
+    "SESSION_DIAGNOSTIC_MAX_BYTES",
     "SessionExecutionResult",
     "execute_runner_session",
     "session_cancellation_token",

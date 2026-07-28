@@ -1480,10 +1480,10 @@ def test_bounded_execution_omits_component_authority_for_default_codex_request(
             )
             self.request: AdapterInvocationRequest | None = None
 
-        def _invoke_bounded(
+        def _transport_request(
             self,
             request: AdapterInvocationRequest,
-        ) -> AdapterErrorResult:
+        ) -> object:
             self.request = request
             return AdapterErrorResult.from_unredacted(
                 adapter_id="codex-default",
@@ -1909,12 +1909,12 @@ def test_bounded_unit_timeout_failure_creates_no_observation_or_action(
     )
     after = _load(runtime)
 
-    assert result.code == "session_reconciliation_required"
-    assert result.adapter_error_kind is None
+    assert result.code == "adapter_failure"
+    assert result.adapter_error_kind == "result_parse_failed"
     session_id = after.runs[cast(str, result.run_id)].current_session_id
     assert session_id is not None
-    assert after.runner_sessions[session_id].state == "starting"
-    assert session_id not in after.runner_session_completions
+    assert after.runner_sessions[session_id].state == "failed"
+    assert session_id in after.runner_session_completions
 
     assert result.activation_id is not None
     retry = run_bounded_execution_unit(
@@ -1924,10 +1924,10 @@ def test_bounded_unit_timeout_failure_creates_no_observation_or_action(
     )
     after_retry = _load(runtime)
 
-    assert retry.code == "session_reconciliation_required"
-    assert after_retry.runner_observations == {}
-    assert after_retry.artifacts == {}
-    assert after_retry.activation_routes == ()
+    assert retry.code == "observation_accepted"
+    assert after_retry.runner_observations
+    assert after_retry.artifacts
+    assert after_retry.activation_routes
 
 
 def test_bounded_unit_adapter_conversion_refusal_creates_no_evidence(
@@ -2224,8 +2224,8 @@ def test_bounded_unit_dispatch_echo_mismatch_refuses_before_kernel_observation(
     )
     after = _load(runtime)
 
-    assert result.code == "session_reconciliation_required"
-    assert result.adapter_error_kind is None
+    assert result.code == "adapter_failure"
+    assert result.adapter_error_kind == "result_parse_failed"
     assert len(after.runs) == 1
     assert after.runner_observations == {}
     assert after.artifacts == {}

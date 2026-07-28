@@ -10,8 +10,10 @@ import os
 import signal
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
@@ -19,6 +21,8 @@ from typing import IO, ClassVar, TypeAlias, cast
 
 from millrace.adapters.runner_contract import (
     RedactionPolicy,
+    RunnerCancellationOperationResult,
+    RunnerCleanupResult,
     canonicalize_redaction_policy,
 )
 
@@ -153,6 +157,31 @@ class SubprocessTransport:
     ) -> SubprocessTransportOutcome:
         if not isinstance(request, SubprocessTransportRequest):
             raise TypeError("request must be SubprocessTransportRequest")
+        started = self.start(request)
+        if isinstance(started, SubprocessTransportError):
+            return started
+        try:
+            started.process.wait(timeout=request.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            started.kill()
+            started.cleanup()
+            return SubprocessTransportError(error_kind="timeout")
+        outcome = started.poll_completion()
+        if outcome is None:
+            return SubprocessTransportError(
+                error_kind="invocation_failed",
+                diagnostics="subprocess completion was unavailable",
+            )
+        return outcome
+
+    def start(
+        self,
+        request: SubprocessTransportRequest,
+    ) -> SubprocessTransportHandle | SubprocessTransportError:
+        """Start a locally owned process and return its live bounded handle."""
+
+        if not isinstance(request, SubprocessTransportRequest):
+            raise TypeError("request must be SubprocessTransportRequest")
         if request.pre_cancelled:
             return SubprocessTransportError(error_kind="cancelled")
         if len(request.stdin_bytes) > request.max_stdin_bytes:
@@ -214,45 +243,148 @@ class SubprocessTransport:
         stdout_capture.start()
         stderr_capture.start()
         stdin_writer.start()
+        return SubprocessTransportHandle(
+            process=process,
+            request=request,
+            stdout_capture=stdout_capture,
+            stderr_capture=stderr_capture,
+            stdin_writer=stdin_writer,
+            termination_lock=termination_lock,
+        )
 
+
+class SubprocessTransportHandle:
+    """Live ownership of one process group and its bounded pipe workers."""
+
+    def __init__(
+        self,
+        *,
+        process: subprocess.Popen[bytes],
+        request: SubprocessTransportRequest,
+        stdout_capture: _BoundedPipeCapture,
+        stderr_capture: _BoundedPipeCapture,
+        stdin_writer: _StdinWriter,
+        termination_lock: threading.Lock,
+    ) -> None:
+        self.process = process
+        self._request = request
+        self._stdout_capture = stdout_capture
+        self._stderr_capture = stderr_capture
+        self._stdin_writer = stdin_writer
+        self._termination_lock = termination_lock
+        self._outcome: SubprocessTransportOutcome | None = None
+        self._delivered = False
+
+    @property
+    def readers_joined(self) -> bool:
+        return (
+            self._stdout_capture.joined
+            and self._stderr_capture.joined
+            and self._stdin_writer.joined
+        )
+
+    def poll_completion(self) -> SubprocessTransportOutcome | None:
+        if self._delivered:
+            return None
+        if self._outcome is None:
+            if self.process.poll() is None:
+                return None
+            self._join_workers()
+            self._outcome = self._completed_outcome()
+        self._delivered = True
+        return self._outcome
+
+    def request_cancel(self) -> RunnerCancellationOperationResult:
+        return _operation_result("cooperative_cancel", "unsupported")
+
+    def terminate(self) -> RunnerCancellationOperationResult:
+        return self._signal("terminate", signal.SIGTERM)
+
+    def kill(self) -> RunnerCancellationOperationResult:
+        return self._signal("kill", signal.SIGKILL)
+
+    def cleanup(self) -> RunnerCleanupResult:
+        started_at = time.time_ns()
+        if self.process.poll() is None:
+            try:
+                self.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+        if self.process.poll() is not None:
+            self._join_workers()
+        disposition = (
+            "complete"
+            if self.process.poll() is not None and self.readers_joined
+            else "orphan_risk"
+        )
+        completed_at = max(started_at, time.time_ns())
+        return RunnerCleanupResult(
+            disposition,
+            started_at,
+            completed_at,
+            _diagnostic_digest(
+                f"cleanup:{disposition}:readers_joined={self.readers_joined}"
+            ),
+        )
+
+    def _signal(
+        self,
+        operation: str,
+        signum: int,
+    ) -> RunnerCancellationOperationResult:
+        started_at = time.time_ns()
+        result = "succeeded"
         try:
-            process.wait(timeout=request.timeout_seconds)
-        except subprocess.TimeoutExpired:
-            _terminate_process(process)
-            stdout_capture.join()
-            stderr_capture.join()
-            stdin_writer.join()
-            return SubprocessTransportError(error_kind="timeout")
+            with self._termination_lock:
+                if self.process.poll() is None:
+                    try:
+                        os.killpg(os.getpgid(self.process.pid), signum)
+                    except Exception:
+                        if signum == signal.SIGTERM:
+                            self.process.terminate()
+                        else:
+                            self.process.kill()
+        except Exception:
+            result = "failed"
+        return RunnerCancellationOperationResult(
+            operation,
+            result,
+            started_at,
+            max(started_at, time.time_ns()),
+            _diagnostic_digest(f"{operation}:{result}"),
+        )
 
-        stdout_capture.join()
-        stderr_capture.join()
-        stdin_writer.join()
+    def _join_workers(self) -> None:
+        self._stdout_capture.join()
+        self._stderr_capture.join()
+        self._stdin_writer.join()
 
+    def _completed_outcome(self) -> SubprocessTransportOutcome:
+        request = self._request
         if (
-            stdout_capture.read_error is not None
-            or stderr_capture.read_error is not None
+            self._stdout_capture.read_error is not None
+            or self._stderr_capture.read_error is not None
+            or not self.readers_joined
         ):
             return SubprocessTransportError(
                 error_kind="invocation_failed",
                 diagnostics="subprocess output capture failed",
             )
-        if stdout_capture.exceeded:
+        if self._stdout_capture.exceeded:
             return SubprocessTransportError(error_kind="output_too_large")
-
         try:
-            stdout_text = stdout_capture.data.decode("utf-8")
             stdout = _redact_text(
-                stdout_text,
+                self._stdout_capture.data.decode("utf-8"),
                 request.redaction_policy,
             )
             if len(stdout.encode("utf-8")) > request.max_stdout_bytes:
                 return SubprocessTransportError(error_kind="output_too_large")
-            if stderr_capture.exceeded:
+            if self._stderr_capture.exceeded:
                 stderr = ""
                 stderr_truncated = True
             else:
                 stderr, stderr_truncated = _redact_and_bound_text(
-                    stderr_capture.data.decode("utf-8", errors="replace"),
+                    self._stderr_capture.data.decode("utf-8", errors="replace"),
                     maximum_bytes=request.max_stderr_bytes,
                     redaction_policy=request.redaction_policy,
                 )
@@ -266,17 +398,21 @@ class SubprocessTransport:
                 error_kind="redaction_refused",
                 diagnostics=_REDACTION_REFUSED_DIAGNOSTIC,
             )
-
-        if process.returncode != 0:
+        returncode = self.process.returncode
+        if returncode != 0:
             return SubprocessTransportError(
-                error_kind="nonzero_exit",
-                exit_code=process.returncode,
+                error_kind=(
+                    "cancelled"
+                    if returncode is not None and returncode < 0
+                    else "nonzero_exit"
+                ),
+                exit_code=returncode,
                 stdout=stdout,
                 stderr=stderr,
                 stderr_truncated=stderr_truncated,
             )
         return SubprocessTransportSuccess(
-            exit_code=process.returncode,
+            exit_code=cast(int, returncode),
             stdout=stdout,
             stderr=stderr,
             stderr_truncated=stderr_truncated,
@@ -324,6 +460,24 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
             process.wait(timeout=1)
         except Exception:
             pass
+
+
+def _operation_result(
+    operation: str,
+    result: str,
+) -> RunnerCancellationOperationResult:
+    started_at = time.time_ns()
+    return RunnerCancellationOperationResult(
+        operation,
+        result,
+        started_at,
+        max(started_at, time.time_ns()),
+        _diagnostic_digest(f"{operation}:{result}"),
+    )
+
+
+def _diagnostic_digest(value: str) -> str:
+    return f"sha256:{sha256(value.encode('utf-8')).hexdigest()}"
 
 
 def _redact_and_bound_text(
@@ -411,11 +565,16 @@ class _BoundedPipeCapture:
     def read_error(self) -> Exception | None:
         return self._read_error
 
+    @property
+    def joined(self) -> bool:
+        return not self._thread.is_alive()
+
     def start(self) -> None:
         self._thread.start()
 
-    def join(self) -> None:
+    def join(self) -> bool:
         self._thread.join(timeout=1)
+        return self.joined
 
     def _read_loop(self) -> None:
         try:
@@ -451,8 +610,13 @@ class _StdinWriter:
     def start(self) -> None:
         self._thread.start()
 
-    def join(self) -> None:
+    @property
+    def joined(self) -> bool:
+        return not self._thread.is_alive()
+
+    def join(self) -> bool:
         self._thread.join(timeout=1)
+        return self.joined
 
     def _write(self) -> None:
         try:
@@ -509,6 +673,7 @@ def _require_positive_number(value: object, field_name: str) -> float:
 __all__ = (
     "SubprocessTransport",
     "SubprocessTransportError",
+    "SubprocessTransportHandle",
     "SubprocessTransportOutcome",
     "SubprocessTransportRequest",
     "SubprocessTransportSuccess",

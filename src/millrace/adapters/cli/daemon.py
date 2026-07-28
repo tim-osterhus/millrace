@@ -303,7 +303,10 @@ def _run_locked_loop(
 
     with _SignalStop() as stop:
         while options.max_ticks is None or iterations < options.max_ticks:
-            result = _run_one_bounded_unit(options)
+            result = _run_one_bounded_unit(
+                options,
+                daemon_stop_requested=lambda: stop.requested,
+            )
             iterations += 1
             last_result = _result_data(result)
 
@@ -325,6 +328,20 @@ def _run_locked_loop(
                     stream=progress_stream,
                     iteration=iterations,
                     result=result,
+                )
+
+            if stop.requested and result.adapter_error_kind == "cancelled":
+                return _summary(
+                    options,
+                    iterations=iterations,
+                    units_started=units_started,
+                    units_succeeded=units_succeeded,
+                    units_refused=units_refused,
+                    adapter_failures=adapter_failures,
+                    idle_iterations=idle_iterations,
+                    lifecycle_transitions_applied=lifecycle_transitions_applied,
+                    stopped_reason="signal",
+                    last_result=last_result,
                 )
 
             stopped_reason = _non_idle_stop_reason(result)
@@ -388,7 +405,11 @@ def _run_locked_loop(
     )
 
 
-def _run_one_bounded_unit(options: DaemonRunOptions) -> BoundedExecutionUnitResult:
+def _run_one_bounded_unit(
+    options: DaemonRunOptions,
+    *,
+    daemon_stop_requested: Callable[[], bool],
+) -> BoundedExecutionUnitResult:
     runtime = open_runtime_context(options.paths, command=_COMMAND)
     try:
         if options.activation_id is None:
@@ -401,6 +422,7 @@ def _run_one_bounded_unit(options: DaemonRunOptions) -> BoundedExecutionUnitResu
             adapter_kind=options.adapter_kind,
             local_config=options.local_config,
             actor_id=options.actor_id,
+            daemon_stop_requested=daemon_stop_requested,
         )
     finally:
         runtime.close()

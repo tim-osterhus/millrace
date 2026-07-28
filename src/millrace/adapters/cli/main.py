@@ -532,6 +532,20 @@ def _add_runs_commands(
     show.set_defaults(command="runs.show")
     help_parsers["runs.show"] = show
 
+    cancel = subparsers.add_parser(
+        "cancel",
+        help="Request cancellation of the current runner session.",
+    )
+    cancel.add_argument("run_id", metavar="RUN_ID")
+    cancel.add_argument(
+        "--input-id",
+        required=True,
+        metavar="ID",
+        help="Replay-safe durable cancellation request ID.",
+    )
+    cancel.set_defaults(command="runs.cancel")
+    help_parsers["runs.cancel"] = cancel
+
 
 def _add_trace_commands(
     group_parser: argparse.ArgumentParser,

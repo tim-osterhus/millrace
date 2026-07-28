@@ -6,6 +6,10 @@ from collections import Counter
 
 from millrace.adapters.cli.context import CliCommandError, open_runtime_context
 from millrace.adapters.cli.output import CliSuccess, ExitCode, success_result
+from millrace.adapters.cli.session_coordinator import (
+    cooperative_cancel_grace_seconds,
+    terminate_grace_seconds,
+)
 from millrace.operator.dispatch import list_ready_dispatch_candidates
 
 
@@ -64,6 +68,12 @@ def handle_doctor_command(namespace: object) -> CliSuccess:
                 "candidate_count": len(ready.candidates),
                 "diagnostic_count": len(ready.diagnostics),
                 "severity_counts": dict(sorted(severity_counts.items())),
+            },
+            "runner_session_mechanics": {
+                "cooperative_cancel_grace_seconds": (
+                    cooperative_cancel_grace_seconds
+                ),
+                "terminate_grace_seconds": terminate_grace_seconds,
             },
             "required_paths": {
                 "workspace_path": {
