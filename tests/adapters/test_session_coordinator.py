@@ -886,6 +886,183 @@ def test_running_write_failure_cleans_real_subprocess(
                 pass
 
 
+def test_live_handle_fence_cleans_after_attempt_persistence_failure(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = None
+    handle = None
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = _CancellingHandle(runtime, request)
+        return replace(_success_start(request), handle=handle)
+
+    def fail_attempt(*_args, **_kwargs):
+        raise RuntimeError("simulated attempt write failure")
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_cancellation_operation",
+        fail_attempt,
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    assert handle is not None
+    assert handle.operations == [
+        "cooperative_cancel",
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
+    after = _load(runtime)
+    session = next(iter(after.runner_sessions.values()))
+    assert session.state in {"cancellation_requested", "terminating"}
+    assert after.runner_observations == {}
+
+
+def test_live_handle_fence_reports_orphan_when_emergency_cleanup_raises(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = None
+    handle = None
+
+    class CleanupFailureHandle(_CancellingHandle):
+        def cleanup(self) -> RunnerCleanupResult:
+            self.operations.append("transport_cleanup")
+            raise RuntimeError("cleanup failed")
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        handle = CleanupFailureHandle(runtime, request)
+        return replace(_success_start(request), handle=handle)
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_cancellation_operation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("attempt write failed")
+        ),
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+
+    assert result.code == "runner_session_orphan_risk"
+    assert handle is not None
+    assert handle.operations[-4:] == [
+        "cooperative_cancel",
+        "terminate",
+        "kill",
+        "transport_cleanup",
+    ]
+    assert _load(runtime).runner_observations == {}
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+def test_live_subprocess_fence_cleans_after_attempt_persistence_failure(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+    captured_handles = []
+
+    class CapturingCodexAdapter(CodexAdapter):
+        def start_session(self, request):
+            started = super().start_session(request)
+            if isinstance(started, StartedSession):
+                captured_handles.append(started.handle)
+            return started
+
+    heartbeat = tmp_path / "live-fence-heartbeat.txt"
+    process_pid = tmp_path / "live-fence.pid"
+    wrapper = (
+        "import os,pathlib,time\n"
+        f"heartbeat=pathlib.Path({str(heartbeat)!r})\n"
+        f"pathlib.Path({str(process_pid)!r}).write_text(str(os.getpid()))\n"
+        "while True:\n"
+        " heartbeat.write_text(str(time.time()))\n"
+        " time.sleep(0.03)\n"
+    )
+    adapter = CapturingCodexAdapter(
+        CodexAdapterConfig(
+            adapter_id="codex-default",
+            wrapper_mode="offline_fake",
+            wrapper_argv=(sys.executable, "-c", wrapper),
+            cwd=tmp_path,
+            env_allowlist={},
+            timeout_seconds=5,
+            max_input_bundle_bytes=16384,
+            max_stdout_bytes=8192,
+            max_stderr_diagnostic_bytes=512,
+            redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        )
+    )
+    callback_calls = 0
+
+    def cancel_only_after_start() -> bool:
+        nonlocal callback_calls
+        callback_calls += 1
+        return callback_calls >= 3
+
+    def fail_attempt(*_args, **_kwargs):
+        raise RuntimeError("simulated attempt write failure")
+
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_cancellation_operation",
+        fail_attempt,
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    try:
+        result = run_bounded_execution_unit(
+            runtime,
+            local_config=AdapterLocalConfig(adapters={"codex": adapter}),
+            daemon_stop_requested=cancel_only_after_start,
+        )
+
+        assert result.code == "session_reconciliation_required"
+        deadline = time.time() + 2
+        while not heartbeat.exists() and time.time() < deadline:
+            time.sleep(0.01)
+        stable = heartbeat.read_text()
+        time.sleep(0.15)
+        assert heartbeat.read_text() == stable
+        after = _load(runtime)
+        session = next(iter(after.runner_sessions.values()))
+        assert session.state in {"cancellation_requested", "terminating"}
+        assert session.cleanup_disposition == "pending"
+        assert after.runner_observations == {}
+    finally:
+        for live_handle in captured_handles:
+            live_handle.kill()
+            live_handle.cleanup()
+        if process_pid.exists():
+            pid = int(process_pid.read_text())
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def test_raw_adapter_error_diagnostic_is_coordinator_redacted(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

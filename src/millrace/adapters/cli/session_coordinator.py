@@ -490,7 +490,43 @@ def _start_created_session(
             handle=start_outcome.handle,
         )
     running_session = running_state.runner_sessions[session.session_id]
-    cancellation_started = False
+    try:
+        return _drive_running_session(
+            runtime,
+            run_ref=run_ref,
+            session=running_session,
+            request=request,
+            handle=start_outcome.handle,
+            deadline=deadline,
+            daemon_stop_requested=daemon_stop_requested,
+        )
+    except Exception:
+        try:
+            completion_persisted = (
+                session.session_id in _load(runtime).runner_session_completions
+            )
+        except Exception:
+            completion_persisted = False
+        if completion_persisted:
+            raise
+        return _emergency_cleanup_live_handle(
+            runtime,
+            run_ref=run_ref,
+            session=running_session,
+            handle=start_outcome.handle,
+        )
+
+
+def _drive_running_session(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    request: AdapterInvocationRequest,
+    handle: RunnerSessionHandle,
+    deadline: float,
+    daemon_stop_requested: Callable[[], bool] | None,
+) -> SessionExecutionResult:
     while True:
         if daemon_stop_requested is not None and daemon_stop_requested():
             _request_cancellation(
@@ -498,30 +534,29 @@ def _start_created_session(
                 run_id=run_ref.run_id,
                 request_id=(
                     "daemon:runner-session-cancel:"
-                    f"{running_session.session_id}"
+                    f"{session.session_id}"
                 ),
                 reason="daemon_shutdown",
                 source_kind="daemon",
                 actor_id="daemon",
             )
-        primary = _primary_cancellation(_load(runtime), running_session)
-        if primary is not None and not cancellation_started:
-            cancellation_started = True
+        primary = _primary_cancellation(_load(runtime), session)
+        if primary is not None:
             return _cancel_running_session(
                 runtime,
                 run_ref=run_ref,
-                session=running_session,
+                session=session,
                 request=request,
-                handle=start_outcome.handle,
+                handle=handle,
                 primary=primary,
             )
         try:
-            outcome = start_outcome.handle.poll_completion()
+            outcome = handle.poll_completion()
         except Exception as exc:
             _audit_session_refusal(
                 runtime,
                 run_ref=run_ref,
-                session=running_session,
+                session=session,
                 reason="runner_session_reconciliation_contradiction",
                 signal_kind="runner_completion_poll",
                 signal_digest=_signal_digest(type(exc).__qualname__),
@@ -531,21 +566,21 @@ def _start_created_session(
                 run_id=run_ref.run_id,
                 request_id=(
                     "runtime:runner-session-failure:"
-                    f"{running_session.session_id}"
+                    f"{session.session_id}"
                 ),
                 reason="runtime_failure",
                 source_kind="runtime",
                 actor_id="runtime",
             )
-            primary = _primary_cancellation(_load(runtime), running_session)
+            primary = _primary_cancellation(_load(runtime), session)
             if primary is None:
                 return SessionExecutionResult("session_reconciliation_required")
             return _cancel_running_session(
                 runtime,
                 run_ref=run_ref,
-                session=running_session,
+                session=session,
                 request=request,
-                handle=start_outcome.handle,
+                handle=handle,
                 primary=primary,
             )
         if outcome is not None:
@@ -553,7 +588,7 @@ def _start_created_session(
                 _audit_session_refusal(
                     runtime,
                     run_ref=run_ref,
-                    session=running_session,
+                    session=session,
                     reason="runner_session_reconciliation_contradiction",
                     signal_kind="runner_completion_outcome",
                     signal_digest=_signal_digest(outcome),
@@ -562,7 +597,7 @@ def _start_created_session(
             return _persist_completion(
                 runtime,
                 run_ref=run_ref,
-                session=running_session,
+                session=session,
                 request=request,
                 outcome=outcome,
                 cleanup_disposition="not_required",
@@ -574,21 +609,21 @@ def _start_created_session(
                 run_id=run_ref.run_id,
                 request_id=(
                     "runtime:runner-session-timeout:"
-                    f"{running_session.session_id}"
+                    f"{session.session_id}"
                 ),
                 reason="runner_timeout",
                 source_kind="runtime",
                 actor_id="runtime",
             )
-            primary = _primary_cancellation(_load(runtime), running_session)
+            primary = _primary_cancellation(_load(runtime), session)
             if primary is None:
                 return SessionExecutionResult("session_reconciliation_required")
             return _cancel_running_session(
                 runtime,
                 run_ref=run_ref,
-                session=running_session,
+                session=session,
                 request=request,
-                handle=start_outcome.handle,
+                handle=handle,
                 primary=primary,
             )
         _sleep(min(_POLL_INTERVAL_SECONDS, remaining))
@@ -626,10 +661,41 @@ def _recover_after_running_persistence_failure(
             )
     except Exception:
         pass
+    return _emergency_cleanup_live_handle(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        handle=handle,
+    )
+
+
+def _emergency_cleanup_live_handle(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    handle: RunnerSessionHandle,
+) -> SessionExecutionResult:
+    try:
+        _request_cancellation(
+            runtime,
+            run_id=run_ref.run_id,
+            request_id=f"runtime:runner-session-failure:{session.session_id}",
+            reason="runtime_failure",
+            source_kind="runtime",
+            actor_id="runtime",
+        )
+    except Exception:
+        pass
     _call_cancellation_operation("cooperative_cancel", handle.request_cancel)
     _call_cancellation_operation("terminate", handle.terminate)
     _call_cancellation_operation("kill", handle.kill)
-    _call_cleanup(handle.cleanup)
+    cleanup = _call_cleanup(handle.cleanup)
+    if cleanup.disposition == "orphan_risk":
+        return SessionExecutionResult(
+            "runner_session_orphan_risk",
+            adapter_error_kind="cancelled",
+        )
     return SessionExecutionResult("session_reconciliation_required")
 
 
