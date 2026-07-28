@@ -102,8 +102,11 @@ class _SignalWaitHandle:
 class _SignalWaitAdapter:
     adapter_kind = "codex"
 
+    def __init__(self, active: threading.Event | None = None) -> None:
+        self._active = active
+
     def start_session(self, request: AdapterInvocationRequest) -> StartedSession:
-        return StartedSession(
+        started = StartedSession(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
@@ -112,6 +115,9 @@ class _SignalWaitAdapter:
             f"signal-wait:{request.session_id}",
             {},
         )
+        if self._active is not None:
+            self._active.set()
+        return started
 
     def reconcile_session(self, request):
         invocation = request.invocation_request
@@ -182,21 +188,50 @@ def test_signal_during_active_session_requests_cancellation(tmp_path) -> None:
     runtime = _runtime(tmp_path, state)
     paths = runtime.paths
     _close(runtime)
-    timer = threading.Timer(0.05, lambda: os.kill(os.getpid(), signal.SIGTERM))
-    timer.start()
+    active = threading.Event()
+    stop_signal_worker = threading.Event()
+    signal_gate = threading.Lock()
+    signal_failures: list[str] = []
+
+    def signal_active_session() -> None:
+        deadline = time.monotonic() + 5
+        while not active.wait(timeout=0.01):
+            if stop_signal_worker.is_set():
+                return
+            if time.monotonic() >= deadline:
+                signal_failures.append("adapter did not start before signal deadline")
+                return
+        with signal_gate:
+            if stop_signal_worker.is_set():
+                return
+            try:
+                os.kill(os.getpid(), signal.SIGTERM)
+            except OSError as exc:
+                signal_failures.append(str(exc))
+
+    signal_worker = threading.Thread(
+        target=signal_active_session,
+        name="daemon-active-session-signal",
+    )
+    signal_worker.start()
     try:
         summary = daemon.run_daemon_loop(
             _daemon_options(
                 paths,
                 max_ticks=1,
                 local_config=AdapterLocalConfig(
-                    adapters={"codex": _SignalWaitAdapter()}
+                    adapters={"codex": _SignalWaitAdapter(active)}
                 ),
             )
         )
     finally:
-        timer.cancel()
+        with signal_gate:
+            stop_signal_worker.set()
+        signal_worker.join(timeout=1)
 
+    assert not signal_worker.is_alive()
+    assert signal_failures == []
+    assert active.is_set()
     reopened = daemon.open_runtime_context(paths, command="test")
     try:
         after = _load(reopened)
