@@ -6,6 +6,7 @@ import signal
 import threading
 import time
 
+import pytest
 from tests.cli.test_cli_daemon_loop import _close, _daemon_options, _invoke
 
 from cli.test_cli_bounded_execution_unit import (
@@ -46,6 +47,7 @@ class _SignalWaitHandle:
             dispatch_echo=DispatchEcho.from_dispatch_envelope(
                 self._request.dispatch_envelope,
                 correlation_id=self._request.correlation_id,
+                selected_adapter_kind=self._request.selected_adapter_kind,
             ),
             redaction_policy=self._request.redaction_policy,
         )
@@ -110,6 +112,7 @@ class _SignalWaitAdapter:
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             _SignalWaitHandle(request),
             f"signal-wait:{request.session_id}",
@@ -125,6 +128,7 @@ class _SignalWaitAdapter:
             DispatchEcho.from_dispatch_envelope(
                 invocation.dispatch_envelope,
                 correlation_id=invocation.correlation_id,
+                selected_adapter_kind=invocation.selected_adapter_kind,
             )
         )
 
@@ -148,6 +152,7 @@ class _OrphanSignalWaitAdapter(_SignalWaitAdapter):
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             _OrphanSignalWaitHandle(request),
             f"orphan-signal-wait:{request.session_id}",
@@ -169,6 +174,7 @@ class _IndeterminateAdapter:
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             None,
             _digest("e"),
@@ -180,6 +186,7 @@ class _IndeterminateAdapter:
             DispatchEcho.from_dispatch_envelope(
                 invocation.dispatch_envelope,
                 correlation_id=invocation.correlation_id,
+                selected_adapter_kind=invocation.selected_adapter_kind,
             )
         )
 
@@ -275,9 +282,24 @@ def test_daemon_reconciles_restart_sessions_before_new_dispatch(tmp_path) -> Non
     from millrace.adapters.cli import daemon
     from millrace.adapters.cli.run import run_bounded_execution_unit
 
+    class LocatedIndeterminateAdapter(_IndeterminateAdapter):
+        def start_session(
+            self,
+            request: AdapterInvocationRequest,
+        ) -> StartIndeterminate:
+            return StartIndeterminate(
+                DispatchEcho.from_dispatch_envelope(
+                    request.dispatch_envelope,
+                    correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
+                ),
+                {"provider_request_id": "request-1"},
+                _digest("e"),
+            )
+
     state, _ = _ready_state()
     runtime = _runtime(tmp_path, state)
-    config = AdapterLocalConfig(adapters={"codex": _IndeterminateAdapter()})
+    config = AdapterLocalConfig(adapters={"codex": LocatedIndeterminateAdapter()})
     started = run_bounded_execution_unit(runtime, local_config=config)
     assert started.code == "session_reconciliation_required"
     paths = runtime.paths
@@ -294,9 +316,7 @@ def test_daemon_reconciles_restart_sessions_before_new_dispatch(tmp_path) -> Non
 
     assert summary.stopped_reason == "runner_session_orphan_risk"
     assert summary.iterations == 0
-    session = after.runner_sessions[
-        after.runs[started.run_id].current_session_id
-    ]
+    session = after.runner_sessions[after.runs[started.run_id].current_session_id]
     assert (session.state, session.cleanup_disposition) == ("lost", "orphan_risk")
     assert len(after.runs) == 1
     assert after.runner_observations == {}
@@ -348,6 +368,59 @@ def test_daemon_reconciles_restart_sessions_before_new_dispatch(tmp_path) -> Non
     assert projected == [traced]
 
 
+@pytest.mark.parametrize("locator_damage", ("missing", "corrupt"))
+def test_daemon_restart_refuses_missing_or_corrupt_session_locator_without_writes(
+    tmp_path,
+    locator_damage: str,
+) -> None:
+    from millrace.adapters.cli import daemon
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+
+    class LocatedIndeterminateAdapter(_IndeterminateAdapter):
+        def start_session(
+            self,
+            request: AdapterInvocationRequest,
+        ) -> StartIndeterminate:
+            return StartIndeterminate(
+                DispatchEcho.from_dispatch_envelope(
+                    request.dispatch_envelope,
+                    correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
+                ),
+                {"provider_request_id": "request-1"},
+                _digest("e"),
+            )
+
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    config = AdapterLocalConfig(adapters={"codex": LocatedIndeterminateAdapter()})
+    started = run_bounded_execution_unit(runtime, local_config=config)
+    persisted = _load(runtime)
+    session = persisted.runner_sessions[
+        persisted.runs[started.run_id].current_session_id
+    ]
+    assert session.durable_locator_digest is not None
+    paths = runtime.paths
+    _close(runtime)
+    locator_path = (
+        paths.cas_path
+        / "sha256"
+        / session.durable_locator_digest.removeprefix("sha256:")
+    )
+    if locator_damage == "missing":
+        locator_path.unlink()
+    else:
+        locator_path.write_bytes(b'{"adapter_locator":')
+    database_before = paths.db_path.read_bytes()
+
+    summary = daemon.run_daemon_loop(
+        _daemon_options(paths, max_ticks=1, local_config=config)
+    )
+
+    assert summary.stopped_reason == "state_open_failed"
+    assert paths.db_path.read_bytes() == database_before
+
+
 def test_runs_cancel_persists_fixed_operator_reason_and_replays(tmp_path) -> None:
     from millrace.adapters.cli import daemon
     from millrace.adapters.cli.run import run_bounded_execution_unit
@@ -356,9 +429,7 @@ def test_runs_cancel_persists_fixed_operator_reason_and_replays(tmp_path) -> Non
     runtime = _runtime(tmp_path, state)
     result = run_bounded_execution_unit(
         runtime,
-        local_config=AdapterLocalConfig(
-            adapters={"codex": _IndeterminateAdapter()}
-        ),
+        local_config=AdapterLocalConfig(adapters={"codex": _IndeterminateAdapter()}),
     )
     paths = runtime.paths
     _close(runtime)
@@ -389,9 +460,7 @@ def test_runs_cancel_persists_fixed_operator_reason_and_replays(tmp_path) -> Non
         after = _load(reopened)
     finally:
         reopened.close()
-    cancellation = after.runner_session_cancellation_requests[
-        "operator-cancel-cli-1"
-    ]
+    cancellation = after.runner_session_cancellation_requests["operator-cancel-cli-1"]
     assert (cancellation.reason, cancellation.source_kind) == (
         "operator_cancel_work",
         "operator",

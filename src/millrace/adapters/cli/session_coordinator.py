@@ -97,6 +97,12 @@ class SessionCancellationRequestResult:
     session_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _StoredReconciliationLocator:
+    handle_id_digest: str | None
+    adapter_locator: Mapping[str, AuthorityValue]
+
+
 def execute_runner_session(
     runtime: OpenRuntimeContext,
     *,
@@ -214,8 +220,8 @@ def _reconcile_session(
             session=session,
             signal=request,
         )
-    locator = _load_reconciliation_locator(runtime, session)
-    if locator is None:
+    stored_locator = _load_reconciliation_locator(runtime, session)
+    if stored_locator is None:
         return _reconciliation_contradiction(
             runtime,
             run_ref=run_ref,
@@ -224,7 +230,10 @@ def _reconcile_session(
         )
     try:
         outcome = adapter.reconcile_session(
-            RunnerSessionReconcileRequest(request, locator)
+            RunnerSessionReconcileRequest(
+                request,
+                stored_locator.adapter_locator,
+            )
         )
     except Exception:
         return _reconciliation_contradiction(
@@ -245,6 +254,7 @@ def _reconcile_session(
         echo.validate_against(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
     except (AttributeError, TypeError, ValueError):
         return _reconciliation_contradiction(
@@ -297,10 +307,22 @@ def _reconcile_session(
             primary=_primary_cancellation(_load(runtime), session),
         )
     if isinstance(outcome, VerifiedLive):
-        locator_digest = _safe_locator_digest(
+        if (
+            stored_locator.handle_id_digest is not None
+            and _handle_id_digest(outcome.handle_id)
+            != stored_locator.handle_id_digest
+        ):
+            return _reconciliation_contradiction(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                signal={"verified_live_handle_id": outcome.handle_id},
+            )
+        locator_digest = _safe_coordinator_locator_digest(
             runtime,
             request,
-            outcome.durable_locator_metadata,
+            handle_id=outcome.handle_id,
+            adapter_locator=outcome.durable_locator_metadata,
         )
         if locator_digest is None:
             return _reconciliation_contradiction(
@@ -336,6 +358,17 @@ def _reconcile_session(
             daemon_stop_requested=daemon_stop_requested,
         )
     if isinstance(outcome, CleanupPending):
+        if (
+            stored_locator.handle_id_digest is None
+            or _handle_id_digest(outcome.handle_id)
+            != stored_locator.handle_id_digest
+        ):
+            return _reconciliation_contradiction(
+                runtime,
+                run_ref=run_ref,
+                session=session,
+                signal={"cleanup_pending_handle_id": outcome.handle_id},
+            )
         return _resume_reconciled_cleanup(
             runtime,
             run_ref=run_ref,
@@ -378,15 +411,41 @@ def _advance_reconciled_starting_session(
 def _load_reconciliation_locator(
     runtime: OpenRuntimeContext,
     session: RunnerSessionRecord,
-) -> Mapping[str, AuthorityValue] | None:
+) -> _StoredReconciliationLocator | None:
     if session.durable_locator_digest is None:
-        return {} if session.state == "starting" else None
+        return (
+            _StoredReconciliationLocator(None, {})
+            if session.state == "starting"
+            else None
+        )
     try:
         payload = runtime.cas_store.get_bytes(session.durable_locator_digest)
         locator = runner_session_locator_from_bytes(payload)
     except (OSError, TypeError, ValueError):
         return None
-    return locator
+    if set(locator) - {"handle_id_digest", "adapter_locator"}:
+        return None
+    handle_id_digest = locator.get("handle_id_digest")
+    adapter_locator = locator.get("adapter_locator")
+    if (
+        (
+            handle_id_digest is not None
+            and not isinstance(handle_id_digest, str)
+        )
+        or not isinstance(adapter_locator, Mapping)
+    ):
+        return None
+    if isinstance(handle_id_digest, str):
+        if (
+            not handle_id_digest.startswith("sha256:")
+            or len(handle_id_digest) != 71
+            or any(
+                character not in "0123456789abcdef"
+                for character in handle_id_digest[7:]
+            )
+        ):
+            return None
+    return _StoredReconciliationLocator(handle_id_digest, adapter_locator)
 
 
 def _reconciliation_contradiction(
@@ -485,28 +544,6 @@ def _resume_reconciled_cleanup(
             session=_load(runtime).runner_sessions[session.session_id],
             signal={"cleanup_completed_without_terminal_outcome": True},
         )
-    if isinstance(outcome, AdapterErrorResult) and outcome.error_kind == "cancelled":
-        diagnostic_bytes = _adapter_error_diagnostic_bytes(
-            outcome,
-            request=request,
-        )
-        if diagnostic_bytes is None:
-            return _reconciliation_contradiction(
-                runtime,
-                run_ref=run_ref,
-                session=_load(runtime).runner_sessions[session.session_id],
-                signal=outcome,
-            )
-        return _persist_adapter_error(
-            runtime,
-            run_ref=run_ref,
-            session=_load(runtime).runner_sessions[session.session_id],
-            outcome=outcome,
-            diagnostic_digest=runtime.cas_store.put_bytes(diagnostic_bytes),
-            cleanup_disposition=cleanup.disposition,
-            terminal_state="interrupted",
-            primary=primary,
-        )
     return _persist_completion(
         runtime,
         run_ref=run_ref,
@@ -515,6 +552,12 @@ def _resume_reconciled_cleanup(
         outcome=outcome,
         cleanup_disposition=cleanup.disposition,
         primary=primary,
+        adapter_error_terminal_state=(
+            "interrupted"
+            if isinstance(outcome, AdapterErrorResult)
+            and outcome.error_kind == "cancelled"
+            else "failed"
+        ),
     )
 
 
@@ -652,6 +695,7 @@ def _start_created_session(
             start_outcome.dispatch_echo.validate_against(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             )
         except (TypeError, ValueError):
             _audit_session_refusal(
@@ -665,7 +709,12 @@ def _start_created_session(
             return SessionExecutionResult("session_reconciliation_required")
         locator = start_outcome.durable_locator_metadata
         if locator is not None:
-            locator_digest = _safe_locator_digest(runtime, request, locator)
+            locator_digest = _safe_coordinator_locator_digest(
+                runtime,
+                request,
+                handle_id=None,
+                adapter_locator=locator,
+            )
             if locator_digest is None:
                 _audit_session_refusal(
                     runtime,
@@ -705,10 +754,12 @@ def _start_created_session(
             start_outcome.dispatch_echo.validate_against(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             )
             error_echo.validate_against(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             )
         except (AttributeError, TypeError, ValueError):
             _audit_session_refusal(
@@ -781,6 +832,7 @@ def _start_created_session(
         start_outcome.dispatch_echo.validate_against(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
     except (TypeError, ValueError):
         _audit_session_refusal(
@@ -793,10 +845,11 @@ def _start_created_session(
         )
         return SessionExecutionResult("session_reconciliation_required")
 
-    locator_digest = _safe_locator_digest(
+    locator_digest = _safe_coordinator_locator_digest(
         runtime,
         request,
-        start_outcome.durable_locator_metadata,
+        handle_id=start_outcome.handle_id,
+        adapter_locator=start_outcome.durable_locator_metadata,
     )
     if locator_digest is None:
         _audit_session_refusal(
@@ -1312,6 +1365,19 @@ def _cancel_running_session(
     )
     state = _load(runtime)
     session = state.runner_sessions[session.session_id]
+    if outcome is not None and not _adapter_outcome_matches_request(
+        outcome,
+        request,
+    ):
+        _audit_session_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            reason="runner_session_authority_mismatch",
+            signal_kind="runner_completion_outcome",
+            signal_digest=_signal_digest(outcome),
+        )
+        return SessionExecutionResult("session_reconciliation_required")
     if cleanup.disposition == "orphan_risk":
         diagnostic_digest = runtime.cas_store.put_bytes(
             _canonical_json_bytes(
@@ -1352,47 +1418,21 @@ def _cancel_running_session(
             ),
         )
     if outcome is not None:
-        if isinstance(outcome, AdapterSuccessResult):
-            return _persist_completion(
-                runtime,
-                run_ref=run_ref,
-                session=session,
-                request=request,
-                outcome=outcome,
-                cleanup_disposition=cleanup.disposition,
-                primary=primary,
-            )
-        if isinstance(outcome, AdapterErrorResult):
-            diagnostic_bytes = _adapter_error_diagnostic_bytes(
-                outcome,
-                request=request,
-            )
-            if diagnostic_bytes is None:
-                _audit_session_refusal(
-                    runtime,
-                    run_ref=run_ref,
-                    session=session,
-                    reason="runner_session_reconciliation_contradiction",
-                    signal_kind="runner_completion_outcome",
-                    signal_digest=_signal_digest(outcome),
-                )
-                outcome = None
-            else:
-                diagnostic_digest = runtime.cas_store.put_bytes(diagnostic_bytes)
-                return _persist_adapter_error(
-                    runtime,
-                    run_ref=run_ref,
-                    session=session,
-                    outcome=outcome,
-                    diagnostic_digest=diagnostic_digest,
-                    cleanup_disposition=cleanup.disposition,
-                    terminal_state=(
-                        "interrupted"
-                        if outcome.error_kind == "cancelled"
-                        else "failed"
-                    ),
-                    primary=primary,
-                )
+        return _persist_completion(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            outcome=outcome,
+            cleanup_disposition=cleanup.disposition,
+            primary=primary,
+            adapter_error_terminal_state=(
+                "interrupted"
+                if isinstance(outcome, AdapterErrorResult)
+                and outcome.error_kind == "cancelled"
+                else "failed"
+            ),
+        )
     terminal_state = (
         "interrupted"
         if cleanup.disposition in {"not_required", "complete"}
@@ -1658,6 +1698,7 @@ def _persist_completion(
     outcome: AdapterInvocationOutcome,
     cleanup_disposition: str,
     primary: RunnerSessionCancellationRecord | None = None,
+    adapter_error_terminal_state: str = "failed",
 ) -> SessionExecutionResult:
     dispatch_echo = outcome.dispatch_echo
     if dispatch_echo is None:
@@ -1670,12 +1711,7 @@ def _persist_completion(
             signal_digest=_signal_digest(outcome),
         )
         return SessionExecutionResult("session_reconciliation_required")
-    try:
-        dispatch_echo.validate_against(
-            request.dispatch_envelope,
-            correlation_id=request.correlation_id,
-        )
-    except (TypeError, ValueError):
+    if not _adapter_outcome_matches_request(outcome, request):
         _audit_session_refusal(
             runtime,
             run_ref=run_ref,
@@ -1708,6 +1744,8 @@ def _persist_completion(
             outcome=outcome,
             diagnostic_digest=diagnostic_digest,
             cleanup_disposition=cleanup_disposition,
+            terminal_state=adapter_error_terminal_state,
+            primary=primary,
         )
     try:
         evidence = runner_evidence_from_adapter_outcome(outcome, request)
@@ -1761,6 +1799,29 @@ def _persist_completion(
     if persisted is None:
         return SessionExecutionResult("completion_refused")
     return _apply_persisted_completion(runtime, completion)
+
+
+def _adapter_outcome_matches_request(
+    outcome: object,
+    request: AdapterInvocationRequest,
+) -> bool:
+    if not isinstance(outcome, (AdapterSuccessResult, AdapterErrorResult)):
+        return False
+    if (
+        outcome.adapter_id != request.adapter_id
+        or outcome.redaction_policy_id != request.redaction_policy.policy_id
+        or outcome.dispatch_echo is None
+    ):
+        return False
+    try:
+        outcome.dispatch_echo.validate_against(
+            request.dispatch_envelope,
+            correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return True
 
 
 def _persist_adapter_error(
@@ -2038,6 +2099,39 @@ def _safe_locator_digest(
     except (TypeError, ValueError):
         return None
     return runtime.cas_store.put_bytes(payload)
+
+
+def _safe_coordinator_locator_digest(
+    runtime: OpenRuntimeContext,
+    request: AdapterInvocationRequest,
+    *,
+    handle_id: str | None,
+    adapter_locator: object,
+) -> str | None:
+    if handle_id is not None and (
+        not isinstance(handle_id, str) or not handle_id.strip()
+    ):
+        return None
+    try:
+        redacted = request.redaction_policy.redact_authority_value(adapter_locator)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(redacted, Mapping):
+        return None
+    locator: dict[str, object] = {"adapter_locator": redacted}
+    if handle_id is not None:
+        locator["handle_id_digest"] = _handle_id_digest(handle_id)
+    try:
+        payload = runner_session_locator_bytes(locator)
+    except (TypeError, ValueError):
+        return None
+    return runtime.cas_store.put_bytes(payload)
+
+
+def _handle_id_digest(handle_id: str) -> str:
+    if not isinstance(handle_id, str) or not handle_id.strip():
+        raise ValueError("handle_id must be a nonblank string")
+    return f"sha256:{sha256(handle_id.encode('utf-8')).hexdigest()}"
 
 
 def _evidence_matches_current_authority(

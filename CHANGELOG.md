@@ -13,6 +13,13 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Fixed
+
+- Hardened runner-session restart reconciliation so adapters must prove the
+  complete selected dispatch authority, cleanup can resume only for the
+  durably correlated handle, and missing or corrupt restart locators fail
+  closed without mutating runtime state.
+
 ## [0.22.0] - 2026-07-23
 
 ### Added

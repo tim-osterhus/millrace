@@ -322,6 +322,7 @@ class DispatchEcho:
     graph_node_id: str
     runner_binding_id: str
     correlation_id: str
+    selected_authority_digest: str
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.run_id, "run_id")
@@ -339,6 +340,10 @@ class DispatchEcho:
         _require_nonblank_string(self.graph_node_id, "graph_node_id")
         _require_nonblank_string(self.runner_binding_id, "runner_binding_id")
         _require_nonblank_string(self.correlation_id, "correlation_id")
+        _require_sha256_digest(
+            self.selected_authority_digest,
+            "selected_authority_digest",
+        )
 
     @classmethod
     def from_dispatch_envelope(
@@ -346,7 +351,12 @@ class DispatchEcho:
         envelope: RunnerDispatchEnvelope,
         *,
         correlation_id: str,
+        selected_adapter_kind: str,
     ) -> DispatchEcho:
+        selected_kind = _require_nonblank_string(
+            selected_adapter_kind,
+            "selected_adapter_kind",
+        )
         return cls(
             run_id=envelope.run_id,
             session_id=envelope.session_id,
@@ -360,6 +370,10 @@ class DispatchEcho:
             graph_node_id=envelope.graph_node_id,
             runner_binding_id=envelope.runner_binding_id,
             correlation_id=correlation_id,
+            selected_authority_digest=selected_invocation_authority_digest(
+                envelope,
+                selected_kind,
+            ),
         )
 
     def validate_against(
@@ -367,10 +381,12 @@ class DispatchEcho:
         envelope: RunnerDispatchEnvelope,
         *,
         correlation_id: str,
+        selected_adapter_kind: str,
     ) -> None:
         expected = DispatchEcho.from_dispatch_envelope(
             envelope,
             correlation_id=correlation_id,
+            selected_adapter_kind=selected_adapter_kind,
         )
         if self != expected:
             raise AdapterEvidenceConversionError("dispatch echo mismatch")
@@ -379,6 +395,27 @@ class DispatchEcho:
         return "DispatchEcho(<redacted>)"
 
     __str__ = __repr__
+
+
+def selected_invocation_authority_digest(
+    envelope: RunnerDispatchEnvelope,
+    selected_adapter_kind: str,
+) -> str:
+    if not isinstance(envelope, RunnerDispatchEnvelope):
+        raise TypeError("envelope must be RunnerDispatchEnvelope")
+    selected_kind = _require_nonblank_string(
+        selected_adapter_kind,
+        "selected_adapter_kind",
+    )
+    payload = _canonical_json_bytes(
+        _plain_authority_value(
+            {
+                "dispatch_envelope": envelope.payload(),
+                "selected_adapter_kind": selected_kind,
+            }
+        )
+    )
+    return f"sha256:{sha256(payload).hexdigest()}"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -870,6 +907,7 @@ def runner_evidence_from_adapter_outcome(
     outcome.dispatch_echo.validate_against(
         dispatch_envelope,
         correlation_id=request.correlation_id,
+        selected_adapter_kind=request.selected_adapter_kind,
     )
     marker = _require_nonblank_string(outcome.marker, "marker")
     try:

@@ -78,6 +78,9 @@ def _dispatch_values() -> dict[str, object]:
         "skill_asset_ids": (),
         "artifact_schema_ids": (),
         "work_item_payload": {},
+        "governance_context": {},
+        "terminal_options": (),
+        "selected_join_evidence": None,
     }
 
 
@@ -138,6 +141,7 @@ def test_session_fields_are_required_in_dispatch_echo_and_result_evidence() -> N
             "graph_node_id": "node-1",
             "runner_binding_id": "runner-1",
             "correlation_id": "correlation-1",
+            "selected_authority_digest": "sha256:" + "a" * 64,
         }
         echo_values.pop(field_name)
         with pytest.raises(TypeError):
@@ -218,12 +222,94 @@ def test_dispatch_echo_refuses_session_authority_mismatch() -> None:
     echo = DispatchEcho.from_dispatch_envelope(
         dispatch,
         correlation_id="correlation-1",
+        selected_adapter_kind="fake",
     )
 
     with pytest.raises(ValueError, match="dispatch echo mismatch"):
         replace(echo, session_fencing_token="stale-fence").validate_against(
             dispatch,
             correlation_id="correlation-1",
+            selected_adapter_kind="fake",
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "run_id",
+        "session_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "work_item_id",
+        "activation_id",
+        "plan_fingerprint",
+        "plan_id",
+        "workflow_id",
+        "workflow_version",
+        "graph_id",
+        "claim_id",
+        "generation",
+        "fencing_token",
+        "queue_family_id",
+        "stage_kind_id",
+        "graph_node_id",
+        "runner_binding_id",
+        "external_enqueue_route_id",
+        "entrypoint_asset_id",
+        "skill_asset_ids",
+        "artifact_schema_ids",
+        "work_item_payload",
+        "governance_context",
+        "terminal_options",
+        "selected_join_evidence",
+    ),
+)
+def test_dispatch_echo_full_authority_proof_refuses_every_v5_mismatch(
+    field_name: str,
+) -> None:
+    dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch,
+        correlation_id="correlation-1",
+        selected_adapter_kind="fake",
+    )
+    changed = dict(_dispatch_values())
+    current = changed[field_name]
+    changed[field_name] = (
+        "changed"
+        if current is None
+        else ("changed",)
+        if isinstance(current, tuple)
+        else {"changed": True}
+        if isinstance(current, dict)
+        else current + 1
+        if isinstance(current, int)
+        else f"{current}-changed"
+    )
+    mismatched = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+    object.__setattr__(mismatched, field_name, changed[field_name])
+
+    with pytest.raises(ValueError, match="dispatch echo mismatch"):
+        echo.validate_against(
+            mismatched,
+            correlation_id="correlation-1",
+            selected_adapter_kind="fake",
+        )
+
+
+def test_dispatch_echo_full_authority_proof_refuses_adapter_kind_mismatch() -> None:
+    dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch,
+        correlation_id="correlation-1",
+        selected_adapter_kind="fake",
+    )
+
+    with pytest.raises(ValueError, match="dispatch echo mismatch"):
+        echo.validate_against(
+            dispatch,
+            correlation_id="correlation-1",
+            selected_adapter_kind="foreign",
         )
 
 
@@ -232,6 +318,7 @@ def test_runner_session_outcomes_are_exact_typed_records() -> None:
     echo = DispatchEcho.from_dispatch_envelope(
         dispatch,
         correlation_id="correlation-1",
+        selected_adapter_kind="fake",
     )
     request = AdapterInvocationRequest(
         adapter_id="adapter-1",
@@ -255,11 +342,14 @@ def test_runner_session_outcomes_are_exact_typed_records() -> None:
     handle = _Handle()
 
     assert StartedSession(echo, handle, "handle-1", {}).outcome_kind == "started"
-    assert StartRefusedBeforeExternalWork(
-        echo,
-        error,
-        start_refusal_diagnostic_digest(error),
-    ).outcome_kind == "refused_before_external_work"
+    assert (
+        StartRefusedBeforeExternalWork(
+            echo,
+            error,
+            start_refusal_diagnostic_digest(error),
+        ).outcome_kind
+        == "refused_before_external_work"
+    )
     assert StartIndeterminate(echo, None, "sha256:" + "b" * 64).outcome_kind == (
         "indeterminate"
     )
@@ -271,22 +361,28 @@ def test_runner_session_outcomes_are_exact_typed_records() -> None:
     assert Unsupported(echo).outcome_kind == "unsupported"
     assert Contradiction(echo, "sha256:" + "c" * 64).outcome_kind == "contradiction"
     operation_diagnostic = {"operation": "terminate"}
-    assert RunnerCancellationOperationResult(
-        "terminate",
-        "succeeded",
-        1,
-        2,
-        operation_diagnostic,
-        runner_cancellation_diagnostic_digest(operation_diagnostic),
-    ).result == "succeeded"
+    assert (
+        RunnerCancellationOperationResult(
+            "terminate",
+            "succeeded",
+            1,
+            2,
+            operation_diagnostic,
+            runner_cancellation_diagnostic_digest(operation_diagnostic),
+        ).result
+        == "succeeded"
+    )
     cleanup_diagnostic = {"cleanup": "complete"}
-    assert RunnerCleanupResult(
-        "complete",
-        1,
-        2,
-        cleanup_diagnostic,
-        runner_cancellation_diagnostic_digest(cleanup_diagnostic),
-    ).disposition == "complete"
+    assert (
+        RunnerCleanupResult(
+            "complete",
+            1,
+            2,
+            cleanup_diagnostic,
+            runner_cancellation_diagnostic_digest(cleanup_diagnostic),
+        ).disposition
+        == "complete"
+    )
 
     with pytest.raises(ValueError, match="diagnostic_digest"):
         RunnerCancellationOperationResult(
@@ -319,9 +415,31 @@ def test_runner_session_locator_codec_is_canonical_bounded_and_mapping_only() ->
     with pytest.raises(ValueError, match="authority"):
         runner_session_locator_from_bytes(b'{"value":1.5}')
     with pytest.raises(ValueError, match="selected authority"):
-        runner_session_locator_from_bytes(
-            b'{"nested":{"claim_id":"hostile-claim"}}'
-        )
+        runner_session_locator_from_bytes(b'{"nested":{"claim_id":"hostile-claim"}}')
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        *tuple(_dispatch_values()),
+        "selected_adapter_kind",
+        "selected_runner_binding_id",
+        "correlation_id",
+        "cancellation_token",
+        "adapter_id",
+    ),
+)
+def test_runner_session_locator_rejects_every_invocation_authority_key(
+    field_name: str,
+) -> None:
+    payload = json.dumps(
+        {"nested": {field_name: "hostile"}},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    with pytest.raises(ValueError, match="selected authority"):
+        runner_session_locator_from_bytes(payload)
 
 
 def test_start_refusal_diagnostic_owns_real_bounded_redacted_content() -> None:
@@ -329,6 +447,7 @@ def test_start_refusal_diagnostic_owns_real_bounded_redacted_content() -> None:
     echo = DispatchEcho.from_dispatch_envelope(
         dispatch,
         correlation_id="correlation-1",
+        selected_adapter_kind="fake",
     )
     error = AdapterErrorResult.from_unredacted(
         adapter_id="adapter-1",
@@ -383,6 +502,7 @@ def test_live_session_records_require_complete_handle_protocol(
     echo = DispatchEcho.from_dispatch_envelope(
         dispatch,
         correlation_id="correlation-1",
+        selected_adapter_kind="fake",
     )
 
     with pytest.raises(TypeError, match="handle"):

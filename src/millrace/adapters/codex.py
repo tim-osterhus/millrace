@@ -78,6 +78,7 @@ _DISPATCH_ECHO_KEYS = frozenset(
         "graph_node_id",
         "runner_binding_id",
         "correlation_id",
+        "selected_authority_digest",
     },
 )
 
@@ -205,6 +206,7 @@ class CodexAdapter:
         echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         if isinstance(prepared, AdapterErrorResult):
             if prepared.error_kind in {
@@ -260,6 +262,7 @@ class CodexAdapter:
             DispatchEcho.from_dispatch_envelope(
                 invocation.dispatch_envelope,
                 correlation_id=invocation.correlation_id,
+                selected_adapter_kind=invocation.selected_adapter_kind,
             )
         )
 
@@ -275,6 +278,7 @@ class CodexAdapter:
         dispatch_echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         transport_outcome = self._transport.invoke(prepared)
         if isinstance(transport_outcome, SubprocessTransportError):
@@ -298,6 +302,7 @@ class CodexAdapter:
         dispatch_echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         if request.selected_adapter_kind != CODEX_ADAPTER_KIND:
             return self._adapter_error(
@@ -390,6 +395,7 @@ class CodexAdapter:
             dispatch_echo.validate_against(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             )
             if wrapper_result["adapter_id"] != self._config.adapter_id:
                 raise ValueError("adapter_id mismatch")
@@ -774,6 +780,7 @@ def _dispatch_echo_json(echo: DispatchEcho) -> dict[str, JsonValue]:
         "graph_node_id": echo.graph_node_id,
         "runner_binding_id": echo.runner_binding_id,
         "correlation_id": echo.correlation_id,
+        "selected_authority_digest": echo.selected_authority_digest,
     }
 
 
@@ -838,6 +845,10 @@ def _dispatch_echo_from_json(value: object) -> DispatchEcho:
         correlation_id=_require_nonblank_string(
             mapping["correlation_id"],
             "dispatch_echo.correlation_id",
+        ),
+        selected_authority_digest=_require_nonblank_string(
+            mapping["selected_authority_digest"],
+            "dispatch_echo.selected_authority_digest",
         ),
     )
 

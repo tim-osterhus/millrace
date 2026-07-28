@@ -19,11 +19,15 @@ from cli.test_cli_bounded_execution_unit import (
     _codex_timeout_config,
     _load,
     _ready_state,
+    _reopen_runtime,
     _runtime,
 )
 from kernel.kernel_ping_scenarios import task_artifact_payload
 from millrace.adapters.cli import session_coordinator
-from millrace.adapters.cli.run import run_bounded_execution_unit
+from millrace.adapters.cli.run import (
+    reconcile_pending_runner_sessions,
+    run_bounded_execution_unit,
+)
 from millrace.adapters.runner_contract import (
     START_REFUSAL_DIAGNOSTIC_MAX_BYTES,
     AdapterErrorResult,
@@ -138,6 +142,7 @@ class _CancellingHandle(_ImmediateHandle):
             dispatch_echo=DispatchEcho.from_dispatch_envelope(
                 self._request.dispatch_envelope,
                 correlation_id=self._request.correlation_id,
+                selected_adapter_kind=self._request.selected_adapter_kind,
             ),
             redaction_policy=self._request.redaction_policy,
         )
@@ -289,10 +294,7 @@ class _MalformedCancellationPollHandle(_CancellingHandle):
     def poll_completion(self) -> object:
         if not self._requested:
             return super().poll_completion()
-        if (
-            self._malformed_after in self.operations
-            and not self._malformed_emitted
-        ):
+        if self._malformed_after in self.operations and not self._malformed_emitted:
             self._malformed_emitted = True
             return object()
         if self._malformed_emitted:
@@ -361,6 +363,7 @@ class _RecordingAdapter:
             DispatchEcho.from_dispatch_envelope(
                 invocation.dispatch_envelope,
                 correlation_id=invocation.correlation_id,
+                selected_adapter_kind=invocation.selected_adapter_kind,
             )
         )
 
@@ -369,6 +372,7 @@ def _success_start(request: AdapterInvocationRequest) -> StartedSession:
     echo = DispatchEcho.from_dispatch_envelope(
         request.dispatch_envelope,
         correlation_id=request.correlation_id,
+        selected_adapter_kind=request.selected_adapter_kind,
     )
     outcome = AdapterSuccessResult.from_unredacted(
         adapter_id=request.adapter_id,
@@ -392,6 +396,7 @@ def _refused_start(
     echo = DispatchEcho.from_dispatch_envelope(
         request.dispatch_envelope,
         correlation_id=request.correlation_id,
+        selected_adapter_kind=request.selected_adapter_kind,
     )
     error = AdapterErrorResult.from_unredacted(
         adapter_id=request.adapter_id,
@@ -441,8 +446,7 @@ def _assert_single_refusal_audit(
     refusal = next(
         refusal
         for refusal in after.refusals
-        if refusal.record_id
-        not in {existing.record_id for existing in before.refusals}
+        if refusal.record_id not in {existing.record_id for existing in before.refusals}
     )
     assert refusal.input_kind == "workflow.refuse_runner_session_signal"
     assert refusal.reason == reason
@@ -453,6 +457,7 @@ def _mismatched_echo(request: AdapterInvocationRequest) -> DispatchEcho:
         DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         ),
         correlation_id="stale-correlation",
     )
@@ -473,6 +478,7 @@ def _completion_signal_result(
         echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         handle = _CapturingImmediateHandle(
             outcome_factory(request),
@@ -506,6 +512,7 @@ def _success_outcome(
         or DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         ),
         redaction_policy=request.redaction_policy,
         marker="TASK_COMPLETE",
@@ -787,9 +794,7 @@ def test_local_timeout_narrows_selected_deadline_and_requests_cancellation(
     assert elapsed < 0.8
     session = next(iter(after.runner_sessions.values()))
     assert session.state == "interrupted"
-    cancellation = next(
-        iter(after.runner_session_cancellation_requests.values())
-    )
+    cancellation = next(iter(after.runner_session_cancellation_requests.values()))
     assert (cancellation.reason, cancellation.source_kind) == (
         "runner_timeout",
         "runtime",
@@ -831,8 +836,7 @@ def test_start_succeeds_but_running_write_fails_cannot_permit_another_start(
 
     def fail_running(candidate, cas_store) -> None:
         if any(
-            session.state == "running"
-            for session in candidate.runner_sessions.values()
+            session.state == "running" for session in candidate.runner_sessions.values()
         ):
             raise RuntimeError("simulated running write crash")
         persist(candidate, cas_store)
@@ -890,8 +894,7 @@ def test_running_write_failure_cleans_real_subprocess(
 
     def fail_running(candidate, cas_store) -> None:
         if any(
-            session.state == "running"
-            for session in candidate.runner_sessions.values()
+            session.state == "running" for session in candidate.runner_sessions.values()
         ):
             raise RuntimeError("simulated running write crash")
         persist(candidate, cas_store)
@@ -905,9 +908,7 @@ def test_running_write_failure_cleans_real_subprocess(
         after = _load(runtime)
 
         assert result.adapter_error_kind == "cancelled"
-        cancellation = next(
-            iter(after.runner_session_cancellation_requests.values())
-        )
+        cancellation = next(iter(after.runner_session_cancellation_requests.values()))
         assert cancellation.reason == "runtime_failure"
         session = next(iter(after.runner_sessions.values()))
         assert (session.state, session.cleanup_disposition) == (
@@ -1127,6 +1128,7 @@ def test_raw_adapter_error_diagnostic_is_coordinator_redacted(
             dispatch_echo=DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             diagnostics={"secret": secret, "blob": "x" * 20_000},
         )
@@ -1178,6 +1180,7 @@ def test_adapter_error_redaction_failure_persists_only_safe_diagnostic(
             dispatch_echo=DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             diagnostics={"secret": secret},
         )
@@ -1222,8 +1225,7 @@ def test_coordinator_cleans_child_group_before_normal_completion(tmp_path) -> No
         "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
         "stderr=subprocess.DEVNULL)\n"
         f"pathlib.Path({str(child_pid)!r}).write_text(str(child_process.pid))\n"
-        "time.sleep(0.1)\n"
-        + _codex_success_wrapper("TASK_COMPLETE")
+        "time.sleep(0.1)\n" + _codex_success_wrapper("TASK_COMPLETE")
     )
     adapter = CodexAdapter(
         CodexAdapterConfig(
@@ -1249,9 +1251,7 @@ def test_coordinator_cleans_child_group_before_normal_completion(tmp_path) -> No
         after = _load(runtime)
 
         assert result.code == "observation_accepted"
-        cancellation = next(
-            iter(after.runner_session_cancellation_requests.values())
-        )
+        cancellation = next(iter(after.runner_session_cancellation_requests.values()))
         assert (cancellation.reason, cancellation.source_kind) == (
             "runtime_failure",
             "runtime",
@@ -1295,6 +1295,7 @@ def test_raw_start_refusal_secret_is_not_persisted(
         echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         error = AdapterErrorResult(
             adapter_id=request.adapter_id,
@@ -1339,6 +1340,7 @@ def test_adapter_error_policy_mismatch_is_refused_without_diagnostic_cas(
             dispatch_echo=DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             diagnostics={"secret": secret},
         )
@@ -1430,6 +1432,7 @@ def test_durable_operator_cancellation_is_observed_and_cleaned_up(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             handle,
             f"fake:{request.session_id}",
@@ -1511,6 +1514,7 @@ def test_cancellation_escalates_in_order(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             handle,
             f"fake:{request.session_id}",
@@ -1536,6 +1540,7 @@ def test_normal_completion_can_win_after_durable_cancellation(tmp_path) -> None:
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             _CompletionRaceHandle(runtime, request),
             f"fake:{request.session_id}",
@@ -1574,6 +1579,7 @@ def test_unsupported_cooperative_cancel_can_still_finish_cleanly(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             handle,
             f"fake:{request.session_id}",
@@ -1608,6 +1614,7 @@ def test_stale_prior_session_cancellation_cannot_cancel_retry(tmp_path) -> None:
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             _CancellingHandle(runtime, request),
             f"fake:{request.session_id}",
@@ -1633,9 +1640,7 @@ def test_stale_prior_session_cancellation_cannot_cancel_retry(tmp_path) -> None:
         key=lambda item: item.dispatch_generation,
     )
     assert [item.state for item in sessions] == ["interrupted", "completed"]
-    cancellation = next(
-        iter(after.runner_session_cancellation_requests.values())
-    )
+    cancellation = next(iter(after.runner_session_cancellation_requests.values()))
     assert cancellation.session_id == sessions[0].session_id
 
 
@@ -1649,6 +1654,7 @@ def test_racing_cancellation_requests_keep_first_request_primary(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             _SecondaryRaceHandle(runtime, request),
             f"fake:{request.session_id}",
@@ -1699,6 +1705,7 @@ def test_secondary_cancellation_is_preserved_while_terminating(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             _TerminatingSecondaryHandle(
                 runtime,
@@ -1747,6 +1754,7 @@ def test_concurrent_cancellation_requests_retry_stale_snapshots(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             None,
             "sha256:" + "a" * 64,
@@ -1766,9 +1774,8 @@ def test_concurrent_cancellation_requests_retry_stale_snapshots(
     original = session_coordinator._persist_transition
 
     def synchronize_first_request(current_runtime, transition):
-        if (
-            isinstance(transition, RequestRunnerSessionCancellation)
-            and not getattr(local, "waited", False)
+        if isinstance(transition, RequestRunnerSessionCancellation) and not getattr(
+            local, "waited", False
         ):
             local.waited = True
             barrier.wait(timeout=5)
@@ -1853,6 +1860,7 @@ def test_orphan_risk_cleanup_always_completes_lost(tmp_path) -> None:
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             OrphanHandle(runtime, request),
             f"fake:{request.session_id}",
@@ -1883,6 +1891,7 @@ def test_mislabeled_operation_is_persisted_failed_under_expected_phase(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             _MislabeledOperationHandle(runtime, request),
             f"fake:{request.session_id}",
@@ -1930,6 +1939,7 @@ def test_attempt_diagnostic_is_redacted_and_oversize_is_summarized(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             DiagnosticHandle(runtime, request),
             f"fake:{request.session_id}",
@@ -1994,6 +2004,7 @@ def test_throwing_poll_during_cancellation_still_cleans_and_completes(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             _ThrowingCancellationPollHandle(runtime, request),
             f"fake:{request.session_id}",
@@ -2049,6 +2060,7 @@ def test_malformed_poll_during_cancellation_is_refused_then_cleaned(
             DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             handle,
             f"fake:{request.session_id}",
@@ -2132,9 +2144,7 @@ def test_forever_pending_handle_times_out_then_cleans_up(
     assert handle is not None
     assert handle.polls >= 1
     assert next(iter(after.runner_sessions.values())).state == "interrupted"
-    cancellation = next(
-        iter(after.runner_session_cancellation_requests.values())
-    )
+    cancellation = next(iter(after.runner_session_cancellation_requests.values()))
     assert (cancellation.reason, cancellation.source_kind) == (
         "runner_timeout",
         "runtime",
@@ -2176,10 +2186,7 @@ def test_malformed_handle_outcome_is_cleaned_and_requires_reconciliation(
         "kill",
         "transport_cleanup",
     ]
-    assert (
-        next(iter(after.runner_sessions.values())).state
-        == "cancellation_requested"
-    )
+    assert next(iter(after.runner_sessions.values())).state == "cancellation_requested"
     assert after.runner_session_completions == {}
 
 
@@ -2375,6 +2382,7 @@ def test_nonterminal_return_fault_cleans_live_subprocess_before_return(
                     dispatch_echo=DispatchEcho.from_dispatch_envelope(
                         self._request.dispatch_envelope,
                         correlation_id=self._request.correlation_id,
+                        selected_adapter_kind=self._request.selected_adapter_kind,
                     ),
                     diagnostics={},
                 )
@@ -2566,6 +2574,7 @@ def test_start_refusal_echo_malformation_is_durably_audited(
         valid_echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         error = AdapterErrorResult.from_unredacted(
             adapter_id=request.adapter_id,
@@ -2620,6 +2629,7 @@ def test_locator_is_redacted_before_bounded_cas_persistence(
     def start_with_secret(request: AdapterInvocationRequest) -> StartedSession:
         return replace(
             _success_start(request),
+            handle_id=secret,
             durable_locator_metadata={"provider_request": secret},
         )
 
@@ -2642,6 +2652,7 @@ def test_locator_is_redacted_before_bounded_cas_persistence(
     locator = runtime.cas_store.get_bytes(session.durable_locator_digest)
     assert secret.encode() not in locator
     assert b"[REDACTED]" in locator
+    assert b"handle_id_digest" in locator
 
 
 def test_oversized_locator_remains_starting_without_adapter_completion(
@@ -2677,6 +2688,7 @@ def test_indeterminate_start_retains_redacted_safe_locator(
         echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         return StartIndeterminate(
             echo,
@@ -2743,6 +2755,7 @@ def test_crash_after_completion_persistence_replays_without_adapter_invocation(
     assert persisted.runner_observations == {}
 
     monkeypatch.setattr(session_coordinator, "decide", original_decide)
+    runtime = _reopen_runtime(runtime)
     replay = run_bounded_execution_unit(
         runtime,
         activation_id="activation-taskmaster",
@@ -2775,7 +2788,9 @@ def test_v3_observation_requires_exact_completion_session_and_application_id(
     persisted = _load(runtime)
     completion = next(iter(persisted.runner_session_completions.values()))
     evidence = runner_result_evidence_from_payload(
-        json.loads(runtime.cas_store.get_bytes(completion.runner_result_evidence_digest))
+        json.loads(
+            runtime.cas_store.get_bytes(completion.runner_result_evidence_digest)
+        )
     )
 
     stale_payload = dict(evidence.payload())
@@ -2880,6 +2895,7 @@ def test_old_session_completion_after_same_run_retry_refuses(tmp_path) -> None:
     echo = DispatchEcho.from_dispatch_envelope(
         first_request.dispatch_envelope,
         correlation_id=first_request.correlation_id,
+        selected_adapter_kind=first_request.selected_adapter_kind,
     )
     late_outcome = AdapterSuccessResult.from_unredacted(
         adapter_id=first_request.adapter_id,
@@ -2930,6 +2946,42 @@ def test_adapter_error_persists_terminal_session_without_workflow_progress(
     assert after.activation_routes == ()
 
 
+@pytest.mark.parametrize("terminal_state", ("failed", "interrupted"))
+def test_terminal_session_reopen_never_reinvokes_adapter(
+    tmp_path,
+    terminal_state: str,
+) -> None:
+    adapter = _RecordingAdapter(
+        _refused_start if terminal_state == "failed" else _success_start
+    )
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    run_bounded_execution_unit(
+        runtime,
+        local_config=_config(adapter),
+        daemon_stop_requested=(
+            (lambda: True) if terminal_state == "interrupted" else None
+        ),
+    )
+    before = _load(runtime)
+    requests_before_reopen = len(adapter.requests)
+
+    runtime = _reopen_runtime(runtime)
+    replay = reconcile_pending_runner_sessions(
+        runtime,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert replay.code == "no_runner_session_reconciliation"
+    assert len(adapter.requests) == requests_before_reopen
+    assert next(iter(after.runner_sessions.values())).state == terminal_state
+    assert after.runner_sessions == before.runner_sessions
+    assert after.runner_session_completions == before.runner_session_completions
+    assert after.runner_observations == before.runner_observations == {}
+    assert after.runs == before.runs
+
+
 def test_prestart_refusal_cas_contains_real_redacted_diagnostic(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2952,6 +3004,7 @@ def test_prestart_refusal_cas_contains_real_redacted_diagnostic(
         echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         captured_error = AdapterErrorResult.from_unredacted(
             adapter_id=request.adapter_id,
@@ -2980,9 +3033,7 @@ def test_prestart_refusal_cas_contains_real_redacted_diagnostic(
     assert runtime.cas_store.get_bytes(completion.diagnostic_digest) == (
         start_refusal_diagnostic_bytes(captured_error)
     )
-    assert b"secret" not in runtime.cas_store.get_bytes(
-        completion.diagnostic_digest
-    )
+    assert b"secret" not in runtime.cas_store.get_bytes(completion.diagnostic_digest)
 
 
 def test_tampered_prestart_refusal_digest_is_durably_refused(tmp_path) -> None:
@@ -3024,15 +3075,14 @@ def test_oversized_prestart_diagnostic_keeps_proven_refusal_terminal(
         echo = DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         )
         error = AdapterErrorResult(
             adapter_id=request.adapter_id,
             error_kind="selected_authority_refused",
             redaction_policy_id=request.redaction_policy.policy_id,
             dispatch_echo=echo,
-            diagnostics={
-                "message": "x" * (START_REFUSAL_DIAGNOSTIC_MAX_BYTES * 2)
-            },
+            diagnostics={"message": "x" * (START_REFUSAL_DIAGNOSTIC_MAX_BYTES * 2)},
         )
         return StartRefusedBeforeExternalWork(
             echo,
@@ -3061,9 +3111,7 @@ def test_oversized_prestart_diagnostic_keeps_proven_refusal_terminal(
 def test_signal_digest_distinguishes_oversized_signals_with_same_prefix() -> None:
     common_prefix = "x" * (16 * 1024)
 
-    first = session_coordinator._signal_digest(
-        {"diagnostic": common_prefix + "first"}
-    )
+    first = session_coordinator._signal_digest({"diagnostic": common_prefix + "first"})
     second = session_coordinator._signal_digest(
         {"diagnostic": common_prefix + "second"}
     )
@@ -3092,6 +3140,7 @@ def _indeterminate_start(request: AdapterInvocationRequest) -> StartIndeterminat
         DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         ),
         {"provider_request_id": "owned-request"},
         "sha256:" + "a" * 64,
@@ -3107,6 +3156,7 @@ def test_restart_unsupported_marks_potentially_started_session_orphan_risk(
     first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
     before = _load(runtime)
 
+    runtime = _reopen_runtime(runtime)
     restarted = run_bounded_execution_unit(
         runtime,
         activation_id=first.activation_id,
@@ -3148,6 +3198,7 @@ def test_restart_verified_live_continues_observation_with_returned_handle(
         echo = DispatchEcho.from_dispatch_envelope(
             invocation.dispatch_envelope,
             correlation_id=invocation.correlation_id,
+            selected_adapter_kind=invocation.selected_adapter_kind,
         )
         return VerifiedLive(
             echo,
@@ -3161,6 +3212,7 @@ def test_restart_verified_live_continues_observation_with_returned_handle(
     runtime = _runtime(tmp_path, state)
     first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
 
+    runtime = _reopen_runtime(runtime)
     restarted = run_bounded_execution_unit(
         runtime,
         activation_id=first.activation_id,
@@ -3202,6 +3254,7 @@ def test_restart_refuses_verified_live_authority_mismatch(
             DispatchEcho.from_dispatch_envelope(
                 invocation.dispatch_envelope,
                 correlation_id=invocation.correlation_id,
+                selected_adapter_kind=invocation.selected_adapter_kind,
             ),
             **mismatch,
         )
@@ -3213,6 +3266,7 @@ def test_restart_refuses_verified_live_authority_mismatch(
     first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
     before = _load(runtime)
 
+    runtime = _reopen_runtime(runtime)
     restarted = run_bounded_execution_unit(
         runtime,
         activation_id=first.activation_id,
@@ -3233,6 +3287,7 @@ def test_restart_terminal_outcome_uses_existing_completion_path(tmp_path) -> Non
         echo = DispatchEcho.from_dispatch_envelope(
             invocation.dispatch_envelope,
             correlation_id=invocation.correlation_id,
+            selected_adapter_kind=invocation.selected_adapter_kind,
         )
         return Terminal(echo, _success_outcome(invocation), "complete")
 
@@ -3241,6 +3296,7 @@ def test_restart_terminal_outcome_uses_existing_completion_path(tmp_path) -> Non
     runtime = _runtime(tmp_path, state)
     first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
 
+    runtime = _reopen_runtime(runtime)
     restarted = run_bounded_execution_unit(
         runtime,
         activation_id=first.activation_id,
@@ -3262,6 +3318,7 @@ def test_restart_adapter_contradiction_refuses_without_guessed_repair(
             DispatchEcho.from_dispatch_envelope(
                 invocation.dispatch_envelope,
                 correlation_id=invocation.correlation_id,
+                selected_adapter_kind=invocation.selected_adapter_kind,
             ),
             "sha256:" + "c" * 64,
         )
@@ -3272,6 +3329,7 @@ def test_restart_adapter_contradiction_refuses_without_guessed_repair(
     first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
     before = _load(runtime)
 
+    runtime = _reopen_runtime(runtime)
     restarted = run_bounded_execution_unit(
         runtime,
         activation_id=first.activation_id,
@@ -3311,9 +3369,7 @@ def test_orphan_risk_explicit_retry_preserves_claim_and_refuses_replacement(
     assert retry.code == "runner_session_orphan_risk"
     assert after.runs == orphaned.runs
     assert after.runner_sessions == orphaned.runner_sessions
-    assert after.runner_session_completions == (
-        orphaned.runner_session_completions
-    )
+    assert after.runner_session_completions == (orphaned.runner_session_completions)
     assert after.runs[first.run_id].run_ref.claim_id == run.run_ref.claim_id
 
 
@@ -3343,9 +3399,7 @@ def test_late_output_after_orphan_risk_remains_fenced(tmp_path) -> None:
 
     assert late.code == "completion_refused"
     assert after.runner_sessions == orphaned.runner_sessions
-    assert after.runner_session_completions == (
-        orphaned.runner_session_completions
-    )
+    assert after.runner_session_completions == (orphaned.runner_session_completions)
     assert after.runner_observations == orphaned.runner_observations == {}
     assert after.artifacts == orphaned.artifacts == {}
     assert after.activation_routes == orphaned.activation_routes == ()
@@ -3385,6 +3439,7 @@ def test_restart_resumes_created_session_without_reconciliation(
     assert adapter.requests == []
 
     monkeypatch.setattr(session_coordinator, "_persist_transition", original)
+    runtime = _reopen_runtime(runtime)
     restarted = run_bounded_execution_unit(
         runtime,
         activation_id="activation-taskmaster",
@@ -3396,8 +3451,40 @@ def test_restart_resumes_created_session_without_reconciliation(
     assert adapter.reconcile_requests == []
 
 
+@pytest.mark.parametrize(
+    (
+        "returned_handle_id",
+        "foreign_terminal_proof",
+        "expected_code",
+        "expected_operations",
+    ),
+    (
+        (
+            "verified-cleanup-handle",
+            False,
+            "adapter_failure",
+            ["transport_cleanup"],
+        ),
+        (
+            "foreign-cleanup-handle",
+            False,
+            "runner_session_reconciliation_contradiction",
+            [],
+        ),
+        (
+            "verified-cleanup-handle",
+            True,
+            "session_reconciliation_required",
+            ["transport_cleanup"],
+        ),
+    ),
+)
 def test_restart_cleanup_pending_continues_only_verified_handle_cleanup(
     tmp_path,
+    returned_handle_id: str,
+    foreign_terminal_proof: bool,
+    expected_code: str,
+    expected_operations: list[str],
 ) -> None:
     handle = None
 
@@ -3423,21 +3510,66 @@ def test_restart_cleanup_pending_continues_only_verified_handle_cleanup(
         echo = DispatchEcho.from_dispatch_envelope(
             invocation.dispatch_envelope,
             correlation_id=invocation.correlation_id,
+            selected_adapter_kind=invocation.selected_adapter_kind,
+        )
+        terminal_echo = (
+            replace(echo, session_fencing_token="foreign-session-fence")
+            if foreign_terminal_proof
+            else echo
         )
         handle = CleanupHandle(
             AdapterErrorResult.from_unredacted(
                 adapter_id=invocation.adapter_id,
                 error_kind="cancelled",
-                dispatch_echo=echo,
+                dispatch_echo=terminal_echo,
                 redaction_policy=invocation.redaction_policy,
             )
         )
-        return CleanupPending(echo, handle, "verified-cleanup-handle")
+        return CleanupPending(echo, handle, returned_handle_id)
 
-    adapter = _RecordingAdapter(_indeterminate_start, reconcile)
+    def indeterminate_cleanup_pending_start(
+        request: AdapterInvocationRequest,
+    ) -> StartIndeterminate:
+        return StartIndeterminate(
+            DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
+            ),
+            None,
+            "sha256:" + "a" * 64,
+        )
+
+    adapter = _RecordingAdapter(indeterminate_cleanup_pending_start, reconcile)
     state, _ = _ready_state()
     runtime = _runtime(tmp_path, state)
     first = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+    current = _load(runtime)
+    session = next(iter(current.runner_sessions.values()))
+    request = adapter.requests[0]
+    assert session.start_intent_at is not None
+    locator_digest = session_coordinator._safe_coordinator_locator_digest(
+        runtime,
+        request,
+        handle_id="verified-cleanup-handle",
+        adapter_locator={"provider_request_id": "owned-request"},
+    )
+    assert locator_digest is not None
+    persisted = session_coordinator._persist_transition(
+        runtime,
+        AdvanceRunnerSession(
+            "test:prove-cleanup-handle",
+            run_ref=current.runs[session.run_id].run_ref,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            session_fencing_token=session.session_fencing_token,
+            expected_state="starting",
+            next_state="starting",
+            occurred_at=session.start_intent_at,
+            durable_locator_digest=locator_digest,
+        ),
+    )
+    assert persisted is not None
     cancellation = session_coordinator.request_operator_cancellation(
         runtime,
         run_id=first.run_id,
@@ -3446,6 +3578,7 @@ def test_restart_cleanup_pending_continues_only_verified_handle_cleanup(
     )
     assert cancellation.accepted
 
+    runtime = _reopen_runtime(runtime)
     restarted = run_bounded_execution_unit(
         runtime,
         activation_id=first.activation_id,
@@ -3453,15 +3586,20 @@ def test_restart_cleanup_pending_continues_only_verified_handle_cleanup(
     )
     after = _load(runtime)
 
-    assert restarted.code == "adapter_failure"
-    assert restarted.adapter_error_kind == "cancelled"
+    assert restarted.code == expected_code
     assert handle is not None
-    assert handle.operations == ["transport_cleanup"]
+    assert handle.operations == expected_operations
     session = next(iter(after.runner_sessions.values()))
-    assert (session.state, session.cleanup_disposition) == (
-        "interrupted",
-        "complete",
-    )
+    if returned_handle_id == "verified-cleanup-handle" and not foreign_terminal_proof:
+        assert restarted.adapter_error_kind == "cancelled"
+        assert (session.state, session.cleanup_disposition) == (
+            "interrupted",
+            "complete",
+        )
+    else:
+        assert session.state == "cancellation_requested"
+        assert after.runner_session_completions == {}
+        assert after.runner_observations == {}
 
 
 @pytest.mark.parametrize("restart_state", ("running", "terminating"))
@@ -3521,6 +3659,7 @@ def test_restart_reconciles_running_and_terminating_sessions(
         )
         assert persisted is not None
 
+    runtime = _reopen_runtime(runtime)
     restarted = run_bounded_execution_unit(
         runtime,
         activation_id=first.activation_id,

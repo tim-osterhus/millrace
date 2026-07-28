@@ -76,6 +76,9 @@ The invocation object has
 `dispatch_echo` has exactly these keys:
 
 - `run_id`: nonblank string;
+- `session_id`: nonblank string;
+- `dispatch_generation`: positive integer;
+- `session_fencing_token`: nonblank string;
 - `claim_id`: nonblank string;
 - `generation`: integer;
 - `fencing_token`: nonblank string;
@@ -83,7 +86,9 @@ The invocation object has
 - `stage_kind_id`: nonblank string;
 - `graph_node_id`: nonblank string;
 - `runner_binding_id`: nonblank string;
-- `correlation_id`: nonblank string.
+- `correlation_id`: nonblank string;
+- `selected_authority_digest`: `sha256:` digest over the complete canonical
+  schema-v5 `dispatch_envelope` plus `selected_adapter_kind`.
 
 The `prompt` object has exactly the selected context the wrapper needs:
 
@@ -108,7 +113,7 @@ The result must contain exactly these keys:
 | --- | --- | --- |
 | `outcome_kind` | string | Exact value `success`. |
 | `adapter_id` | string | Must equal the invocation `adapter_id`. |
-| `dispatch_echo` | object | Must contain exactly the nine unchanged echo keys. |
+| `dispatch_echo` | object | Must contain exactly the thirteen unchanged echo keys, including the complete selected-authority digest. |
 | `redaction_policy_id` | string | Must equal the configured policy ID. |
 | `marker` | string or null | Candidate terminal marker selected from the legal markers. |
 | `captured_stdout` | string or null | Bounded provider output retained as evidence. |
@@ -145,7 +150,7 @@ This abbreviated example retains every required top-level field. Real
   "cancellation_token": null,
   "redaction_policy": {"policy_id": "local-default", "secret_tokens": []},
   "dispatch_envelope": {"work_item_payload": {}, "governance_context": {}, "selected_join_evidence": null, "terminal_options": []},
-  "dispatch_echo": {"run_id":"run-1","claim_id":"claim-1","generation":1,"fencing_token":"fence-1","plan_fingerprint":"sha256:example","stage_kind_id":"stage.worker","graph_node_id":"worker.start","runner_binding_id":"runner.worker","correlation_id":"corr-1"},
+  "dispatch_echo": {"run_id":"run-1","session_id":"session-1","dispatch_generation":1,"session_fencing_token":"session-fence-1","claim_id":"claim-1","generation":1,"fencing_token":"fence-1","plan_fingerprint":"sha256:example","stage_kind_id":"stage.worker","graph_node_id":"worker.start","runner_binding_id":"runner.worker","correlation_id":"corr-1","selected_authority_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000"},
   "selected_asset_material": {},
   "entrypoint_asset_ref": null,
   "skill_asset_refs": [],
@@ -159,7 +164,7 @@ This abbreviated example retains every required top-level field. Real
 {
   "outcome_kind": "success",
   "adapter_id": "local-codex",
-  "dispatch_echo": {"run_id":"run-1","claim_id":"claim-1","generation":1,"fencing_token":"fence-1","plan_fingerprint":"sha256:example","stage_kind_id":"stage.worker","graph_node_id":"worker.start","runner_binding_id":"runner.worker","correlation_id":"corr-1"},
+  "dispatch_echo": {"run_id":"run-1","session_id":"session-1","dispatch_generation":1,"session_fencing_token":"session-fence-1","claim_id":"claim-1","generation":1,"fencing_token":"fence-1","plan_fingerprint":"sha256:example","stage_kind_id":"stage.worker","graph_node_id":"worker.start","runner_binding_id":"runner.worker","correlation_id":"corr-1","selected_authority_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000"},
   "redaction_policy_id": "local-default",
   "marker": "WORK_COMPLETE",
   "captured_stdout": null,

@@ -409,8 +409,8 @@ def _codex_mismatch_config() -> object:
     from millrace.adapters.runner_contract import AdapterLocalConfig, RedactionPolicy
 
     wrapper = _codex_success_wrapper("TASK_COMPLETE").replace(
-        "'run_id': dispatch['run_id'],",
-        "'run_id': 'wrong-run',",
+        "echo = bundle['dispatch_echo']",
+        "echo = dict(bundle['dispatch_echo']); echo['run_id'] = 'wrong-run'",
     )
     return AdapterLocalConfig(
         adapters={
@@ -446,20 +446,7 @@ def _codex_success_wrapper(marker: str) -> str:
         "    marker = 'WORK_COMPLETE' if dispatch['stage_kind_id'] == "
         "'kernel_ping.worker' else 'TASK_COMPLETE'\n"
         "artifact = {} if marker == 'WORK_COMPLETE' else " + artifact_json + "\n"
-        "echo = {\n"
-        "    'run_id': dispatch['run_id'],\n"
-        "    'session_id': dispatch['session_id'],\n"
-        "    'dispatch_generation': dispatch['dispatch_generation'],\n"
-        "    'session_fencing_token': dispatch['session_fencing_token'],\n"
-        "    'claim_id': dispatch['claim_id'],\n"
-        "    'generation': dispatch['generation'],\n"
-        "    'fencing_token': dispatch['fencing_token'],\n"
-        "    'plan_fingerprint': dispatch['plan_fingerprint'],\n"
-        "    'stage_kind_id': dispatch['stage_kind_id'],\n"
-        "    'graph_node_id': dispatch['graph_node_id'],\n"
-        "    'runner_binding_id': dispatch['runner_binding_id'],\n"
-        "    'correlation_id': bundle['correlation_id'],\n"
-        "}\n"
+        "echo = bundle['dispatch_echo']\n"
         "print(json.dumps({\n"
         "    'outcome_kind': 'success',\n"
         "    'adapter_id': bundle['adapter_id'],\n"
@@ -1299,9 +1286,9 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
         AdapterLocalConfig,
         DispatchEcho,
         RedactionPolicy,
-    StartRefusedBeforeExternalWork,
-    Unsupported,
-    start_refusal_diagnostic_digest,
+        StartRefusedBeforeExternalWork,
+        Unsupported,
+        start_refusal_diagnostic_digest,
     )
     from millrace.contracts.compiled_plan import (
         CapabilityDeclaration,
@@ -1324,6 +1311,7 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
                 dispatch_echo=DispatchEcho.from_dispatch_envelope(
                     request.dispatch_envelope,
                     correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
                 ),
                 redaction_policy=request.redaction_policy,
                 diagnostics={"reason": "offline refusal"},
@@ -1340,6 +1328,7 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
                 DispatchEcho.from_dispatch_envelope(
                     invocation.dispatch_envelope,
                     correlation_id=invocation.correlation_id,
+                    selected_adapter_kind=invocation.selected_adapter_kind,
                 )
             )
 
@@ -1491,6 +1480,7 @@ def test_bounded_execution_omits_component_authority_for_default_codex_request(
                 dispatch_echo=DispatchEcho.from_dispatch_envelope(
                     request.dispatch_envelope,
                     correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
                 ),
                 redaction_policy=request.redaction_policy,
             )
@@ -1741,7 +1731,7 @@ def test_codex_config_and_bounded_execution_are_unchanged(
                     "cwd": str(tmp_path),
                     "env_allowlist": {},
                     "timeout_seconds": 5,
-                        "max_input_bundle_bytes": 16384,
+                    "max_input_bundle_bytes": 16384,
                     "max_stdout_bytes": 8192,
                     "max_stderr_diagnostic_bytes": 512,
                     "redaction_policy": {

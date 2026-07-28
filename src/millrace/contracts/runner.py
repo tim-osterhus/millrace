@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from hashlib import sha256
 from types import MappingProxyType
 from typing import ClassVar, cast
@@ -413,20 +413,22 @@ def runner_session_locator_bytes(
 
 
 _LOCATOR_SELECTED_AUTHORITY_FIELDS = frozenset(
+    field_info.name for field_info in fields(RunnerDispatchEnvelope)
+) | frozenset(
     {
-        "run_id",
-        "claim_id",
+        "adapter_id",
+        "cancellation_token",
+        "correlation_id",
+        "environment_policy_ref",
+        "local_config_ref",
         "plan_ref",
-        "plan_fingerprint",
-        "runner_binding_id",
-        "stage_kind_id",
-        "graph_node_id",
-        "queue_family_id",
-        "session_id",
-        "dispatch_generation",
-        "session_fencing_token",
-        "generation",
-        "fencing_token",
+        "selected_adapter_kind",
+        "selected_artifact_schemas",
+        "selected_asset_material",
+        "selected_component_pin",
+        "selected_runner_binding_id",
+        "selected_terminal_result_mappings",
+        "timeout_seconds",
     }
 )
 

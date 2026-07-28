@@ -368,6 +368,7 @@ class MillforgeAdapter:
             else DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             )
         )
         if isinstance(outcome, AdapterErrorResult):
@@ -404,6 +405,7 @@ class MillforgeAdapter:
             DispatchEcho.from_dispatch_envelope(
                 invocation.dispatch_envelope,
                 correlation_id=invocation.correlation_id,
+                selected_adapter_kind=invocation.selected_adapter_kind,
             )
         )
 
@@ -427,6 +429,7 @@ class MillforgeAdapter:
             dispatch_echo=DispatchEcho.from_dispatch_envelope(
                 request.dispatch_envelope,
                 correlation_id=request.correlation_id,
+                selected_adapter_kind=request.selected_adapter_kind,
             ),
             diagnostics={"reason": reason},
         )
@@ -1225,6 +1228,7 @@ def _translate_result(
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         ),
         redaction_policy=request.redaction_policy,
         marker=cast(str, option["marker"]),
@@ -1250,6 +1254,7 @@ def _result_error(
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             request.dispatch_envelope,
             correlation_id=request.correlation_id,
+            selected_adapter_kind=request.selected_adapter_kind,
         ),
         diagnostics={"reason": "provider_result"},
     )

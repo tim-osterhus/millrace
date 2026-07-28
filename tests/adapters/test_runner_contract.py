@@ -144,11 +144,8 @@ def test_adapter_invocation_request_freezes_selected_runner_authority_projection
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="millforge",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
@@ -181,11 +178,8 @@ def test_adapter_invocation_request_freezes_selected_runner_authority_projection
             selected_runner_binding_id=current_dispatch.runner_binding_id,
             selected_adapter_kind="millforge",
             dispatch_envelope=current_dispatch,
-
             session_id=current_dispatch.session_id,
-
             dispatch_generation=current_dispatch.dispatch_generation,
-
             session_fencing_token=current_dispatch.session_fencing_token,
             timeout_seconds=30,
             correlation_id="corr-1",
@@ -366,11 +360,8 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
@@ -386,11 +377,8 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
             selected_runner_binding_id=dispatch.runner_binding_id,
             selected_adapter_kind="fake_local",
             dispatch_envelope=dispatch,
-
             session_id=dispatch.session_id,
-
             dispatch_generation=dispatch.dispatch_generation,
-
             session_fencing_token=dispatch.session_fencing_token,
             timeout_seconds=30,
             correlation_id="corr-1",
@@ -403,11 +391,8 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
                 selected_runner_binding_id=dispatch.runner_binding_id,
                 selected_adapter_kind="fake_local",
                 dispatch_envelope=dispatch,
-
                 session_id=dispatch.session_id,
-
                 dispatch_generation=dispatch.dispatch_generation,
-
                 session_fencing_token=dispatch.session_fencing_token,
                 timeout_seconds=nonfinite_timeout,
                 correlation_id="corr-1",
@@ -419,11 +404,8 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
             selected_runner_binding_id=dispatch.runner_binding_id,
             selected_adapter_kind="fake_local",
             dispatch_envelope=dispatch,
-
             session_id=dispatch.session_id,
-
             dispatch_generation=dispatch.dispatch_generation,
-
             session_fencing_token=dispatch.session_fencing_token,
             timeout_seconds=0,
             correlation_id="corr-1",
@@ -445,11 +427,8 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
             selected_runner_binding_id="wrong-runner",
             selected_adapter_kind="fake_local",
             dispatch_envelope=dispatch,
-
             session_id=dispatch.session_id,
-
             dispatch_generation=dispatch.dispatch_generation,
-
             session_fencing_token=dispatch.session_fencing_token,
             timeout_seconds=30,
             correlation_id="corr-1",
@@ -500,11 +479,8 @@ def test_success_result_converts_only_after_dispatch_echo_matches() -> None:
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
@@ -515,6 +491,7 @@ def test_success_result_converts_only_after_dispatch_echo_matches() -> None:
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             dispatch,
             correlation_id="corr-1",
+            selected_adapter_kind="fake_local",
         ),
         marker="UNSELECTED_BUT_STILL_EVIDENCE",
         observation_payload_candidate={"worker_summary": "ready"},
@@ -540,6 +517,7 @@ def test_success_result_converts_only_after_dispatch_echo_matches() -> None:
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             _valid_dispatch_envelope(run_id="run-2"),
             correlation_id="corr-1",
+            selected_adapter_kind="fake_local",
         ),
         marker="TASK_COMPLETE",
         redaction_policy=policy,
@@ -552,6 +530,7 @@ def test_success_result_converts_only_after_dispatch_echo_matches() -> None:
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             dispatch,
             correlation_id="corr-2",
+            selected_adapter_kind="fake_local",
         ),
         marker="TASK_COMPLETE",
         redaction_policy=policy,
@@ -595,11 +574,8 @@ def test_success_result_converts_request_bound_provenance_without_provider_data(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="millforge",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
@@ -617,6 +593,7 @@ def test_success_result_converts_request_bound_provenance_without_provider_data(
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             dispatch,
             correlation_id="corr-1",
+            selected_adapter_kind="millforge",
         ),
         marker="TASK_COMPLETE",
         adapter_provenance=provenance,
@@ -664,11 +641,8 @@ def test_success_result_conversion_refuses_unbound_or_malformed_provenance(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="millforge",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
@@ -680,6 +654,7 @@ def test_success_result_conversion_refuses_unbound_or_malformed_provenance(
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             dispatch,
             correlation_id="corr-1",
+            selected_adapter_kind="millforge",
         ),
         marker="TASK_COMPLETE",
         adapter_provenance=RunnerAdapterProvenance(
@@ -732,17 +707,16 @@ def test_success_result_refuses_each_dispatch_echo_identity_mismatch(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=policy,
     )
-    echo = DispatchEcho.from_dispatch_envelope(dispatch, correlation_id="corr-1")
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch, correlation_id="corr-1", selected_adapter_kind="fake_local"
+    )
     mismatched_echo = replace(echo, **{field_name: field_value})
     success = AdapterSuccessResult.from_unredacted(
         adapter_id="adapter-1",
@@ -772,11 +746,8 @@ def test_error_outcomes_and_half_success_records_cannot_convert_to_evidence() ->
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
@@ -788,6 +759,7 @@ def test_error_outcomes_and_half_success_records_cannot_convert_to_evidence() ->
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             dispatch,
             correlation_id="corr-1",
+            selected_adapter_kind="fake_local",
         ),
         diagnostics={"secret": "safe"},
         redaction_policy=policy,
@@ -805,6 +777,7 @@ def test_error_outcomes_and_half_success_records_cannot_convert_to_evidence() ->
             dispatch_echo=DispatchEcho.from_dispatch_envelope(
                 dispatch,
                 correlation_id="corr-1",
+                selected_adapter_kind="fake_local",
             ),
             marker="TASK_COMPLETE",
             error_kind="timeout",
@@ -843,11 +816,8 @@ def test_each_adapter_error_kind_cannot_convert_to_evidence(error_kind: str) -> 
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
@@ -859,6 +829,7 @@ def test_each_adapter_error_kind_cannot_convert_to_evidence(error_kind: str) -> 
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
             dispatch,
             correlation_id="corr-1",
+            selected_adapter_kind="fake_local",
         ),
         diagnostics={"safe": "diagnostic"},
         redaction_policy=policy,
@@ -881,7 +852,9 @@ def test_redaction_runs_before_result_exposure_across_all_result_surfaces(
     dispatch = _valid_dispatch_envelope()
     secret = "token-secret"
     policy = RedactionPolicy(policy_id="redact-default", secret_tokens=(secret,))
-    echo = DispatchEcho.from_dispatch_envelope(dispatch, correlation_id="corr-1")
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch, correlation_id="corr-1", selected_adapter_kind="fake_local"
+    )
     success = AdapterSuccessResult.from_unredacted(
         adapter_id="adapter-1",
         dispatch_echo=echo,
@@ -958,17 +931,16 @@ def test_redaction_canonicalizes_policy_and_hides_identity_repr_surfaces(
         fencing_token=f"fence-{secret}",
         plan_fingerprint=f"sha256:{secret}",
     )
-    echo = DispatchEcho.from_dispatch_envelope(dispatch, correlation_id="corr-1")
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch, correlation_id="corr-1", selected_adapter_kind="fake_local"
+    )
     request = AdapterInvocationRequest(
         adapter_id=f"adapter-{secret}",
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
@@ -1051,11 +1023,8 @@ def test_adapter_invocation_request_repr_hides_selected_context(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind=f"fake-{secret}",
         dispatch_envelope=dispatch,
-
         session_id=dispatch.session_id,
-
         dispatch_generation=dispatch.dispatch_generation,
-
         session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id=f"corr-{secret}",
@@ -1090,7 +1059,9 @@ def test_redaction_covers_mapping_keys_and_overlapping_tokens(
         policy_id="redact-default",
         secret_tokens=("token", secret),
     )
-    echo = DispatchEcho.from_dispatch_envelope(dispatch, correlation_id="corr-1")
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch, correlation_id="corr-1", selected_adapter_kind="fake_local"
+    )
 
     success = AdapterSuccessResult.from_unredacted(
         adapter_id="adapter-1",

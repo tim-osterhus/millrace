@@ -964,6 +964,66 @@ def test_runner_session_run_link_corruption_is_refused(
         store.close()
 
 
+@pytest.mark.parametrize(
+    ("sql", "message"),
+    (
+        (
+            """
+            UPDATE runs
+            SET current_session_id = 'missing-session'
+            WHERE run_id = 'run-taskmaster'
+            """,
+            "current_session_id",
+        ),
+        (
+            """
+            UPDATE runner_sessions
+            SET run_id = 'missing-run'
+            WHERE session_id = 'session-1'
+            """,
+            "reference runs",
+        ),
+    ),
+)
+def test_runner_session_run_link_raw_corruption_is_read_only(
+    tmp_path,
+    sql: str,
+    message: str,
+) -> None:
+    cas_root = tmp_path / "cas"
+    cas_store = ContentAddressedByteStore(cas_root)
+    state, _digests = _cas_backed_session_state(_session_state(), cas_store)
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(sql)
+    database_before = db_path.read_bytes()
+    cas_before = {
+        path.relative_to(cas_root): path.read_bytes()
+        for path in cas_root.rglob("*")
+        if path.is_file()
+    }
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match=message):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+    assert db_path.read_bytes() == database_before
+    assert {
+        path.relative_to(cas_root): path.read_bytes()
+        for path in cas_root.rglob("*")
+        if path.is_file()
+    } == cas_before
+
+
 def test_runner_session_corrupt_cancellation_attempt_link_is_refused(
     tmp_path,
 ) -> None:
@@ -1106,6 +1166,12 @@ def test_runner_session_completion_link_raw_corruption_is_refused(
             """,
             (value,),
         )
+    database_before = db_path.read_bytes()
+    cas_before = {
+        path.relative_to(tmp_path / "cas"): path.read_bytes()
+        for path in (tmp_path / "cas").rglob("*")
+        if path.is_file()
+    }
 
     store = SQLiteRuntimeStore.open(db_path)
     try:
@@ -1113,6 +1179,12 @@ def test_runner_session_completion_link_raw_corruption_is_refused(
             store.load_runtime_state(cas_store)
     finally:
         store.close()
+    assert db_path.read_bytes() == database_before
+    assert {
+        path.relative_to(tmp_path / "cas"): path.read_bytes()
+        for path in (tmp_path / "cas").rglob("*")
+        if path.is_file()
+    } == cas_before
 
 
 def test_runner_session_attempt_linked_to_secondary_request_is_refused(
