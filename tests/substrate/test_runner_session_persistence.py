@@ -634,6 +634,100 @@ def test_runner_session_generation_gap_is_refused(tmp_path) -> None:
         store.close()
 
 
+def test_runner_session_same_run_fence_reuse_raw_corruption_is_refused(
+    tmp_path,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, digests = _cas_backed_session_state(_session_state(), cas_store)
+    prior = state.runner_sessions["session-1"]
+    session = RunnerSessionRecord(
+        session_id="session-2",
+        run_id=prior.run_id,
+        dispatch_generation=2,
+        session_fencing_token="session-fence-2",
+        state="failed",
+        created_at=200,
+        start_intent_at=None,
+        started_at=None,
+        ended_at=250,
+        durable_locator_digest=None,
+        cleanup_disposition="not_required",
+    )
+    completion = RunnerSessionCompletionRecord(
+        completion_id="completion-2",
+        session_id=session.session_id,
+        run_id=session.run_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        terminal_state="failed",
+        exit_kind="error",
+        adapter_outcome_kind=None,
+        adapter_error_kind="invocation_failed",
+        runner_result_evidence_digest=None,
+        primary_cancellation_request_id=None,
+        cleanup_disposition="not_required",
+        started_at=None,
+        cancel_requested_at=None,
+        completed_at=250,
+        bounds_summary="bounded",
+        truncation_metadata="none",
+        redaction_policy_id="redaction.default",
+        diagnostic_digest=digests["completion_diagnostic"],
+        application_input_id="cli:run.session-completion:completion-2",
+    )
+    run = state.runs[session.run_id]
+    state = replace(
+        state,
+        runs={
+            **state.runs,
+            session.run_id: replace(
+                run,
+                current_session_id=session.session_id,
+                last_dispatch_generation=2,
+            ),
+        },
+        runner_sessions={
+            **state.runner_sessions,
+            session.session_id: session,
+        },
+        runner_session_completions={
+            **state.runner_session_completions,
+            session.session_id: completion,
+        },
+    )
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+    finally:
+        store.close()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_sessions
+            SET session_fencing_token = ?
+            WHERE session_id = ?
+            """,
+            (prior.session_fencing_token, session.session_id),
+        )
+        connection.execute(
+            """
+            UPDATE runner_session_completions
+            SET session_fencing_token = ?
+            WHERE session_id = ?
+            """,
+            (prior.session_fencing_token, session.session_id),
+        )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError, match="fencing token"):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     ("corruption", "message"),
     (

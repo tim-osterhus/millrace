@@ -52,6 +52,13 @@ def create_runner_session_refusal(
         return "runner_session_authority_mismatch"
     if transition_input.session_id in state.runner_sessions:
         return "stale_runner_session"
+    if any(
+        session.run_id == run.run_ref.run_id
+        and session.session_fencing_token
+        == transition_input.session_fencing_token
+        for session in state.runner_sessions.values()
+    ):
+        return "runner_session_reconciliation_contradiction"
     if run.current_session_id is None:
         if run.last_dispatch_generation != 0:
             return "runner_session_reconciliation_contradiction"
@@ -372,6 +379,30 @@ def completion_refusal(
         ):
             return "runner_session_reconciliation_contradiction"
     elif session.started_at != completion.started_at:
+        return "runner_session_reconciliation_contradiction"
+    latest_session_fact_at = max(
+        (
+            session.created_at,
+            *(
+                timestamp
+                for timestamp in (session.start_intent_at, session.started_at)
+                if timestamp is not None
+            ),
+            *(
+                request.requested_at
+                for request in state.runner_session_cancellation_requests.values()
+                if request.session_id == completion.session_id
+            ),
+            *(
+                timestamp
+                for attempt in state.runner_session_cancellation_attempts.values()
+                if attempt.session_id == completion.session_id
+                for timestamp in (attempt.started_at, attempt.completed_at)
+                if timestamp is not None
+            ),
+        )
+    )
+    if completion.completed_at < latest_session_fact_at:
         return "runner_session_reconciliation_contradiction"
     primary_request_id = completion.primary_cancellation_request_id
     if primary_request_id is None:

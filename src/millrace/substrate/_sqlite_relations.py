@@ -113,6 +113,7 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
     terminal_states = {"completed", "interrupted", "failed", "lost"}
     sessions_by_run: dict[str, list[RunnerSessionRecord]] = {}
     seen_run_generations: set[tuple[str, int]] = set()
+    seen_run_fencing_tokens: set[tuple[str, str]] = set()
     for session_id, session in state.runner_sessions.items():
         if session_id != session.session_id:
             raise StorageIntegrityError(
@@ -129,6 +130,15 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
                 "runner_sessions run dispatch generation must be unique"
             )
         seen_run_generations.add(run_generation)
+        run_fencing_token = (
+            session.run_id,
+            session.session_fencing_token,
+        )
+        if run_fencing_token in seen_run_fencing_tokens:
+            raise StorageIntegrityError(
+                "runner_sessions same-run fencing token must be unique"
+            )
+        seen_run_fencing_tokens.add(run_fencing_token)
         sessions_by_run.setdefault(session.run_id, []).append(session)
 
     for run_id, run in state.runs.items():

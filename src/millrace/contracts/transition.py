@@ -105,6 +105,24 @@ def _require_runner_session_digest(field_name: str, digest: str) -> None:
         raise ValueError(f"{field_name} must be a sha256 digest")
 
 
+def _require_durable_timestamp(field_name: str, value: object) -> None:
+    if type(value) is not int or value < 0 or value > DURABLE_INT64_MAX:
+        raise ValueError(f"{field_name} must be a durable non-negative integer")
+
+
+def _require_durable_positive_integer(
+    field_name: str,
+    value: object,
+) -> None:
+    if type(value) is not int or value < 1 or value > DURABLE_INT64_MAX:
+        raise ValueError(f"{field_name} must be a durable positive integer")
+
+
+def _require_boolean(field_name: str, value: object) -> None:
+    if type(value) is not bool:
+        raise ValueError(f"{field_name} must be a boolean")
+
+
 @dataclass(frozen=True, slots=True)
 class TransitionInput:
     input_kind: ClassVar[str] = "transition_input"
@@ -211,8 +229,8 @@ class CreateRunnerSession(KernelCommand):
         TransitionInput.__post_init__(self)
         for field_name in ("session_id", "session_fencing_token"):
             _require_runner_session_text(field_name, getattr(self, field_name))
-        if type(self.created_at) is not int or self.created_at < 0:
-            raise ValueError("created_at must be a non-negative integer")
+        _require_durable_timestamp("created_at", self.created_at)
+        _require_boolean("explicit_retry_intent", self.explicit_retry_intent)
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,10 +255,11 @@ class AdvanceRunnerSession(KernelCommand):
             "next_state",
         ):
             _require_runner_session_text(field_name, getattr(self, field_name))
-        if type(self.dispatch_generation) is not int or self.dispatch_generation < 1:
-            raise ValueError("dispatch_generation must be a positive integer")
-        if type(self.occurred_at) is not int or self.occurred_at < 0:
-            raise ValueError("occurred_at must be a non-negative integer")
+        _require_durable_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        _require_durable_timestamp("occurred_at", self.occurred_at)
         if self.durable_locator_digest is not None:
             _require_runner_session_digest(
                 "durable_locator_digest",
@@ -286,6 +305,13 @@ class RequestRunnerSessionCancellation(KernelCommand):
             raise ValueError("unsupported runner session cancellation reason")
         if self.source_kind not in {"operator", "daemon", "runtime"}:
             raise ValueError("unsupported runner session cancellation source")
+        _require_durable_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        _require_durable_timestamp("requested_at", self.requested_at)
+        _require_durable_positive_integer("request_order", self.request_order)
+        _require_boolean("primary", self.primary)
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +348,17 @@ class RecordRunnerSessionCancellationAttempt(KernelCommand):
             "bounded_diagnostic_digest",
             self.bounded_diagnostic_digest,
         )
+        _require_durable_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        _require_durable_positive_integer("sequence", self.sequence)
+        _require_durable_timestamp("started_at", self.started_at)
+        _require_durable_timestamp("completed_at", self.completed_at)
+        if self.completed_at < self.started_at:
+            raise ValueError(
+                "runner session cancellation attempt timestamps must be monotonic"
+            )
         if self.operation not in {
             "cooperative_cancel",
             "terminate",

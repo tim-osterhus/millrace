@@ -8,6 +8,7 @@ from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
 from millrace.compiler import compile_workflow
 from millrace.compiler.canonical import authority_fingerprint
 from millrace.contracts.state import (
+    RunnerSessionCancellationAttemptRecord,
     RunnerSessionCancellationRecord,
     RunnerSessionCompletionRecord,
     RunnerSessionRecord,
@@ -286,6 +287,18 @@ def test_explicit_retry_keeps_runref_and_advances_session_generation(
         created_at=200,
         explicit_retry_intent=True,
     )
+    reused_fence_decision = decide(
+        state,
+        replace(retry, session_fencing_token="session-fence-1"),
+        deterministic_context(transition_id="transition-reused-session-fence"),
+    )
+    assert reused_fence_decision.accepted is False
+    assert reused_fence_decision.refusal is not None
+    assert (
+        reused_fence_decision.refusal.reason
+        == "runner_session_reconciliation_contradiction"
+    )
+
     state = apply(
         state,
         decide(
@@ -841,6 +854,143 @@ def test_composed_completed_refuses_absent_or_backdated_start_evidence(
     assert decision.refusal.reason == "runner_session_reconciliation_contradiction"
 
 
+@pytest.mark.parametrize(
+    ("scenario", "completed_at", "accepted"),
+    (
+        ("created", 99, False),
+        ("starting", 109, False),
+        ("secondary_request", 135, False),
+        ("attempt_completion", 140, False),
+        ("equality", 145, True),
+    ),
+)
+def test_completion_temporal_admission_is_stable_before_apply(
+    scenario: str,
+    completed_at: int,
+    accepted: bool,
+) -> None:
+    state = _claimed_state()
+    run = state.runs["run-taskmaster"]
+    prior = scenario
+    if scenario in {"secondary_request", "attempt_completion", "equality"}:
+        prior = "cancellation_requested"
+    session = RunnerSessionRecord(
+        session_id="session-1",
+        run_id=run.run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        state=prior,
+        created_at=100,
+        start_intent_at=None if prior == "created" else 110,
+        started_at=120 if prior == "cancellation_requested" else None,
+        ended_at=None,
+        durable_locator_digest=None,
+        cleanup_disposition="pending",
+    )
+    requests = {}
+    attempts = {}
+    if prior == "cancellation_requested":
+        primary = RunnerSessionCancellationRecord(
+            request_id="cancel-1",
+            session_id=session.session_id,
+            dispatch_generation=1,
+            reason="operator_cancel_work",
+            source_kind="operator",
+            actor_id="operator-1",
+            requested_at=130,
+            request_order=1,
+            primary=True,
+        )
+        requests[primary.request_id] = primary
+        if scenario == "secondary_request":
+            secondary = RunnerSessionCancellationRecord(
+                request_id="cancel-2",
+                session_id=session.session_id,
+                dispatch_generation=1,
+                reason="daemon_shutdown",
+                source_kind="daemon",
+                actor_id="daemon-1",
+                requested_at=140,
+                request_order=2,
+                primary=False,
+            )
+            requests[secondary.request_id] = secondary
+        if scenario in {"attempt_completion", "equality"}:
+            attempt = RunnerSessionCancellationAttemptRecord(
+                attempt_id="attempt-1",
+                session_id=session.session_id,
+                request_id=primary.request_id,
+                sequence=1,
+                operation="cooperative_cancel",
+                result="succeeded",
+                started_at=135,
+                completed_at=145,
+                bounded_diagnostic_digest="sha256:" + "a" * 64,
+            )
+            attempts[attempt.attempt_id] = attempt
+    state = replace(
+        state,
+        runs={
+            **state.runs,
+            run.run_ref.run_id: replace(
+                run,
+                current_session_id=session.session_id,
+                last_dispatch_generation=1,
+            ),
+        },
+        runner_sessions={session.session_id: session},
+        runner_session_cancellation_requests=requests,
+        runner_session_cancellation_attempts=attempts,
+    )
+    completion = RunnerSessionCompletionRecord(
+        completion_id="completion-1",
+        session_id=session.session_id,
+        run_id=run.run_ref.run_id,
+        dispatch_generation=1,
+        session_fencing_token=session.session_fencing_token,
+        terminal_state="failed",
+        exit_kind="error",
+        adapter_outcome_kind=None,
+        adapter_error_kind="invocation_failed",
+        runner_result_evidence_digest=None,
+        primary_cancellation_request_id=(
+            "cancel-1" if prior == "cancellation_requested" else None
+        ),
+        cleanup_disposition="complete",
+        started_at=session.started_at,
+        cancel_requested_at=(
+            130 if prior == "cancellation_requested" else None
+        ),
+        completed_at=completed_at,
+        bounds_summary="bounded",
+        truncation_metadata="none",
+        redaction_policy_id="redaction.default",
+        diagnostic_digest="sha256:" + "b" * 64,
+        application_input_id="cli:run.session-completion:completion-1",
+    )
+
+    decision = decide(
+        state,
+        RecordRunnerSessionCompletion(
+            "complete-session",
+            run_ref=run.run_ref,
+            expected_state=prior,
+            completion=completion,
+        ),
+        deterministic_context(transition_id="transition-complete-session"),
+    )
+
+    assert decision.accepted is accepted
+    if accepted:
+        assert apply(state, decision).runner_sessions["session-1"].ended_at == 145
+    else:
+        assert decision.refusal is not None
+        assert (
+            decision.refusal.reason
+            == "runner_session_reconciliation_contradiction"
+        )
+
+
 def test_cancellation_request_refuses_time_before_latest_session_phase() -> None:
     state = _claimed_state()
     run = state.runs["run-taskmaster"]
@@ -1262,6 +1412,97 @@ def test_runner_session_refuses_state_timestamp_contradictions(
             durable_locator_digest="sha256:" + "a" * 64,
             cleanup_disposition="pending",
         )
+
+
+@pytest.mark.parametrize(
+    ("command_kind", "field_name", "invalid"),
+    (
+        ("create", "created_at", "100"),
+        ("create", "created_at", 2**63),
+        ("create", "explicit_retry_intent", 1),
+        ("create", "explicit_retry_intent", "yes"),
+        ("advance", "dispatch_generation", 0),
+        ("advance", "dispatch_generation", 2**63),
+        ("advance", "occurred_at", "110"),
+        ("advance", "occurred_at", 2**63),
+        ("request", "dispatch_generation", 0),
+        ("request", "dispatch_generation", 2**63),
+        ("request", "requested_at", "130"),
+        ("request", "requested_at", 2**63),
+        ("request", "request_order", 0),
+        ("request", "request_order", 2**63),
+        ("request", "primary", 1),
+        ("request", "primary", "yes"),
+        ("attempt", "dispatch_generation", 0),
+        ("attempt", "dispatch_generation", 2**63),
+        ("attempt", "sequence", 0),
+        ("attempt", "sequence", 2**63),
+        ("attempt", "started_at", "135"),
+        ("attempt", "started_at", 2**63),
+        ("attempt", "completed_at", "140"),
+        ("attempt", "completed_at", 2**63),
+    ),
+)
+def test_runner_session_commands_reject_invalid_scalar_values(
+    command_kind: str,
+    field_name: str,
+    invalid: object,
+) -> None:
+    run_ref = _claimed_state().runs["run-taskmaster"].run_ref
+    commands = {
+        "create": CreateRunnerSession(
+            "create-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            session_fencing_token="session-fence-1",
+            created_at=100,
+            explicit_retry_intent=False,
+        ),
+        "advance": AdvanceRunnerSession(
+            "advance-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="created",
+            next_state="starting",
+            occurred_at=110,
+        ),
+        "request": RequestRunnerSessionCancellation(
+            "cancel-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="running",
+            request_id="cancel-1",
+            reason="operator_cancel_work",
+            source_kind="operator",
+            actor_id="operator-1",
+            requested_at=130,
+            request_order=1,
+            primary=True,
+        ),
+        "attempt": RecordRunnerSessionCancellationAttempt(
+            "attempt-cancel-session",
+            run_ref=run_ref,
+            session_id="session-1",
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            expected_state="cancellation_requested",
+            attempt_id="attempt-1",
+            request_id="cancel-1",
+            sequence=1,
+            operation="cooperative_cancel",
+            result="succeeded",
+            started_at=135,
+            completed_at=140,
+            bounded_diagnostic_digest="sha256:" + "a" * 64,
+        ),
+    }
+
+    with pytest.raises(ValueError):
+        replace(commands[command_kind], **{field_name: invalid})
 
 
 def test_runner_session_cancellation_attempt_and_completion_are_durable() -> None:
