@@ -13,12 +13,15 @@ from millrace.kernel import apply, decide
 from millrace.operator import operator_status
 from millrace.operator.dispatch import (
     DispatchProjectionError,
-    build_dispatch_envelope_for_run,
+)
+from millrace.operator.dispatch import (
+    build_dispatch_envelope_for_run as _build_dispatch_envelope_for_run,
 )
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.codecs import dumps_cas_object, encode_payload
 from millrace.substrate.errors import StorageIntegrityError
 from millrace.substrate.records import ARTIFACT_PAYLOAD_OBJECT_KIND
+from millrace.testing import fake_runner_session_state
 from substrate._runtime_store_support import (
     load_runtime_state,
     persist_and_load_runtime_state,
@@ -26,6 +29,13 @@ from substrate._runtime_store_support import (
     runtime_store_paths,
 )
 from support import vendor_selection
+
+
+def build_dispatch_envelope_for_run(*, state, run_id):
+    return _build_dispatch_envelope_for_run(
+        state=fake_runner_session_state(state=state, run_id=run_id),
+        run_id=run_id,
+    )
 
 
 def _with_fully_drifted_fanout_target(state, *, run_id: str):

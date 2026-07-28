@@ -16,6 +16,9 @@ from millrace.contracts.runner import RunnerDispatchEnvelope
 def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
     values: dict[str, object] = {
         "run_id": "run-1",
+        "session_id": "session-1",
+        "dispatch_generation": 1,
+        "session_fencing_token": "session-fence-1",
         "work_item_id": "work-1",
         "activation_id": "activation-1",
         "plan_fingerprint": "sha256:abcdef",
@@ -50,6 +53,9 @@ def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
     values.update(overrides)
     return RunnerDispatchEnvelope(
         run_id=cast(str, values["run_id"]),
+        session_id=cast(str, values["session_id"]),
+        dispatch_generation=cast(int, values["dispatch_generation"]),
+        session_fencing_token=cast(str, values["session_fencing_token"]),
         work_item_id=cast(str, values["work_item_id"]),
         activation_id=cast(str, values["activation_id"]),
         plan_fingerprint=cast(str, values["plan_fingerprint"]),
@@ -162,6 +168,12 @@ def _request(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind=selected_adapter_kind,
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=5,
         correlation_id="corr-1",
         redaction_policy=cast(RedactionPolicy, policy),
@@ -179,6 +191,12 @@ def _request_with_policy(redaction_policy: object) -> object:
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="codex",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=5,
         correlation_id="corr-1",
         redaction_policy=redaction_policy,  # type: ignore[arg-type]
@@ -252,6 +270,9 @@ def _success_wrapper_code(*, marker: str = "TASK_COMPLETE") -> str:
         "dispatch = bundle['dispatch_envelope']\n"
         "echo = {\n"
         "    'run_id': dispatch['run_id'],\n"
+        "    'session_id': dispatch['session_id'],\n"
+        "    'dispatch_generation': dispatch['dispatch_generation'],\n"
+        "    'session_fencing_token': dispatch['session_fencing_token'],\n"
         "    'claim_id': dispatch['claim_id'],\n"
         "    'generation': dispatch['generation'],\n"
         "    'fencing_token': dispatch['fencing_token'],\n"
@@ -285,6 +306,9 @@ def _secret_surface_wrapper_code(secret: str = "token-secret") -> str:
         "dispatch=bundle['dispatch_envelope']\n"
         "echo={\n"
         "    'run_id':dispatch['run_id'],\n"
+        "    'session_id':dispatch['session_id'],\n"
+        "    'dispatch_generation':dispatch['dispatch_generation'],\n"
+        "    'session_fencing_token':dispatch['session_fencing_token'],\n"
         "    'claim_id':dispatch['claim_id'],\n"
         "    'generation':dispatch['generation'],\n"
         "    'fencing_token':dispatch['fencing_token'],\n"
@@ -792,8 +816,12 @@ def test_codex_adapter_refuses_extra_top_level_success_fields(tmp_path: Path) ->
     wrapper_code = (
         "import json, sys\n"
         "bundle=json.loads(sys.stdin.read())\n"
-        "dispatch=bundle['dispatch_envelope']\n"
-        "echo={'run_id':dispatch['run_id'],'claim_id':dispatch['claim_id'],"
+            "dispatch=bundle['dispatch_envelope']\n"
+            "echo={'run_id':dispatch['run_id'],"
+            "'session_id':dispatch['session_id'],"
+            "'dispatch_generation':dispatch['dispatch_generation'],"
+            "'session_fencing_token':dispatch['session_fencing_token'],"
+            "'claim_id':dispatch['claim_id'],"
         "'generation':dispatch['generation'],"
         "'fencing_token':dispatch['fencing_token'],"
         "'plan_fingerprint':dispatch['plan_fingerprint'],"
@@ -841,7 +869,11 @@ def test_codex_adapter_refuses_wrapper_identity_mismatch(
         "import json, sys\n"
         "bundle=json.loads(sys.stdin.read())\n"
         "dispatch=bundle['dispatch_envelope']\n"
-        "echo={'run_id':dispatch['run_id'],'claim_id':dispatch['claim_id'],"
+        "echo={'run_id':dispatch['run_id'],"
+        "'session_id':dispatch['session_id'],"
+        "'dispatch_generation':dispatch['dispatch_generation'],"
+        "'session_fencing_token':dispatch['session_fencing_token'],"
+        "'claim_id':dispatch['claim_id'],"
         "'generation':dispatch['generation'],"
         "'fencing_token':dispatch['fencing_token'],"
         "'plan_fingerprint':dispatch['plan_fingerprint'],"
@@ -1139,7 +1171,11 @@ def test_codex_adapter_redaction_failure_is_structured_without_leak(
         "import json, sys\n"
         "bundle=json.loads(sys.stdin.read())\n"
         "dispatch=bundle['dispatch_envelope']\n"
-        "echo={'run_id':dispatch['run_id'],'claim_id':dispatch['claim_id'],"
+        "echo={'run_id':dispatch['run_id'],"
+        "'session_id':dispatch['session_id'],"
+        "'dispatch_generation':dispatch['dispatch_generation'],"
+        "'session_fencing_token':dispatch['session_fencing_token'],"
+        "'claim_id':dispatch['claim_id'],"
         "'generation':dispatch['generation'],"
         "'fencing_token':dispatch['fencing_token'],"
         "'plan_fingerprint':dispatch['plan_fingerprint'],"

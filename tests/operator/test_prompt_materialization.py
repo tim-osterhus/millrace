@@ -108,6 +108,9 @@ def _dispatch(
 ) -> RunnerDispatchEnvelope:
     return RunnerDispatchEnvelope(
         run_id="run-1",
+        session_id="session-1",
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
         work_item_id="work-1",
         activation_id="activation-1",
         plan_fingerprint=f"sha256:{'1' * 64}",

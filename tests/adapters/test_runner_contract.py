@@ -18,6 +18,9 @@ from millrace.contracts.runner import (
 def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
     kwargs: dict[str, object] = {
         "run_id": "run-1",
+        "session_id": "session-1",
+        "dispatch_generation": 1,
+        "session_fencing_token": "session-fence-1",
         "work_item_id": "work-1",
         "activation_id": "activation-1",
         "plan_fingerprint": "sha256:abcdef",
@@ -51,6 +54,9 @@ def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
     kwargs.update(overrides)
     return RunnerDispatchEnvelope(
         run_id=cast(str, kwargs["run_id"]),
+        session_id=cast(str, kwargs["session_id"]),
+        dispatch_generation=cast(int, kwargs["dispatch_generation"]),
+        session_fencing_token=cast(str, kwargs["session_fencing_token"]),
         work_item_id=cast(str, kwargs["work_item_id"]),
         activation_id=cast(str, kwargs["activation_id"]),
         plan_fingerprint=cast(str, kwargs["plan_fingerprint"]),
@@ -138,6 +144,12 @@ def test_adapter_invocation_request_freezes_selected_runner_authority_projection
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="millforge",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -169,6 +181,12 @@ def test_adapter_invocation_request_freezes_selected_runner_authority_projection
             selected_runner_binding_id=current_dispatch.runner_binding_id,
             selected_adapter_kind="millforge",
             dispatch_envelope=current_dispatch,
+
+            session_id=current_dispatch.session_id,
+
+            dispatch_generation=current_dispatch.dispatch_generation,
+
+            session_fencing_token=current_dispatch.session_fencing_token,
             timeout_seconds=30,
             correlation_id="corr-1",
             redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -314,14 +332,20 @@ def test_adapter_invocation_request_freezes_selected_runner_authority_projection
 class _FakeAdapter:
     adapter_kind = "fake_local"
 
-    def invoke(self, request: object) -> object:
+    def start_session(self, request: object) -> object:
+        return request
+
+    def reconcile_session(self, request: object) -> object:
         return request
 
 
 class _LocalSubprocessFakeAdapter:
     adapter_kind = "local_subprocess"
 
-    def invoke(self, request: object) -> object:
+    def start_session(self, request: object) -> object:
+        return request
+
+    def reconcile_session(self, request: object) -> object:
         return request
 
 
@@ -342,6 +366,12 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -356,6 +386,12 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
             selected_runner_binding_id=dispatch.runner_binding_id,
             selected_adapter_kind="fake_local",
             dispatch_envelope=dispatch,
+
+            session_id=dispatch.session_id,
+
+            dispatch_generation=dispatch.dispatch_generation,
+
+            session_fencing_token=dispatch.session_fencing_token,
             timeout_seconds=30,
             correlation_id="corr-1",
             redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -367,6 +403,12 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
                 selected_runner_binding_id=dispatch.runner_binding_id,
                 selected_adapter_kind="fake_local",
                 dispatch_envelope=dispatch,
+
+                session_id=dispatch.session_id,
+
+                dispatch_generation=dispatch.dispatch_generation,
+
+                session_fencing_token=dispatch.session_fencing_token,
                 timeout_seconds=nonfinite_timeout,
                 correlation_id="corr-1",
                 redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -377,6 +419,12 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
             selected_runner_binding_id=dispatch.runner_binding_id,
             selected_adapter_kind="fake_local",
             dispatch_envelope=dispatch,
+
+            session_id=dispatch.session_id,
+
+            dispatch_generation=dispatch.dispatch_generation,
+
+            session_fencing_token=dispatch.session_fencing_token,
             timeout_seconds=0,
             correlation_id="corr-1",
             redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -397,6 +445,12 @@ def test_adapter_request_and_resolver_refuses_bad_values() -> None:
             selected_runner_binding_id="wrong-runner",
             selected_adapter_kind="fake_local",
             dispatch_envelope=dispatch,
+
+            session_id=dispatch.session_id,
+
+            dispatch_generation=dispatch.dispatch_generation,
+
+            session_fencing_token=dispatch.session_fencing_token,
             timeout_seconds=30,
             correlation_id="corr-1",
             redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -446,6 +500,12 @@ def test_success_result_converts_only_after_dispatch_echo_matches() -> None:
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=policy,
@@ -535,6 +595,12 @@ def test_success_result_converts_request_bound_provenance_without_provider_data(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="millforge",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=policy,
@@ -598,6 +664,12 @@ def test_success_result_conversion_refuses_unbound_or_malformed_provenance(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="millforge",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=policy,
@@ -660,6 +732,12 @@ def test_success_result_refuses_each_dispatch_echo_identity_mismatch(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=policy,
@@ -694,6 +772,12 @@ def test_error_outcomes_and_half_success_records_cannot_convert_to_evidence() ->
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=policy,
@@ -759,6 +843,12 @@ def test_each_adapter_error_kind_cannot_convert_to_evidence(error_kind: str) -> 
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=policy,
@@ -874,6 +964,12 @@ def test_redaction_canonicalizes_policy_and_hides_identity_repr_surfaces(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind="fake_local",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=policy,
@@ -955,6 +1051,12 @@ def test_adapter_invocation_request_repr_hides_selected_context(
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind=f"fake-{secret}",
         dispatch_envelope=dispatch,
+
+        session_id=dispatch.session_id,
+
+        dispatch_generation=dispatch.dispatch_generation,
+
+        session_fencing_token=dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id=f"corr-{secret}",
         redaction_policy=policy,

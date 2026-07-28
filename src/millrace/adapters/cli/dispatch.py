@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from uuid import uuid4
+
 from millrace.adapters.cli.context import (
     CliCommandError,
     command_input_id,
@@ -15,7 +18,7 @@ from millrace.adapters.cli.output import (
     json_ready,
     success_result,
 )
-from millrace.contracts.transition import ClaimWork
+from millrace.contracts.transition import ClaimWork, CreateRunnerSession
 from millrace.operator.dispatch import (
     DispatchProjectionError,
     build_dispatch_envelope_for_run,
@@ -65,6 +68,23 @@ def _claim(namespace: object) -> CliSuccess:
                 message="Claim was accepted but no created run was persisted.",
                 exit_code=ExitCode.INTERNAL_ERROR,
                 details={"input_id": input_id_value},
+            )
+        run = next_state.runs[run_id]
+        if run.current_session_id is None:
+            session_id = f"session-{uuid4().hex}"
+            _, next_state = decide_apply_persist(
+                runtime,
+                next_state,
+                CreateRunnerSession(
+                    f"cli:dispatch.claim:session:{run_id}",
+                    run_ref=run.run_ref,
+                    session_id=session_id,
+                    session_fencing_token=f"session-fence-{uuid4().hex}",
+                    created_at=time.time_ns(),
+                    explicit_retry_intent=False,
+                ),
+                command=command,
+                claim_id_value=run.run_ref.claim_id,
             )
         envelope = build_dispatch_envelope_for_run(state=next_state, run_id=run_id)
     finally:

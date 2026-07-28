@@ -15,6 +15,11 @@ from millrace.adapters.cli.context import (
     transition_context,
 )
 from millrace.adapters.cli.output import ExitCode
+from millrace.adapters.cli.session_coordinator import (
+    execute_runner_session,
+    session_cancellation_token,
+    session_correlation_id,
+)
 from millrace.adapters.codex import CODEX_ADAPTER_KIND, CodexAdapter, CodexAdapterConfig
 from millrace.adapters.millforge import (
     MILLFORGE_ADAPTER_KIND,
@@ -22,15 +27,11 @@ from millrace.adapters.millforge import (
     MillforgeAdapterConfig,
 )
 from millrace.adapters.runner_contract import (
-    AdapterErrorResult,
-    AdapterEvidenceConversionError,
     AdapterInvocationRequest,
     AdapterLocalConfig,
     AdapterResolverError,
-    AdapterSuccessResult,
     RedactionPolicy,
     resolve_adapter,
-    runner_evidence_from_adapter_outcome,
 )
 from millrace.compiler import DEFAULT_SELECTED_RUNNER_ADAPTER_POLICY
 from millrace.contracts.compiled_plan import (
@@ -41,8 +42,14 @@ from millrace.contracts.compiled_plan import (
     SelectedCompiledPlan,
 )
 from millrace.contracts.runner import RunnerDispatchEnvelope
-from millrace.contracts.state import Activation, RunRecord, RuntimeState, WorkItem
-from millrace.contracts.transition import ClaimWork, RunnerResultObserved
+from millrace.contracts.state import (
+    Activation,
+    RunnerSessionRecord,
+    RunRecord,
+    RuntimeState,
+    WorkItem,
+)
+from millrace.contracts.transition import ClaimWork
 from millrace.kernel import apply, decide
 from millrace.operator.dispatch import (
     DispatchProjectionError,
@@ -140,14 +147,20 @@ def run_bounded_execution_unit(
         active = active_result
 
     selected_kind = normalized_adapter_kind or active.adapter_kind
-    dispatch = _build_dispatch(active.run.run_ref.run_id, _load(runtime))
-    if isinstance(dispatch, BoundedExecutionUnitResult):
-        return _with_active_ids(dispatch, active)
-
     try:
-        selected_asset_material = build_selected_asset_material(
-            selected_plan=active.selected_plan,
-            dispatch_envelope=dispatch,
+        adapter = resolve_adapter(selected_kind, effective_config)
+        session_result = execute_runner_session(
+            runtime,
+            run_ref=active.run.run_ref,
+            adapter=adapter,
+            request_factory=lambda session: _session_invocation_request(
+                runtime,
+                active=active,
+                selected_kind=selected_kind,
+                effective_config=effective_config,
+                session=session,
+            ),
+            explicit_retry_intent=normalized_activation_id is not None,
         )
     except SelectedAssetMaterializationError as exc:
         return _with_active_ids(
@@ -157,110 +170,23 @@ def run_bounded_execution_unit(
             ),
             active,
         )
-
-    redaction_policy = _redaction_policy_for_adapter(selected_kind, effective_config)
-    try:
-        invocation_timeout_seconds = _selected_invocation_timeout_seconds(
-            active.selected_plan,
-            dispatch.runner_binding_id,
-        )
-    except ValueError:
+    except DispatchProjectionError:
         return _with_active_ids(
             BoundedExecutionUnitResult(code="ready_state_corrupt"),
             active,
         )
-    try:
-        selected_component_pin, selected_terminal_mappings, selected_schemas = (
-            _selected_runner_authority_for_request(active.selected_plan, dispatch)
-        )
-    except ValueError:
-        return _with_active_ids(
-            BoundedExecutionUnitResult(code="ready_state_corrupt"),
-            active,
-        )
-    request = AdapterInvocationRequest(
-        adapter_id=_adapter_id_for_request(selected_kind, effective_config),
-        selected_runner_binding_id=dispatch.runner_binding_id,
-        selected_adapter_kind=selected_kind,
-        dispatch_envelope=dispatch,
-        timeout_seconds=invocation_timeout_seconds,
-        correlation_id=f"{_COMMAND}:{dispatch.run_id}",
-        redaction_policy=redaction_policy,
-        selected_asset_material=selected_asset_material,
-        local_config_ref="cli-local-adapter-config",
-        selected_component_pin=selected_component_pin,
-        selected_terminal_result_mappings=selected_terminal_mappings,
-        selected_artifact_schemas=selected_schemas,
-    )
-
-    try:
-        adapter = resolve_adapter(selected_kind, effective_config)
-        outcome = adapter.invoke(request)
-    except Exception:
+    except (AdapterResolverError, TypeError, ValueError):
         return _with_active_ids(
             BoundedExecutionUnitResult(code="adapter_failure"),
             active,
         )
-
-    if isinstance(outcome, AdapterErrorResult):
-        return _with_active_ids(
-            BoundedExecutionUnitResult(
-                code="adapter_failure",
-                adapter_error_kind=outcome.error_kind,
-            ),
-            active,
-        )
-    if not isinstance(outcome, AdapterSuccessResult):
-        return _with_active_ids(
-            BoundedExecutionUnitResult(code="adapter_failure"),
-            active,
-        )
-
-    try:
-        evidence = runner_evidence_from_adapter_outcome(outcome, request)
-    except (AdapterEvidenceConversionError, TypeError, ValueError):
-        return _with_active_ids(
-            BoundedExecutionUnitResult(code="adapter_conversion_refused"),
-            active,
-        )
-
-    observation = RunnerResultObserved(
-        _observation_input_id(evidence.run_id),
-        run_id=evidence.run_id,
-        payload=evidence.payload(),
-        observed_at=None,
-    )
-    observation_state = _load(runtime)
-    decision = decide(
-        observation_state,
-        observation,
-        transition_context(
-            command=_COMMAND,
-            input_id_value=observation.input_id,
-        ),
-    )
-    if not decision.accepted:
-        refusal_reason = (
-            "transition_refused"
-            if decision.refusal is None
-            else decision.refusal.reason
-        )
-        return _with_active_ids(
-            BoundedExecutionUnitResult(
-                code="observation_refused",
-                observation_refusal_reason=refusal_reason,
-                transition_disposition=decision.disposition,
-            ),
-            active,
-        )
-
-    next_state = apply(observation_state, decision)
-    runtime.store.persist_runtime_state(next_state, runtime.cas_store)
     return _with_active_ids(
         BoundedExecutionUnitResult(
-            code="observation_accepted",
-            accepted=True,
-            transition_disposition=decision.disposition,
+            code=session_result.code,
+            accepted=session_result.accepted,
+            adapter_error_kind=session_result.adapter_error_kind,
+            observation_refusal_reason=session_result.observation_refusal_reason,
+            transition_disposition=session_result.transition_disposition,
         ),
         active,
     )
@@ -296,6 +222,51 @@ def load_adapter_local_config(path: Path) -> AdapterLocalConfig:
             exit_code=ExitCode.CLI_USAGE,
             details={"error": type(exc).__name__},
         ) from exc
+
+
+def _session_invocation_request(
+    runtime: OpenRuntimeContext,
+    *,
+    active: _ActiveRun,
+    selected_kind: str,
+    effective_config: AdapterLocalConfig,
+    session: RunnerSessionRecord,
+) -> AdapterInvocationRequest:
+    dispatch = build_dispatch_envelope_for_run(
+        state=_load(runtime),
+        run_id=active.run.run_ref.run_id,
+    )
+    selected_asset_material = build_selected_asset_material(
+        selected_plan=active.selected_plan,
+        dispatch_envelope=dispatch,
+    )
+    selected_component_pin, selected_terminal_mappings, selected_schemas = (
+        _selected_runner_authority_for_request(active.selected_plan, dispatch)
+    )
+    return AdapterInvocationRequest(
+        adapter_id=_adapter_id_for_request(selected_kind, effective_config),
+        selected_runner_binding_id=dispatch.runner_binding_id,
+        selected_adapter_kind=selected_kind,
+        dispatch_envelope=dispatch,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        timeout_seconds=_selected_invocation_timeout_seconds(
+            active.selected_plan,
+            dispatch.runner_binding_id,
+        ),
+        correlation_id=session_correlation_id(session),
+        redaction_policy=_redaction_policy_for_adapter(
+            selected_kind,
+            effective_config,
+        ),
+        selected_asset_material=selected_asset_material,
+        local_config_ref="cli-local-adapter-config",
+        cancellation_token=session_cancellation_token(session),
+        selected_component_pin=selected_component_pin,
+        selected_terminal_result_mappings=selected_terminal_mappings,
+        selected_artifact_schemas=selected_schemas,
+    )
 
 
 def _select_ready_activation(
@@ -380,9 +351,17 @@ def _active_or_claimed_activation(
             return active
         if active.activation.activation_id != activation_id:
             return BoundedExecutionUnitResult(code="ready_state_corrupt")
-        dispatch = _build_dispatch(active.run.run_ref.run_id, state)
-        if isinstance(dispatch, BoundedExecutionUnitResult):
-            return _with_active_ids(dispatch, active)
+        if any(
+            observation.run_id == active.run.run_ref.run_id
+            for observation in state.runner_observations.values()
+        ):
+            return _with_active_ids(
+                BoundedExecutionUnitResult(
+                    code="no_ready_work",
+                    diagnostics=({"reason": "run_observed"},),
+                ),
+                active,
+            )
         refusal = _preclaim_adapter_refusal(
             requested_adapter_kind=requested_adapter_kind,
             selected_adapter_kind=active.adapter_kind,
@@ -543,9 +522,10 @@ def _preclaim_adapter_refusal(
         adapter = resolve_adapter(selected_adapter_kind, local_config)
     except (AdapterResolverError, TypeError, ValueError):
         return BoundedExecutionUnitResult(code="adapter_failure")
-    if selected_adapter_kind == CODEX_ADAPTER_KIND:
-        if not isinstance(adapter, CodexAdapter):
-            return BoundedExecutionUnitResult(code="adapter_failure")
+    if selected_adapter_kind == CODEX_ADAPTER_KIND and isinstance(
+        adapter,
+        CodexAdapter,
+    ):
         config = _codex_adapter_config(adapter)
         if config is not None and any(
             not os.environ.get(flag) for flag in config.live_test_opt_in_env_flags

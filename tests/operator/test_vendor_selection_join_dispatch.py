@@ -12,9 +12,19 @@ from millrace.kernel import apply, decide
 from millrace.kernel.join_policy import canonical_correlation_identity
 from millrace.operator.dispatch import (
     DispatchProjectionError,
-    build_dispatch_envelope_for_run,
 )
+from millrace.operator.dispatch import (
+    build_dispatch_envelope_for_run as _build_dispatch_envelope_for_run,
+)
+from millrace.testing import fake_runner_session_state
 from support import generic_lifecycle, vendor_selection
+
+
+def build_dispatch_envelope_for_run(*, state, run_id):
+    return _build_dispatch_envelope_for_run(
+        state=fake_runner_session_state(state=state, run_id=run_id),
+        run_id=run_id,
+    )
 
 
 def _claim_award_decider_for_join(

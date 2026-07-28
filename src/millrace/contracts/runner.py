@@ -17,9 +17,9 @@ from millrace.contracts.compiled_plan import (
 )
 
 RUNNER_DISPATCH_RECORD_KIND = "runner_dispatch_envelope"
-RUNNER_DISPATCH_SCHEMA_VERSION = 4
+RUNNER_DISPATCH_SCHEMA_VERSION = 5
 RUNNER_RESULT_RECORD_KIND = "runner_result_evidence"
-RUNNER_RESULT_SCHEMA_VERSION = 2
+RUNNER_RESULT_SCHEMA_VERSION = 3
 _RUNNER_ADAPTER_PROVENANCE_RECORD_KIND = "runner_adapter_provenance"
 _RUNNER_ADAPTER_PROVENANCE_SCHEMA_VERSION = 1
 _SELECTED_JOIN_EVIDENCE_RECORD_KIND = "selected_join_evidence"
@@ -84,6 +84,9 @@ class RunnerDispatchEnvelope:
     schema_version: ClassVar[int] = RUNNER_DISPATCH_SCHEMA_VERSION
 
     run_id: str
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
     work_item_id: str
     activation_id: str
     plan_fingerprint: str
@@ -109,6 +112,14 @@ class RunnerDispatchEnvelope:
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.run_id, "run_id")
+        _require_nonblank_string(self.session_id, "session_id")
+        _require_int(self.dispatch_generation, "dispatch_generation")
+        if self.dispatch_generation < 1:
+            raise ValueError("dispatch_generation must be positive")
+        _require_nonblank_string(
+            self.session_fencing_token,
+            "session_fencing_token",
+        )
         _require_nonblank_string(self.work_item_id, "work_item_id")
         _require_nonblank_string(self.activation_id, "activation_id")
         _require_nonblank_string(self.plan_fingerprint, "plan_fingerprint")
@@ -179,6 +190,9 @@ class RunnerDispatchEnvelope:
                 "record_kind": self.record_kind,
                 "schema_version": self.schema_version,
                 "run_id": self.run_id,
+                "session_id": self.session_id,
+                "dispatch_generation": self.dispatch_generation,
+                "session_fencing_token": self.session_fencing_token,
                 "work_item_id": self.work_item_id,
                 "activation_id": self.activation_id,
                 "plan_fingerprint": self.plan_fingerprint,
@@ -246,6 +260,9 @@ class RunnerResultEvidence:
     schema_version: ClassVar[int] = RUNNER_RESULT_SCHEMA_VERSION
 
     run_id: str
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
     plan_fingerprint: str
     claim_id: str
     generation: int
@@ -260,6 +277,14 @@ class RunnerResultEvidence:
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.run_id, "run_id")
+        _require_nonblank_string(self.session_id, "session_id")
+        _require_int(self.dispatch_generation, "dispatch_generation")
+        if self.dispatch_generation < 1:
+            raise ValueError("dispatch_generation must be positive")
+        _require_nonblank_string(
+            self.session_fencing_token,
+            "session_fencing_token",
+        )
         _require_nonblank_string(self.plan_fingerprint, "plan_fingerprint")
         _require_nonblank_string(self.claim_id, "claim_id")
         _require_int(self.generation, "generation")
@@ -296,6 +321,9 @@ class RunnerResultEvidence:
                 "record_kind": self.record_kind,
                 "schema_version": self.schema_version,
                 "run_id": self.run_id,
+                "session_id": self.session_id,
+                "dispatch_generation": self.dispatch_generation,
+                "session_fencing_token": self.session_fencing_token,
                 "plan_fingerprint": self.plan_fingerprint,
                 "claim_id": self.claim_id,
                 "generation": self.generation,
@@ -319,6 +347,9 @@ _RESULT_REQUIRED_PAYLOAD_KEYS = {
     "record_kind",
     "schema_version",
     "run_id",
+    "session_id",
+    "dispatch_generation",
+    "session_fencing_token",
     "plan_fingerprint",
     "claim_id",
     "generation",
@@ -364,6 +395,15 @@ def runner_result_evidence_from_payload(
 
     return RunnerResultEvidence(
         run_id=_require_string(payload.get("run_id"), "run_id"),
+        session_id=_require_string(payload.get("session_id"), "session_id"),
+        dispatch_generation=_require_int(
+            payload.get("dispatch_generation"),
+            "dispatch_generation",
+        ),
+        session_fencing_token=_require_string(
+            payload.get("session_fencing_token"),
+            "session_fencing_token",
+        ),
         plan_fingerprint=_require_string(
             payload.get("plan_fingerprint"),
             "plan_fingerprint",

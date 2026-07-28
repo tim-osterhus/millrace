@@ -42,10 +42,13 @@ from millrace.contracts.transition import (
 )
 from millrace.kernel import StateConcurrencyError, apply, decide
 from millrace.operator import operator_status
-from millrace.operator.dispatch import build_dispatch_envelope_for_run
+from millrace.operator.dispatch import (
+    build_dispatch_envelope_for_run as _build_dispatch_envelope_for_run,
+)
 from millrace.testing import (
     deterministic_context,
     fake_runner_dispatch_envelope_for_run,
+    fake_runner_session_state,
 )
 from support.simple_loop import (
     action_by_id,
@@ -63,6 +66,13 @@ MANAGER_BLOCKED_ACTION_ID = ActionId("simple_loop.manager.blocked")
 WORKER_BLOCKED_ACTION_ID = ActionId("simple_loop.worker.blocked")
 WORKER_FAILED_ACTION_ID = ActionId("simple_loop.worker.failed")
 REVIEWER_BLOCKED_ACTION_ID = ActionId("simple_loop.reviewer.blocked")
+
+
+def build_dispatch_envelope_for_run(*, state, run_id):
+    return _build_dispatch_envelope_for_run(
+        state=fake_runner_session_state(state=state, run_id=run_id),
+        run_id=run_id,
+    )
 TROUBLESHOOTER_RESOLVED_ACTION_ID = ActionId("simple_loop.troubleshooter.resolved")
 TROUBLESHOOTER_OPERATOR_NEEDED_ACTION_ID = ActionId(
     "simple_loop.troubleshooter.operator_needed"

@@ -379,7 +379,7 @@ def test_daemon_refuses_exact_fake_local_selected_authority_without_remap(
         ("local_config", "stopped_reason"),
         (
             (_codex_error_config(), "adapter_failure"),
-            (_codex_mismatch_config(), "adapter_failure"),
+            (_codex_mismatch_config(), "session_reconciliation_required"),
         ),
     )
 def test_daemon_adapter_failures_stop_without_runtime_evidence(

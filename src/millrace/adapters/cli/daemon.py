@@ -42,6 +42,7 @@ _RUNNER_FAILURE_REASONS = frozenset(
     {
         "adapter_failure",
         "adapter_conversion_refused",
+        "session_reconciliation_required",
     }
 )
 _DOMAIN_REFUSAL_REASONS = frozenset(

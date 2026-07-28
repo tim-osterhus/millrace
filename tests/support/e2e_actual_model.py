@@ -421,6 +421,8 @@ def classify_daemon_result(result: object) -> str:
         return "runtime_governance_refusal"
     if code == "no_ready_work":
         return "operator_visible_blocker"
+    if code == "session_reconciliation_required":
+        return "operator_visible_blocker"
     if code == "observation_accepted":
         raise ValueError(
             "accepted daemon units require status/trace evidence before "

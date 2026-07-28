@@ -46,6 +46,9 @@ def _api() -> tuple[type[object], type[object]]:
 def _dispatch(**overrides: object) -> RunnerDispatchEnvelope:
     values: dict[str, object] = {
         "run_id": "run-1",
+        "session_id": "session-1",
+        "dispatch_generation": 1,
+        "session_fencing_token": "session-fence-1",
         "work_item_id": "work-1",
         "activation_id": "activation-1",
         "plan_fingerprint": "sha256:plan",
@@ -621,6 +624,12 @@ def _request(
         selected_runner_binding_id=current_dispatch.runner_binding_id,
         selected_adapter_kind="millforge",
         dispatch_envelope=current_dispatch,
+
+        session_id=current_dispatch.session_id,
+
+        dispatch_generation=current_dispatch.dispatch_generation,
+
+        session_fencing_token=current_dispatch.session_fencing_token,
         timeout_seconds=30,
         correlation_id="corr-1",
         redaction_policy=RedactionPolicy(

@@ -204,7 +204,7 @@ def test_unknown_run_observation_is_rejected_with_exact_payload_rejection_order(
 
     assert decision.accepted is False
     assert decision.refusal is not None
-    assert decision.refusal.reason == "unknown_run"
+    assert decision.refusal.reason == "invalid_runner_evidence"
 
 
 def test_fake_runner_dispatch_envelope_derives_claimed_run_without_state_change() -> (

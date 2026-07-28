@@ -41,6 +41,9 @@ CLI_ALLOWED_IMPORT_PREFIXES = (
 
 CLI_REVIEWED_RUNNER_IMPORT_PREFIXES_BY_FILE = {
     "millrace/adapters/cli/daemon.py": ("millrace.adapters.runner_contract",),
+    "millrace/adapters/cli/session_coordinator.py": (
+        "millrace.adapters.runner_contract",
+    ),
     "millrace/adapters/cli/run.py": (
         "millrace.adapters.codex",
         "millrace.adapters.millforge",
@@ -402,6 +405,24 @@ def test_cli_modules_do_not_import_testing_or_runner_adapters() -> None:
     assert not any(
         imported.startswith("millrace.compiler.runner_bindings")
         for imported in run_imports
+    )
+
+
+def test_session_runtime_has_no_synchronous_adapter_invoke_consumer() -> None:
+    run_source = (ADAPTER_ROOT / "cli" / "run.py").read_text(encoding="utf-8")
+    coordinator_source = (
+        ADAPTER_ROOT / "cli" / "session_coordinator.py"
+    ).read_text(encoding="utf-8")
+    codex_source = (ADAPTER_ROOT / "codex.py").read_text(encoding="utf-8")
+    millforge_source = (ADAPTER_ROOT / "millforge.py").read_text(encoding="utf-8")
+
+    assert "adapter.invoke(" not in run_source
+    assert "adapter.invoke(" not in coordinator_source
+    assert "self.invoke(" not in codex_source
+    assert millforge_source.count("self.invoke(request)") == 1
+    assert (
+        "def _start_session_via_temporary_synchronous_compatibility_shim("
+        in millforge_source
     )
 
 

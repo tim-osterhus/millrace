@@ -22,6 +22,14 @@ from millrace.adapters.runner_contract import (
     AdapterSuccessResult,
     DispatchEcho,
     RedactionPolicy,
+    RunnerCancellationOperationResult,
+    RunnerCleanupResult,
+    RunnerSessionReconcileRequest,
+    RunnerSessionStartOutcome,
+    StartedSession,
+    StartIndeterminate,
+    StartRefusedBeforeExternalWork,
+    Unsupported,
     canonicalize_redaction_policy,
 )
 from millrace.contracts.compiled_plan import (
@@ -324,6 +332,7 @@ class MillforgeAdapter:
                 evidence,
                 prepared,
             )
+
             if invocation_evidence_sha256 is None:
                 return self._authority_error(request, "invocation_evidence")
             adapter_provenance = _adapter_provenance(
@@ -335,6 +344,63 @@ class MillforgeAdapter:
             return _translate_result(request, prepared, result, adapter_provenance)
         finally:
             await _close_live_facade(facade)
+
+    def start_session(
+        self,
+        request: AdapterInvocationRequest,
+    ) -> RunnerSessionStartOutcome:
+        return self._start_session_via_temporary_synchronous_compatibility_shim(
+            request
+        )
+
+    def _start_session_via_temporary_synchronous_compatibility_shim(
+        self,
+        request: AdapterInvocationRequest,
+    ) -> RunnerSessionStartOutcome:
+        """Temporary RS-2 bridge; delete when Millforge gets an RS-5 handle."""
+
+        outcome = self.invoke(request)
+        echo = (
+            outcome.dispatch_echo
+            if outcome.dispatch_echo is not None
+            else DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            )
+        )
+        diagnostic_digest = _session_diagnostic_digest(outcome.outcome_kind)
+        if isinstance(outcome, AdapterErrorResult):
+            if outcome.error_kind in {
+                "missing_opt_in_config",
+                "unsupported_adapter_kind",
+                "input_too_large",
+                "redaction_refused",
+                "selected_authority_refused",
+            }:
+                return StartRefusedBeforeExternalWork(
+                    echo,
+                    outcome,
+                    diagnostic_digest,
+                )
+            return StartIndeterminate(echo, None, diagnostic_digest)
+        return StartedSession(
+            echo,
+            _CompletedMillforgeCompatibilityHandle(outcome),
+            f"millforge:{request.session_id}:{request.dispatch_generation}",
+            {},
+        )
+
+    def reconcile_session(
+        self,
+        request: RunnerSessionReconcileRequest,
+    ) -> Unsupported:
+        invocation = request.invocation_request
+        return Unsupported(
+            DispatchEcho.from_dispatch_envelope(
+                invocation.dispatch_envelope,
+                correlation_id=invocation.correlation_id,
+            )
+        )
 
     def _authority_error(
         self,
@@ -359,6 +425,49 @@ class MillforgeAdapter:
             ),
             diagnostics={"reason": reason},
         )
+
+
+class _CompletedMillforgeCompatibilityHandle:
+    def __init__(self, outcome: AdapterInvocationOutcome) -> None:
+        self._outcome: AdapterInvocationOutcome | None = outcome
+
+    def poll_completion(self) -> AdapterInvocationOutcome | None:
+        outcome = self._outcome
+        self._outcome = None
+        return outcome
+
+    def request_cancel(self) -> RunnerCancellationOperationResult:
+        return _unsupported_session_operation("cooperative_cancel")
+
+    def terminate(self) -> RunnerCancellationOperationResult:
+        return _unsupported_session_operation("terminate")
+
+    def kill(self) -> RunnerCancellationOperationResult:
+        return _unsupported_session_operation("kill")
+
+    def cleanup(self) -> RunnerCleanupResult:
+        return RunnerCleanupResult(
+            "not_required",
+            0,
+            0,
+            _session_diagnostic_digest("not_required"),
+        )
+
+
+def _unsupported_session_operation(
+    operation: str,
+) -> RunnerCancellationOperationResult:
+    return RunnerCancellationOperationResult(
+        operation,
+        "unsupported",
+        0,
+        0,
+        _session_diagnostic_digest(operation),
+    )
+
+
+def _session_diagnostic_digest(value: str) -> str:
+    return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
 @dataclass(frozen=True, slots=True)

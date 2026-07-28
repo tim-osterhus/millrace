@@ -56,8 +56,31 @@ class RunnerAdapter(Protocol):
 
     adapter_kind: str
 
-    def invoke(self, request: AdapterInvocationRequest) -> AdapterInvocationOutcome:
-        """Invoke the adapter and return success or process-level error."""
+    def start_session(
+        self,
+        request: AdapterInvocationRequest,
+    ) -> RunnerSessionStartOutcome:
+        """Start one externally fenced runner session."""
+
+    def reconcile_session(
+        self,
+        request: RunnerSessionReconcileRequest,
+    ) -> RunnerSessionReconcileOutcome:
+        """Reconcile one durable session without guessing its outcome."""
+
+
+class RunnerSessionHandle(Protocol):
+    """Process-local control surface for one runner session."""
+
+    def poll_completion(self) -> AdapterInvocationOutcome | None: ...
+
+    def request_cancel(self) -> RunnerCancellationOperationResult: ...
+
+    def terminate(self) -> RunnerCancellationOperationResult: ...
+
+    def kill(self) -> RunnerCancellationOperationResult: ...
+
+    def cleanup(self) -> RunnerCleanupResult: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -135,8 +158,10 @@ def resolve_adapter(
         raise AdapterResolverError(
             "local adapter config cannot remap selected adapter_kind",
         )
-    if not callable(getattr(adapter, "invoke", None)):
-        raise AdapterResolverError("resolved adapter must implement invoke")
+    if not callable(getattr(adapter, "start_session", None)):
+        raise AdapterResolverError("resolved adapter must implement start_session")
+    if not callable(getattr(adapter, "reconcile_session", None)):
+        raise AdapterResolverError("resolved adapter must implement reconcile_session")
     return adapter
 
 
@@ -146,6 +171,9 @@ class AdapterInvocationRequest:
     selected_runner_binding_id: str
     selected_adapter_kind: str
     dispatch_envelope: RunnerDispatchEnvelope
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
     timeout_seconds: float
     correlation_id: str
     redaction_policy: RedactionPolicy
@@ -170,6 +198,21 @@ class AdapterInvocationRequest:
             raise ValueError(
                 "selected_runner_binding_id must match dispatch envelope",
             )
+        _require_nonblank_string(self.session_id, "session_id")
+        _require_int(self.dispatch_generation, "dispatch_generation")
+        _require_nonblank_string(
+            self.session_fencing_token,
+            "session_fencing_token",
+        )
+        if self.session_id != self.dispatch_envelope.session_id:
+            raise ValueError("session_id must match dispatch envelope")
+        if self.dispatch_generation != self.dispatch_envelope.dispatch_generation:
+            raise ValueError("dispatch_generation must match dispatch envelope")
+        if (
+            self.session_fencing_token
+            != self.dispatch_envelope.session_fencing_token
+        ):
+            raise ValueError("session_fencing_token must match dispatch envelope")
         _require_positive_number(self.timeout_seconds, "timeout_seconds")
         _require_nonblank_string(self.correlation_id, "correlation_id")
         if not isinstance(self.redaction_policy, RedactionPolicy):
@@ -264,6 +307,9 @@ class AdapterInvocationRequest:
 @dataclass(frozen=True, slots=True, repr=False)
 class DispatchEcho:
     run_id: str
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
     claim_id: str
     generation: int
     fencing_token: str
@@ -275,6 +321,12 @@ class DispatchEcho:
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.run_id, "run_id")
+        _require_nonblank_string(self.session_id, "session_id")
+        _require_int(self.dispatch_generation, "dispatch_generation")
+        _require_nonblank_string(
+            self.session_fencing_token,
+            "session_fencing_token",
+        )
         _require_nonblank_string(self.claim_id, "claim_id")
         _require_int(self.generation, "generation")
         _require_nonblank_string(self.fencing_token, "fencing_token")
@@ -293,6 +345,9 @@ class DispatchEcho:
     ) -> DispatchEcho:
         return cls(
             run_id=envelope.run_id,
+            session_id=envelope.session_id,
+            dispatch_generation=envelope.dispatch_generation,
+            session_fencing_token=envelope.session_fencing_token,
             claim_id=envelope.claim_id,
             generation=envelope.generation,
             fencing_token=envelope.fencing_token,
@@ -535,6 +590,197 @@ class AdapterErrorResult:
 AdapterInvocationOutcome: TypeAlias = AdapterSuccessResult | AdapterErrorResult
 
 
+@dataclass(frozen=True, slots=True)
+class StartedSession:
+    dispatch_echo: DispatchEcho
+    handle: RunnerSessionHandle
+    handle_id: str
+    durable_locator_metadata: Mapping[str, AuthorityValue]
+    outcome_kind: ClassVar[str] = "started"
+
+    def __post_init__(self) -> None:
+        _require_dispatch_echo(self.dispatch_echo)
+        _require_nonblank_string(self.handle_id, "handle_id")
+        object.__setattr__(
+            self,
+            "durable_locator_metadata",
+            _coerce_payload_mapping(
+                self.durable_locator_metadata,
+                "durable_locator_metadata",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StartRefusedBeforeExternalWork:
+    dispatch_echo: DispatchEcho
+    adapter_error: AdapterErrorResult
+    diagnostic_digest: str
+    outcome_kind: ClassVar[str] = "refused_before_external_work"
+
+    def __post_init__(self) -> None:
+        _require_dispatch_echo(self.dispatch_echo)
+        if not isinstance(self.adapter_error, AdapterErrorResult):
+            raise TypeError("adapter_error must be AdapterErrorResult")
+        _require_sha256_digest(self.diagnostic_digest, "diagnostic_digest")
+
+
+@dataclass(frozen=True, slots=True)
+class StartIndeterminate:
+    dispatch_echo: DispatchEcho
+    durable_locator_metadata: Mapping[str, AuthorityValue] | None
+    diagnostic_digest: str
+    outcome_kind: ClassVar[str] = "indeterminate"
+
+    def __post_init__(self) -> None:
+        _require_dispatch_echo(self.dispatch_echo)
+        if self.durable_locator_metadata is not None:
+            object.__setattr__(
+                self,
+                "durable_locator_metadata",
+                _coerce_payload_mapping(
+                    self.durable_locator_metadata,
+                    "durable_locator_metadata",
+                ),
+            )
+        _require_sha256_digest(self.diagnostic_digest, "diagnostic_digest")
+
+
+RunnerSessionStartOutcome: TypeAlias = (
+    StartedSession | StartRefusedBeforeExternalWork | StartIndeterminate
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionReconcileRequest:
+    invocation_request: AdapterInvocationRequest
+    durable_locator_metadata: Mapping[str, AuthorityValue]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.invocation_request, AdapterInvocationRequest):
+            raise TypeError("invocation_request must be AdapterInvocationRequest")
+        object.__setattr__(
+            self,
+            "durable_locator_metadata",
+            _coerce_payload_mapping(
+                self.durable_locator_metadata,
+                "durable_locator_metadata",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedLive:
+    dispatch_echo: DispatchEcho
+    handle: RunnerSessionHandle
+    handle_id: str
+    durable_locator_metadata: Mapping[str, AuthorityValue]
+    outcome_kind: ClassVar[str] = "verified_live"
+
+    def __post_init__(self) -> None:
+        _require_dispatch_echo(self.dispatch_echo)
+        _require_nonblank_string(self.handle_id, "handle_id")
+        object.__setattr__(
+            self,
+            "durable_locator_metadata",
+            _coerce_payload_mapping(
+                self.durable_locator_metadata,
+                "durable_locator_metadata",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Terminal:
+    dispatch_echo: DispatchEcho
+    adapter_outcome: AdapterInvocationOutcome
+    cleanup_disposition: str
+    outcome_kind: ClassVar[str] = "terminal"
+
+    def __post_init__(self) -> None:
+        _require_dispatch_echo(self.dispatch_echo)
+        if not isinstance(
+            self.adapter_outcome,
+            (AdapterSuccessResult, AdapterErrorResult),
+        ):
+            raise TypeError("adapter_outcome must be an adapter invocation outcome")
+        if self.cleanup_disposition not in {"not_required", "complete"}:
+            raise ValueError("terminal cleanup must be complete or not_required")
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupPending:
+    dispatch_echo: DispatchEcho
+    handle: RunnerSessionHandle
+    handle_id: str
+    outcome_kind: ClassVar[str] = "cleanup_pending"
+
+    def __post_init__(self) -> None:
+        _require_dispatch_echo(self.dispatch_echo)
+        _require_nonblank_string(self.handle_id, "handle_id")
+
+
+@dataclass(frozen=True, slots=True)
+class Unsupported:
+    dispatch_echo: DispatchEcho
+    outcome_kind: ClassVar[str] = "unsupported"
+
+    def __post_init__(self) -> None:
+        _require_dispatch_echo(self.dispatch_echo)
+
+
+@dataclass(frozen=True, slots=True)
+class Contradiction:
+    dispatch_echo: DispatchEcho
+    diagnostic_digest: str
+    outcome_kind: ClassVar[str] = "contradiction"
+
+    def __post_init__(self) -> None:
+        _require_dispatch_echo(self.dispatch_echo)
+        _require_sha256_digest(self.diagnostic_digest, "diagnostic_digest")
+
+
+RunnerSessionReconcileOutcome: TypeAlias = (
+    VerifiedLive | Terminal | CleanupPending | Unsupported | Contradiction
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerCancellationOperationResult:
+    operation: str
+    result: str
+    started_at: int
+    completed_at: int
+    diagnostic_digest: str
+
+    def __post_init__(self) -> None:
+        if self.operation not in {
+            "cooperative_cancel",
+            "terminate",
+            "kill",
+            "transport_cleanup",
+        }:
+            raise ValueError("unsupported cancellation operation")
+        if self.result not in {"succeeded", "failed", "timed_out", "unsupported"}:
+            raise ValueError("unsupported cancellation result")
+        _require_timestamps(self.started_at, self.completed_at)
+        _require_sha256_digest(self.diagnostic_digest, "diagnostic_digest")
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerCleanupResult:
+    disposition: str
+    started_at: int
+    completed_at: int
+    diagnostic_digest: str
+
+    def __post_init__(self) -> None:
+        if self.disposition not in {"not_required", "complete", "orphan_risk"}:
+            raise ValueError("unsupported cleanup disposition")
+        _require_timestamps(self.started_at, self.completed_at)
+        _require_sha256_digest(self.diagnostic_digest, "diagnostic_digest")
+
+
 def runner_evidence_from_adapter_outcome(
     outcome: AdapterInvocationOutcome,
     request: AdapterInvocationRequest,
@@ -571,6 +817,9 @@ def runner_evidence_from_adapter_outcome(
             )
     return RunnerResultEvidence(
         run_id=dispatch_envelope.run_id,
+        session_id=dispatch_envelope.session_id,
+        dispatch_generation=dispatch_envelope.dispatch_generation,
+        session_fencing_token=dispatch_envelope.session_fencing_token,
         plan_fingerprint=dispatch_envelope.plan_fingerprint,
         claim_id=dispatch_envelope.claim_id,
         generation=dispatch_envelope.generation,
@@ -809,6 +1058,31 @@ def _require_int(value: object, field_name: str) -> int:
     return value
 
 
+def _require_dispatch_echo(value: object) -> DispatchEcho:
+    if not isinstance(value, DispatchEcho):
+        raise TypeError("dispatch_echo must be DispatchEcho")
+    return value
+
+
+def _require_sha256_digest(value: object, field_name: str) -> str:
+    digest = _require_nonblank_string(value, field_name)
+    hex_value = digest.removeprefix("sha256:")
+    if (
+        not digest.startswith("sha256:")
+        or len(hex_value) != 64
+        or any(character not in "0123456789abcdef" for character in hex_value)
+    ):
+        raise ValueError(f"{field_name} must be a sha256 digest")
+    return digest
+
+
+def _require_timestamps(started_at: object, completed_at: object) -> None:
+    start = _require_int(started_at, "started_at")
+    completed = _require_int(completed_at, "completed_at")
+    if start < 0 or completed < start:
+        raise ValueError("operation timestamps must be durable and monotonic")
+
+
 def _require_positive_number(value: object, field_name: str) -> float:
     if type(value) not in {int, float}:
         raise TypeError(f"{field_name} must be a number")
@@ -828,9 +1102,23 @@ __all__ = (
     "AdapterLocalConfig",
     "AdapterResolverError",
     "AdapterSuccessResult",
+    "CleanupPending",
+    "Contradiction",
     "DispatchEcho",
     "RedactionPolicy",
     "RunnerAdapter",
+    "RunnerCancellationOperationResult",
+    "RunnerCleanupResult",
+    "RunnerSessionHandle",
+    "RunnerSessionReconcileOutcome",
+    "RunnerSessionReconcileRequest",
+    "RunnerSessionStartOutcome",
+    "StartIndeterminate",
+    "StartRefusedBeforeExternalWork",
+    "StartedSession",
+    "Terminal",
+    "Unsupported",
+    "VerifiedLive",
     "canonicalize_redaction_policy",
     "resolve_adapter",
     "runner_evidence_from_adapter_outcome",

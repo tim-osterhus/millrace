@@ -24,6 +24,9 @@ def _valid_dispatch_payload() -> dict[str, AuthorityValue]:
         "record_kind": RUNNER_DISPATCH_RECORD_KIND,
         "schema_version": RUNNER_DISPATCH_SCHEMA_VERSION,
         "run_id": "run-1",
+        "session_id": "session-1",
+        "dispatch_generation": 1,
+        "session_fencing_token": "session-fence-1",
         "work_item_id": "work-1",
         "activation_id": "activation-1",
         "plan_fingerprint": "sha256:abcdef",
@@ -60,6 +63,9 @@ def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
     kwargs.update(overrides)
     return RunnerDispatchEnvelope(
         run_id=cast(str, kwargs["run_id"]),
+        session_id=cast(str, kwargs["session_id"]),
+        dispatch_generation=cast(int, kwargs["dispatch_generation"]),
+        session_fencing_token=cast(str, kwargs["session_fencing_token"]),
         work_item_id=cast(str, kwargs["work_item_id"]),
         activation_id=cast(str, kwargs["activation_id"]),
         plan_fingerprint=cast(str, kwargs["plan_fingerprint"]),
@@ -166,6 +172,9 @@ def _valid_result_payload() -> dict[str, AuthorityValue]:
         "record_kind": RUNNER_RESULT_RECORD_KIND,
         "schema_version": RUNNER_RESULT_SCHEMA_VERSION,
         "run_id": "run-1",
+        "session_id": "session-1",
+        "dispatch_generation": 1,
+        "session_fencing_token": "session-fence-1",
         "plan_fingerprint": "sha256:abcdef",
         "claim_id": "claim-1",
         "generation": 0,
@@ -196,6 +205,9 @@ def _valid_result_evidence(**overrides: object) -> RunnerResultEvidence:
     kwargs.update(overrides)
     return RunnerResultEvidence(
         run_id=cast(str, kwargs["run_id"]),
+        session_id=cast(str, kwargs["session_id"]),
+        dispatch_generation=cast(int, kwargs["dispatch_generation"]),
+        session_fencing_token=cast(str, kwargs["session_fencing_token"]),
         plan_fingerprint=cast(str, kwargs["plan_fingerprint"]),
         claim_id=cast(str, kwargs["claim_id"]),
         generation=cast(int, kwargs["generation"]),
@@ -221,7 +233,7 @@ def test_runner_dispatch_and_result_records_expose_stable_protocol_metadata() ->
     assert RunnerDispatchEnvelope.schema_version == RUNNER_DISPATCH_SCHEMA_VERSION
     assert RunnerResultEvidence.record_kind == RUNNER_RESULT_RECORD_KIND
     assert RunnerResultEvidence.schema_version == RUNNER_RESULT_SCHEMA_VERSION
-    assert RUNNER_RESULT_SCHEMA_VERSION == 2
+    assert RUNNER_RESULT_SCHEMA_VERSION == 3
     assert RunnerAdapterProvenance.record_kind == "runner_adapter_provenance"
     assert RunnerAdapterProvenance.schema_version == 1
     assert "record_kind" not in {field.name for field in fields(RunnerDispatchEnvelope)}
@@ -238,7 +250,7 @@ def test_runner_dispatch_and_result_records_expose_stable_protocol_metadata() ->
 
     assert dispatch.payload()["record_kind"] == RUNNER_DISPATCH_RECORD_KIND
     assert dispatch.payload()["schema_version"] == RUNNER_DISPATCH_SCHEMA_VERSION
-    assert dispatch.payload()["schema_version"] == 4
+    assert dispatch.payload()["schema_version"] == 5
     assert dispatch.payload()["selected_join_evidence"] is None
     assert evidence.payload()["record_kind"] == RUNNER_RESULT_RECORD_KIND
     assert evidence.payload()["schema_version"] == RUNNER_RESULT_SCHEMA_VERSION
@@ -316,7 +328,7 @@ def test_runner_dispatch_selected_join_evidence_is_versioned_exact_and_immutable
     first_payload = cast(Mapping[str, AuthorityValue], first_artifact["payload"])
     nested_payload = cast(Mapping[str, AuthorityValue], first_payload["nested"])
 
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert selected == selected_join_evidence
     assert set(selected) == {
         "record_kind",

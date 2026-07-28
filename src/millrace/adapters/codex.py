@@ -10,6 +10,7 @@ import json
 import os
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
@@ -23,6 +24,14 @@ from millrace.adapters.runner_contract import (
     AdapterSuccessResult,
     DispatchEcho,
     RedactionPolicy,
+    RunnerCancellationOperationResult,
+    RunnerCleanupResult,
+    RunnerSessionReconcileRequest,
+    RunnerSessionStartOutcome,
+    StartedSession,
+    StartIndeterminate,
+    StartRefusedBeforeExternalWork,
+    Unsupported,
     canonicalize_redaction_policy,
 )
 from millrace.adapters.subprocess_transport import (
@@ -55,6 +64,9 @@ _SUCCESS_RESULT_KEYS = frozenset(
 _DISPATCH_ECHO_KEYS = frozenset(
     {
         "run_id",
+        "session_id",
+        "dispatch_generation",
+        "session_fencing_token",
         "claim_id",
         "generation",
         "fencing_token",
@@ -180,6 +192,59 @@ class CodexAdapter:
         self._transport = transport or SubprocessTransport()
 
     def invoke(self, request: AdapterInvocationRequest) -> AdapterInvocationOutcome:
+        return self._invoke_bounded(request)
+
+    def start_session(
+        self,
+        request: AdapterInvocationRequest,
+    ) -> RunnerSessionStartOutcome:
+        outcome = self._invoke_bounded(request)
+        echo = (
+            outcome.dispatch_echo
+            if outcome.dispatch_echo is not None
+            else DispatchEcho.from_dispatch_envelope(
+                request.dispatch_envelope,
+                correlation_id=request.correlation_id,
+            )
+        )
+        diagnostic_digest = _session_diagnostic_digest(outcome.outcome_kind)
+        if isinstance(outcome, AdapterErrorResult):
+            if outcome.error_kind in {
+                "missing_opt_in_config",
+                "unsupported_adapter_kind",
+                "input_too_large",
+                "redaction_refused",
+                "selected_authority_refused",
+            }:
+                return StartRefusedBeforeExternalWork(
+                    echo,
+                    outcome,
+                    diagnostic_digest,
+                )
+            return StartIndeterminate(echo, None, diagnostic_digest)
+        return StartedSession(
+            echo,
+            _CompletedCodexSessionHandle(outcome),
+            f"codex:{request.session_id}:{request.dispatch_generation}",
+            {"wrapper_mode": self._config.wrapper_mode},
+        )
+
+    def reconcile_session(
+        self,
+        request: RunnerSessionReconcileRequest,
+    ) -> Unsupported:
+        invocation = request.invocation_request
+        return Unsupported(
+            DispatchEcho.from_dispatch_envelope(
+                invocation.dispatch_envelope,
+                correlation_id=invocation.correlation_id,
+            )
+        )
+
+    def _invoke_bounded(
+        self,
+        request: AdapterInvocationRequest,
+    ) -> AdapterInvocationOutcome:
         if not isinstance(request, AdapterInvocationRequest):
             raise TypeError("request must be AdapterInvocationRequest")
         dispatch_echo = DispatchEcho.from_dispatch_envelope(
@@ -439,6 +504,49 @@ class CodexAdapter:
             )
 
 
+class _CompletedCodexSessionHandle:
+    def __init__(self, outcome: AdapterInvocationOutcome) -> None:
+        self._outcome: AdapterInvocationOutcome | None = outcome
+
+    def poll_completion(self) -> AdapterInvocationOutcome | None:
+        outcome = self._outcome
+        self._outcome = None
+        return outcome
+
+    def request_cancel(self) -> RunnerCancellationOperationResult:
+        return _unsupported_session_operation("cooperative_cancel")
+
+    def terminate(self) -> RunnerCancellationOperationResult:
+        return _unsupported_session_operation("terminate")
+
+    def kill(self) -> RunnerCancellationOperationResult:
+        return _unsupported_session_operation("kill")
+
+    def cleanup(self) -> RunnerCleanupResult:
+        return RunnerCleanupResult(
+            "not_required",
+            0,
+            0,
+            _session_diagnostic_digest("not_required"),
+        )
+
+
+def _unsupported_session_operation(
+    operation: str,
+) -> RunnerCancellationOperationResult:
+    return RunnerCancellationOperationResult(
+        operation,
+        "unsupported",
+        0,
+        0,
+        _session_diagnostic_digest(operation),
+    )
+
+
+def _session_diagnostic_digest(value: str) -> str:
+    return f"sha256:{sha256(value.encode('utf-8')).hexdigest()}"
+
+
 def _bundle_stdin_bytes(
     request: AdapterInvocationRequest,
     *,
@@ -534,6 +642,9 @@ def _prompt_bundle(
         ),
         "dispatch_identity": {
             "run_id": request.dispatch_envelope.run_id,
+            "session_id": request.session_id,
+            "dispatch_generation": request.dispatch_generation,
+            "session_fencing_token": request.session_fencing_token,
             "plan_id": request.dispatch_envelope.plan_id,
             "claim_id": request.dispatch_envelope.claim_id,
             "generation": request.dispatch_envelope.generation,
@@ -600,6 +711,9 @@ def _selected_skill_json(
 def _dispatch_echo_json(echo: DispatchEcho) -> dict[str, JsonValue]:
     return {
         "run_id": echo.run_id,
+        "session_id": echo.session_id,
+        "dispatch_generation": echo.dispatch_generation,
+        "session_fencing_token": echo.session_fencing_token,
         "claim_id": echo.claim_id,
         "generation": echo.generation,
         "fencing_token": echo.fencing_token,
@@ -632,6 +746,18 @@ def _dispatch_echo_from_json(value: object) -> DispatchEcho:
         raise ValueError("dispatch_echo has unsupported keys")
     return DispatchEcho(
         run_id=_require_nonblank_string(mapping["run_id"], "dispatch_echo.run_id"),
+        session_id=_require_nonblank_string(
+            mapping["session_id"],
+            "dispatch_echo.session_id",
+        ),
+        dispatch_generation=_require_int(
+            mapping["dispatch_generation"],
+            "dispatch_echo.dispatch_generation",
+        ),
+        session_fencing_token=_require_nonblank_string(
+            mapping["session_fencing_token"],
+            "dispatch_echo.session_fencing_token",
+        ),
         claim_id=_require_nonblank_string(
             mapping["claim_id"],
             "dispatch_echo.claim_id",

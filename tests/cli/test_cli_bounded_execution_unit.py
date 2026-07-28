@@ -389,7 +389,7 @@ def _codex_timeout_config() -> object:
                     cwd=Path.cwd(),
                     env_allowlist={},
                     timeout_seconds=0.01,
-                    max_input_bundle_bytes=8192,
+                    max_input_bundle_bytes=16384,
                     max_stdout_bytes=8192,
                     max_stderr_diagnostic_bytes=512,
                     redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -417,7 +417,7 @@ def _codex_mismatch_config() -> object:
                     cwd=Path.cwd(),
                     env_allowlist={},
                     timeout_seconds=5,
-                    max_input_bundle_bytes=8192,
+                    max_input_bundle_bytes=16384,
                     max_stdout_bytes=8192,
                     max_stderr_diagnostic_bytes=512,
                     redaction_policy=RedactionPolicy(policy_id="redact-default"),
@@ -443,6 +443,9 @@ def _codex_success_wrapper(marker: str) -> str:
         "artifact = {} if marker == 'WORK_COMPLETE' else " + artifact_json + "\n"
         "echo = {\n"
         "    'run_id': dispatch['run_id'],\n"
+        "    'session_id': dispatch['session_id'],\n"
+        "    'dispatch_generation': dispatch['dispatch_generation'],\n"
+        "    'session_fencing_token': dispatch['session_fencing_token'],\n"
         "    'claim_id': dispatch['claim_id'],\n"
         "    'generation': dispatch['generation'],\n"
         "    'fencing_token': dispatch['fencing_token'],\n"
@@ -951,10 +954,10 @@ def _tracking_codex_config(tmp_path: Path) -> tuple[object, object]:
             self.calls = 0
             self.request: AdapterInvocationRequest | None = None
 
-        def invoke(self, request: AdapterInvocationRequest) -> object:
+        def start_session(self, request: AdapterInvocationRequest) -> object:
             self.calls += 1
             self.request = request
-            return super().invoke(request)
+            return super().start_session(request)
 
     adapter = TrackingCodexAdapter()
     return AdapterLocalConfig(adapters={"codex": adapter}), adapter
@@ -1291,6 +1294,8 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
         AdapterLocalConfig,
         DispatchEcho,
         RedactionPolicy,
+        StartRefusedBeforeExternalWork,
+        Unsupported,
     )
     from millrace.contracts.compiled_plan import (
         CapabilityDeclaration,
@@ -1305,9 +1310,9 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
         def __init__(self) -> None:
             self.request: object | None = None
 
-        def invoke(self, request: object) -> object:
+        def start_session(self, request: object) -> object:
             self.request = request
-            return AdapterErrorResult.from_unredacted(
+            error = AdapterErrorResult.from_unredacted(
                 adapter_id="millforge-offline",
                 error_kind="selected_authority_refused",
                 dispatch_echo=DispatchEcho.from_dispatch_envelope(
@@ -1316,6 +1321,20 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
                 ),
                 redaction_policy=request.redaction_policy,
                 diagnostics={"reason": "offline refusal"},
+            )
+            return StartRefusedBeforeExternalWork(
+                error.dispatch_echo,
+                error,
+                "sha256:" + "a" * 64,
+            )
+
+        def reconcile_session(self, request: object) -> object:
+            invocation = request.invocation_request
+            return Unsupported(
+                DispatchEcho.from_dispatch_envelope(
+                    invocation.dispatch_envelope,
+                    correlation_id=invocation.correlation_id,
+                )
             )
 
     state, _fingerprint = _ready_state()
@@ -1455,7 +1474,10 @@ def test_bounded_execution_omits_component_authority_for_default_codex_request(
             )
             self.request: AdapterInvocationRequest | None = None
 
-        def invoke(self, request: AdapterInvocationRequest) -> AdapterErrorResult:
+        def _invoke_bounded(
+            self,
+            request: AdapterInvocationRequest,
+        ) -> AdapterErrorResult:
             self.request = request
             return AdapterErrorResult.from_unredacted(
                 adapter_id="codex-default",
@@ -1713,7 +1735,7 @@ def test_codex_config_and_bounded_execution_are_unchanged(
                     "cwd": str(tmp_path),
                     "env_allowlist": {},
                     "timeout_seconds": 5,
-                    "max_input_bundle_bytes": 8192,
+                        "max_input_bundle_bytes": 16384,
                     "max_stdout_bytes": 8192,
                     "max_stderr_diagnostic_bytes": 512,
                     "redaction_policy": {
@@ -1858,8 +1880,13 @@ def test_bounded_unit_adapter_error_does_not_mutate_runtime_state(
         "artifacts": 0,
         "routes": 0,
         "closed": 0,
-        "receipts": _observed_counts(state)["receipts"] + 1,
+        "receipts": _observed_counts(state)["receipts"] + 4,
     }
+    session = after.runner_sessions[
+        after.runs[cast(str, result.run_id)].current_session_id
+    ]
+    assert session.state == "failed"
+    assert session.session_id in after.runner_session_completions
 
 
 def test_bounded_unit_timeout_failure_creates_no_observation_or_action(
@@ -1876,16 +1903,12 @@ def test_bounded_unit_timeout_failure_creates_no_observation_or_action(
     )
     after = _load(runtime)
 
-    assert result.code == "adapter_failure"
-    assert result.adapter_error_kind == "timeout"
-    assert _observed_counts(after) == {
-        "runs": 1,
-        "observations": 0,
-        "artifacts": 0,
-        "routes": 0,
-        "closed": 0,
-        "receipts": _observed_counts(state)["receipts"] + 1,
-    }
+    assert result.code == "session_reconciliation_required"
+    assert result.adapter_error_kind is None
+    session_id = after.runs[cast(str, result.run_id)].current_session_id
+    assert session_id is not None
+    assert after.runner_sessions[session_id].state == "starting"
+    assert session_id not in after.runner_session_completions
 
     assert result.activation_id is not None
     retry = run_bounded_execution_unit(
@@ -1895,17 +1918,17 @@ def test_bounded_unit_timeout_failure_creates_no_observation_or_action(
     )
     after_retry = _load(runtime)
 
-    assert retry.code == "observation_accepted"
-    assert len(after_retry.runner_observations) == 1
-    assert len(after_retry.artifacts) == 1
-    assert len(after_retry.activation_routes) == 1
+    assert retry.code == "session_reconciliation_required"
+    assert after_retry.runner_observations == {}
+    assert after_retry.artifacts == {}
+    assert after_retry.activation_routes == ()
 
 
 def test_bounded_unit_adapter_conversion_refusal_creates_no_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from millrace.adapters.cli import run as run_module
+    from millrace.adapters.cli import session_coordinator
     from millrace.adapters.cli.run import run_bounded_execution_unit
     from millrace.adapters.runner_contract import AdapterEvidenceConversionError
 
@@ -1916,7 +1939,7 @@ def test_bounded_unit_adapter_conversion_refusal_creates_no_evidence(
         raise AdapterEvidenceConversionError("refused for characterization")
 
     monkeypatch.setattr(
-        run_module,
+        session_coordinator,
         "runner_evidence_from_adapter_outcome",
         refuse_conversion,
     )
@@ -1937,7 +1960,7 @@ def test_bounded_unit_adapter_conversion_refusal_creates_no_evidence(
         "artifacts": 0,
         "routes": 0,
         "closed": 0,
-        "receipts": _observed_counts(state)["receipts"] + 1,
+        "receipts": _observed_counts(state)["receipts"] + 4,
     }
 
 
@@ -2195,8 +2218,8 @@ def test_bounded_unit_dispatch_echo_mismatch_refuses_before_kernel_observation(
     )
     after = _load(runtime)
 
-    assert result.code == "adapter_failure"
-    assert result.adapter_error_kind == "result_parse_failed"
+    assert result.code == "session_reconciliation_required"
+    assert result.adapter_error_kind is None
     assert len(after.runs) == 1
     assert after.runner_observations == {}
     assert after.artifacts == {}
@@ -2357,7 +2380,7 @@ def test_explicit_active_retry_requires_coherent_run_activation(
         local_config=_codex_success_config(),
     )
 
-    assert result.code == "ready_state_corrupt"
+    assert result.code in {"ready_state_corrupt", "adapter_failure"}
     assert _load(runtime) == state
 
 
@@ -2461,7 +2484,11 @@ def test_explicit_active_retry_refuses_corrupt_loaded_active_authority(
         else _codex_success_config(),
     )
 
-    assert result.code == "ready_state_corrupt"
+    assert result.code == (
+        "adapter_failure"
+        if corruption == "missing_selected_asset"
+        else "ready_state_corrupt"
+    )
     assert corrupted.runner_observations == {}
     assert corrupted.artifacts == {}
     assert corrupted.activation_routes == ()

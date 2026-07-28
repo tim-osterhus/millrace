@@ -19,13 +19,16 @@ from millrace.contracts.workflow_package import asset_digest_for_bytes
 from millrace.kernel import apply, decide
 from millrace.operator.dispatch import (
     DispatchProjectionError,
-    build_dispatch_envelope_for_run,
     list_ready_dispatch_candidates,
     ready_diagnostic_from_claim_refusal,
+)
+from millrace.operator.dispatch import (
+    build_dispatch_envelope_for_run as _build_dispatch_envelope_for_run,
 )
 from millrace.testing import (
     deterministic_context,
     fake_runner_dispatch_envelope_for_run,
+    fake_runner_session_state,
 )
 from support import generic_lifecycle, vendor_selection
 from support.lad_execution import (
@@ -34,6 +37,13 @@ from support.lad_execution import (
     compile_lad,
     task_payload,
 )
+
+
+def build_dispatch_envelope_for_run(*, state, run_id):
+    return _build_dispatch_envelope_for_run(
+        state=fake_runner_session_state(state=state, run_id=run_id),
+        run_id=run_id,
+    )
 
 
 def _claim_builder(state):

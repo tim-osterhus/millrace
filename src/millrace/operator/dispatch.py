@@ -154,6 +154,11 @@ def build_dispatch_envelope_for_run(
             run_id=run_id,
             work_item_id=run.work_item_id,
         )
+    if run.current_session_id is None:
+        raise _dispatch_error("missing_runner_session", run_id=run_id)
+    session = state.runner_sessions.get(run.current_session_id)
+    if session is None or session.run_id != run_id:
+        raise _dispatch_error("runner_session_authority_mismatch", run_id=run_id)
 
     activation = state.activations.get(run.activation_id)
     if activation is None:
@@ -248,6 +253,9 @@ def build_dispatch_envelope_for_run(
     )
     return RunnerDispatchEnvelope(
         run_id=run.run_ref.run_id,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
         work_item_id=work_item.ref.work_item_id,
         activation_id=activation.activation_id,
         plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,

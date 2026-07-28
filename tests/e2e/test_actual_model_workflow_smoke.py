@@ -610,9 +610,9 @@ def test_undeclared_marker_and_wrong_dispatch_echo_classify_without_progress(
     assert classify_daemon_result(wrong_marker) == "runtime_governance_refusal"
     assert _observed_counts(marker_after)["observations"] == 0
     assert _observed_counts(marker_after)["closed"] == 0
-    assert wrong_echo.code == "adapter_failure"
-    assert wrong_echo.adapter_error_kind == "result_parse_failed"
-    assert classify_daemon_result(wrong_echo) == "model_output_schema_refusal"
+    assert wrong_echo.code == "session_reconciliation_required"
+    assert wrong_echo.adapter_error_kind is None
+    assert classify_daemon_result(wrong_echo) == "operator_visible_blocker"
     assert _observed_counts(echo_after)["observations"] == 0
     assert _observed_counts(echo_after)["closed"] == 0
 
