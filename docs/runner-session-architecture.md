@@ -58,9 +58,10 @@ refused.
 
 ## Read-Only Projections
 
-`runs list`, `runs show`, `trace show RUN_ID`, and `status` expose a compact
-`runner_session` projection when a current session exists. The projection can
-include:
+`runs list` is active-run scoped and adds a compact `runner_session` projection
+to each listed active run. `runs show RUN_ID` and `trace show RUN_ID` expose
+the current session for that run. `status` exposes current sessions across its
+runtime scope. The projection can include:
 
 - session ID, dispatch generation, state, and selected adapter kind;
 - primary cancellation reason and current phase;
@@ -78,6 +79,8 @@ bounded diagnostics:
 
 These surfaces are bounded, redacted, read-only, and non-authoritative. They
 do not reconcile, repair, retry, cancel, or otherwise mutate runtime state.
+Application status is `not_completed`, `not_applicable`, `pending`, `applied`,
+or `refused`; a persisted refused receipt is never reported as applied.
 
 ## Finite Event Follow
 

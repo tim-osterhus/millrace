@@ -92,8 +92,8 @@ These are package data, not hard-coded kernel behavior.
 
 [Getting started](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/getting-started.md) ·
 [How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/how-millrace-works.md) ·
-[Runner-session architecture](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/runner-session-architecture.md) ·
-[Daemon lifecycle](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/daemon-lifecycle.md) ·
+[Runner-session architecture](docs/runner-session-architecture.md) ·
+[Daemon lifecycle](docs/daemon-lifecycle.md) ·
 [Workflow packages](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/workflow-packages.md) ·
 [Millforge runner](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/millforge-runner.md) ·
 [Codex runner](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/codex-runner.md) ·

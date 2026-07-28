@@ -307,6 +307,7 @@ def _run_locked_loop(
     idle_iterations = 0
     lifecycle_transitions_applied = 0
     last_result: dict[str, object] = {}
+    last_handled_run_id: str | None = None
 
     with _SignalStop() as stop:
         startup = _reconcile_startup_sessions(
@@ -315,6 +316,7 @@ def _run_locked_loop(
         )
         if startup.code != "no_runner_session_reconciliation":
             last_result = _result_data(startup)
+            last_handled_run_id = _result_run_id(startup)
             stopped_reason = _non_idle_stop_reason(startup)
             if stopped_reason is not None:
                 return _summary(
@@ -330,6 +332,7 @@ def _run_locked_loop(
                     lifecycle_transitions_applied=0,
                     stopped_reason=stopped_reason,
                     last_result=last_result,
+                    last_handled_run_id=last_handled_run_id,
                     diagnostics=tuple(
                         dict(item) for item in startup.diagnostics
                     ),
@@ -341,6 +344,9 @@ def _run_locked_loop(
             )
             iterations += 1
             last_result = _result_data(result)
+            result_run_id = _result_run_id(result)
+            if result_run_id is not None:
+                last_handled_run_id = result_run_id
 
             if _result_started(result):
                 units_started += 1
@@ -378,6 +384,7 @@ def _run_locked_loop(
                     lifecycle_transitions_applied=lifecycle_transitions_applied,
                     stopped_reason="signal",
                     last_result=last_result,
+                    last_handled_run_id=last_handled_run_id,
                 )
 
             stopped_reason = _non_idle_stop_reason(result)
@@ -393,6 +400,7 @@ def _run_locked_loop(
                     lifecycle_transitions_applied=lifecycle_transitions_applied,
                     stopped_reason=stopped_reason,
                     last_result=last_result,
+                    last_handled_run_id=last_handled_run_id,
                     diagnostics=tuple(dict(item) for item in result.diagnostics),
                 )
 
@@ -408,6 +416,7 @@ def _run_locked_loop(
                     lifecycle_transitions_applied=lifecycle_transitions_applied,
                     stopped_reason="signal",
                     last_result=last_result,
+                    last_handled_run_id=last_handled_run_id,
                 )
 
             if options.max_ticks is not None and iterations >= options.max_ticks:
@@ -425,6 +434,7 @@ def _run_locked_loop(
                         lifecycle_transitions_applied=lifecycle_transitions_applied,
                         stopped_reason="signal",
                         last_result=last_result,
+                        last_handled_run_id=last_handled_run_id,
                     )
 
     return _summary(
@@ -438,6 +448,7 @@ def _run_locked_loop(
         lifecycle_transitions_applied=lifecycle_transitions_applied,
         stopped_reason="max_ticks",
         last_result=last_result,
+        last_handled_run_id=last_handled_run_id,
     )
 
 
@@ -631,6 +642,10 @@ def _result_started(result: BoundedExecutionUnitResult) -> bool:
     return result.activation_id is not None or result.run_id is not None
 
 
+def _result_run_id(result: BoundedExecutionUnitResult) -> str | None:
+    return result.run_id if isinstance(result.run_id, str) and result.run_id else None
+
+
 def _result_data(result: BoundedExecutionUnitResult) -> dict[str, object]:
     return {
         "code": result.code,
@@ -658,6 +673,7 @@ def _summary(
     lifecycle_transitions_applied: int = 0,
     stopped_reason: str,
     last_result: dict[str, object] | None = None,
+    last_handled_run_id: str | None = None,
     diagnostics: tuple[dict[str, object], ...] = (),
 ) -> DaemonRunSummary:
     result_data = last_result or {}
@@ -675,18 +691,17 @@ def _summary(
         cas_path=str(options.paths.cas_path),
         last_result=result_data,
         diagnostics=diagnostics,
-        runner_session=_summary_runner_session(options, result_data),
+        runner_session=_summary_runner_session(options, last_handled_run_id),
     )
 
 
 def _summary_runner_session(
     options: DaemonRunOptions,
-    last_result: dict[str, object],
+    last_handled_run_id: str | None,
 ) -> dict[str, object] | None:
     from millrace.adapters.cli.status import runner_session_projection
 
-    run_id = last_result.get("run_id")
-    if not isinstance(run_id, str) or not run_id:
+    if last_handled_run_id is None:
         return None
     try:
         runtime = open_runtime_context(options.paths, command=_COMMAND)
@@ -696,7 +711,7 @@ def _summary_runner_session(
             runtime.close()
     except (CliCommandError, OSError, SubstrateError):
         return None
-    projection = runner_session_projection(state, run_id)
+    projection = runner_session_projection(state, last_handled_run_id)
     if projection is None:
         return None
     return projection

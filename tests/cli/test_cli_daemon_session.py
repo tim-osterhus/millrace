@@ -566,6 +566,62 @@ def test_runner_session_public_projections_include_selected_authority_and_cancel
         assert session["orphan_risk"] is False
 
 
+@pytest.mark.parametrize(
+    ("receipt", "expected"),
+    (
+        (None, "pending"),
+        (True, "applied"),
+        (False, "refused"),
+    ),
+)
+def test_runner_session_projection_reports_application_receipt_truth(
+    monkeypatch,
+    receipt: bool | None,
+    expected: str,
+) -> None:
+    from types import SimpleNamespace
+
+    from millrace.adapters.cli import status
+
+    completion = SimpleNamespace(
+        runner_result_evidence_digest=_digest("a"),
+        application_input_id="apply-session-1",
+        terminal_state="completed",
+        exit_kind="success",
+    )
+    state = SimpleNamespace(
+        runs={"run-1": SimpleNamespace(current_session_id="session-1")},
+        runner_sessions={
+            "session-1": SimpleNamespace(
+                session_id="session-1",
+                run_id="run-1",
+                dispatch_generation=1,
+                state="completed",
+                cleanup_disposition="complete",
+            )
+        },
+        runner_session_completions={"session-1": completion},
+        runner_session_cancellation_requests={},
+        runner_session_cancellation_attempts={},
+        receipts=(
+            {}
+            if receipt is None
+            else {"apply-session-1": SimpleNamespace(accepted=receipt)}
+        ),
+    )
+    monkeypatch.setattr(
+        status,
+        "_selected_adapter_kind",
+        lambda _state, _run_id: "codex",
+    )
+
+    projected = status.runner_session_projection(state, "run-1")
+
+    assert projected is not None
+    assert projected["application_persisted"] is (receipt is not None)
+    assert projected["application_status"] == expected
+
+
 def test_runs_cancel_refuses_terminal_session(tmp_path) -> None:
     from millrace.adapters.cli import daemon
     from millrace.adapters.cli.run import run_bounded_execution_unit
@@ -718,6 +774,32 @@ def test_runs_follow_projects_events_but_reconciles_final_from_durable_state(
     assert payload["durable_final"]["terminal_state"] == "completed"
     assert payload["durable_final"]["completion_persisted"] is True
     assert payload["durable_final"]["application_persisted"] is True
+    for command in (
+        ("runs", "show", result.run_id),
+        ("trace", "show", result.run_id),
+        ("status",),
+    ):
+        projection_code, projection_stdout, projection_stderr = _invoke(
+            [
+                "--json",
+                "--workspace",
+                str(paths.workspace_path),
+                "--db",
+                str(paths.db_path),
+                "--cas",
+                str(paths.cas_path),
+                *command,
+            ]
+        )
+        assert projection_code == 0, projection_stderr
+        projection_data = json.loads(projection_stdout)["data"]
+        if command[:2] == ("runs", "show"):
+            projected_session = projection_data["run"]["runner_session"]
+        elif command[:2] == ("trace", "show"):
+            projected_session = projection_data["runner_session"]
+        else:
+            projected_session = projection_data["runner_sessions"][0]
+        assert projected_session["application_status"] == "applied"
     reopened = daemon.open_runtime_context(paths, command="test")
     try:
         assert _load(reopened).runner_observations == observations_before

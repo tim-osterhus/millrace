@@ -321,6 +321,7 @@ def test_daemon_maps_exact_v6_to_upgrade_required_without_mutation(
         ("runs", "follow", "run-unknown", "--after-sequence", "0"),
         ("trace", "show", "run-unknown"),
         ("doctor",),
+        ("workspace", "init", "--input-id", "reinit-v6"),
     ),
 )
 def test_session_projection_commands_refuse_exact_v6_without_mutation(
@@ -360,6 +361,14 @@ def test_session_projection_commands_refuse_exact_v6_without_mutation(
         "current_schema_version": 6,
         "required_schema_version": 7,
     }
+    human_exit, human_stdout, human_stderr = _invoke(
+        ["--workspace", str(workspace), *command]
+    )
+    assert human_exit == 4
+    assert human_stdout == ""
+    assert human_stderr == (
+        "workspace_upgrade_required: Workspace schema upgrade is required.\n"
+    )
     assert _directory_bytes(workspace) == before
 
 

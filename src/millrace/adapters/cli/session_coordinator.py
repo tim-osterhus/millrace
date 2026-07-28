@@ -197,7 +197,11 @@ def execute_runner_session(
     )
     persisted = _persist_transition(runtime, created)
     if persisted is None:
-        return SessionExecutionResult("session_creation_refused")
+        return SessionExecutionResult(
+            "runner_session_retry_refused"
+            if current is not None and explicit_retry_intent
+            else "session_creation_refused"
+        )
     session = persisted.runner_sessions[session_id]
     return _start_created_session(
         runtime,

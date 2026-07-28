@@ -532,10 +532,14 @@ def runner_session_projection(
     if completion is not None:
         if completion.runner_result_evidence_digest is None:
             application_status = "not_applicable"
-        elif completion.application_input_id in state.receipts:
-            application_status = "applied"
         else:
-            application_status = "pending"
+            receipt = state.receipts.get(completion.application_input_id)
+            if receipt is None:
+                application_status = "pending"
+            elif receipt.accepted:
+                application_status = "applied"
+            else:
+                application_status = "refused"
     return {
         "session_id": session.session_id,
         "run_id": session.run_id,

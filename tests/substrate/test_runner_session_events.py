@@ -372,7 +372,11 @@ def test_active_stream_ceiling_refuses_new_stream_without_resetting_sequences(
 def test_provider_event_rate_is_bounded_per_kind_and_second(
     tmp_path,
     kind: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from millrace.substrate import runner_session_events
+
+    monkeypatch.setattr(runner_session_events, "_admission_second", lambda: 42)
     writer = _writer(tmp_path)
     accepted = 0
     for index in range(RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND + 5):

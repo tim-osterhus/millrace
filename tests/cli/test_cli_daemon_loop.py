@@ -253,6 +253,7 @@ def test_daemon_reloads_persisted_state_between_bounded_units(
         paths.db_path,
         paths.db_path,
         paths.db_path,
+        paths.db_path,
     )
     assert summary.iterations == 3
     assert summary.units_succeeded == 2
@@ -516,6 +517,52 @@ def test_daemon_adapter_failure_after_claim_stops_and_next_no_arg_skips_active_r
     assert explicit.units_succeeded == 1
     assert explicit.last_result["run_id"] == failed.last_result["run_id"]
     assert len(after.runner_observations) == 1
+
+
+def test_daemon_summary_keeps_handled_session_after_final_idle_tick(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import daemon
+    from millrace.adapters.cli.run import BoundedExecutionUnitResult
+
+    state, _fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    handled = daemon.run_bounded_execution_unit(
+        runtime,
+        local_config=_codex_success_config(marker="AUTO"),
+    )
+    paths = runtime.paths
+    _close(runtime)
+    results = iter(
+        (
+            BoundedExecutionUnitResult(
+                code="observation_accepted",
+                accepted=True,
+                run_id=handled.run_id,
+            ),
+            BoundedExecutionUnitResult(code="no_ready_work"),
+        )
+    )
+    monkeypatch.setattr(
+        daemon,
+        "_run_one_bounded_unit",
+        lambda *_args, **_kwargs: next(results),
+    )
+
+    summary = daemon.run_daemon_loop(
+        _daemon_options(
+            paths,
+            max_ticks=2,
+            local_config=_codex_success_config(marker="AUTO"),
+        )
+    )
+
+    assert summary.last_result["code"] == "no_ready_work"
+    assert summary.last_result["run_id"] is None
+    assert summary.runner_session is not None
+    assert summary.runner_session["run_id"] == handled.run_id
+    assert summary.runner_session["application_status"] == "applied"
 
 
 def test_daemon_asset_material_refusal_counters_and_ids(

@@ -100,6 +100,12 @@ def test_runner_session_release_docs_cover_public_and_compatibility_contracts() 
     assert "v0.22 runtime" in compatibility_text
     assert "Runner-session architecture" in readme_text
     assert "Daemon lifecycle" in readme_text
+    for relative_target in (
+        "docs/runner-session-architecture.md",
+        "docs/daemon-lifecycle.md",
+    ):
+        assert f"]({relative_target})" in readme_text
+        assert (PROJECT_ROOT / relative_target).is_file()
 
 
 def _run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -221,6 +227,8 @@ def test_public_document_set_uses_final_release_paths() -> None:
         "docs/v0.22-compatibility.md",
         "docs/errors.md",
         "docs/how-millrace-works.md",
+        "docs/runner-session-architecture.md",
+        "docs/daemon-lifecycle.md",
         "docs/workflow-packages.md",
         "docs/millforge-runner.md",
         "docs/codex-runner.md",
@@ -238,9 +246,17 @@ def test_public_docs_are_self_contained_and_links_are_release_safe() -> None:
         encoding="utf-8"
     )
     canonical_root = "https://github.com/tim-osterhus/millrace/blob/v0.22.0/"
-    for relative_path in PUBLIC_DOCS - {"README.md"} | {"LICENSE"}:
+    current_relative_docs = {
+        "docs/runner-session-architecture.md",
+        "docs/daemon-lifecycle.md",
+    }
+    for relative_path in PUBLIC_DOCS - {"README.md"} - current_relative_docs | {
+        "LICENSE"
+    }:
         assert f"{canonical_root}{relative_path}" in readme
-    assert "](docs/" not in readme
+    for relative_path in current_relative_docs:
+        assert f"]({relative_path})" in readme
+        assert (PROJECT_ROOT / relative_path).is_file()
     assert "](LICENSE)" not in readme
     assert "source runtime checkout" not in millforge_guide
     assert "After the v0.22 distributions are published" not in millforge_guide

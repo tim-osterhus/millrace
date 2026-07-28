@@ -3169,6 +3169,53 @@ def test_same_run_retry_changes_correlation_and_cancellation_ids(tmp_path) -> No
     assert first_request.cancellation_token != second_request.cancellation_token
 
 
+def test_same_run_retry_creation_refusal_uses_public_retry_code(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _RecordingAdapter(_refused_start)
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    first = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(adapter),
+    )
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_transition",
+        lambda *_args, **_kwargs: None,
+    )
+
+    retry = run_bounded_execution_unit(
+        runtime,
+        activation_id=first.activation_id,
+        local_config=_config(adapter),
+    )
+
+    assert first.code == "adapter_failure"
+    assert retry.code == "runner_session_retry_refused"
+
+
+def test_initial_session_creation_refusal_keeps_creation_code(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, _ = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    monkeypatch.setattr(
+        session_coordinator,
+        "_persist_transition",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(_success_start)),
+    )
+
+    assert result.code == "session_creation_refused"
+
+
 def test_old_session_completion_after_same_run_retry_refuses(tmp_path) -> None:
     starts = 0
 
