@@ -14,15 +14,19 @@ from millrace.contracts.compiled_plan import verify_authority_fingerprint
 from millrace.contracts.state import (
     AdmittedPlan,
     GovernanceEventRecord,
+    RunnerSessionRecord,
+    RunRef,
     RuntimeState,
     TraceRecord,
 )
 from millrace.contracts.transition import (
     AdmitPlanRef,
+    AdvanceRunnerSessionRecord,
     CloseClosureTarget,
     CloseWorkItem,
     CreateActivation,
     CreateRun,
+    CreateRunnerSessionRecord,
     CreateWorkItem,
     EmitGovernanceEvent,
     EmitTrace,
@@ -44,6 +48,9 @@ from millrace.contracts.transition import (
     RecordRefusal,
     RecordRemediationWork,
     RecordRunnerObservation,
+    RecordRunnerSessionCancellation,
+    RecordRunnerSessionCancellationAttemptRecord,
+    RecordRunnerSessionCompletionRecord,
     RecordTransition,
     RecordWorkDependency,
     RouteActivation,
@@ -90,6 +97,25 @@ def apply(state: RuntimeState, decision: TransitionDecision) -> RuntimeState:
             next_state = _apply_create_activation(next_state, mutation)
         elif isinstance(mutation, CreateRun):
             next_state = _apply_create_run(next_state, mutation)
+        elif isinstance(mutation, CreateRunnerSessionRecord):
+            next_state = _apply_create_runner_session(next_state, mutation)
+        elif isinstance(mutation, AdvanceRunnerSessionRecord):
+            next_state = _apply_advance_runner_session(next_state, mutation)
+        elif isinstance(mutation, RecordRunnerSessionCancellation):
+            next_state = _apply_record_runner_session_cancellation(
+                next_state,
+                mutation,
+            )
+        elif isinstance(mutation, RecordRunnerSessionCancellationAttemptRecord):
+            next_state = _apply_record_runner_session_cancellation_attempt(
+                next_state,
+                mutation,
+            )
+        elif isinstance(mutation, RecordRunnerSessionCompletionRecord):
+            next_state = _apply_record_runner_session_completion(
+                next_state,
+                mutation,
+            )
         elif isinstance(mutation, RecordRunnerObservation):
             next_state = _apply_record_runner_observation(next_state, mutation)
         elif isinstance(mutation, RecordArtifact):
@@ -223,6 +249,21 @@ def _validate_durable_id_uniqueness(
         run.run_ref.claim_id for run in state.runs.values()
     )
     existing_runner_observation_ids = _non_empty_ids(state.runner_observations)
+    existing_runner_session_ids = _non_empty_ids(state.runner_sessions)
+    existing_runner_session_cancellation_ids = _non_empty_ids(
+        state.runner_session_cancellation_requests
+    )
+    existing_runner_session_attempt_ids = _non_empty_ids(
+        state.runner_session_cancellation_attempts
+    )
+    existing_runner_session_completion_ids = _non_empty_ids(
+        record.completion_id
+        for record in state.runner_session_completions.values()
+    )
+    existing_runner_session_application_input_ids = _non_empty_ids(
+        record.application_input_id
+        for record in state.runner_session_completions.values()
+    )
     existing_artifact_ids = _non_empty_ids(state.artifacts)
     existing_effect_proposal_ids = _non_empty_ids(state.effect_proposals)
     existing_effect_proposal_dedupe_keys = _non_empty_ids(
@@ -273,6 +314,11 @@ def _validate_durable_id_uniqueness(
     seen_run_ids: set[str] = set()
     seen_claim_ids: set[str] = set()
     seen_runner_observation_ids: set[str] = set()
+    seen_runner_session_ids: set[str] = set()
+    seen_runner_session_cancellation_ids: set[str] = set()
+    seen_runner_session_attempt_ids: set[str] = set()
+    seen_runner_session_completion_ids: set[str] = set()
+    seen_runner_session_application_input_ids: set[str] = set()
     seen_artifact_ids: set[str] = set()
     seen_effect_proposal_ids: set[str] = set()
     seen_effect_proposal_dedupe_keys: set[str] = set()
@@ -359,6 +405,40 @@ def _validate_durable_id_uniqueness(
                 existing_ids=existing_claim_ids,
                 seen_ids=seen_claim_ids,
                 message="claim already exists",
+            )
+        elif isinstance(mutation, CreateRunnerSessionRecord):
+            _ensure_new_durable_id(
+                mutation.session.session_id,
+                existing_ids=existing_runner_session_ids,
+                seen_ids=seen_runner_session_ids,
+                message="runner session already exists",
+            )
+        elif isinstance(mutation, RecordRunnerSessionCancellation):
+            _ensure_new_durable_id(
+                mutation.record.request_id,
+                existing_ids=existing_runner_session_cancellation_ids,
+                seen_ids=seen_runner_session_cancellation_ids,
+                message="runner session cancellation request already exists",
+            )
+        elif isinstance(mutation, RecordRunnerSessionCancellationAttemptRecord):
+            _ensure_new_durable_id(
+                mutation.record.attempt_id,
+                existing_ids=existing_runner_session_attempt_ids,
+                seen_ids=seen_runner_session_attempt_ids,
+                message="runner session cancellation attempt already exists",
+            )
+        elif isinstance(mutation, RecordRunnerSessionCompletionRecord):
+            _ensure_new_durable_id(
+                mutation.record.completion_id,
+                existing_ids=existing_runner_session_completion_ids,
+                seen_ids=seen_runner_session_completion_ids,
+                message="runner session completion already exists",
+            )
+            _ensure_new_durable_id(
+                mutation.record.application_input_id,
+                existing_ids=existing_runner_session_application_input_ids,
+                seen_ids=seen_runner_session_application_input_ids,
+                message="runner session completion application input already exists",
             )
         elif isinstance(mutation, RecordRunnerObservation):
             observation = mutation.observation
@@ -931,6 +1011,177 @@ def _apply_create_run(
             claimed_activation,
         ),
         runs=_mapping_with(state.runs, run.run_ref.run_id, run),
+    )
+
+
+def _apply_create_runner_session(
+    state: RuntimeState,
+    mutation: CreateRunnerSessionRecord,
+) -> RuntimeState:
+    session = mutation.session
+    run = state.runs.get(session.run_id)
+    if run is None:
+        raise StateConcurrencyError("runner session run is missing")
+    if run.run_ref != mutation.expected_run_ref:
+        raise StateConcurrencyError("runner session run authority changed")
+    if run.current_session_id != mutation.expected_current_session_id:
+        raise StateConcurrencyError("runner session pointer changed")
+    if session.session_id in state.runner_sessions:
+        raise StateConcurrencyError("runner session already exists")
+    if session.dispatch_generation != run.last_dispatch_generation + 1:
+        raise StateConcurrencyError("runner session generation changed")
+    updated_run = replace(
+        run,
+        current_session_id=session.session_id,
+        last_dispatch_generation=session.dispatch_generation,
+    )
+    return replace(
+        state,
+        runs=_mapping_with(state.runs, session.run_id, updated_run),
+        runner_sessions=_mapping_with(
+            state.runner_sessions,
+            session.session_id,
+            session,
+        ),
+    )
+
+
+def _runner_session_for_mutation(
+    state: RuntimeState,
+    *,
+    run_ref: RunRef,
+    session_id: str,
+    expected_session_state: str,
+) -> RunnerSessionRecord:
+    run_id = run_ref.run_id
+    run = state.runs.get(run_id)
+    if run is None or run.run_ref != run_ref:
+        raise StateConcurrencyError("runner session run authority changed")
+    if run.current_session_id != session_id:
+        raise StateConcurrencyError("runner session pointer changed")
+    session = state.runner_sessions.get(session_id)
+    if session is None or session.state != expected_session_state:
+        raise StateConcurrencyError("runner session state changed")
+    return session
+
+
+def _apply_advance_runner_session(
+    state: RuntimeState,
+    mutation: AdvanceRunnerSessionRecord,
+) -> RuntimeState:
+    prior = _runner_session_for_mutation(
+        state,
+        run_ref=mutation.expected_run_ref,
+        session_id=mutation.session.session_id,
+        expected_session_state=mutation.expected_session_state,
+    )
+    if (
+        mutation.session.run_id != prior.run_id
+        or mutation.session.dispatch_generation != prior.dispatch_generation
+        or mutation.session.session_fencing_token != prior.session_fencing_token
+    ):
+        raise StateConcurrencyError("runner session authority changed")
+    return replace(
+        state,
+        runner_sessions=_mapping_with(
+            state.runner_sessions,
+            mutation.session.session_id,
+            mutation.session,
+        ),
+    )
+
+
+def _apply_record_runner_session_cancellation(
+    state: RuntimeState,
+    mutation: RecordRunnerSessionCancellation,
+) -> RuntimeState:
+    record = mutation.record
+    _runner_session_for_mutation(
+        state,
+        run_ref=mutation.expected_run_ref,
+        session_id=record.session_id,
+        expected_session_state=mutation.expected_session_state,
+    )
+    if record.request_id in state.runner_session_cancellation_requests:
+        raise StateConcurrencyError("runner session cancellation request exists")
+    requests = tuple(
+        request
+        for request in state.runner_session_cancellation_requests.values()
+        if request.session_id == record.session_id
+    )
+    if record.request_order != len(requests) + 1:
+        raise StateConcurrencyError("runner session cancellation order changed")
+    return replace(
+        state,
+        runner_session_cancellation_requests=_mapping_with(
+            state.runner_session_cancellation_requests,
+            record.request_id,
+            record,
+        ),
+    )
+
+
+def _apply_record_runner_session_cancellation_attempt(
+    state: RuntimeState,
+    mutation: RecordRunnerSessionCancellationAttemptRecord,
+) -> RuntimeState:
+    record = mutation.record
+    _runner_session_for_mutation(
+        state,
+        run_ref=mutation.expected_run_ref,
+        session_id=record.session_id,
+        expected_session_state=mutation.expected_session_state,
+    )
+    request = state.runner_session_cancellation_requests.get(record.request_id)
+    if request is None or request.session_id != record.session_id:
+        raise StateConcurrencyError("runner session cancellation request changed")
+    attempts = tuple(
+        attempt
+        for attempt in state.runner_session_cancellation_attempts.values()
+        if attempt.session_id == record.session_id
+    )
+    if (
+        record.attempt_id in state.runner_session_cancellation_attempts
+        or record.sequence != len(attempts) + 1
+    ):
+        raise StateConcurrencyError("runner session cancellation attempt changed")
+    return replace(
+        state,
+        runner_session_cancellation_attempts=_mapping_with(
+            state.runner_session_cancellation_attempts,
+            record.attempt_id,
+            record,
+        ),
+    )
+
+
+def _apply_record_runner_session_completion(
+    state: RuntimeState,
+    mutation: RecordRunnerSessionCompletionRecord,
+) -> RuntimeState:
+    record = mutation.record
+    _runner_session_for_mutation(
+        state,
+        run_ref=mutation.expected_run_ref,
+        session_id=record.session_id,
+        expected_session_state=mutation.expected_session_state,
+    )
+    if record.session_id in state.runner_session_completions:
+        raise StateConcurrencyError("runner session completion exists")
+    if any(
+        existing.application_input_id == record.application_input_id
+        for existing in state.runner_session_completions.values()
+    ):
+        raise StateConcurrencyError(
+            "runner session completion application input exists"
+        )
+    return replace(
+        state,
+        runner_session_completions=_mapping_with(
+            state.runner_session_completions,
+            record.session_id,
+            record,
+        ),
     )
 
 

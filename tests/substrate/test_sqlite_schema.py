@@ -81,7 +81,70 @@ EXPECTED_TABLE_COLUMNS = {
         "stage_kind_id",
         "runner_binding_id",
         "created_by_input_id",
+        "current_session_id",
+        "last_dispatch_generation",
         "started_at_order",
+    ),
+    "runner_sessions": (
+        "schema_version",
+        "session_id",
+        "run_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "state",
+        "created_at",
+        "start_intent_at",
+        "started_at",
+        "ended_at",
+        "durable_locator_digest",
+        "cleanup_disposition",
+    ),
+    "runner_session_cancellation_requests": (
+        "schema_version",
+        "request_id",
+        "session_id",
+        "dispatch_generation",
+        "reason",
+        "source_kind",
+        "actor_id",
+        "requested_at",
+        "request_order",
+        "primary_request",
+    ),
+    "runner_session_cancellation_attempts": (
+        "schema_version",
+        "attempt_id",
+        "session_id",
+        "request_id",
+        "sequence",
+        "operation",
+        "result",
+        "started_at",
+        "completed_at",
+        "bounded_diagnostic_digest",
+    ),
+    "runner_session_completions": (
+        "schema_version",
+        "completion_id",
+        "session_id",
+        "run_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "terminal_state",
+        "exit_kind",
+        "adapter_outcome_kind",
+        "adapter_error_kind",
+        "runner_result_evidence_digest",
+        "primary_cancellation_request_id",
+        "cleanup_disposition",
+        "started_at",
+        "cancel_requested_at",
+        "completed_at",
+        "bounds_summary",
+        "truncation_metadata",
+        "redaction_policy_id",
+        "diagnostic_digest",
+        "application_input_id",
     ),
     "runner_observations": (
         "observation_id",
@@ -850,10 +913,10 @@ def test_open_refuses_unknown_store_schema_version_without_mutation(
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     db_path = tmp_path / "runtime.sqlite3"
-    _create_marked_store_metadata(db_path, store_schema_version=7)
+    _create_marked_store_metadata(db_path, store_schema_version=8)
 
     before = _store_snapshot(db_path)
-    with pytest.raises(UnsupportedStoreSchemaVersion, match="7"):
+    with pytest.raises(UnsupportedStoreSchemaVersion, match="8"):
         SQLiteRuntimeStore.open(db_path)
     assert _store_snapshot(db_path) == before
 
@@ -889,10 +952,10 @@ def test_workflow_package_command_audit_schema_bumps_sqlite_store_version() -> N
     assert SQLITE_STORE_SCHEMA_VERSION >= 5
 
 
-def test_runner_observation_schema_uses_store_version_6() -> None:
+def test_runner_session_schema_uses_store_version_7() -> None:
     from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
 
-    assert SQLITE_STORE_SCHEMA_VERSION == 6
+    assert SQLITE_STORE_SCHEMA_VERSION == 7
 
 
 def test_open_refuses_package_registry_table_shape_drift(tmp_path: Path) -> None:
@@ -1050,17 +1113,17 @@ def test_initialize_refuses_store_schema_version_5_without_mutation(
     assert _store_snapshot(db_path) == before
 
 
-def test_initialize_refuses_store_schema_version_7_without_mutation(
+def test_initialize_refuses_store_schema_version_8_without_mutation(
     tmp_path: Path,
 ) -> None:
     from millrace.substrate.errors import UnsupportedStoreSchemaVersion
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     db_path = tmp_path / "runtime.sqlite3"
-    _create_marked_store_metadata(db_path, store_schema_version=7)
+    _create_marked_store_metadata(db_path, store_schema_version=8)
 
     before = _store_snapshot(db_path)
-    with pytest.raises(UnsupportedStoreSchemaVersion, match="7"):
+    with pytest.raises(UnsupportedStoreSchemaVersion, match="8"):
         SQLiteRuntimeStore.initialize(db_path)
     assert _store_snapshot(db_path) == before
 
@@ -1068,7 +1131,7 @@ def test_initialize_refuses_store_schema_version_7_without_mutation(
 def test_open_refuses_v6_store_with_legacy_runner_observation_shape_without_mutation(
     tmp_path: Path,
 ) -> None:
-    from millrace.substrate.errors import StoreNotInitialized
+    from millrace.substrate.errors import StoreSchemaUpgradeRequired
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     db_path = tmp_path / "runtime.sqlite3"
@@ -1079,7 +1142,7 @@ def test_open_refuses_v6_store_with_legacy_runner_observation_shape_without_muta
     _replace_runner_observations_with_legacy_shape(db_path)
 
     before = _store_snapshot(db_path)
-    with pytest.raises(StoreNotInitialized, match="schema"):
+    with pytest.raises(StoreSchemaUpgradeRequired, match="upgrade"):
         SQLiteRuntimeStore.open(db_path)
     assert _store_snapshot(db_path) == before
 
@@ -1367,7 +1430,7 @@ def test_sqlite_schema_includes_learning_effect_proposal_and_reconciliation_rows
     )
 
 
-def test_sqlite_runtime_rows_are_versioned_by_store_schema_not_per_row(
+def test_sqlite_runtime_rows_use_store_schema_except_versioned_session_records(
     tmp_path: Path,
 ) -> None:
     from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
@@ -1383,10 +1446,18 @@ def test_sqlite_runtime_rows_are_versioned_by_store_schema_not_per_row(
         store.close()
 
     runtime_tables = set(EXPECTED_TABLE_COLUMNS) - {"store_metadata"}
+    versioned_record_tables = {
+        "runner_sessions",
+        "runner_session_cancellation_requests",
+        "runner_session_cancellation_attempts",
+        "runner_session_completions",
+    }
     for table_name in runtime_tables:
         columns = _table_columns(db_path, table_name)
         assert "record_kind" not in columns
-        assert "schema_version" not in columns
+        assert ("schema_version" in columns) == (
+            table_name in versioned_record_tables
+        )
 
 
 def test_open_refuses_schema_with_same_columns_but_missing_constraints(

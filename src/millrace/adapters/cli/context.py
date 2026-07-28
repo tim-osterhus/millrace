@@ -82,7 +82,10 @@ def workspace_paths(namespace: object) -> CliWorkspacePaths:
 
 def open_runtime_context(namespace: object, *, command: str) -> OpenRuntimeContext:
     from millrace.substrate.cas import ContentAddressedByteStore
-    from millrace.substrate.errors import StoreNotInitialized
+    from millrace.substrate.errors import (
+        StoreNotInitialized,
+        StoreSchemaUpgradeRequired,
+    )
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     paths = workspace_paths(namespace)
@@ -96,6 +99,8 @@ def open_runtime_context(namespace: object, *, command: str) -> OpenRuntimeConte
         )
     try:
         store = SQLiteRuntimeStore.open(paths.db_path)
+    except StoreSchemaUpgradeRequired as exc:
+        raise workspace_upgrade_required(command) from exc
     except StoreNotInitialized as exc:
         raise store_not_initialized(command, paths) from exc
     return OpenRuntimeContext(
@@ -294,6 +299,19 @@ def store_not_initialized(command: str, paths: CliWorkspacePaths) -> CliCommandE
         message="SQLite runtime store is not initialized.",
         exit_code=ExitCode.PERSISTENCE_FAILURE,
         details=_path_details(paths),
+    )
+
+
+def workspace_upgrade_required(command: str) -> CliCommandError:
+    return CliCommandError(
+        command=command,
+        code="workspace_upgrade_required",
+        message="Workspace schema upgrade is required.",
+        exit_code=ExitCode.PERSISTENCE_FAILURE,
+        details={
+            "current_schema_version": 6,
+            "required_schema_version": 7,
+        },
     )
 
 

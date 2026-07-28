@@ -9,6 +9,7 @@ from typing import TypeAlias
 from millrace.contracts.compiled_plan import SelectedCompiledPlan
 from millrace.substrate.errors import (
     StoreNotInitialized,
+    StoreSchemaUpgradeRequired,
     UnsupportedStoreSchemaVersion,
 )
 from millrace.substrate.records import (
@@ -127,8 +128,129 @@ _RUNTIME_TABLE_SQL = (
         stage_kind_id TEXT NOT NULL,
         runner_binding_id TEXT NOT NULL,
         created_by_input_id TEXT NOT NULL,
+        current_session_id TEXT,
+        last_dispatch_generation INTEGER NOT NULL CHECK (
+            last_dispatch_generation >= 0
+        ),
         started_at_order INTEGER NOT NULL CHECK (started_at_order >= 0),
         UNIQUE (activation_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runner_sessions (
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        session_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        dispatch_generation INTEGER NOT NULL CHECK (dispatch_generation >= 1),
+        session_fencing_token TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (
+            state IN (
+                'created',
+                'starting',
+                'running',
+                'cancellation_requested',
+                'terminating',
+                'completed',
+                'interrupted',
+                'failed',
+                'lost'
+            )
+        ),
+        created_at INTEGER NOT NULL CHECK (created_at >= 0),
+        start_intent_at INTEGER CHECK (
+            start_intent_at IS NULL OR start_intent_at >= 0
+        ),
+        started_at INTEGER CHECK (started_at IS NULL OR started_at >= 0),
+        ended_at INTEGER CHECK (ended_at IS NULL OR ended_at >= 0),
+        durable_locator_digest TEXT,
+        cleanup_disposition TEXT NOT NULL CHECK (
+            cleanup_disposition IN (
+                'pending',
+                'not_required',
+                'complete',
+                'orphan_risk'
+            )
+        ),
+        UNIQUE (run_id, dispatch_generation)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runner_session_cancellation_requests (
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        request_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        dispatch_generation INTEGER NOT NULL CHECK (dispatch_generation >= 1),
+        reason TEXT NOT NULL CHECK (
+            reason IN (
+                'operator_cancel_work',
+                'daemon_shutdown',
+                'runner_timeout',
+                'runtime_failure'
+            )
+        ),
+        source_kind TEXT NOT NULL CHECK (
+            source_kind IN ('operator', 'daemon', 'runtime')
+        ),
+        actor_id TEXT NOT NULL,
+        requested_at INTEGER NOT NULL CHECK (requested_at >= 0),
+        request_order INTEGER NOT NULL CHECK (request_order >= 1),
+        primary_request INTEGER NOT NULL CHECK (primary_request IN (0, 1)),
+        UNIQUE (session_id, request_order)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runner_session_cancellation_attempts (
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        attempt_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 1),
+        operation TEXT NOT NULL CHECK (
+            operation IN (
+                'cooperative_cancel',
+                'terminate',
+                'kill',
+                'transport_cleanup'
+            )
+        ),
+        result TEXT NOT NULL CHECK (
+            result IN ('succeeded', 'failed', 'timed_out', 'unsupported')
+        ),
+        started_at INTEGER NOT NULL CHECK (started_at >= 0),
+        completed_at INTEGER NOT NULL CHECK (completed_at >= 0),
+        bounded_diagnostic_digest TEXT NOT NULL,
+        UNIQUE (session_id, sequence)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runner_session_completions (
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        completion_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL UNIQUE,
+        run_id TEXT NOT NULL,
+        dispatch_generation INTEGER NOT NULL CHECK (dispatch_generation >= 1),
+        session_fencing_token TEXT NOT NULL,
+        terminal_state TEXT NOT NULL CHECK (
+            terminal_state IN ('completed', 'interrupted', 'failed', 'lost')
+        ),
+        exit_kind TEXT NOT NULL,
+        adapter_outcome_kind TEXT,
+        adapter_error_kind TEXT,
+        runner_result_evidence_digest TEXT,
+        primary_cancellation_request_id TEXT,
+        cleanup_disposition TEXT NOT NULL CHECK (
+            cleanup_disposition IN ('not_required', 'complete', 'orphan_risk')
+        ),
+        started_at INTEGER CHECK (started_at IS NULL OR started_at >= 0),
+        cancel_requested_at INTEGER CHECK (
+            cancel_requested_at IS NULL OR cancel_requested_at >= 0
+        ),
+        completed_at INTEGER NOT NULL CHECK (completed_at >= 0),
+        bounds_summary TEXT NOT NULL,
+        truncation_metadata TEXT NOT NULL,
+        redaction_policy_id TEXT NOT NULL,
+        diagnostic_digest TEXT NOT NULL,
+        application_input_id TEXT NOT NULL UNIQUE
     )
     """,
     """
@@ -938,7 +1060,70 @@ EXPECTED_TABLE_COLUMNS = {
         "stage_kind_id",
         "runner_binding_id",
         "created_by_input_id",
+        "current_session_id",
+        "last_dispatch_generation",
         "started_at_order",
+    ),
+    "runner_sessions": (
+        "schema_version",
+        "session_id",
+        "run_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "state",
+        "created_at",
+        "start_intent_at",
+        "started_at",
+        "ended_at",
+        "durable_locator_digest",
+        "cleanup_disposition",
+    ),
+    "runner_session_cancellation_requests": (
+        "schema_version",
+        "request_id",
+        "session_id",
+        "dispatch_generation",
+        "reason",
+        "source_kind",
+        "actor_id",
+        "requested_at",
+        "request_order",
+        "primary_request",
+    ),
+    "runner_session_cancellation_attempts": (
+        "schema_version",
+        "attempt_id",
+        "session_id",
+        "request_id",
+        "sequence",
+        "operation",
+        "result",
+        "started_at",
+        "completed_at",
+        "bounded_diagnostic_digest",
+    ),
+    "runner_session_completions": (
+        "schema_version",
+        "completion_id",
+        "session_id",
+        "run_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "terminal_state",
+        "exit_kind",
+        "adapter_outcome_kind",
+        "adapter_error_kind",
+        "runner_result_evidence_digest",
+        "primary_cancellation_request_id",
+        "cleanup_disposition",
+        "started_at",
+        "cancel_requested_at",
+        "completed_at",
+        "bounds_summary",
+        "truncation_metadata",
+        "redaction_policy_id",
+        "diagnostic_digest",
+        "application_input_id",
     ),
     "runner_observations": (
         "observation_id",
@@ -1536,6 +1721,10 @@ def validate_metadata(metadata: StoreSchemaMetadata) -> None:
         raise StoreNotInitialized("SQLite store is missing initialization marker")
 
     schema_version = metadata["store_schema_version"]
+    if schema_version == 6:
+        raise StoreSchemaUpgradeRequired(
+            "SQLite store schema version 6 requires an explicit workspace upgrade"
+        )
     if schema_version != SQLITE_STORE_SCHEMA_VERSION:
         raise UnsupportedStoreSchemaVersion(
             "unsupported SQLite store schema version: "

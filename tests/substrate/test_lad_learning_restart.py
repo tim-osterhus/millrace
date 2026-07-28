@@ -123,9 +123,11 @@ def test_restart_refuses_two_active_learning_runs(tmp_path: Path) -> None:
                 stage_kind_id,
                 runner_binding_id,
                 created_by_input_id,
+                current_session_id,
+                last_dispatch_generation,
                 started_at_order
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "run-second-learning",
@@ -140,6 +142,8 @@ def test_restart_refuses_two_active_learning_runs(tmp_path: Path) -> None:
                 str(target_activation.stage_kind_id),
                 str(target_activation.runner_binding_id),
                 "claim-second-learning",
+                None,
+                0,
                 999,
             ),
         )

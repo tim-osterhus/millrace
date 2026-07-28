@@ -131,6 +131,7 @@ PACKAGE_LOCAL_IMPLEMENTATION_MODULES = {
     "millrace.kernel.observation_policy",
     "millrace.kernel.operator_waits",
     "millrace.kernel.projection",
+    "millrace.kernel.runner_sessions",
     "millrace.kernel.schema",
     "millrace.kernel.state",
     "millrace.kernel.terminal_actions",
@@ -246,6 +247,7 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
             "millrace.kernel.joins",
             "millrace.kernel.lookups",
             "millrace.kernel.operator_waits",
+            "millrace.kernel.runner_sessions",
             "millrace.kernel.schema",
             "millrace.kernel.terminal_actions",
         }
@@ -288,6 +290,7 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
         }
     ),
     "millrace.kernel.projection": frozenset[str](),
+    "millrace.kernel.runner_sessions": frozenset[str](),
     "millrace.kernel.schema": frozenset[str](),
     "millrace.kernel.state": frozenset[str](),
     "millrace.kernel.terminal_actions": frozenset(

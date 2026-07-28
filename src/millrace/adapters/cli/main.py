@@ -987,10 +987,26 @@ def _render_command_exception(
     json_mode: bool,
 ) -> int:
     from millrace.adapters.cli.context import CliCommandError
-    from millrace.substrate.errors import StoreNotInitialized, SubstrateError
+    from millrace.substrate.errors import (
+        StoreNotInitialized,
+        StoreSchemaUpgradeRequired,
+        SubstrateError,
+    )
 
     if isinstance(exc, CliCommandError):
         return render_error(exc.to_cli_error(), json_mode=json_mode)
+    if isinstance(exc, StoreSchemaUpgradeRequired):
+        error = error_result(
+            command=command,
+            code="workspace_upgrade_required",
+            message="Workspace schema upgrade is required.",
+            exit_code=ExitCode.PERSISTENCE_FAILURE,
+            details={
+                "current_schema_version": 6,
+                "required_schema_version": 7,
+            },
+        )
+        return render_error(error, json_mode=json_mode)
     if isinstance(exc, StoreNotInitialized):
         error = error_result(
             command=command,

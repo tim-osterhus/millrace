@@ -31,6 +31,25 @@ from millrace.contracts.ids import (
 K = TypeVar("K")
 T = TypeVar("T")
 DURABLE_INT64_MAX = 2**63 - 1
+_RUNNER_SESSION_STATES = frozenset(
+    {
+        "created",
+        "starting",
+        "running",
+        "cancellation_requested",
+        "terminating",
+        "completed",
+        "interrupted",
+        "failed",
+        "lost",
+    }
+)
+_RUNNER_SESSION_TERMINAL_STATES = frozenset(
+    {"completed", "interrupted", "failed", "lost"}
+)
+_RUNNER_SESSION_CLEANUP_DISPOSITIONS = frozenset(
+    {"pending", "not_required", "complete", "orphan_risk"}
+)
 
 
 def _freeze_mapping(value: Mapping[K, T]) -> Mapping[K, T]:
@@ -139,6 +158,290 @@ class RunRecord:
     stage_kind_id: StageKindId
     runner_binding_id: RunnerBindingId
     created_by_input_id: str
+    current_session_id: str | None = None
+    last_dispatch_generation: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionRecord:
+    record_kind: ClassVar[str] = "runner_session"
+    schema_version: ClassVar[int] = 1
+
+    session_id: str
+    run_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    state: str
+    created_at: int
+    start_intent_at: int | None
+    started_at: int | None
+    ended_at: int | None
+    durable_locator_digest: str | None
+    cleanup_disposition: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("session_id", "run_id", "session_fencing_token"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} must be non-blank")
+        if type(self.dispatch_generation) is not int or self.dispatch_generation < 1:
+            raise ValueError("dispatch_generation must be a positive integer")
+        for field_name in (
+            "created_at",
+            "start_intent_at",
+            "started_at",
+            "ended_at",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and (
+                type(value) is not int
+                or value < 0
+                or value > DURABLE_INT64_MAX
+            ):
+                raise ValueError(f"{field_name} must be a durable non-negative integer")
+        timestamps = tuple(
+            value
+            for value in (
+                self.created_at,
+                self.start_intent_at,
+                self.started_at,
+                self.ended_at,
+            )
+            if value is not None
+        )
+        if timestamps != tuple(sorted(timestamps)):
+            raise ValueError("runner session timestamps must be monotonic")
+        if self.state not in _RUNNER_SESSION_STATES:
+            raise ValueError("unsupported runner session state")
+        if self.cleanup_disposition not in _RUNNER_SESSION_CLEANUP_DISPOSITIONS:
+            raise ValueError("unsupported runner session cleanup disposition")
+        if (
+            self.durable_locator_digest is not None
+            and not _is_sha256_digest(self.durable_locator_digest)
+        ):
+            raise ValueError("durable_locator_digest must be a sha256 digest")
+        if self.state == "created" and self.durable_locator_digest is not None:
+            raise ValueError("created runner session cannot have a durable locator")
+        if self.started_at is not None and self.start_intent_at is None:
+            raise ValueError("runner session started_at requires start_intent_at")
+        if self.state == "created" and (
+            self.start_intent_at is not None or self.started_at is not None
+        ):
+            raise ValueError("created runner session cannot have start timestamps")
+        if self.state == "starting" and (
+            self.start_intent_at is None or self.started_at is not None
+        ):
+            raise ValueError("starting runner session timestamps are contradictory")
+        if self.state == "running" and (
+            self.start_intent_at is None or self.started_at is None
+        ):
+            raise ValueError("running runner session requires start timestamps")
+        if self.state in _RUNNER_SESSION_TERMINAL_STATES:
+            if self.ended_at is None:
+                raise ValueError("terminal runner session must have ended_at")
+            if self.state == "lost":
+                if self.cleanup_disposition != "orphan_risk":
+                    raise ValueError("lost runner session must retain orphan risk")
+            elif self.cleanup_disposition not in {"not_required", "complete"}:
+                raise ValueError("terminal runner session cleanup is incomplete")
+        elif self.ended_at is not None:
+            raise ValueError("nonterminal runner session cannot have ended_at")
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionCancellationRecord:
+    record_kind: ClassVar[str] = "runner_session_cancellation"
+    schema_version: ClassVar[int] = 1
+
+    request_id: str
+    session_id: str
+    dispatch_generation: int
+    reason: str
+    source_kind: str
+    actor_id: str
+    requested_at: int
+    request_order: int
+    primary: bool
+
+    def __post_init__(self) -> None:
+        _validate_non_blank_fields(
+            self,
+            ("request_id", "session_id", "actor_id"),
+        )
+        _validate_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        _validate_positive_integer("request_order", self.request_order)
+        _validate_durable_timestamp("requested_at", self.requested_at)
+        if self.reason not in {
+            "operator_cancel_work",
+            "daemon_shutdown",
+            "runner_timeout",
+            "runtime_failure",
+        }:
+            raise ValueError("unsupported runner session cancellation reason")
+        if self.source_kind not in {"operator", "daemon", "runtime"}:
+            raise ValueError("unsupported runner session cancellation source")
+        if type(self.primary) is not bool:
+            raise ValueError("primary must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionCancellationAttemptRecord:
+    record_kind: ClassVar[str] = "runner_session_cancellation_attempt"
+    schema_version: ClassVar[int] = 1
+
+    attempt_id: str
+    session_id: str
+    request_id: str
+    sequence: int
+    operation: str
+    result: str
+    started_at: int
+    completed_at: int
+    bounded_diagnostic_digest: str
+
+    def __post_init__(self) -> None:
+        _validate_non_blank_fields(
+            self,
+            ("attempt_id", "session_id", "request_id"),
+        )
+        _validate_positive_integer("sequence", self.sequence)
+        _validate_durable_timestamp("started_at", self.started_at)
+        _validate_durable_timestamp("completed_at", self.completed_at)
+        if self.completed_at < self.started_at:
+            raise ValueError("cancellation attempt timestamps must be monotonic")
+        if self.operation not in {
+            "cooperative_cancel",
+            "terminate",
+            "kill",
+            "transport_cleanup",
+        }:
+            raise ValueError("unsupported runner session cancellation operation")
+        if self.result not in {"succeeded", "failed", "timed_out", "unsupported"}:
+            raise ValueError("unsupported runner session cancellation result")
+        _validate_sha256_digest(
+            "bounded_diagnostic_digest",
+            self.bounded_diagnostic_digest,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionCompletionRecord:
+    record_kind: ClassVar[str] = "runner_session_completion"
+    schema_version: ClassVar[int] = 1
+
+    completion_id: str
+    session_id: str
+    run_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    terminal_state: str
+    exit_kind: str
+    adapter_outcome_kind: str | None
+    adapter_error_kind: str | None
+    runner_result_evidence_digest: str | None
+    primary_cancellation_request_id: str | None
+    cleanup_disposition: str
+    started_at: int | None
+    cancel_requested_at: int | None
+    completed_at: int
+    bounds_summary: str
+    truncation_metadata: str
+    redaction_policy_id: str
+    diagnostic_digest: str
+    application_input_id: str
+
+    def __post_init__(self) -> None:
+        _validate_non_blank_fields(
+            self,
+            (
+                "completion_id",
+                "session_id",
+                "run_id",
+                "session_fencing_token",
+                "exit_kind",
+                "bounds_summary",
+                "truncation_metadata",
+                "redaction_policy_id",
+            ),
+        )
+        _validate_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        for field_name in ("started_at", "cancel_requested_at", "completed_at"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _validate_durable_timestamp(field_name, value)
+        earlier_times = tuple(
+            value
+            for value in (self.started_at, self.cancel_requested_at)
+            if value is not None
+        )
+        if any(value > self.completed_at for value in earlier_times):
+            raise ValueError("runner session completion timestamps must be monotonic")
+        if self.terminal_state not in _RUNNER_SESSION_TERMINAL_STATES:
+            raise ValueError("unsupported runner session terminal state")
+        if self.terminal_state == "lost":
+            if self.cleanup_disposition != "orphan_risk":
+                raise ValueError("lost runner completion must retain orphan risk")
+        elif self.cleanup_disposition not in {"not_required", "complete"}:
+            raise ValueError("runner session completion cleanup is incomplete")
+        if (
+            self.runner_result_evidence_digest is not None
+            and self.terminal_state != "completed"
+        ):
+            raise ValueError("only completed sessions may carry runner result evidence")
+        if (
+            self.terminal_state == "completed"
+            and self.runner_result_evidence_digest is None
+        ):
+            raise ValueError("completed runner session requires result evidence")
+        for field_name in (
+            "runner_result_evidence_digest",
+            "diagnostic_digest",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                _validate_sha256_digest(field_name, value)
+        expected_application_input_id = (
+            f"cli:run.session-completion:{self.completion_id}"
+        )
+        if self.application_input_id != expected_application_input_id:
+            raise ValueError("invalid runner session completion application_input_id")
+
+
+def _validate_non_blank_fields(record: object, field_names: tuple[str, ...]) -> None:
+    for field_name in field_names:
+        value = getattr(record, field_name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field_name} must be non-blank")
+
+
+def _validate_positive_integer(field_name: str, value: object) -> None:
+    if type(value) is not int or value < 1 or value > DURABLE_INT64_MAX:
+        raise ValueError(f"{field_name} must be a durable positive integer")
+
+
+def _validate_durable_timestamp(field_name: str, value: object) -> None:
+    if type(value) is not int or value < 0 or value > DURABLE_INT64_MAX:
+        raise ValueError(f"{field_name} must be a durable non-negative integer")
+
+
+def _validate_sha256_digest(field_name: str, value: object) -> None:
+    if not _is_sha256_digest(value):
+        raise ValueError(f"{field_name} must be a sha256 digest")
+
+
+def _is_sha256_digest(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(
+        character in "0123456789abcdef" for character in digest
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -625,6 +928,16 @@ class RuntimeState:
     work_items: Mapping[str, WorkItem] = field(default_factory=dict)
     activations: Mapping[str, Activation] = field(default_factory=dict)
     runs: Mapping[str, RunRecord] = field(default_factory=dict)
+    runner_sessions: Mapping[str, RunnerSessionRecord] = field(default_factory=dict)
+    runner_session_cancellation_requests: Mapping[
+        str, RunnerSessionCancellationRecord
+    ] = field(default_factory=dict)
+    runner_session_cancellation_attempts: Mapping[
+        str, RunnerSessionCancellationAttemptRecord
+    ] = field(default_factory=dict)
+    runner_session_completions: Mapping[
+        str, RunnerSessionCompletionRecord
+    ] = field(default_factory=dict)
     runner_observations: Mapping[str, RunnerObservationRecord] = field(
         default_factory=dict
     )
@@ -677,6 +990,26 @@ class RuntimeState:
         object.__setattr__(self, "work_items", _freeze_mapping(self.work_items))
         object.__setattr__(self, "activations", _freeze_mapping(self.activations))
         object.__setattr__(self, "runs", _freeze_mapping(self.runs))
+        object.__setattr__(
+            self,
+            "runner_sessions",
+            _freeze_mapping(self.runner_sessions),
+        )
+        object.__setattr__(
+            self,
+            "runner_session_cancellation_requests",
+            _freeze_mapping(self.runner_session_cancellation_requests),
+        )
+        object.__setattr__(
+            self,
+            "runner_session_cancellation_attempts",
+            _freeze_mapping(self.runner_session_cancellation_attempts),
+        )
+        object.__setattr__(
+            self,
+            "runner_session_completions",
+            _freeze_mapping(self.runner_session_completions),
+        )
         object.__setattr__(
             self,
             "runner_observations",
@@ -801,6 +1134,10 @@ __all__ = (
     "RunRecord",
     "RunRef",
     "RunnerObservationRecord",
+    "RunnerSessionCancellationAttemptRecord",
+    "RunnerSessionCancellationRecord",
+    "RunnerSessionCompletionRecord",
+    "RunnerSessionRecord",
     "RuntimeState",
     "TraceRecord",
     "TransitionRecord",

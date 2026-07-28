@@ -40,6 +40,10 @@ from millrace.substrate._sqlite_rows import (
     RefusalRow,
     RemediationWorkRow,
     RunnerObservationRow,
+    RunnerSessionCancellationAttemptRow,
+    RunnerSessionCancellationRow,
+    RunnerSessionCompletionRow,
+    RunnerSessionRow,
     RunRow,
     TraceRow,
     TransitionRow,
@@ -72,6 +76,10 @@ from millrace.substrate._sqlite_rows import (
     encode_remediation_work_row,
     encode_run_row,
     encode_runner_observation_row,
+    encode_runner_session_cancellation_attempt_row,
+    encode_runner_session_cancellation_row,
+    encode_runner_session_completion_row,
+    encode_runner_session_row,
     encode_trace_row,
     encode_transition_row,
     encode_work_dependency_row,
@@ -138,6 +146,22 @@ def persist_runtime_state_rows(
     run_rows = tuple(
         encode_run_row(run, started_at_order=order)
         for order, run in enumerate(state.runs.values())
+    )
+    runner_session_rows = tuple(
+        encode_runner_session_row(session)
+        for session in state.runner_sessions.values()
+    )
+    runner_session_cancellation_rows = tuple(
+        encode_runner_session_cancellation_row(record)
+        for record in state.runner_session_cancellation_requests.values()
+    )
+    runner_session_cancellation_attempt_rows = tuple(
+        encode_runner_session_cancellation_attempt_row(record)
+        for record in state.runner_session_cancellation_attempts.values()
+    )
+    runner_session_completion_rows = tuple(
+        encode_runner_session_completion_row(record)
+        for record in state.runner_session_completions.values()
     )
     observation_rows = tuple(
         encode_runner_observation_row(
@@ -288,6 +312,12 @@ def persist_runtime_state_rows(
             work_item_rows=work_item_rows,
             activation_rows=activation_rows,
             run_rows=run_rows,
+            runner_session_rows=runner_session_rows,
+            runner_session_cancellation_rows=runner_session_cancellation_rows,
+            runner_session_cancellation_attempt_rows=(
+                runner_session_cancellation_attempt_rows
+            ),
+            runner_session_completion_rows=runner_session_completion_rows,
             observation_rows=observation_rows,
             artifact_rows=artifact_rows,
             effect_proposal_rows=effect_proposal_rows,
@@ -329,6 +359,12 @@ def persist_runtime_state_rows(
             work_item_rows=work_item_rows,
             activation_rows=activation_rows,
             run_rows=run_rows,
+            runner_session_rows=runner_session_rows,
+            runner_session_cancellation_rows=runner_session_cancellation_rows,
+            runner_session_cancellation_attempt_rows=(
+                runner_session_cancellation_attempt_rows
+            ),
+            runner_session_completion_rows=runner_session_completion_rows,
             observation_rows=observation_rows,
             artifact_rows=artifact_rows,
             effect_proposal_rows=effect_proposal_rows,
@@ -580,9 +616,88 @@ _RUNTIME_TABLE_SIGNATURE_COLUMNS = (
             "stage_kind_id",
             "runner_binding_id",
             "created_by_input_id",
+            "current_session_id",
+            "last_dispatch_generation",
             "started_at_order",
         ),
         "started_at_order",
+    ),
+    (
+        "runner_sessions",
+        (
+            "schema_version",
+            "session_id",
+            "run_id",
+            "dispatch_generation",
+            "session_fencing_token",
+            "state",
+            "created_at",
+            "start_intent_at",
+            "started_at",
+            "ended_at",
+            "durable_locator_digest",
+            "cleanup_disposition",
+        ),
+        "session_id",
+    ),
+    (
+        "runner_session_cancellation_requests",
+        (
+            "schema_version",
+            "request_id",
+            "session_id",
+            "dispatch_generation",
+            "reason",
+            "source_kind",
+            "actor_id",
+            "requested_at",
+            "request_order",
+            "primary_request",
+        ),
+        "request_id",
+    ),
+    (
+        "runner_session_cancellation_attempts",
+        (
+            "schema_version",
+            "attempt_id",
+            "session_id",
+            "request_id",
+            "sequence",
+            "operation",
+            "result",
+            "started_at",
+            "completed_at",
+            "bounded_diagnostic_digest",
+        ),
+        "attempt_id",
+    ),
+    (
+        "runner_session_completions",
+        (
+            "schema_version",
+            "completion_id",
+            "session_id",
+            "run_id",
+            "dispatch_generation",
+            "session_fencing_token",
+            "terminal_state",
+            "exit_kind",
+            "adapter_outcome_kind",
+            "adapter_error_kind",
+            "runner_result_evidence_digest",
+            "primary_cancellation_request_id",
+            "cleanup_disposition",
+            "started_at",
+            "cancel_requested_at",
+            "completed_at",
+            "bounds_summary",
+            "truncation_metadata",
+            "redaction_policy_id",
+            "diagnostic_digest",
+            "application_input_id",
+        ),
+        "completion_id",
     ),
     (
         "runner_observations",
@@ -1088,6 +1203,12 @@ def _refuse_same_history_runtime_rewrite(
     work_item_rows: tuple[WorkItemRow, ...],
     activation_rows: tuple[ActivationRow, ...],
     run_rows: tuple[RunRow, ...],
+    runner_session_rows: tuple[RunnerSessionRow, ...],
+    runner_session_cancellation_rows: tuple[RunnerSessionCancellationRow, ...],
+    runner_session_cancellation_attempt_rows: tuple[
+        RunnerSessionCancellationAttemptRow, ...
+    ],
+    runner_session_completion_rows: tuple[RunnerSessionCompletionRow, ...],
     observation_rows: tuple[RunnerObservationRow, ...],
     artifact_rows: tuple[ArtifactRow, ...],
     effect_proposal_rows: tuple[EffectProposalRow, ...],
@@ -1127,6 +1248,12 @@ def _refuse_same_history_runtime_rewrite(
         work_item_rows=work_item_rows,
         activation_rows=activation_rows,
         run_rows=run_rows,
+        runner_session_rows=runner_session_rows,
+        runner_session_cancellation_rows=runner_session_cancellation_rows,
+        runner_session_cancellation_attempt_rows=(
+            runner_session_cancellation_attempt_rows
+        ),
+        runner_session_completion_rows=runner_session_completion_rows,
         observation_rows=observation_rows,
         artifact_rows=artifact_rows,
         effect_proposal_rows=effect_proposal_rows,
@@ -1183,6 +1310,12 @@ def _candidate_runtime_signature(
     work_item_rows: tuple[WorkItemRow, ...],
     activation_rows: tuple[ActivationRow, ...],
     run_rows: tuple[RunRow, ...],
+    runner_session_rows: tuple[RunnerSessionRow, ...],
+    runner_session_cancellation_rows: tuple[RunnerSessionCancellationRow, ...],
+    runner_session_cancellation_attempt_rows: tuple[
+        RunnerSessionCancellationAttemptRow, ...
+    ],
+    runner_session_completion_rows: tuple[RunnerSessionCompletionRow, ...],
     observation_rows: tuple[RunnerObservationRow, ...],
     artifact_rows: tuple[ArtifactRow, ...],
     effect_proposal_rows: tuple[EffectProposalRow, ...],
@@ -1216,6 +1349,12 @@ def _candidate_runtime_signature(
         "work_items": work_item_rows,
         "activations": activation_rows,
         "runs": run_rows,
+        "runner_sessions": runner_session_rows,
+        "runner_session_cancellation_requests": runner_session_cancellation_rows,
+        "runner_session_cancellation_attempts": (
+            runner_session_cancellation_attempt_rows
+        ),
+        "runner_session_completions": runner_session_completion_rows,
         "runner_observations": observation_rows,
         "artifacts": artifact_rows,
         "effect_proposals": effect_proposal_rows,
@@ -1293,6 +1432,12 @@ def _replace_runtime_rows(
     work_item_rows: tuple[WorkItemRow, ...],
     activation_rows: tuple[ActivationRow, ...],
     run_rows: tuple[RunRow, ...],
+    runner_session_rows: tuple[RunnerSessionRow, ...],
+    runner_session_cancellation_rows: tuple[RunnerSessionCancellationRow, ...],
+    runner_session_cancellation_attempt_rows: tuple[
+        RunnerSessionCancellationAttemptRow, ...
+    ],
+    runner_session_completion_rows: tuple[RunnerSessionCompletionRow, ...],
     observation_rows: tuple[RunnerObservationRow, ...],
     artifact_rows: tuple[ArtifactRow, ...],
     effect_proposal_rows: tuple[EffectProposalRow, ...],
@@ -1335,6 +1480,12 @@ def _replace_runtime_rows(
         work_item_rows=work_item_rows,
         activation_rows=activation_rows,
         run_rows=run_rows,
+        runner_session_rows=runner_session_rows,
+        runner_session_cancellation_rows=runner_session_cancellation_rows,
+        runner_session_cancellation_attempt_rows=(
+            runner_session_cancellation_attempt_rows
+        ),
+        runner_session_completion_rows=runner_session_completion_rows,
         observation_rows=observation_rows,
         artifact_rows=artifact_rows,
         effect_proposal_rows=effect_proposal_rows,
@@ -1388,6 +1539,10 @@ def _replace_runtime_rows(
         "effect_proposals",
         "artifacts",
         "runner_observations",
+        "runner_session_completions",
+        "runner_session_cancellation_attempts",
+        "runner_session_cancellation_requests",
+        "runner_sessions",
         "runs",
         "activations",
         "work_items",
@@ -1551,9 +1706,11 @@ def _replace_runtime_rows(
             stage_kind_id,
             runner_binding_id,
             created_by_input_id,
+            current_session_id,
+            last_dispatch_generation,
             started_at_order
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         tuple(
             (
@@ -1569,9 +1726,167 @@ def _replace_runtime_rows(
                 row.stage_kind_id,
                 row.runner_binding_id,
                 row.created_by_input_id,
+                row.current_session_id,
+                row.last_dispatch_generation,
                 row.started_at_order,
             )
             for row in run_rows
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT INTO runner_sessions (
+            schema_version,
+            session_id,
+            run_id,
+            dispatch_generation,
+            session_fencing_token,
+            state,
+            created_at,
+            start_intent_at,
+            started_at,
+            ended_at,
+            durable_locator_digest,
+            cleanup_disposition
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        tuple(
+            (
+                row.schema_version,
+                row.session_id,
+                row.run_id,
+                row.dispatch_generation,
+                row.session_fencing_token,
+                row.state,
+                row.created_at,
+                row.start_intent_at,
+                row.started_at,
+                row.ended_at,
+                row.durable_locator_digest,
+                row.cleanup_disposition,
+            )
+            for row in runner_session_rows
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT INTO runner_session_cancellation_requests (
+            schema_version,
+            request_id,
+            session_id,
+            dispatch_generation,
+            reason,
+            source_kind,
+            actor_id,
+            requested_at,
+            request_order,
+            primary_request
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        tuple(
+            (
+                row.schema_version,
+                row.request_id,
+                row.session_id,
+                row.dispatch_generation,
+                row.reason,
+                row.source_kind,
+                row.actor_id,
+                row.requested_at,
+                row.request_order,
+                row.primary_request,
+            )
+            for row in runner_session_cancellation_rows
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT INTO runner_session_cancellation_attempts (
+            schema_version,
+            attempt_id,
+            session_id,
+            request_id,
+            sequence,
+            operation,
+            result,
+            started_at,
+            completed_at,
+            bounded_diagnostic_digest
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        tuple(
+            (
+                row.schema_version,
+                row.attempt_id,
+                row.session_id,
+                row.request_id,
+                row.sequence,
+                row.operation,
+                row.result,
+                row.started_at,
+                row.completed_at,
+                row.bounded_diagnostic_digest,
+            )
+            for row in runner_session_cancellation_attempt_rows
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT INTO runner_session_completions (
+            schema_version,
+            completion_id,
+            session_id,
+            run_id,
+            dispatch_generation,
+            session_fencing_token,
+            terminal_state,
+            exit_kind,
+            adapter_outcome_kind,
+            adapter_error_kind,
+            runner_result_evidence_digest,
+            primary_cancellation_request_id,
+            cleanup_disposition,
+            started_at,
+            cancel_requested_at,
+            completed_at,
+            bounds_summary,
+            truncation_metadata,
+            redaction_policy_id,
+            diagnostic_digest,
+            application_input_id
+        )
+        VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+        """,
+        tuple(
+            (
+                row.schema_version,
+                row.completion_id,
+                row.session_id,
+                row.run_id,
+                row.dispatch_generation,
+                row.session_fencing_token,
+                row.terminal_state,
+                row.exit_kind,
+                row.adapter_outcome_kind,
+                row.adapter_error_kind,
+                row.runner_result_evidence_digest,
+                row.primary_cancellation_request_id,
+                row.cleanup_disposition,
+                row.started_at,
+                row.cancel_requested_at,
+                row.completed_at,
+                row.bounds_summary,
+                row.truncation_metadata,
+                row.redaction_policy_id,
+                row.diagnostic_digest,
+                row.application_input_id,
+            )
+            for row in runner_session_completion_rows
         ),
     )
     connection.executemany(

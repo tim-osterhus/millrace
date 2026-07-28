@@ -39,6 +39,10 @@ class UnsupportedStoreSchemaVersion(UnsupportedSchemaVersion):
     """Raised when a SQLite store schema version is not supported."""
 
 
+class StoreSchemaUpgradeRequired(UnsupportedStoreSchemaVersion):
+    """Raised only when a recognized prior store requires an explicit upgrade."""
+
+
 class UnsupportedCodec(SubstrateError, ValueError):
     """Raised when a CAS object uses an unsupported codec."""
 
@@ -58,6 +62,7 @@ __all__ = (
     "InvalidCasDigest",
     "InvalidCasObject",
     "StoreNotInitialized",
+    "StoreSchemaUpgradeRequired",
     "StorageIntegrityError",
     "SubstrateError",
     "UnsupportedCodec",

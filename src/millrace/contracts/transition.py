@@ -43,7 +43,12 @@ from millrace.contracts.state import (
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
+    RunnerSessionCancellationAttemptRecord,
+    RunnerSessionCancellationRecord,
+    RunnerSessionCompletionRecord,
+    RunnerSessionRecord,
     RunRecord,
+    RunRef,
     TraceRecord,
     TransitionRecord,
     TransitionRefusal,
@@ -166,6 +171,109 @@ class ClaimWork(KernelCommand):
     input_kind: ClassVar[str] = "workflow.claim_work"
 
     activation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class CreateRunnerSession(KernelCommand):
+    input_kind: ClassVar[str] = "workflow.create_runner_session"
+
+    run_ref: RunRef
+    session_id: str
+    session_fencing_token: str
+    created_at: int
+    explicit_retry_intent: bool
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in ("session_id", "session_fencing_token"):
+            _require_non_blank_protocol_id(field_name, getattr(self, field_name))
+        if type(self.created_at) is not int or self.created_at < 0:
+            raise ValueError("created_at must be a non-negative integer")
+
+
+@dataclass(frozen=True, slots=True)
+class AdvanceRunnerSession(KernelCommand):
+    input_kind: ClassVar[str] = "workflow.advance_runner_session"
+
+    run_ref: RunRef
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    expected_state: str
+    next_state: str
+    occurred_at: int
+    durable_locator_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in (
+            "session_id",
+            "session_fencing_token",
+            "expected_state",
+            "next_state",
+        ):
+            _require_non_blank_protocol_id(field_name, getattr(self, field_name))
+        if type(self.dispatch_generation) is not int or self.dispatch_generation < 1:
+            raise ValueError("dispatch_generation must be a positive integer")
+        if type(self.occurred_at) is not int or self.occurred_at < 0:
+            raise ValueError("occurred_at must be a non-negative integer")
+        if self.durable_locator_digest is not None:
+            digest = self.durable_locator_digest
+            if (
+                not digest.startswith("sha256:")
+                or len(digest.removeprefix("sha256:")) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in digest.removeprefix("sha256:")
+                )
+            ):
+                raise ValueError("durable_locator_digest must be a sha256 digest")
+
+
+@dataclass(frozen=True, slots=True)
+class RequestRunnerSessionCancellation(KernelCommand):
+    input_kind: ClassVar[str] = "workflow.request_runner_session_cancellation"
+
+    run_ref: RunRef
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    expected_state: str
+    request_id: str
+    reason: str
+    source_kind: str
+    actor_id: str
+    requested_at: int
+    request_order: int
+    primary: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RecordRunnerSessionCancellationAttempt(KernelCommand):
+    input_kind: ClassVar[str] = "workflow.record_runner_session_cancellation_attempt"
+
+    run_ref: RunRef
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    expected_state: str
+    attempt_id: str
+    request_id: str
+    sequence: int
+    operation: str
+    result: str
+    started_at: int
+    completed_at: int
+    bounded_diagnostic_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class RecordRunnerSessionCompletion(KernelCommand):
+    input_kind: ClassVar[str] = "workflow.record_runner_session_completion"
+
+    run_ref: RunRef
+    expected_state: str
+    completion: RunnerSessionCompletionRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -630,6 +738,53 @@ class CreateRun:
 
 
 @dataclass(frozen=True, slots=True)
+class CreateRunnerSessionRecord:
+    session: RunnerSessionRecord
+    expected_run_ref: RunRef
+    expected_current_session_id: str | None
+    mutation_kind: ClassVar[str] = "mutation.create_runner_session"
+    mutation_schema_version: ClassVar[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
+class AdvanceRunnerSessionRecord:
+    session: RunnerSessionRecord
+    expected_run_ref: RunRef
+    expected_session_state: str
+    mutation_kind: ClassVar[str] = "mutation.advance_runner_session"
+    mutation_schema_version: ClassVar[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
+class RecordRunnerSessionCancellation:
+    record: RunnerSessionCancellationRecord
+    expected_run_ref: RunRef
+    expected_session_state: str
+    mutation_kind: ClassVar[str] = "mutation.record_runner_session_cancellation"
+    mutation_schema_version: ClassVar[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
+class RecordRunnerSessionCancellationAttemptRecord:
+    record: RunnerSessionCancellationAttemptRecord
+    expected_run_ref: RunRef
+    expected_session_state: str
+    mutation_kind: ClassVar[str] = (
+        "mutation.record_runner_session_cancellation_attempt"
+    )
+    mutation_schema_version: ClassVar[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
+class RecordRunnerSessionCompletionRecord:
+    record: RunnerSessionCompletionRecord
+    expected_run_ref: RunRef
+    expected_session_state: str
+    mutation_kind: ClassVar[str] = "mutation.record_runner_session_completion"
+    mutation_schema_version: ClassVar[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
 class RecordTransition:
     transition_record: TransitionRecord
     mutation_kind: ClassVar[str] = "mutation.record_transition"
@@ -853,6 +1008,11 @@ TransitionMutation: TypeAlias = (
     | CreateWorkItem
     | CreateActivation
     | CreateRun
+    | CreateRunnerSessionRecord
+    | AdvanceRunnerSessionRecord
+    | RecordRunnerSessionCancellation
+    | RecordRunnerSessionCancellationAttemptRecord
+    | RecordRunnerSessionCompletionRecord
     | RecordTransition
     | RecordRefusal
     | RecordRunnerObservation
@@ -959,6 +1119,69 @@ def _transition_input_payload(
         return {
             "input_kind": input_kind(transition_input),
             "activation_id": transition_input.activation_id,
+        }
+    if isinstance(transition_input, CreateRunnerSession):
+        return {
+            "input_kind": input_kind(transition_input),
+            "run_ref": transition_input.run_ref,
+            "session_id": transition_input.session_id,
+            "session_fencing_token": transition_input.session_fencing_token,
+            "created_at": transition_input.created_at,
+            "explicit_retry_intent": transition_input.explicit_retry_intent,
+        }
+    if isinstance(transition_input, AdvanceRunnerSession):
+        return {
+            "input_kind": input_kind(transition_input),
+            "run_ref": transition_input.run_ref,
+            "session_id": transition_input.session_id,
+            "dispatch_generation": transition_input.dispatch_generation,
+            "session_fencing_token": transition_input.session_fencing_token,
+            "expected_state": transition_input.expected_state,
+            "next_state": transition_input.next_state,
+            "occurred_at": transition_input.occurred_at,
+            "durable_locator_digest": transition_input.durable_locator_digest,
+        }
+    if isinstance(transition_input, RequestRunnerSessionCancellation):
+        return {
+            "input_kind": input_kind(transition_input),
+            "run_ref": transition_input.run_ref,
+            "session_id": transition_input.session_id,
+            "dispatch_generation": transition_input.dispatch_generation,
+            "session_fencing_token": transition_input.session_fencing_token,
+            "expected_state": transition_input.expected_state,
+            "request_id": transition_input.request_id,
+            "reason": transition_input.reason,
+            "source_kind": transition_input.source_kind,
+            "actor_id": transition_input.actor_id,
+            "requested_at": transition_input.requested_at,
+            "request_order": transition_input.request_order,
+            "primary": transition_input.primary,
+        }
+    if isinstance(transition_input, RecordRunnerSessionCancellationAttempt):
+        return {
+            "input_kind": input_kind(transition_input),
+            "run_ref": transition_input.run_ref,
+            "session_id": transition_input.session_id,
+            "dispatch_generation": transition_input.dispatch_generation,
+            "session_fencing_token": transition_input.session_fencing_token,
+            "expected_state": transition_input.expected_state,
+            "attempt_id": transition_input.attempt_id,
+            "request_id": transition_input.request_id,
+            "sequence": transition_input.sequence,
+            "operation": transition_input.operation,
+            "result": transition_input.result,
+            "started_at": transition_input.started_at,
+            "completed_at": transition_input.completed_at,
+            "bounded_diagnostic_digest": (
+                transition_input.bounded_diagnostic_digest
+            ),
+        }
+    if isinstance(transition_input, RecordRunnerSessionCompletion):
+        return {
+            "input_kind": input_kind(transition_input),
+            "run_ref": transition_input.run_ref,
+            "expected_state": transition_input.expected_state,
+            "completion": transition_input.completion,
         }
     if isinstance(transition_input, FanoutFromArtifact):
         return {
@@ -1111,10 +1334,14 @@ def _is_string_backed_id(value: object) -> bool:
 __all__ = (
     "AdmitPlan",
     "AdmitPlanRef",
+    "AdvanceRunnerSession",
+    "AdvanceRunnerSessionRecord",
     "ClaimWork",
     "CloseWorkItem",
     "ControlInput",
     "CreateActivation",
+    "CreateRunnerSession",
+    "CreateRunnerSessionRecord",
     "CreateRun",
     "CreateWorkItem",
     "EmitGovernanceEvent",
@@ -1153,11 +1380,17 @@ __all__ = (
     "RecordRecoveryAttempt",
     "RecordRemediationWork",
     "RecordRunnerObservation",
+    "RecordRunnerSessionCancellation",
+    "RecordRunnerSessionCancellationAttempt",
+    "RecordRunnerSessionCancellationAttemptRecord",
+    "RecordRunnerSessionCompletion",
+    "RecordRunnerSessionCompletionRecord",
     "RecordTransition",
     "RecordWorkDependency",
     "RouteActivation",
     "ReconcileEffect",
     "RunnerResultObserved",
+    "RequestRunnerSessionCancellation",
     "SelectDefaultPlan",
     "SelectDefaultPlanRef",
     "SetPause",

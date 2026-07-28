@@ -47,6 +47,10 @@ from millrace.contracts.state import (
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
+    RunnerSessionCancellationAttemptRecord,
+    RunnerSessionCancellationRecord,
+    RunnerSessionCompletionRecord,
+    RunnerSessionRecord,
     RunRecord,
     TraceRecord,
     TransitionRecord,
@@ -133,7 +137,78 @@ class RunRow:
     stage_kind_id: str
     runner_binding_id: str
     created_by_input_id: str
+    current_session_id: str | None
+    last_dispatch_generation: int
     started_at_order: int
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionRow:
+    schema_version: int
+    session_id: str
+    run_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    state: str
+    created_at: int
+    start_intent_at: int | None
+    started_at: int | None
+    ended_at: int | None
+    durable_locator_digest: str | None
+    cleanup_disposition: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionCancellationRow:
+    schema_version: int
+    request_id: str
+    session_id: str
+    dispatch_generation: int
+    reason: str
+    source_kind: str
+    actor_id: str
+    requested_at: int
+    request_order: int
+    primary_request: int
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionCancellationAttemptRow:
+    schema_version: int
+    attempt_id: str
+    session_id: str
+    request_id: str
+    sequence: int
+    operation: str
+    result: str
+    started_at: int
+    completed_at: int
+    bounded_diagnostic_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionCompletionRow:
+    schema_version: int
+    completion_id: str
+    session_id: str
+    run_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    terminal_state: str
+    exit_kind: str
+    adapter_outcome_kind: str | None
+    adapter_error_kind: str | None
+    runner_result_evidence_digest: str | None
+    primary_cancellation_request_id: str | None
+    cleanup_disposition: str
+    started_at: int | None
+    cancel_requested_at: int | None
+    completed_at: int
+    bounds_summary: str
+    truncation_metadata: str
+    redaction_policy_id: str
+    diagnostic_digest: str
+    application_input_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -687,6 +762,17 @@ def _expect_plan_format_version(
     return value
 
 
+def _expect_record_schema_version(
+    row: tuple[object, ...],
+    index: int,
+    column: str,
+) -> int:
+    value = _expect_positive_int(row, index, column)
+    if value != 1:
+        raise StorageIntegrityError(f"{column} unsupported schema_version: {value}")
+    return value
+
+
 def encode_admitted_plan_pin_row(
     admitted_plan: AdmittedPlan,
     *,
@@ -948,6 +1034,8 @@ def encode_run_row(
         stage_kind_id=str(run.stage_kind_id),
         runner_binding_id=str(run.runner_binding_id),
         created_by_input_id=run.created_by_input_id,
+        current_session_id=run.current_session_id,
+        last_dispatch_generation=run.last_dispatch_generation,
         started_at_order=started_at_order,
     )
 
@@ -974,7 +1062,275 @@ def decode_run_row(row: tuple[object, ...]) -> RunRow:
         stage_kind_id=_expect_text(row, 9, "runs.stage_kind_id"),
         runner_binding_id=_expect_text(row, 10, "runs.runner_binding_id"),
         created_by_input_id=_expect_text(row, 11, "runs.created_by_input_id"),
-        started_at_order=_expect_nonnegative_int(row, 12, "runs.started_at_order"),
+        current_session_id=_expect_optional_text(
+            row,
+            12,
+            "runs.current_session_id",
+            allow_empty=False,
+        ),
+        last_dispatch_generation=_expect_nonnegative_int(
+            row,
+            13,
+            "runs.last_dispatch_generation",
+        ),
+        started_at_order=_expect_nonnegative_int(row, 14, "runs.started_at_order"),
+    )
+
+
+def encode_runner_session_row(session: RunnerSessionRecord) -> RunnerSessionRow:
+    return RunnerSessionRow(
+        schema_version=session.schema_version,
+        session_id=session.session_id,
+        run_id=session.run_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        state=session.state,
+        created_at=session.created_at,
+        start_intent_at=session.start_intent_at,
+        started_at=session.started_at,
+        ended_at=session.ended_at,
+        durable_locator_digest=session.durable_locator_digest,
+        cleanup_disposition=session.cleanup_disposition,
+    )
+
+
+def decode_runner_session_row(row: tuple[object, ...]) -> RunnerSessionRow:
+    return RunnerSessionRow(
+        schema_version=_expect_record_schema_version(
+            row, 0, "runner_sessions.schema_version"
+        ),
+        session_id=_expect_text(row, 1, "runner_sessions.session_id"),
+        run_id=_expect_text(row, 2, "runner_sessions.run_id"),
+        dispatch_generation=_expect_positive_int(
+            row, 3, "runner_sessions.dispatch_generation"
+        ),
+        session_fencing_token=_expect_text(
+            row, 4, "runner_sessions.session_fencing_token"
+        ),
+        state=_expect_text(row, 5, "runner_sessions.state"),
+        created_at=_expect_nonnegative_int(row, 6, "runner_sessions.created_at"),
+        start_intent_at=_expect_optional_nonnegative_int(
+            row, 7, "runner_sessions.start_intent_at"
+        ),
+        started_at=_expect_optional_nonnegative_int(
+            row, 8, "runner_sessions.started_at"
+        ),
+        ended_at=_expect_optional_nonnegative_int(
+            row, 9, "runner_sessions.ended_at"
+        ),
+        durable_locator_digest=_expect_optional_text(
+            row,
+            10,
+            "runner_sessions.durable_locator_digest",
+            allow_empty=False,
+        ),
+        cleanup_disposition=_expect_text(
+            row, 11, "runner_sessions.cleanup_disposition"
+        ),
+    )
+
+
+def encode_runner_session_cancellation_row(
+    record: RunnerSessionCancellationRecord,
+) -> RunnerSessionCancellationRow:
+    return RunnerSessionCancellationRow(
+        schema_version=record.schema_version,
+        request_id=record.request_id,
+        session_id=record.session_id,
+        dispatch_generation=record.dispatch_generation,
+        reason=record.reason,
+        source_kind=record.source_kind,
+        actor_id=record.actor_id,
+        requested_at=record.requested_at,
+        request_order=record.request_order,
+        primary_request=int(record.primary),
+    )
+
+
+def decode_runner_session_cancellation_row(
+    row: tuple[object, ...],
+) -> RunnerSessionCancellationRow:
+    return RunnerSessionCancellationRow(
+        schema_version=_expect_record_schema_version(
+            row, 0, "runner_session_cancellation_requests.schema_version"
+        ),
+        request_id=_expect_text(
+            row, 1, "runner_session_cancellation_requests.request_id"
+        ),
+        session_id=_expect_text(
+            row, 2, "runner_session_cancellation_requests.session_id"
+        ),
+        dispatch_generation=_expect_positive_int(
+            row, 3, "runner_session_cancellation_requests.dispatch_generation"
+        ),
+        reason=_expect_text(
+            row, 4, "runner_session_cancellation_requests.reason"
+        ),
+        source_kind=_expect_text(
+            row, 5, "runner_session_cancellation_requests.source_kind"
+        ),
+        actor_id=_expect_text(
+            row, 6, "runner_session_cancellation_requests.actor_id"
+        ),
+        requested_at=_expect_nonnegative_int(
+            row, 7, "runner_session_cancellation_requests.requested_at"
+        ),
+        request_order=_expect_positive_int(
+            row, 8, "runner_session_cancellation_requests.request_order"
+        ),
+        primary_request=_expect_bool_int(
+            row, 9, "runner_session_cancellation_requests.primary_request"
+        ),
+    )
+
+
+def encode_runner_session_cancellation_attempt_row(
+    record: RunnerSessionCancellationAttemptRecord,
+) -> RunnerSessionCancellationAttemptRow:
+    return RunnerSessionCancellationAttemptRow(
+        schema_version=record.schema_version,
+        attempt_id=record.attempt_id,
+        session_id=record.session_id,
+        request_id=record.request_id,
+        sequence=record.sequence,
+        operation=record.operation,
+        result=record.result,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        bounded_diagnostic_digest=record.bounded_diagnostic_digest,
+    )
+
+
+def decode_runner_session_cancellation_attempt_row(
+    row: tuple[object, ...],
+) -> RunnerSessionCancellationAttemptRow:
+    return RunnerSessionCancellationAttemptRow(
+        schema_version=_expect_record_schema_version(
+            row, 0, "runner_session_cancellation_attempts.schema_version"
+        ),
+        attempt_id=_expect_text(
+            row, 1, "runner_session_cancellation_attempts.attempt_id"
+        ),
+        session_id=_expect_text(
+            row, 2, "runner_session_cancellation_attempts.session_id"
+        ),
+        request_id=_expect_text(
+            row, 3, "runner_session_cancellation_attempts.request_id"
+        ),
+        sequence=_expect_positive_int(
+            row, 4, "runner_session_cancellation_attempts.sequence"
+        ),
+        operation=_expect_text(
+            row, 5, "runner_session_cancellation_attempts.operation"
+        ),
+        result=_expect_text(
+            row, 6, "runner_session_cancellation_attempts.result"
+        ),
+        started_at=_expect_nonnegative_int(
+            row, 7, "runner_session_cancellation_attempts.started_at"
+        ),
+        completed_at=_expect_nonnegative_int(
+            row, 8, "runner_session_cancellation_attempts.completed_at"
+        ),
+        bounded_diagnostic_digest=_expect_text(
+            row,
+            9,
+            "runner_session_cancellation_attempts.bounded_diagnostic_digest",
+        ),
+    )
+
+
+def encode_runner_session_completion_row(
+    record: RunnerSessionCompletionRecord,
+) -> RunnerSessionCompletionRow:
+    return RunnerSessionCompletionRow(
+        schema_version=record.schema_version,
+        completion_id=record.completion_id,
+        session_id=record.session_id,
+        run_id=record.run_id,
+        dispatch_generation=record.dispatch_generation,
+        session_fencing_token=record.session_fencing_token,
+        terminal_state=record.terminal_state,
+        exit_kind=record.exit_kind,
+        adapter_outcome_kind=record.adapter_outcome_kind,
+        adapter_error_kind=record.adapter_error_kind,
+        runner_result_evidence_digest=record.runner_result_evidence_digest,
+        primary_cancellation_request_id=record.primary_cancellation_request_id,
+        cleanup_disposition=record.cleanup_disposition,
+        started_at=record.started_at,
+        cancel_requested_at=record.cancel_requested_at,
+        completed_at=record.completed_at,
+        bounds_summary=record.bounds_summary,
+        truncation_metadata=record.truncation_metadata,
+        redaction_policy_id=record.redaction_policy_id,
+        diagnostic_digest=record.diagnostic_digest,
+        application_input_id=record.application_input_id,
+    )
+
+
+def decode_runner_session_completion_row(
+    row: tuple[object, ...],
+) -> RunnerSessionCompletionRow:
+    return RunnerSessionCompletionRow(
+        schema_version=_expect_record_schema_version(
+            row, 0, "runner_session_completions.schema_version"
+        ),
+        completion_id=_expect_text(
+            row, 1, "runner_session_completions.completion_id"
+        ),
+        session_id=_expect_text(row, 2, "runner_session_completions.session_id"),
+        run_id=_expect_text(row, 3, "runner_session_completions.run_id"),
+        dispatch_generation=_expect_positive_int(
+            row, 4, "runner_session_completions.dispatch_generation"
+        ),
+        session_fencing_token=_expect_text(
+            row, 5, "runner_session_completions.session_fencing_token"
+        ),
+        terminal_state=_expect_text(
+            row, 6, "runner_session_completions.terminal_state"
+        ),
+        exit_kind=_expect_text(row, 7, "runner_session_completions.exit_kind"),
+        adapter_outcome_kind=_expect_optional_text(
+            row, 8, "runner_session_completions.adapter_outcome_kind"
+        ),
+        adapter_error_kind=_expect_optional_text(
+            row, 9, "runner_session_completions.adapter_error_kind"
+        ),
+        runner_result_evidence_digest=_expect_optional_text(
+            row, 10, "runner_session_completions.runner_result_evidence_digest"
+        ),
+        primary_cancellation_request_id=_expect_optional_text(
+            row,
+            11,
+            "runner_session_completions.primary_cancellation_request_id",
+        ),
+        cleanup_disposition=_expect_text(
+            row, 12, "runner_session_completions.cleanup_disposition"
+        ),
+        started_at=_expect_optional_nonnegative_int(
+            row, 13, "runner_session_completions.started_at"
+        ),
+        cancel_requested_at=_expect_optional_nonnegative_int(
+            row, 14, "runner_session_completions.cancel_requested_at"
+        ),
+        completed_at=_expect_nonnegative_int(
+            row, 15, "runner_session_completions.completed_at"
+        ),
+        bounds_summary=_expect_text(
+            row, 16, "runner_session_completions.bounds_summary"
+        ),
+        truncation_metadata=_expect_text(
+            row, 17, "runner_session_completions.truncation_metadata"
+        ),
+        redaction_policy_id=_expect_text(
+            row, 18, "runner_session_completions.redaction_policy_id"
+        ),
+        diagnostic_digest=_expect_text(
+            row, 19, "runner_session_completions.diagnostic_digest"
+        ),
+        application_input_id=_expect_text(
+            row, 20, "runner_session_completions.application_input_id"
+        ),
     )
 
 

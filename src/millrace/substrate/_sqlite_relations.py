@@ -38,6 +38,9 @@ from millrace.contracts.state import (
     PlanRef,
     RecoveryAttemptRecord,
     RemediationWorkRecord,
+    RunnerSessionCancellationAttemptRecord,
+    RunnerSessionCancellationRecord,
+    RunnerSessionRecord,
     RunRecord,
     RuntimeState,
     TransitionRecord,
@@ -104,6 +107,202 @@ _SUPPORTED_SELECTED_TERMINAL_ACTION_KINDS = frozenset(
         "closure_gap",
     )
 )
+
+
+def _validate_runner_session_relations(state: RuntimeState) -> None:
+    terminal_states = {"completed", "interrupted", "failed", "lost"}
+    sessions_by_run: dict[str, list[RunnerSessionRecord]] = {}
+    seen_run_generations: set[tuple[str, int]] = set()
+    for session_id, session in state.runner_sessions.items():
+        if session_id != session.session_id:
+            raise StorageIntegrityError(
+                "runner_sessions mapping key must match session_id"
+            )
+        run = state.runs.get(session.run_id)
+        if run is None:
+            raise StorageIntegrityError(
+                "runner_sessions.run_id must reference runs"
+            )
+        run_generation = (session.run_id, session.dispatch_generation)
+        if run_generation in seen_run_generations:
+            raise StorageIntegrityError(
+                "runner_sessions run dispatch generation must be unique"
+            )
+        seen_run_generations.add(run_generation)
+        sessions_by_run.setdefault(session.run_id, []).append(session)
+
+    for run_id, run in state.runs.items():
+        sessions = sessions_by_run.get(run_id, [])
+        if not sessions:
+            if (
+                run.current_session_id is not None
+                or run.last_dispatch_generation != 0
+            ):
+                raise StorageIntegrityError(
+                    "runs runner session pointer requires durable session"
+                )
+            continue
+        current_session = state.runner_sessions.get(run.current_session_id or "")
+        if current_session is None or current_session.run_id != run_id:
+            raise StorageIntegrityError(
+                "runs.current_session_id must reference session for same run"
+            )
+        generations = sorted(
+            session.dispatch_generation for session in sessions
+        )
+        if generations != list(range(1, len(sessions) + 1)):
+            raise StorageIntegrityError(
+                "runner session dispatch generation must be monotonic"
+            )
+        highest_generation = generations[-1]
+        if (
+            current_session.dispatch_generation != highest_generation
+            or run.last_dispatch_generation != highest_generation
+        ):
+            raise StorageIntegrityError(
+                "runs session pointer and dispatch generation must be current"
+            )
+        active = [
+            session
+            for session in sessions
+            if session.state not in terminal_states
+        ]
+        if len(active) > 1:
+            raise StorageIntegrityError(
+                "run may have at most one nonterminal runner session"
+            )
+        if active and active[0].session_id != run.current_session_id:
+            raise StorageIntegrityError(
+                "nonterminal runner session must be current"
+            )
+
+    requests_by_session: dict[str, list[RunnerSessionCancellationRecord]] = {}
+    for request_id, request in state.runner_session_cancellation_requests.items():
+        if request_id != request.request_id:
+            raise StorageIntegrityError(
+                "runner session cancellation mapping key must match request_id"
+            )
+        request_session = state.runner_sessions.get(request.session_id)
+        if request_session is None:
+            raise StorageIntegrityError(
+                "runner session cancellation request session is missing"
+            )
+        if request.dispatch_generation != request_session.dispatch_generation:
+            raise StorageIntegrityError(
+                "runner session cancellation dispatch generation mismatch"
+            )
+        requests_by_session.setdefault(request.session_id, []).append(request)
+    for requests in requests_by_session.values():
+        ordered = sorted(requests, key=lambda record: record.request_order)
+        if [record.request_order for record in ordered] != list(
+            range(1, len(ordered) + 1)
+        ):
+            raise StorageIntegrityError(
+                "runner session cancellation request order must be monotonic"
+            )
+        if not ordered[0].primary or any(
+            record.primary for record in ordered[1:]
+        ):
+            raise StorageIntegrityError(
+                "runner session cancellation primary request is contradictory"
+            )
+        if [record.requested_at for record in ordered] != sorted(
+            record.requested_at for record in ordered
+        ):
+            raise StorageIntegrityError(
+                "runner session cancellation timestamps must be monotonic"
+            )
+
+    attempts_by_session: dict[str, list[RunnerSessionCancellationAttemptRecord]] = {}
+    for attempt_id, attempt in state.runner_session_cancellation_attempts.items():
+        if attempt_id != attempt.attempt_id:
+            raise StorageIntegrityError(
+                "runner session cancellation attempt key must match attempt_id"
+            )
+        attempt_session = state.runner_sessions.get(attempt.session_id)
+        attempt_request = state.runner_session_cancellation_requests.get(
+            attempt.request_id
+        )
+        if attempt_session is None:
+            raise StorageIntegrityError(
+                "runner session cancellation attempt session is missing"
+            )
+        if (
+            attempt_request is None
+            or attempt_request.session_id != attempt.session_id
+        ):
+            raise StorageIntegrityError(
+                "runner session cancellation attempt request is invalid"
+            )
+        if attempt.started_at < attempt_request.requested_at:
+            raise StorageIntegrityError(
+                "runner session cancellation attempt predates request"
+            )
+        attempts_by_session.setdefault(attempt.session_id, []).append(attempt)
+    for attempts in attempts_by_session.values():
+        ordered_attempts = sorted(
+            attempts,
+            key=lambda attempt_record: attempt_record.sequence,
+        )
+        if [record.sequence for record in ordered_attempts] != list(
+            range(1, len(ordered_attempts) + 1)
+        ):
+            raise StorageIntegrityError(
+                "runner session cancellation attempt order must be monotonic"
+            )
+
+    application_input_ids: set[str] = set()
+    for session_id, completion in state.runner_session_completions.items():
+        if session_id != completion.session_id:
+            raise StorageIntegrityError(
+                "runner session completion key must match session_id"
+            )
+        completion_session = state.runner_sessions.get(session_id)
+        if completion_session is None:
+            raise StorageIntegrityError(
+                "runner session completion session is missing"
+            )
+        if (
+            completion.run_id != completion_session.run_id
+            or completion.dispatch_generation
+            != completion_session.dispatch_generation
+            or completion.session_fencing_token
+            != completion_session.session_fencing_token
+            or completion.terminal_state != completion_session.state
+            or completion.completed_at != completion_session.ended_at
+            or completion.cleanup_disposition
+            != completion_session.cleanup_disposition
+        ):
+            raise StorageIntegrityError(
+                "runner session completion contradicts session"
+            )
+        if completion.application_input_id in application_input_ids:
+            raise StorageIntegrityError(
+                "runner session completion application_input_id must be unique"
+            )
+        application_input_ids.add(completion.application_input_id)
+        completion_request_id = completion.primary_cancellation_request_id
+        if completion_request_id is not None:
+            completion_request = state.runner_session_cancellation_requests.get(
+                completion_request_id
+            )
+            if (
+                completion_request is None
+                or completion_request.session_id != session_id
+                or not completion_request.primary
+                or completion.cancel_requested_at
+                != completion_request.requested_at
+            ):
+                raise StorageIntegrityError(
+                    "runner session completion cancellation link is invalid"
+                )
+
+    for session in state.runner_sessions.values():
+        has_completion = session.session_id in state.runner_session_completions
+        if (session.state in terminal_states) != has_completion:
+            raise StorageIntegrityError(
+                "runner session terminal state and completion must be paired"
+            )
 
 
 def _recovery_action_matches_policy_source(
@@ -240,6 +439,8 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
             raise StorageIntegrityError(
                 "runs.runner_binding_id must match activations.runner_binding_id"
             )
+
+    _validate_runner_session_relations(state)
 
     _validate_unique(
         "runs.claim_id",

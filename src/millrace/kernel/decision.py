@@ -81,11 +81,15 @@ from millrace.contracts.state import (
 from millrace.contracts.transition import (
     AdmitPlan,
     AdmitPlanRef,
+    AdvanceRunnerSession,
+    AdvanceRunnerSessionRecord,
     ClaimWork,
     CloseClosureTarget,
     CloseWorkItem,
     CreateActivation,
     CreateRun,
+    CreateRunnerSession,
+    CreateRunnerSessionRecord,
     CreateWorkItem,
     EmitGovernanceEvent,
     EmitTrace,
@@ -115,8 +119,14 @@ from millrace.contracts.transition import (
     RecordRecoveryAttempt,
     RecordRefusal,
     RecordRemediationWork,
+    RecordRunnerSessionCancellation,
+    RecordRunnerSessionCancellationAttempt,
+    RecordRunnerSessionCancellationAttemptRecord,
+    RecordRunnerSessionCompletion,
+    RecordRunnerSessionCompletionRecord,
     RecordTransition,
     RecordWorkDependency,
+    RequestRunnerSessionCancellation,
     RouteActivation,
     RunnerResultObserved,
     SelectDefaultPlan,
@@ -172,6 +182,19 @@ from millrace.kernel.operator_waits import (
     decide_operator_close_wait,
     decide_operator_resume_wait,
     decide_operator_revise_wait,
+)
+from millrace.kernel.runner_sessions import (
+    advance_runner_session_refusal,
+    cancellation_attempt_record,
+    cancellation_attempt_refusal,
+    cancellation_record,
+    cancellation_request_refusal,
+    completion_refusal,
+    create_runner_session_refusal,
+    runner_session_for_advance,
+    runner_session_for_creation,
+    session_for_cancellation_request,
+    session_for_completion,
 )
 from millrace.kernel.schema import validate_schema
 from millrace.kernel.terminal_actions import (
@@ -265,6 +288,146 @@ def decide(
         return _decide_enqueue(state, transition_input, context, digest)
     if isinstance(transition_input, ClaimWork):
         return _decide_claim(state, transition_input, context, digest)
+    if isinstance(transition_input, CreateRunnerSession):
+        refusal = create_runner_session_refusal(state, transition_input)
+        if refusal is not None:
+            return _refused_decision(
+                transition_input=transition_input,
+                context=context,
+                digest=digest,
+                reason=refusal,
+                event_plan_fingerprint=(
+                    transition_input.run_ref.plan_ref.authority_fingerprint
+                ),
+                event_run_id=transition_input.run_ref.run_id,
+            )
+        run = state.runs[transition_input.run_ref.run_id]
+        return _accepted_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            mutations=(
+                CreateRunnerSessionRecord(
+                    session=runner_session_for_creation(state, transition_input),
+                    expected_run_ref=transition_input.run_ref,
+                    expected_current_session_id=run.current_session_id,
+                ),
+            ),
+            expected_plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
+            expected_run_generations={
+                run.run_ref.run_id: run.run_ref.generation,
+            },
+            expected_run_fencing_tokens={
+                run.run_ref.run_id: run.run_ref.fencing_token,
+            },
+            event_plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
+            event_run_id=run.run_ref.run_id,
+            event_authority_source="run",
+        )
+    if isinstance(transition_input, AdvanceRunnerSession):
+        refusal = advance_runner_session_refusal(state, transition_input)
+        if refusal is not None:
+            return _runner_session_refused_decision(
+                transition_input,
+                context,
+                digest,
+                refusal,
+            )
+        return _runner_session_accepted_decision(
+            transition_input,
+            context,
+            digest,
+            transition_input.run_ref,
+            (
+                AdvanceRunnerSessionRecord(
+                    session=runner_session_for_advance(state, transition_input),
+                    expected_run_ref=transition_input.run_ref,
+                    expected_session_state=transition_input.expected_state,
+                ),
+            ),
+        )
+    if isinstance(transition_input, RequestRunnerSessionCancellation):
+        refusal = cancellation_request_refusal(state, transition_input)
+        if refusal is not None:
+            return _runner_session_refused_decision(
+                transition_input,
+                context,
+                digest,
+                refusal,
+            )
+        return _runner_session_accepted_decision(
+            transition_input,
+            context,
+            digest,
+            transition_input.run_ref,
+            (
+                RecordRunnerSessionCancellation(
+                    record=cancellation_record(transition_input),
+                    expected_run_ref=transition_input.run_ref,
+                    expected_session_state=transition_input.expected_state,
+                ),
+                AdvanceRunnerSessionRecord(
+                    session=session_for_cancellation_request(
+                        state,
+                        transition_input,
+                    ),
+                    expected_run_ref=transition_input.run_ref,
+                    expected_session_state=transition_input.expected_state,
+                ),
+            ),
+        )
+    if isinstance(transition_input, RecordRunnerSessionCancellationAttempt):
+        refusal = cancellation_attempt_refusal(state, transition_input)
+        if refusal is not None:
+            return _runner_session_refused_decision(
+                transition_input,
+                context,
+                digest,
+                refusal,
+            )
+        return _runner_session_accepted_decision(
+            transition_input,
+            context,
+            digest,
+            transition_input.run_ref,
+            (
+                RecordRunnerSessionCancellationAttemptRecord(
+                    record=cancellation_attempt_record(transition_input),
+                    expected_run_ref=transition_input.run_ref,
+                    expected_session_state=transition_input.expected_state,
+                ),
+            ),
+        )
+    if isinstance(transition_input, RecordRunnerSessionCompletion):
+        refusal = completion_refusal(state, transition_input)
+        if refusal is not None:
+            return _runner_session_refused_decision(
+                transition_input,
+                context,
+                digest,
+                refusal,
+            )
+        return _runner_session_accepted_decision(
+            transition_input,
+            context,
+            digest,
+            transition_input.run_ref,
+            (
+                RecordRunnerSessionCompletionRecord(
+                    record=transition_input.completion,
+                    expected_run_ref=transition_input.run_ref,
+                    expected_session_state=transition_input.expected_state,
+                ),
+                AdvanceRunnerSessionRecord(
+                    session=session_for_completion(
+                        state,
+                        transition_input.completion,
+                    ),
+                    expected_run_ref=transition_input.run_ref,
+                    expected_session_state=transition_input.expected_state,
+                ),
+            ),
+        )
     if isinstance(transition_input, FanoutFromArtifact):
         return _decide_fanout_from_artifact(state, transition_input, context, digest)
     if isinstance(transition_input, JoinFromArtifact):
@@ -5105,6 +5268,51 @@ def _accepted_terminal_action_decision(
         event_run_id=result.event_run_id,
         event_action_id=result.event_action_id,
         event_authority_source=result.event_authority_source,
+    )
+
+
+def _runner_session_accepted_decision(
+    transition_input: TransitionInput,
+    context: TransitionContext,
+    digest: str,
+    run_ref: RunRef,
+    mutations: tuple[TransitionMutation, ...],
+) -> TransitionDecision:
+    return _accepted_decision(
+        transition_input=transition_input,
+        context=context,
+        digest=digest,
+        mutations=mutations,
+        expected_plan_fingerprint=run_ref.plan_ref.authority_fingerprint,
+        expected_run_generations={run_ref.run_id: run_ref.generation},
+        expected_run_fencing_tokens={run_ref.run_id: run_ref.fencing_token},
+        event_plan_fingerprint=run_ref.plan_ref.authority_fingerprint,
+        event_run_id=run_ref.run_id,
+        event_authority_source="run",
+    )
+
+
+def _runner_session_refused_decision(
+    transition_input: TransitionInput,
+    context: TransitionContext,
+    digest: str,
+    reason: str,
+) -> TransitionDecision:
+    run_ref = getattr(transition_input, "run_ref", None)
+    if not isinstance(run_ref, RunRef):
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason=reason,
+        )
+    return _refused_decision(
+        transition_input=transition_input,
+        context=context,
+        digest=digest,
+        reason=reason,
+        event_plan_fingerprint=run_ref.plan_ref.authority_fingerprint,
+        event_run_id=run_ref.run_id,
     )
 
 

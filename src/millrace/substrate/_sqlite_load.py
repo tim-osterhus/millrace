@@ -44,6 +44,10 @@ from millrace.contracts.state import (
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
+    RunnerSessionCancellationAttemptRecord,
+    RunnerSessionCancellationRecord,
+    RunnerSessionCompletionRecord,
+    RunnerSessionRecord,
     RunRecord,
     RunRef,
     RuntimeState,
@@ -102,6 +106,10 @@ from millrace.substrate._sqlite_rows import (
     decode_remediation_work_row,
     decode_run_row,
     decode_runner_observation_row,
+    decode_runner_session_cancellation_attempt_row,
+    decode_runner_session_cancellation_row,
+    decode_runner_session_completion_row,
+    decode_runner_session_row,
     decode_trace_row,
     decode_transition_row,
     decode_work_dependency_row,
@@ -203,6 +211,14 @@ def _load_runtime_state_rows_in_transaction(
         work_items=_load_work_items(connection, cas_store),
         activations=_load_activations(connection),
         runs=_load_runs(connection),
+        runner_sessions=_load_runner_sessions(connection),
+        runner_session_cancellation_requests=(
+            _load_runner_session_cancellation_requests(connection)
+        ),
+        runner_session_cancellation_attempts=(
+            _load_runner_session_cancellation_attempts(connection)
+        ),
+        runner_session_completions=_load_runner_session_completions(connection),
         runner_observations=_load_runner_observations(connection, cas_store),
         artifacts=_load_artifacts(connection, cas_store),
         effect_proposals=_load_effect_proposals(connection),
@@ -465,6 +481,8 @@ def _load_runs(connection: sqlite3.Connection) -> dict[str, RunRecord]:
                 stage_kind_id,
                 runner_binding_id,
                 created_by_input_id,
+                current_session_id,
+                last_dispatch_generation,
                 started_at_order
             FROM runs
             ORDER BY started_at_order
@@ -486,9 +504,221 @@ def _load_runs(connection: sqlite3.Connection) -> dict[str, RunRecord]:
             stage_kind_id=StageKindId(row.stage_kind_id),
             runner_binding_id=RunnerBindingId(row.runner_binding_id),
             created_by_input_id=row.created_by_input_id,
+            current_session_id=row.current_session_id,
+            last_dispatch_generation=row.last_dispatch_generation,
         )
         for row in rows
     }
+
+
+def _load_runner_sessions(
+    connection: sqlite3.Connection,
+) -> dict[str, RunnerSessionRecord]:
+    rows = tuple(
+        decode_runner_session_row(cast(tuple[object, ...], row))
+        for row in connection.execute(
+            """
+            SELECT
+                schema_version,
+                session_id,
+                run_id,
+                dispatch_generation,
+                session_fencing_token,
+                state,
+                created_at,
+                start_intent_at,
+                started_at,
+                ended_at,
+                durable_locator_digest,
+                cleanup_disposition
+            FROM runner_sessions
+            ORDER BY run_id, dispatch_generation
+            """
+        ).fetchall()
+    )
+    records: dict[str, RunnerSessionRecord] = {}
+    for row in rows:
+        try:
+            record = RunnerSessionRecord(
+                session_id=row.session_id,
+                run_id=row.run_id,
+                dispatch_generation=row.dispatch_generation,
+                session_fencing_token=row.session_fencing_token,
+                state=row.state,
+                created_at=row.created_at,
+                start_intent_at=row.start_intent_at,
+                started_at=row.started_at,
+                ended_at=row.ended_at,
+                durable_locator_digest=row.durable_locator_digest,
+                cleanup_disposition=row.cleanup_disposition,
+            )
+        except ValueError as exc:
+            raise StorageIntegrityError(
+                f"invalid runner_sessions row: {exc}"
+            ) from exc
+        records[record.session_id] = record
+    return records
+
+
+def _load_runner_session_cancellation_requests(
+    connection: sqlite3.Connection,
+) -> dict[str, RunnerSessionCancellationRecord]:
+    rows = tuple(
+        decode_runner_session_cancellation_row(cast(tuple[object, ...], row))
+        for row in connection.execute(
+            """
+            SELECT
+                schema_version,
+                request_id,
+                session_id,
+                dispatch_generation,
+                reason,
+                source_kind,
+                actor_id,
+                requested_at,
+                request_order,
+                primary_request
+            FROM runner_session_cancellation_requests
+            ORDER BY session_id, request_order
+            """
+        ).fetchall()
+    )
+    records: dict[str, RunnerSessionCancellationRecord] = {}
+    for row in rows:
+        try:
+            record = RunnerSessionCancellationRecord(
+                request_id=row.request_id,
+                session_id=row.session_id,
+                dispatch_generation=row.dispatch_generation,
+                reason=row.reason,
+                source_kind=row.source_kind,
+                actor_id=row.actor_id,
+                requested_at=row.requested_at,
+                request_order=row.request_order,
+                primary=bool(row.primary_request),
+            )
+        except ValueError as exc:
+            raise StorageIntegrityError(
+                f"invalid runner session cancellation row: {exc}"
+            ) from exc
+        records[record.request_id] = record
+    return records
+
+
+def _load_runner_session_cancellation_attempts(
+    connection: sqlite3.Connection,
+) -> dict[str, RunnerSessionCancellationAttemptRecord]:
+    rows = tuple(
+        decode_runner_session_cancellation_attempt_row(
+            cast(tuple[object, ...], row)
+        )
+        for row in connection.execute(
+            """
+            SELECT
+                schema_version,
+                attempt_id,
+                session_id,
+                request_id,
+                sequence,
+                operation,
+                result,
+                started_at,
+                completed_at,
+                bounded_diagnostic_digest
+            FROM runner_session_cancellation_attempts
+            ORDER BY session_id, sequence
+            """
+        ).fetchall()
+    )
+    records: dict[str, RunnerSessionCancellationAttemptRecord] = {}
+    for row in rows:
+        try:
+            record = RunnerSessionCancellationAttemptRecord(
+                attempt_id=row.attempt_id,
+                session_id=row.session_id,
+                request_id=row.request_id,
+                sequence=row.sequence,
+                operation=row.operation,
+                result=row.result,
+                started_at=row.started_at,
+                completed_at=row.completed_at,
+                bounded_diagnostic_digest=row.bounded_diagnostic_digest,
+            )
+        except ValueError as exc:
+            raise StorageIntegrityError(
+                f"invalid runner session cancellation attempt row: {exc}"
+            ) from exc
+        records[record.attempt_id] = record
+    return records
+
+
+def _load_runner_session_completions(
+    connection: sqlite3.Connection,
+) -> dict[str, RunnerSessionCompletionRecord]:
+    rows = tuple(
+        decode_runner_session_completion_row(cast(tuple[object, ...], row))
+        for row in connection.execute(
+            """
+            SELECT
+                schema_version,
+                completion_id,
+                session_id,
+                run_id,
+                dispatch_generation,
+                session_fencing_token,
+                terminal_state,
+                exit_kind,
+                adapter_outcome_kind,
+                adapter_error_kind,
+                runner_result_evidence_digest,
+                primary_cancellation_request_id,
+                cleanup_disposition,
+                started_at,
+                cancel_requested_at,
+                completed_at,
+                bounds_summary,
+                truncation_metadata,
+                redaction_policy_id,
+                diagnostic_digest,
+                application_input_id
+            FROM runner_session_completions
+            ORDER BY run_id, dispatch_generation
+            """
+        ).fetchall()
+    )
+    records: dict[str, RunnerSessionCompletionRecord] = {}
+    for row in rows:
+        try:
+            record = RunnerSessionCompletionRecord(
+                completion_id=row.completion_id,
+                session_id=row.session_id,
+                run_id=row.run_id,
+                dispatch_generation=row.dispatch_generation,
+                session_fencing_token=row.session_fencing_token,
+                terminal_state=row.terminal_state,
+                exit_kind=row.exit_kind,
+                adapter_outcome_kind=row.adapter_outcome_kind,
+                adapter_error_kind=row.adapter_error_kind,
+                runner_result_evidence_digest=row.runner_result_evidence_digest,
+                primary_cancellation_request_id=(
+                    row.primary_cancellation_request_id
+                ),
+                cleanup_disposition=row.cleanup_disposition,
+                started_at=row.started_at,
+                cancel_requested_at=row.cancel_requested_at,
+                completed_at=row.completed_at,
+                bounds_summary=row.bounds_summary,
+                truncation_metadata=row.truncation_metadata,
+                redaction_policy_id=row.redaction_policy_id,
+                diagnostic_digest=row.diagnostic_digest,
+                application_input_id=row.application_input_id,
+            )
+        except ValueError as exc:
+            raise StorageIntegrityError(
+                f"invalid runner session completion row: {exc}"
+            ) from exc
+        records[record.session_id] = record
+    return records
 
 
 def _load_runner_observations(

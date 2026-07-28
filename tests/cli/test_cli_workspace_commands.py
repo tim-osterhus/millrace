@@ -35,6 +35,14 @@ def _compile_export(path: Path) -> str:
     return authority_fingerprint(result.plan)
 
 
+def _directory_bytes(path: Path) -> dict[str, bytes]:
+    return {
+        str(candidate.relative_to(path)): candidate.read_bytes()
+        for candidate in sorted(path.rglob("*"))
+        if candidate.is_file()
+    }
+
+
 def test_workspace_init_creates_store_with_control_transition_only(
     tmp_path: Path,
 ) -> None:
@@ -167,7 +175,7 @@ def test_workspace_check_reports_initialized_store_without_writing(
         "workspace_path": str(workspace),
         "db_path": str(workspace / ".millrace" / "runtime.sqlite3"),
         "cas_path": str(workspace / ".millrace" / "cas"),
-        "schema_version": 6,
+        "schema_version": 7,
         "initialized": True,
         "admitted_plan_count": 0,
         "default_plan_fingerprint": None,
@@ -175,6 +183,66 @@ def test_workspace_check_reports_initialized_store_without_writing(
     }
     after = store.load_runtime_state(cas_store)
     assert after == before
+
+
+def test_workspace_check_maps_exact_v6_to_upgrade_required_json_and_human(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    workspace = tmp_path / "workspace"
+    _invoke(
+        [
+            "--workspace",
+            str(workspace),
+            "workspace",
+            "init",
+            "--input-id",
+            "init-workspace",
+        ]
+    )
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE store_metadata SET store_schema_version = 6 WHERE id = 1"
+        )
+    before = _directory_bytes(workspace)
+
+    json_exit, json_stdout, json_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "workspace",
+            "check",
+        ]
+    )
+    human_exit, human_stdout, human_stderr = _invoke(
+        [
+            "--workspace",
+            str(workspace),
+            "workspace",
+            "check",
+        ]
+    )
+
+    assert json_exit == human_exit == 4
+    assert json_stdout == human_stdout == ""
+    assert _json(json_stderr) == {
+        "ok": False,
+        "command": "workspace.check",
+        "code": "workspace_upgrade_required",
+        "message": "Workspace schema upgrade is required.",
+        "details": {
+            "current_schema_version": 6,
+            "required_schema_version": 7,
+        },
+    }
+    assert (
+        human_stderr
+        == "workspace_upgrade_required: Workspace schema upgrade is required.\n"
+    )
+    assert _directory_bytes(workspace) == before
 
 
 def test_workspace_init_conflicting_input_id_returns_domain_refusal(
