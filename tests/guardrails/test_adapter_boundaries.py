@@ -44,6 +44,15 @@ CLI_REVIEWED_RUNNER_IMPORT_PREFIXES_BY_FILE = {
     "millrace/adapters/cli/session_coordinator.py": (
         "millrace.adapters.runner_contract",
     ),
+    "millrace/adapters/cli/session_reconciliation.py": (
+        "millrace.adapters.runner_contract",
+    ),
+    "millrace/adapters/cli/session_cancellation.py": (
+        "millrace.adapters.runner_contract",
+    ),
+    "millrace/adapters/cli/session_completion.py": (
+        "millrace.adapters.runner_contract",
+    ),
     "millrace/adapters/cli/run.py": (
         "millrace.adapters.codex",
         "millrace.adapters.millforge",
@@ -410,14 +419,15 @@ def test_cli_modules_do_not_import_testing_or_runner_adapters() -> None:
 
 def test_session_runtime_has_no_synchronous_adapter_invoke_consumer() -> None:
     run_source = (ADAPTER_ROOT / "cli" / "run.py").read_text(encoding="utf-8")
-    coordinator_source = (
-        ADAPTER_ROOT / "cli" / "session_coordinator.py"
-    ).read_text(encoding="utf-8")
+    session_sources = [
+        path.read_text(encoding="utf-8")
+        for path in (ADAPTER_ROOT / "cli").glob("session_*.py")
+    ]
     codex_source = (ADAPTER_ROOT / "codex.py").read_text(encoding="utf-8")
     millforge_source = (ADAPTER_ROOT / "millforge.py").read_text(encoding="utf-8")
 
     assert "adapter.invoke(" not in run_source
-    assert "adapter.invoke(" not in coordinator_source
+    assert all("adapter.invoke(" not in source for source in session_sources)
     assert "self.invoke(" not in codex_source
     assert "def invoke(" not in millforge_source
     assert "_CompletedMillforgeCompatibilityHandle" not in millforge_source

@@ -43,12 +43,7 @@ class RunnerSessionEvent:
     truncation_metadata: Mapping[str, AuthorityValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("event_id", "session_id", "run_id", "redaction_policy_id"):
-            value = getattr(self, name)
-            if not isinstance(value, str):
-                raise TypeError(f"{name} must be a string")
-            if not value.strip():
-                raise ValueError(f"{name} must be nonblank")
+        _validate_event_text(self)
         for name in ("dispatch_generation", "sequence", "observed_at"):
             value = getattr(self, name)
             if type(value) is not int:
@@ -87,6 +82,15 @@ class RunnerSessionEvent:
                 "truncation_metadata": self.truncation_metadata,
             }
         )
+
+
+def _validate_event_text(event: RunnerSessionEvent) -> None:
+    for name in ("event_id", "session_id", "run_id", "redaction_policy_id"):
+        value = getattr(event, name)
+        if not isinstance(value, str):
+            raise TypeError(f"{name} must be a string")
+        if not value.strip():
+            raise ValueError(f"{name} must be nonblank")
 
 
 def _freeze_mapping(

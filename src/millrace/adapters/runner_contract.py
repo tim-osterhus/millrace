@@ -843,21 +843,7 @@ class RunnerCancellationOperationResult:
             raise ValueError("unsupported cancellation operation")
         if self.result not in {"succeeded", "failed", "timed_out", "unsupported"}:
             raise ValueError("unsupported cancellation result")
-        _require_timestamps(self.started_at, self.completed_at)
-        object.__setattr__(
-            self,
-            "diagnostic",
-            _coerce_payload_mapping(self.diagnostic, "diagnostic"),
-        )
-        if len(_canonical_json_bytes(_plain_authority_value(self.diagnostic))) > (
-            RUNNER_CANCELLATION_DIAGNOSTIC_MAX_BYTES
-        ):
-            raise ValueError("diagnostic content exceeds cancellation bound")
-        _require_sha256_digest(self.diagnostic_digest, "diagnostic_digest")
-        if self.diagnostic_digest != runner_cancellation_diagnostic_digest(
-            self.diagnostic
-        ):
-            raise ValueError("diagnostic_digest must match diagnostic content")
+        _validate_cancellation_result(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -871,21 +857,21 @@ class RunnerCleanupResult:
     def __post_init__(self) -> None:
         if self.disposition not in {"not_required", "complete", "orphan_risk"}:
             raise ValueError("unsupported cleanup disposition")
-        _require_timestamps(self.started_at, self.completed_at)
-        object.__setattr__(
-            self,
-            "diagnostic",
-            _coerce_payload_mapping(self.diagnostic, "diagnostic"),
-        )
-        if len(_canonical_json_bytes(_plain_authority_value(self.diagnostic))) > (
-            RUNNER_CANCELLATION_DIAGNOSTIC_MAX_BYTES
-        ):
-            raise ValueError("diagnostic content exceeds cancellation bound")
-        _require_sha256_digest(self.diagnostic_digest, "diagnostic_digest")
-        if self.diagnostic_digest != runner_cancellation_diagnostic_digest(
-            self.diagnostic
-        ):
-            raise ValueError("diagnostic_digest must match diagnostic content")
+        _validate_cancellation_result(self)
+
+
+def _validate_cancellation_result(
+    result: RunnerCancellationOperationResult | RunnerCleanupResult,
+) -> None:
+    _require_timestamps(result.started_at, result.completed_at)
+    diagnostic = _coerce_payload_mapping(result.diagnostic, "diagnostic")
+    object.__setattr__(result, "diagnostic", diagnostic)
+    diagnostic_bytes = _canonical_json_bytes(_plain_authority_value(diagnostic))
+    if len(diagnostic_bytes) > RUNNER_CANCELLATION_DIAGNOSTIC_MAX_BYTES:
+        raise ValueError("diagnostic content exceeds cancellation bound")
+    _require_sha256_digest(result.diagnostic_digest, "diagnostic_digest")
+    if result.diagnostic_digest != runner_cancellation_diagnostic_digest(diagnostic):
+        raise ValueError("diagnostic_digest must match diagnostic content")
 
 
 def runner_cancellation_diagnostic_digest(

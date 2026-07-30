@@ -43,6 +43,37 @@ def is_legal_runner_session_transition(prior: str, next_state: str) -> bool:
     return next_state in RUNNER_SESSION_TRANSITIONS.get(prior, ())
 
 
+def _has_runner_session_fencing_token(
+    state: RuntimeState,
+    run_id: str,
+    session_fencing_token: str,
+) -> bool:
+    return any(
+        session.run_id == run_id
+        and session.session_fencing_token == session_fencing_token
+        for session in state.runner_sessions.values()
+    )
+
+
+def _runner_session_retry_refusal(
+    state: RuntimeState,
+    transition_input: CreateRunnerSession,
+    prior: RunnerSessionRecord,
+) -> str | None:
+    if not transition_input.explicit_retry_intent:
+        return "runner_session_retry_forbidden"
+    if any(
+        observation.run_id == prior.run_id
+        for observation in state.runner_observations.values()
+    ):
+        return "runner_session_retry_forbidden"
+    if prior.state not in {"failed", "interrupted"}:
+        return "runner_session_retry_forbidden"
+    if prior.cleanup_disposition not in {"not_required", "complete"}:
+        return "runner_session_cleanup_incomplete"
+    return None
+
+
 def create_runner_session_refusal(
     state: RuntimeState,
     transition_input: CreateRunnerSession,
@@ -52,11 +83,10 @@ def create_runner_session_refusal(
         return "runner_session_authority_mismatch"
     if transition_input.session_id in state.runner_sessions:
         return "stale_runner_session"
-    if any(
-        session.run_id == run.run_ref.run_id
-        and session.session_fencing_token
-        == transition_input.session_fencing_token
-        for session in state.runner_sessions.values()
+    if _has_runner_session_fencing_token(
+        state,
+        run.run_ref.run_id,
+        transition_input.session_fencing_token,
     ):
         return "runner_session_reconciliation_contradiction"
     if run.current_session_id is None:
@@ -66,18 +96,7 @@ def create_runner_session_refusal(
     prior = state.runner_sessions.get(run.current_session_id)
     if prior is None or prior.run_id != run.run_ref.run_id:
         return "runner_session_reconciliation_contradiction"
-    if not transition_input.explicit_retry_intent:
-        return "runner_session_retry_forbidden"
-    if any(
-        observation.run_id == run.run_ref.run_id
-        for observation in state.runner_observations.values()
-    ):
-        return "runner_session_retry_forbidden"
-    if prior.state not in {"failed", "interrupted"}:
-        return "runner_session_retry_forbidden"
-    if prior.cleanup_disposition not in {"not_required", "complete"}:
-        return "runner_session_cleanup_incomplete"
-    return None
+    return _runner_session_retry_refusal(state, transition_input, prior)
 
 
 def runner_session_for_creation(
@@ -382,6 +401,88 @@ def cancellation_attempt_refusal(
     return None
 
 
+def _latest_runner_session_fact_at(
+    state: RuntimeState,
+    session: RunnerSessionRecord,
+) -> int:
+    timestamps = [session.created_at]
+    timestamps.extend(
+        timestamp
+        for timestamp in (session.start_intent_at, session.started_at)
+        if timestamp is not None
+    )
+    timestamps.extend(
+        request.requested_at
+        for request in state.runner_session_cancellation_requests.values()
+        if request.session_id == session.session_id
+    )
+    timestamps.extend(
+        timestamp
+        for attempt in state.runner_session_cancellation_attempts.values()
+        if attempt.session_id == session.session_id
+        for timestamp in (attempt.started_at, attempt.completed_at)
+        if timestamp is not None
+    )
+    return max(timestamps)
+
+
+def _completion_temporal_contradiction(
+    state: RuntimeState,
+    completion: RunnerSessionCompletionRecord,
+) -> bool:
+    session = state.runner_sessions[completion.session_id]
+    if session.started_at is None:
+        if completion.started_at is None:
+            if completion.terminal_state == "completed":
+                return True
+        elif (
+            session.start_intent_at is None
+            or completion.started_at < session.start_intent_at
+        ):
+            return True
+    elif session.started_at != completion.started_at:
+        return True
+    return completion.completed_at < _latest_runner_session_fact_at(state, session)
+
+
+def _completion_cancellation_contradiction(
+    state: RuntimeState,
+    completion: RunnerSessionCompletionRecord,
+) -> bool:
+    primary_request_id = completion.primary_cancellation_request_id
+    cancellation_requests = tuple(
+        request
+        for request in state.runner_session_cancellation_requests.values()
+        if request.session_id == completion.session_id
+    )
+    has_cancellation_history = bool(cancellation_requests) or any(
+        attempt.session_id == completion.session_id
+        for attempt in state.runner_session_cancellation_attempts.values()
+    )
+    if completion.terminal_state == "interrupted" and has_cancellation_history:
+        if not cancellation_requests:
+            return True
+        primary_request = min(
+            cancellation_requests,
+            key=lambda request: request.request_order,
+        )
+        if (
+            not primary_request.primary
+            or primary_request_id != primary_request.request_id
+            or completion.cancel_requested_at != primary_request.requested_at
+        ):
+            return True
+    if primary_request_id is None:
+        return completion.cancel_requested_at is not None
+    request = state.runner_session_cancellation_requests.get(primary_request_id)
+    return (
+        request is None
+        or request.session_id != completion.session_id
+        or not request.primary
+        or completion.cancel_requested_at != request.requested_at
+    )
+
+
 def completion_refusal(
     state: RuntimeState,
     transition_input: RecordRunnerSessionCompletion,
@@ -417,77 +518,10 @@ def completion_refusal(
         completion.terminal_state,
     ):
         return "invalid_runner_session_transition"
-    session = state.runner_sessions[completion.session_id]
-    if session.started_at is None:
-        if completion.started_at is None:
-            if completion.terminal_state == "completed":
-                return "runner_session_reconciliation_contradiction"
-        elif (
-            session.start_intent_at is None
-            or completion.started_at < session.start_intent_at
-        ):
-            return "runner_session_reconciliation_contradiction"
-    elif session.started_at != completion.started_at:
+    if _completion_temporal_contradiction(state, completion):
         return "runner_session_reconciliation_contradiction"
-    latest_session_fact_at = max(
-        (
-            session.created_at,
-            *(
-                timestamp
-                for timestamp in (session.start_intent_at, session.started_at)
-                if timestamp is not None
-            ),
-            *(
-                request.requested_at
-                for request in state.runner_session_cancellation_requests.values()
-                if request.session_id == completion.session_id
-            ),
-            *(
-                timestamp
-                for attempt in state.runner_session_cancellation_attempts.values()
-                if attempt.session_id == completion.session_id
-                for timestamp in (attempt.started_at, attempt.completed_at)
-                if timestamp is not None
-            ),
-        )
-    )
-    if completion.completed_at < latest_session_fact_at:
+    if _completion_cancellation_contradiction(state, completion):
         return "runner_session_reconciliation_contradiction"
-    primary_request_id = completion.primary_cancellation_request_id
-    cancellation_requests = tuple(
-        request
-        for request in state.runner_session_cancellation_requests.values()
-        if request.session_id == completion.session_id
-    )
-    has_cancellation_history = bool(cancellation_requests) or any(
-        attempt.session_id == completion.session_id
-        for attempt in state.runner_session_cancellation_attempts.values()
-    )
-    if completion.terminal_state == "interrupted" and has_cancellation_history:
-        if not cancellation_requests:
-            return "runner_session_reconciliation_contradiction"
-        primary_request = min(
-            cancellation_requests,
-            key=lambda request: request.request_order,
-        )
-        if (
-            not primary_request.primary
-            or primary_request_id != primary_request.request_id
-            or completion.cancel_requested_at != primary_request.requested_at
-        ):
-            return "runner_session_reconciliation_contradiction"
-    if primary_request_id is None:
-        if completion.cancel_requested_at is not None:
-            return "runner_session_reconciliation_contradiction"
-    else:
-        request = state.runner_session_cancellation_requests.get(primary_request_id)
-        if (
-            request is None
-            or request.session_id != completion.session_id
-            or not request.primary
-            or completion.cancel_requested_at != request.requested_at
-        ):
-            return "runner_session_reconciliation_contradiction"
     return None
 
 

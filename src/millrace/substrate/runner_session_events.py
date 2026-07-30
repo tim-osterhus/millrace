@@ -507,8 +507,7 @@ class RunnerSessionEventStore:
             "SELECT sequence.session_id FROM session_event_sequences AS sequence "
             "LEFT JOIN session_events AS event "
             "ON event.session_id = sequence.session_id "
-            "WHERE sequence.terminal_recorded = 1 "
-            "GROUP BY sequence.session_id "
+            "WHERE sequence.terminal_recorded = 1 GROUP BY sequence.session_id "
             "ORDER BY COALESCE(MIN(event.observed_at), -1), "
             "COALESCE(MIN(event.sequence), -1) LIMIT 1"
         ).fetchone()
@@ -532,25 +531,8 @@ class RunnerSessionEventStore:
         )
         if stream_count < RUNNER_SESSION_EVENT_STORE_MAX_STREAMS:
             return
-        victim = self._connection.execute(
-            "SELECT sequence.session_id FROM session_event_sequences AS sequence "
-            "LEFT JOIN session_events AS event "
-            "ON event.session_id = sequence.session_id "
-            "WHERE sequence.terminal_recorded = 1 "
-            "GROUP BY sequence.session_id "
-            "ORDER BY COALESCE(MIN(event.observed_at), -1), "
-            "COALESCE(MIN(event.sequence), -1) LIMIT 1"
-        ).fetchone()
-        if victim is None:
+        if not self._evict_oldest_closed_stream():
             raise ValueError("runner-session event stream ceiling reached")
-        self._connection.execute(
-            "DELETE FROM session_events WHERE session_id = ?",
-            victim,
-        )
-        self._connection.execute(
-            "DELETE FROM session_event_sequences WHERE session_id = ?",
-            victim,
-        )
 
 
 class RunnerSessionEventWriter:

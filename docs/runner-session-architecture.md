@@ -11,6 +11,25 @@ binding, and that binding supplies `adapter_kind`. Local configuration may
 resolve that kind to an implementation and narrow limits, but it cannot remap
 the selected binding or add workflow meaning.
 
+## Coordinator Ownership
+
+`adapters/cli/session_coordinator.py` is the stable orchestration facade. It
+owns session creation, external start, live-handle driving, and state routing.
+Three private modules own the remaining mechanics:
+
+- `session_reconciliation.py` owns restart reconciliation and locator checks.
+- `session_cancellation.py` owns cancellation, escalation, and cleanup.
+- `session_completion.py` owns completion persistence, replay, and diagnostics.
+
+The dependency graph is acyclic. The coordinator may use all three private
+modules. Reconciliation may use cancellation and completion. Cancellation may
+use completion. Completion does not use another session module.
+
+Reconciliation returns verified live state through one immutable record with
+four fields: `session`, `request`, `handle`, and `deadline`. The private modules
+do not expose a second orchestration API. Existing callers continue to use the
+coordinator facade.
+
 ## Durable Ordering
 
 Before external work starts, Millrace persists the run, creates the session,
