@@ -43,7 +43,11 @@ def _imports(path: Path) -> set[str]:
         elif isinstance(node, ast.ImportFrom):
             parts = package.split(".")[: -node.level + 1 or None]
             prefix = ".".join(parts) if node.level else ""
-            found.add(".".join(filter(None, (prefix, node.module or ""))))
+            base = ".".join(filter(None, (prefix, node.module or "")))
+            found.add(base)
+            found.update(
+                ".".join(filter(None, (base, alias.name))) for alias in node.names
+            )
     return found
 
 def _functions(path: Path) -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
@@ -190,8 +194,13 @@ def test_verified_live_handoff_is_the_only_transport_bundle() -> None:
         }
         for path in paths
     }
-    rank = {"session_completion": 0, "session_cancellation": 1,
-            "session_reconciliation": 2, "session_coordinator": 3}
+    rank = {
+        "session_persistence": 0,
+        "session_completion": 1,
+        "session_cancellation": 2,
+        "session_reconciliation": 3,
+        "session_coordinator": 4,
+    }
     for source, targets in graph.items():
         assert source == "session_coordinator" or "session_coordinator" not in targets
         assert all(rank[source] > rank[target] for target in targets if target in rank)

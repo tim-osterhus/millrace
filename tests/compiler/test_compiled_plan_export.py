@@ -19,9 +19,8 @@ from millrace.compiler.canonical import (
 )
 from millrace.contracts import PartitionDeclaration, SelectedCompiledPlan
 from millrace.contracts.ids import PartitionId
-from millrace.workflows import kernel_ping, lad_execution, lad_learning, simple_loop
+from millrace.workflows import kernel_ping
 from support import kernel_ping as kernel_ping_support
-from support import lad_learning as lad_learning_support
 
 Source = dict[str, object]
 _CODEX_POLICY = SelectedRunnerAdapterPolicy(
@@ -73,6 +72,49 @@ EXPECTED_EXPORT_ALL = (
 
 def _source() -> Source:
     return deepcopy(kernel_ping.WORKFLOW_SOURCE)
+
+
+def _source_with_effect_declaration() -> Source:
+    source = _source()
+    stage = next(
+        record
+        for record in cast(list[dict[str, object]], source["stage_kinds"])
+        if record["id"] == "kernel_ping.taskmaster"
+    )
+    stage["declared_outcome_ids"] = (
+        *cast(tuple[str, ...], stage["declared_outcome_ids"]),
+        "kernel_ping.taskmaster.effect_ready",
+    )
+    cast(list[dict[str, object]], source["terminal_outcomes"]).append(
+        {
+            "id": "kernel_ping.taskmaster.effect_ready",
+            "stage_kind_id": "kernel_ping.taskmaster",
+            "marker": "EFFECT_READY",
+        }
+    )
+    cast(list[dict[str, object]], source["terminal_actions"]).append(
+        {
+            "id": "kernel_ping.close_taskmaster_effect_ready",
+            "stage_kind_id": "kernel_ping.taskmaster",
+            "outcome_id": "kernel_ping.taskmaster.effect_ready",
+            "kind": "complete_work_item",
+            "artifact_schema_id": "kernel_ping.task_artifact",
+        }
+    )
+    source["effect_declarations"] = [
+        {
+            "id": "kernel_ping.effect.record_task",
+            "terminal_action_id": "kernel_ping.close_taskmaster_effect_ready",
+            "artifact_schema_id": "kernel_ping.task_artifact",
+            "provider_ref": "provider.fake_local.workspace",
+            "capability_policy_ref": "policy.fake_local.no_real_side_effects",
+            "target_ref_kind": "workspace_record",
+            "target_ref_schema": "kernel_ping.effects.target.workspace_record.v1",
+            "allowed_reconciliation_statuses": ("applied", "no_op", "refused"),
+            "real_side_effects_allowed": False,
+        }
+    ]
+    return source
 
 
 def _compile_plan(source: Mapping[str, object]) -> SelectedCompiledPlan:
@@ -427,96 +469,6 @@ def test_selected_authority_in_export_matches_canonical_authority() -> None:
     assert _canonical_json_bytes(selected_authority) == canonical_authority_bytes(plan)
     assert authority_fingerprint(selected_authority) == parsed["authority_fingerprint"]
     assert not _contains_key(selected_authority, "presentation")
-
-
-def test_export_preserves_partitionless_stage_as_json_null() -> None:
-    from millrace.compiler import verify_compiled_plan_export_record
-
-    plan = _compile_codex_plan(simple_loop.workflow_source())
-    parsed = _parsed_export(plan)
-    selected_authority = cast(dict[str, object], parsed["selected_authority"])
-    stage_kinds = cast(list[object], selected_authority["stage_kinds"])
-    troubleshooter = next(
-        cast(dict[str, object], stage)
-        for stage in stage_kinds
-        if cast(dict[str, object], stage)["id"] == "simple_loop.troubleshooter"
-    )
-
-    assert troubleshooter["partition_id"] is None
-    verified = verify_compiled_plan_export_record(parsed)
-    assert verified.authority_fingerprint == authority_fingerprint(plan)
-    assert verified.selected_authority == selected_authority
-
-
-def test_export_shape_includes_recovery_policies_and_refuses_old_shape() -> None:
-    from millrace.compiler import verify_compiled_plan_export_record
-    from millrace.compiler.export import CompiledPlanExportError
-
-    plan = _compile_codex_plan(simple_loop.workflow_source())
-    parsed = _parsed_export(plan)
-    selected_authority = cast(dict[str, object], parsed["selected_authority"])
-
-    assert parsed["plan_format_version"] == SelectedCompiledPlan.schema_version
-    assert selected_authority["schema_version"] == SelectedCompiledPlan.schema_version
-    assert len(cast(list[object], selected_authority["recovery_policies"])) == 1
-    assert selected_authority["lineage_policy"] == "root_from_external_enqueue"
-    waits = cast(list[object], selected_authority["wait_states"])
-    counters = cast(list[object], selected_authority["counters"])
-    assert {cast(dict[str, object], wait)["id"] for wait in waits} == {
-        "simple_loop.blocked_recovery.cooldown"
-    }
-    assert {cast(dict[str, object], counter)["id"] for counter in counters} == {
-        "simple_loop.reviewer_gap_counter"
-    }
-    assert parsed["authority_fingerprint"] == authority_fingerprint(plan)
-
-    old_shape = deepcopy(parsed)
-    old_selected = cast(dict[str, object], old_shape["selected_authority"])
-    old_selected.pop("recovery_policies")
-    with pytest.raises(
-        CompiledPlanExportError,
-        match="missing selected_authority key: recovery_policies",
-    ):
-        verify_compiled_plan_export_record(old_shape)
-
-
-def test_export_shape_includes_intervention_options_and_refuses_old_shape() -> None:
-    from millrace.compiler import verify_compiled_plan_export_record
-    from millrace.compiler.export import CompiledPlanExportError
-
-    plan = _compile_codex_plan(simple_loop.workflow_source())
-    parsed = _parsed_export(plan)
-    selected_authority = cast(dict[str, object], parsed["selected_authority"])
-    options = cast(list[object], selected_authority["intervention_options"])
-
-    assert parsed["plan_format_version"] == SelectedCompiledPlan.schema_version
-    assert selected_authority["schema_version"] == SelectedCompiledPlan.schema_version
-    assert {cast(dict[str, object], option)["id"] for option in options} == {
-        "simple_loop.resume_lineage",
-        "simple_loop.close_lineage",
-        "simple_loop.revise_lineage",
-    }
-    by_id = {
-        cast(dict[str, object], option)["id"]: cast(dict[str, object], option)
-        for option in options
-    }
-    revise = by_id["simple_loop.revise_lineage"]
-    assert revise["option_kind"] == "revise_lineage"
-    assert revise["payload_schema_id"] == "simple_loop.work_packet"
-    assert revise["target_queue_family_id"] == "work_packet"
-    assert revise["target_stage_kind_id"] == "simple_loop.worker"
-    assert revise["target_graph_node_id"] == "simple_loop.worker.start"
-    assert revise["target_runner_binding_id"] == "simple_loop.default_agent_runner"
-    assert parsed["authority_fingerprint"] == authority_fingerprint(plan)
-
-    old_shape = deepcopy(parsed)
-    old_selected = cast(dict[str, object], old_shape["selected_authority"])
-    old_selected.pop("intervention_options")
-    with pytest.raises(
-        CompiledPlanExportError,
-        match="missing selected_authority key: intervention_options",
-    ):
-        verify_compiled_plan_export_record(old_shape)
 
 
 def test_export_can_verify_generic_partitionless_authority_without_hydration() -> None:
@@ -958,7 +910,7 @@ def test_verify_refuses_each_missing_selected_authority_key(field: str) -> None:
 
 
 def test_export_preserves_non_empty_capability_authority() -> None:
-    plan = _compile_codex_plan(lad_execution.workflow_source())
+    plan = _compile_plan(_source())
     parsed = _parsed_export(plan)
     selected_authority = cast(dict[str, object], parsed["selected_authority"])
 
@@ -968,21 +920,20 @@ def test_export_preserves_non_empty_capability_authority() -> None:
         selected_authority["runner_bindings"],
     )
 
-    assert capabilities == [
-        {
-            "id": "capability.runner.invoke",
-            "capability_kind": "runner.invoke",
-            "support_status": "supported",
-            "grant_status": "granted",
-            "approval_policy_id": None,
-            "record_kind": "capability_declaration",
-            "schema_version": 1,
-        }
-    ]
-    assert runner_bindings[0]["required_capability_ids"] == ["capability.runner.invoke"]
+    runner_invoke = next(
+        capability
+        for capability in capabilities
+        if capability["id"] == "capability.runner.invoke"
+    )
+    assert runner_invoke["capability_kind"] == "runner.invoke"
+    assert runner_invoke["grant_status"] == "granted"
+    assert all(
+        "capability.runner.invoke" in binding["required_capability_ids"]
+        for binding in runner_bindings
+    )
 
 
-def test_learning_effect_declarations_round_trip_through_export_and_codecs() -> None:
+def test_effect_declarations_round_trip_through_export_and_codecs() -> None:
     from millrace.substrate.codecs import (
         decode_selected_compiled_plan,
         dumps_cas_object,
@@ -991,7 +942,7 @@ def test_learning_effect_declarations_round_trip_through_export_and_codecs() -> 
     )
     from millrace.substrate.records import SELECTED_COMPILED_PLAN_OBJECT_KIND
 
-    plan = _compile_codex_plan(lad_learning.workflow_source())
+    plan = _compile_plan(_source_with_effect_declaration())
     parsed = _parsed_export(plan)
     selected_authority = cast(dict[str, object], parsed["selected_authority"])
     effect_declarations = cast(
@@ -1001,41 +952,18 @@ def test_learning_effect_declarations_round_trip_through_export_and_codecs() -> 
 
     assert effect_declarations == [
         {
-            "effect_declaration_id": lad_learning_support.CURATOR_EFFECT_DECLARATION_ID,
-            "terminal_action_id": "learning.close_curator_complete",
-            "artifact_schema_id": lad_learning_support.LEARNING_SKILL_UPDATE_SCHEMA_ID,
-            "provider_ref": lad_learning_support.FAKE_LOCAL_EFFECT_PROVIDER_REF,
-            "capability_policy_ref": (
-                lad_learning_support.FAKE_LOCAL_EFFECT_CAPABILITY_POLICY_REF
-            ),
-            "target_ref_kind": "workspace_skill_update",
-            "target_ref_schema": "learning.effects.target.workspace_skill_update.v1",
+            "effect_declaration_id": "kernel_ping.effect.record_task",
+            "terminal_action_id": "kernel_ping.close_taskmaster_effect_ready",
+            "artifact_schema_id": "kernel_ping.task_artifact",
+            "provider_ref": "provider.fake_local.workspace",
+            "capability_policy_ref": "policy.fake_local.no_real_side_effects",
+            "target_ref_kind": "workspace_record",
+            "target_ref_schema": "kernel_ping.effects.target.workspace_record.v1",
             "allowed_reconciliation_statuses": ["applied", "no_op", "refused"],
             "real_side_effects_allowed": False,
             "record_kind": "effect_declaration",
             "schema_version": 1,
-        },
-        {
-            "effect_declaration_id": (
-                lad_learning_support.LIBRARIAN_EFFECT_DECLARATION_ID
-            ),
-            "terminal_action_id": "learning.close_librarian_complete",
-            "artifact_schema_id": (
-                lad_learning_support.LEARNING_SKILL_INSTALL_REPORT_SCHEMA_ID
-            ),
-            "provider_ref": lad_learning_support.FAKE_LOCAL_EFFECT_PROVIDER_REF,
-            "capability_policy_ref": (
-                lad_learning_support.FAKE_LOCAL_EFFECT_CAPABILITY_POLICY_REF
-            ),
-            "target_ref_kind": "workspace_skill_install_report",
-            "target_ref_schema": (
-                "learning.effects.target.workspace_skill_install_report.v1"
-            ),
-            "allowed_reconciliation_statuses": ["applied", "no_op", "refused"],
-            "real_side_effects_allowed": False,
-            "record_kind": "effect_declaration",
-            "schema_version": 1,
-        },
+        }
     ]
 
     envelope = encode_selected_compiled_plan(plan)
@@ -1049,19 +977,19 @@ def test_learning_effect_declarations_round_trip_through_export_and_codecs() -> 
     assert decoded.effect_declarations == plan.effect_declarations
 
 
-def test_learning_effect_declaration_drift_changes_selected_fingerprint() -> None:
-    source = lad_learning.workflow_source()
+def test_effect_declaration_drift_changes_selected_fingerprint() -> None:
+    source = _source_with_effect_declaration()
     drifted_source = deepcopy(source)
     effect = next(
         cast(dict[str, object], item)
         for item in cast(list[object], drifted_source["effect_declarations"])
         if cast(dict[str, object], item)["id"]
-        == lad_learning_support.CURATOR_EFFECT_DECLARATION_ID
+        == "kernel_ping.effect.record_task"
     )
-    effect["target_ref_schema"] = "learning.effects.target.workspace_skill_update.v2"
+    effect["target_ref_schema"] = "kernel_ping.effects.target.workspace_record.v2"
 
-    base_plan = _compile_codex_plan(source)
-    drifted_plan = _compile_codex_plan(drifted_source)
+    base_plan = _compile_plan(source)
+    drifted_plan = _compile_plan(drifted_source)
 
     assert authority_fingerprint(base_plan) != authority_fingerprint(drifted_plan)
     assert (
@@ -1071,22 +999,18 @@ def test_learning_effect_declaration_drift_changes_selected_fingerprint() -> Non
 
 
 def test_export_preserves_selected_graph_authority() -> None:
-    plan = _compile_codex_plan(lad_execution.workflow_source())
+    plan = _compile_plan(_source())
     parsed = _parsed_export(plan)
     selected_authority = cast(dict[str, object], parsed["selected_authority"])
     graphs = cast(list[dict[str, object]], selected_authority["graphs"])
 
     assert graphs == [
         {
-            "id": "execution.lad.graph",
+            "id": "kernel_ping.graph",
             "node_ids": [
-                "execution.lad.builder.start",
-                "execution.lad.checker.start",
-                "execution.lad.fixer.start",
-                "execution.lad.doublechecker.start",
-                "execution.lad.updater.start",
-                "execution.lad.troubleshooter.start",
-                "execution.lad.consultant.start",
+                "kernel_ping.taskmaster.start",
+                "kernel_ping.worker.start",
+                "kernel_ping.taskmaster.review",
             ],
             "record_kind": "graph_declaration",
             "schema_version": 1,

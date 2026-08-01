@@ -15,6 +15,19 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Added
 
+- Added durable, plan-pinned daemon budget epochs for wall time, accepted
+  starts, and reviewed adapter-reported token usage. Exhaustion suspends new
+  dispatch atomically while preserving accepted runner-session authority.
+- Added replay-safe `queue cancel` and atomic `queue cancel-lineage` controls.
+  They reuse durable close-work transitions, refuse live or unresolved runner
+  aftermath, and project bounded queue-closure audit evidence without deleting
+  queue state or signaling adapters.
+- Added replay-safe global dispatch suspension and exact-identity resumption.
+  The distinct versioned record gates only new claim acceptance, preserves
+  workflow pause semantics and accepted work, and projects bounded
+  pre-suspension work across status, runs, trace, and doctor.
+- Advanced the fresh workspace store to schema 8. Exact schema-6 and schema-7
+  workspaces refuse unchanged as `workspace_upgrade_required`.
 - Added durable, fenced runner sessions with replay-safe operator
   cancellation, restart reconciliation, bounded run/status/trace/doctor and
   daemon-stop projections, stable session refusal/diagnostic codes, and an

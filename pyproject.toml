@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "millrace-ai"
-version = "0.22.0"
+version = "0.22.1"
 description = "A governed runtime for compiler-validated, durable agent workflows."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -54,11 +54,6 @@ source-exclude = [
     "/docs/maintainers/**",
     "/src/millrace/**/README.md",
     "/src/millrace/testing/**",
-    "/src/millrace/workflows/lad_execution.py",
-    "/src/millrace/workflows/lad_learning.py",
-    "/src/millrace/workflows/lad_planning.py",
-    "/src/millrace/workflows/simple_loop.py",
-    "/src/millrace/workflows/vendor_selection.py",
 ]
 
 [tool.pytest.ini_options]

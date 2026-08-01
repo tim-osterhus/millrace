@@ -368,6 +368,7 @@ class _FakeFacade:
         evidence_mutator: Callable[[_PublicRecord, _PublicRecord], _PublicRecord]
         | None = None,
         events: list[str] | None = None,
+        usage: object | None = None,
     ) -> None:
         self.calls = 0
         self.evidence_calls = 0
@@ -381,6 +382,7 @@ class _FakeFacade:
         self.result_mutator = result_mutator
         self.evidence_mutator = evidence_mutator
         self.events = [] if events is None else events
+        self.usage = usage
         self._descriptor = _record(
             runner_id="millforge-base",
             runner_version=2,
@@ -458,6 +460,7 @@ class _FakeFacade:
             selected_output=selected,
             selected_output_schema_sha256=selected_digest,
             diagnostic=_record(code="safe", message="safe"),
+            usage=self.usage,
         )
         if self.result_mutator is not None:
             self.result_mutator(result, intent, request)
@@ -929,6 +932,83 @@ def test_millforge_adapter_matches_configured_descriptor_and_invokes_once(  # no
     )
     assert "adapter_provenance" not in result.artifact_payload_candidate
     assert result.observation_payload_candidate is None
+
+
+def test_millforge_adapter_normalizes_reviewed_token_usage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import (
+        AdapterSuccessResult,
+        AdapterTokenUsage,
+    )
+
+    facade = _FakeFacade(
+        selected_output=_SelectedOutputPresent({"status": "ok"}),
+        usage=_record(
+            token_usage=_record(
+                input_tokens=13,
+                output_tokens=5,
+                total_tokens=18,
+            )
+        ),
+    )
+
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
+
+    assert isinstance(result, AdapterSuccessResult)
+    assert result.token_usage == AdapterTokenUsage(
+        input_tokens=13,
+        output_tokens=5,
+        total_tokens=18,
+    )
+
+
+@pytest.mark.parametrize(
+    "token_usage",
+    (
+        _record(input_tokens=True, output_tokens=5, total_tokens=6),
+        _record(input_tokens=-1, output_tokens=5, total_tokens=4),
+        _record(input_tokens=2**63, output_tokens=0, total_tokens=2**63),
+        _record(input_tokens=13, output_tokens=5, total_tokens=19),
+        _record(input_tokens=13, output_tokens=5),
+    ),
+    ids=(
+        "boolean",
+        "negative",
+        "oversized",
+        "contradictory-total",
+        "missing-total",
+    ),
+)
+def test_millforge_adapter_maps_malformed_reviewed_usage_to_parse_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    token_usage: object,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    facade = _FakeFacade(
+        selected_output=_SelectedOutputPresent({"status": "ok"}),
+        usage=_record(token_usage=token_usage),
+    )
+
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+    assert result.token_usage is None
+
+
+def test_millforge_adapter_declares_reviewed_token_usage_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import has_reviewed_token_usage_mapping
+
+    adapter = _adapter(monkeypatch, tmp_path, _FakeFacade())
+
+    assert has_reviewed_token_usage_mapping(adapter)
 
 
 def test_millforge_adapter_snapshots_invocation_evidence_before_execute(

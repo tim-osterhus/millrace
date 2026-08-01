@@ -29,6 +29,7 @@ from millrace.contracts.state import (
     ClosureTerminalRecord,
     CooldownWaitRecord,
     CounterRecord,
+    DispatchSuspensionRecord,
     EffectProposalRecord,
     EffectReconciliationRecord,
     FanoutRecord,
@@ -41,6 +42,7 @@ from millrace.contracts.state import (
     PauseRecord,
     PlanRef,
     QuarantineRecord,
+    QueueClosureRecord,
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
@@ -228,6 +230,80 @@ class EnqueueWork(OperatorCommand):
             "payload",
             freeze_authority_mapping(cast(Mapping[str, object], self.payload)),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SuspendDispatch(OperatorCommand):
+    input_kind: ClassVar[str] = "workflow.suspend_dispatch"
+
+    plan_fingerprint: AuthorityFingerprint
+    actor_id: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in ("plan_fingerprint", "actor_id", "reason"):
+            _require_non_blank_protocol_id(field_name, getattr(self, field_name))
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeDispatch(OperatorCommand):
+    input_kind: ClassVar[str] = "workflow.resume_dispatch"
+
+    plan_fingerprint: AuthorityFingerprint
+    suspension_id: str
+    actor_id: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in (
+            "plan_fingerprint",
+            "suspension_id",
+            "actor_id",
+            "reason",
+        ):
+            _require_non_blank_protocol_id(field_name, getattr(self, field_name))
+
+
+@dataclass(frozen=True, slots=True)
+class CancelQueuedWork(OperatorCommand):
+    input_kind: ClassVar[str] = "workflow.cancel_queued_work"
+
+    work_item_id: str
+    plan_fingerprint: AuthorityFingerprint
+    actor_id: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in (
+            "work_item_id",
+            "plan_fingerprint",
+            "actor_id",
+            "reason",
+        ):
+            _require_non_blank_protocol_id(field_name, getattr(self, field_name))
+
+
+@dataclass(frozen=True, slots=True)
+class CancelQueuedLineage(OperatorCommand):
+    input_kind: ClassVar[str] = "workflow.cancel_queued_lineage"
+
+    lineage_id: str
+    plan_fingerprint: AuthorityFingerprint
+    actor_id: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in (
+            "lineage_id",
+            "plan_fingerprint",
+            "actor_id",
+            "reason",
+        ):
+            _require_non_blank_protocol_id(field_name, getattr(self, field_name))
 
 
 @dataclass(frozen=True, slots=True)
@@ -782,6 +858,8 @@ class TransitionDecision:
     expected_run_fencing_tokens: Mapping[str, str]
     expected_run_unobserved: tuple[str, ...]
     expected_pause_absent: bool
+    expected_dispatch_suspension_absent: bool
+    expected_dispatch_suspension_generation: int | None
     expected_lineage_quarantine_absent: tuple[str, ...]
     mutations: tuple[TransitionMutation, ...]
     governance_events: tuple[GovernanceEventRecord, ...] = ()
@@ -790,6 +868,18 @@ class TransitionDecision:
     expected_activation_plan_refs: Mapping[str, PlanRef] = field(default_factory=dict)
     expected_work_item_open: tuple[str, ...] = ()
     expected_operator_wait_absent: tuple[str, ...] = ()
+    expected_activation_claims: Mapping[str, str | None] = field(
+        default_factory=dict
+    )
+    expected_run_current_session_ids: Mapping[str, str | None] = field(
+        default_factory=dict
+    )
+    expected_runner_session_snapshots: Mapping[str, tuple[str, str]] = field(
+        default_factory=dict
+    )
+    expected_lineage_work_item_ids: Mapping[str, tuple[str, ...]] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -846,6 +936,26 @@ class TransitionDecision:
             self,
             "expected_activation_plan_refs",
             _freeze_expectation_mapping(self.expected_activation_plan_refs),
+        )
+        object.__setattr__(
+            self,
+            "expected_activation_claims",
+            _freeze_expectation_mapping(self.expected_activation_claims),
+        )
+        object.__setattr__(
+            self,
+            "expected_run_current_session_ids",
+            _freeze_expectation_mapping(self.expected_run_current_session_ids),
+        )
+        object.__setattr__(
+            self,
+            "expected_runner_session_snapshots",
+            _freeze_expectation_mapping(self.expected_runner_session_snapshots),
+        )
+        object.__setattr__(
+            self,
+            "expected_lineage_work_item_ids",
+            _freeze_expectation_mapping(self.expected_lineage_work_item_ids),
         )
         object.__setattr__(self, "mutations", tuple(self.mutations))
         object.__setattr__(self, "governance_events", tuple(self.governance_events))
@@ -1078,10 +1188,28 @@ class CloseWorkItem:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordQueueClosure:
+    record_id: str
+    record: QueueClosureRecord | None = None
+    mutation_kind: ClassVar[str] = "mutation.record_queue_closure"
+    mutation_schema_version: ClassVar[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
 class SetPause:
     record_id: str
     record: PauseRecord | None = None
     mutation_kind: ClassVar[str] = "mutation.set_pause"
+    mutation_schema_version: ClassVar[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
+class SetDispatchSuspension:
+    record: DispatchSuspensionRecord
+    expected_record: DispatchSuspensionRecord | None
+    expected_dispatch_generation: int
+    expected_default_plan_ref: PlanRef | None
+    mutation_kind: ClassVar[str] = "mutation.set_dispatch_suspension"
     mutation_schema_version: ClassVar[int] = 1
 
 
@@ -1195,7 +1323,9 @@ TransitionMutation: TypeAlias = (
     | RecordRemediationWork
     | RecordClosureBlocked
     | CloseWorkItem
+    | RecordQueueClosure
     | SetPause
+    | SetDispatchSuspension
     | SetQuarantine
     | RecordLineageQuarantine
     | SupersedeLineageQuarantine
@@ -1280,6 +1410,37 @@ def _transition_input_payload(
             "input_kind": input_kind(transition_input),
             "queue_family_id": transition_input.queue_family_id,
             "payload": transition_input.payload,
+        }
+    if isinstance(transition_input, SuspendDispatch):
+        return {
+            "input_kind": input_kind(transition_input),
+            "plan_fingerprint": transition_input.plan_fingerprint,
+            "actor_id": transition_input.actor_id,
+            "reason": transition_input.reason,
+        }
+    if isinstance(transition_input, ResumeDispatch):
+        return {
+            "input_kind": input_kind(transition_input),
+            "plan_fingerprint": transition_input.plan_fingerprint,
+            "suspension_id": transition_input.suspension_id,
+            "actor_id": transition_input.actor_id,
+            "reason": transition_input.reason,
+        }
+    if isinstance(transition_input, CancelQueuedWork):
+        return {
+            "input_kind": input_kind(transition_input),
+            "work_item_id": transition_input.work_item_id,
+            "plan_fingerprint": transition_input.plan_fingerprint,
+            "actor_id": transition_input.actor_id,
+            "reason": transition_input.reason,
+        }
+    if isinstance(transition_input, CancelQueuedLineage):
+        return {
+            "input_kind": input_kind(transition_input),
+            "lineage_id": transition_input.lineage_id,
+            "plan_fingerprint": transition_input.plan_fingerprint,
+            "actor_id": transition_input.actor_id,
+            "reason": transition_input.reason,
         }
     if isinstance(transition_input, ClaimWork):
         return {
@@ -1514,6 +1675,8 @@ __all__ = (
     "AdmitPlanRef",
     "AdvanceRunnerSession",
     "AdvanceRunnerSessionRecord",
+    "CancelQueuedLineage",
+    "CancelQueuedWork",
     "ClaimWork",
     "CloseWorkItem",
     "ControlInput",
@@ -1554,6 +1717,7 @@ __all__ = (
     "RecordLineageQuarantine",
     "RecordOperatorIntervention",
     "RecordOperatorWait",
+    "RecordQueueClosure",
     "RecordRefusal",
     "RecordRecoveryAttempt",
     "RecordRemediationWork",
@@ -1568,13 +1732,16 @@ __all__ = (
     "RecordWorkDependency",
     "RouteActivation",
     "ReconcileEffect",
+    "ResumeDispatch",
     "RunnerResultObserved",
     "RequestRunnerSessionCancellation",
     "SelectDefaultPlan",
     "SelectDefaultPlanRef",
     "SetPause",
+    "SetDispatchSuspension",
     "SetQuarantine",
     "SupersedeLineageQuarantine",
+    "SuspendDispatch",
     "TimerDue",
     "TransitionContext",
     "TransitionDecision",

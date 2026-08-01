@@ -9,24 +9,36 @@ from typing import Any, cast
 
 import pytest
 
+import millrace.operator as operator_api
 from kernel.kernel_ping_scenarios import bootstrap_to_worker_claim
-from kernel.simple_loop_scenarios import (
-    bootstrap_to_manager_claim,
-    bootstrap_to_manager_cooldown_wait,
-    bootstrap_to_reviewer_claim,
-)
 from millrace.compiler.canonical import authority_fingerprint
+from millrace.contracts import QueueFamilyId
 from millrace.contracts.compiled_plan import SelectedCompiledPlan
-from millrace.contracts.state import AdmittedPlan, PlanRef, RuntimeState
+from millrace.contracts.state import (
+    DURABLE_INT64_MAX,
+    RUNNER_SESSION_TEXT_MAX_BYTES,
+    AdmittedPlan,
+    DaemonBudgetEpochRecord,
+    PlanRef,
+    RunnerSessionUsageRecord,
+    RuntimeState,
+)
 from millrace.contracts.transition import (
+    AdmitPlan,
+    CancelQueuedWork,
     ClaimWork,
+    EnqueueWork,
+    InitializeWorkspace,
     OperatorResumeWait,
     OperatorReviseWait,
+    ResumeDispatch,
     RunnerResultObserved,
+    SelectDefaultPlan,
+    SuspendDispatch,
     TimerDue,
     input_payload_digest,
 )
-from millrace.kernel import apply
+from millrace.kernel import apply, empty_runtime_state
 from millrace.kernel.lookups import external_enqueue_routes, plan_ref_for
 from millrace.substrate._sqlite_relations import validate_loaded_runtime_state
 from millrace.substrate.cas import ContentAddressedByteStore
@@ -50,6 +62,7 @@ from millrace.testing import (
 from millrace.testing import (
     deterministic_context,
     fake_runner_completion_input_id,
+    fake_runner_observation_payload,
     materialize_fake_runner_session_cas,
 )
 from millrace.workflows import kernel_ping
@@ -64,37 +77,42 @@ from substrate._runtime_store_support import (
     worker_runtime_state,
 )
 from support import (
+    generic_admission,
+    generic_fanout,
     generic_lifecycle,
-    vendor_selection,
 )
 from support import (
     kernel_ping as kernel_ping_support,
 )
-from support.lad_execution import (
-    INCIDENT_REPORT_SCHEMA_ID,
-    REPORT_SCHEMA_ID,
-    apply_runner_observation,
-    bootstrap_builder_claim,
-    claim_activation,
-    compile_lad,
-    runtime_failure_exhausted_state,
-)
-from support.simple_loop import (
-    apply_accepted_input,
-    compile_simple_loop,
-    detail_request_payload,
-    gap_packet_payload,
-    incident_report_payload,
-    runner_observation,
-    simple_loop_context,
-    troubleshooting_report_payload,
-    work_prompt_payload,
-    work_result_payload,
-)
 
 
 def _component_source() -> dict[str, object]:
-    source = kernel_ping.workflow_source()
+    source = generic_lifecycle.source()
+    origin_stage = next(
+        record
+        for record in cast(list[dict[str, object]], source["stage_kinds"])
+        if record["id"] == "origin_stage"
+    )
+    origin_stage["declared_outcome_ids"] = (
+        *cast(tuple[str, ...], origin_stage["declared_outcome_ids"]),
+        "lifecycle.origin.blocked",
+    )
+    cast(list[dict[str, object]], source["terminal_outcomes"]).append(
+        {
+            "id": "lifecycle.origin.blocked",
+            "stage_kind_id": "origin_stage",
+            "marker": "SOURCE_BLOCKED",
+        }
+    )
+    cast(list[dict[str, object]], source["terminal_actions"]).append(
+        {
+            "id": "lifecycle.origin.block",
+            "stage_kind_id": "origin_stage",
+            "outcome_id": "lifecycle.origin.blocked",
+            "kind": "complete_work_item",
+            "artifact_schema_id": generic_lifecycle.SOURCE_SCHEMA_ID,
+        }
+    )
     source["capabilities"] = [
         {
             "id": "capability.runner.invoke",
@@ -114,8 +132,10 @@ def _component_source() -> dict[str, object]:
         {
             "adapter_kind": "codex",
             "stage_kind_ids": (
-                "kernel_ping.taskmaster",
-                "kernel_ping.worker",
+                "origin_stage",
+                "alpha_stage",
+                "beta_stage",
+                "review_stage",
             ),
             "required_capability_ids": ("capability.runner.invoke",),
             "component_pin": {
@@ -131,9 +151,9 @@ def _component_source() -> dict[str, object]:
             },
             "terminal_result_mappings": (
                 {
-                    "stage_kind_id": "kernel_ping.taskmaster",
+                    "stage_kind_id": "origin_stage",
                     "runner_result_id": "COMPLETE",
-                    "outcome_id": "kernel_ping.taskmaster.task_complete",
+                    "outcome_id": "lifecycle.origin.ready",
                 },
             ),
         }
@@ -200,7 +220,7 @@ def _assert_corrupt_millforge_selected_plan_refuses_load(
 
 
 def _component_free_capability_source() -> dict[str, object]:
-    source = kernel_ping.workflow_source()
+    source = generic_lifecycle.source()
     source["capabilities"] = [
         {
             "id": "capability.runner.invoke",
@@ -212,8 +232,8 @@ def _component_free_capability_source() -> dict[str, object]:
     for runner in cast(list[dict[str, object]], source["runner_bindings"]):
         runner["adapter_kind"] = "codex"
         runner["required_capability_ids"] = ("capability.runner.invoke",)
-        runner.pop("component_pin")
-        runner.pop("terminal_result_mappings")
+        runner.pop("component_pin", None)
+        runner.pop("terminal_result_mappings", None)
     return source
 
 
@@ -256,12 +276,12 @@ def _mutate_valid_runner_component_authority(
     elif field_name == "legal_terminal_result_ids":
         pin[field_name] = ["BLOCKED", "COMPLETE", "RETRY"]
     elif field_name == "mapping_stage_kind_id":
-        mapping["stage_kind_id"] = "kernel_ping.worker"
-        mapping["outcome_id"] = "kernel_ping.worker.work_complete"
+        mapping["stage_kind_id"] = "alpha_stage"
+        mapping["outcome_id"] = "lifecycle.alpha.ready"
     elif field_name == "mapping_runner_result_id":
         mapping["runner_result_id"] = "BLOCKED"
     else:
-        mapping["outcome_id"] = "kernel_ping.taskmaster.blocked"
+        mapping["outcome_id"] = "lifecycle.origin.blocked"
 
 
 def _selected_stage_record(
@@ -294,9 +314,7 @@ def test_restart_refuses_fanout_aftermath_for_absent_optional_collection(
         else generic_lifecycle.source_closed_optional_collection_omission_state()
     )
     transition_by_id = {item.record_id: item for item in populated.transitions}
-    transition_by_id.update(
-        {item.record_id: item for item in zero_item.transitions}
-    )
+    transition_by_id.update({item.record_id: item for item in zero_item.transitions})
     event_by_id = {item.record_id: item for item in populated.governance_events}
     event_by_id.update({item.record_id: item for item in zero_item.governance_events})
     trace_by_id = {item.record_id: item for item in populated.traces}
@@ -474,8 +492,8 @@ def test_restart_refuses_corrupt_runner_component_authority(
     tmp_path: Path,
     corruption: str,
 ) -> None:
-    plan, fingerprint = kernel_ping_support.compile_kernel_ping(_component_source())
-    state = bootstrap_to_worker_claim(plan, fingerprint)
+    plan, fingerprint = generic_lifecycle.compile_lifecycle(_component_source())
+    state = _generic_admitted_only_state(plan, fingerprint)
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     selected_plan_record = json.loads(
@@ -488,9 +506,9 @@ def test_restart_refuses_corrupt_runner_component_authority(
     if corruption == "digest":
         pin["descriptor_sha256"] = "A" * 64
     elif corruption == "mapping_stage":
-        mapping["stage_kind_id"] = "kernel_ping.worker"
+        mapping["stage_kind_id"] = "alpha_stage"
     elif corruption == "mapping_outcome":
-        mapping["outcome_id"] = "kernel_ping.worker.work_complete"
+        mapping["outcome_id"] = "lifecycle.alpha.ready"
     elif corruption == "capability_closure":
         runner["required_capability_ids"] = []
     elif corruption == "noncanonical_capabilities":
@@ -503,8 +521,8 @@ def test_restart_refuses_corrupt_runner_component_authority(
     elif corruption == "missing_outcome":
         mapping["outcome_id"] = "missing.outcome"
     elif corruption == "undeclared_outcome":
-        taskmaster = _selected_stage_record(payload, "kernel_ping.taskmaster")
-        taskmaster["declared_outcome_ids"] = []
+        origin = _selected_stage_record(payload, "origin_stage")
+        origin["declared_outcome_ids"] = []
     else:
         payload["capabilities"] = []
     corrupt_bytes = json.dumps(
@@ -545,8 +563,7 @@ def test_restart_refuses_corrupt_millforge_mapping_before_provider_work(
             cast(str, mapping["runner_result_id"]): mapping for mapping in mappings
         }
         assert {
-            result_id: mapping["outcome_id"]
-            for result_id, mapping in by_result.items()
+            result_id: mapping["outcome_id"] for result_id, mapping in by_result.items()
         } == {
             "BLOCKED": "kernel_ping.taskmaster.blocked",
             "TASK_COMPLETE": "kernel_ping.taskmaster.task_complete",
@@ -565,11 +582,11 @@ def test_restart_refuses_component_free_capability_cardinality(
     tmp_path: Path,
     corruption: str,
 ) -> None:
-    plan, fingerprint = kernel_ping_support.compile_kernel_ping(
+    plan, fingerprint = generic_lifecycle.compile_lifecycle(
         _component_free_capability_source()
     )
     assert plan.runner_bindings[0].component_pin is None
-    state = bootstrap_to_worker_claim(plan, fingerprint)
+    state = _generic_admitted_only_state(plan, fingerprint)
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     selected_plan_record = json.loads(
@@ -578,9 +595,7 @@ def test_restart_refuses_component_free_capability_cardinality(
     payload = cast(dict[str, object], selected_plan_record["payload"])
     capabilities = cast(list[dict[str, object]], payload["capabilities"])
     payload["capabilities"] = (
-        []
-        if corruption == "missing"
-        else [*capabilities, dict(capabilities[0])]
+        [] if corruption == "missing" else [*capabilities, dict(capabilities[0])]
     )
     corrupt_bytes = json.dumps(
         selected_plan_record,
@@ -603,8 +618,8 @@ def test_restart_refuses_valid_component_authority_drift_against_stale_pin(
     tmp_path: Path,
     field_name: str,
 ) -> None:
-    plan, fingerprint = kernel_ping_support.compile_kernel_ping(_component_source())
-    state = bootstrap_to_worker_claim(plan, fingerprint)
+    plan, fingerprint = generic_lifecycle.compile_lifecycle(_component_source())
+    state = _generic_admitted_only_state(plan, fingerprint)
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     selected_plan_record = json.loads(
@@ -758,7 +773,7 @@ def test_restart_refuses_wrong_kind_cas_object_reference(tmp_path: Path) -> None
 
 
 def test_restart_refuses_corrupt_selected_join_declaration(tmp_path: Path) -> None:
-    db_path, cas_root = _persist_vendor_selection_with_corrupt_join(
+    db_path, cas_root = _persist_generic_join_with_corrupt_join(
         tmp_path,
         lambda join: join.__setitem__("required_artifact_schema_ids", []),
     )
@@ -773,9 +788,9 @@ def test_restart_refuses_corrupt_selected_join_declaration(tmp_path: Path) -> No
 def test_restart_refuses_selected_join_correlation_key_schema_mismatch(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root = _persist_vendor_selection_with_corrupt_join(
+    db_path, cas_root = _persist_generic_join_with_corrupt_join(
         tmp_path,
-        lambda join: join.__setitem__("correlation_key", "request_id"),
+        lambda join: join.__setitem__("correlation_key", "missing_key"),
     )
 
     with pytest.raises(
@@ -790,13 +805,9 @@ def test_restart_refuses_selected_join_without_unique_generated_target_route(
 ) -> None:
     def remove_award_route(payload: dict[str, object]) -> None:
         routes = cast(list[dict[str, object]], payload["generated_work_routes"])
-        routes[:] = [
-            route
-            for route in routes
-            if route["id"] != "vendor_selection.award_join_work"
-        ]
+        routes[:] = [route for route in routes if route["id"] != "route.review"]
 
-    db_path, cas_root = _persist_vendor_selection_with_corrupt_selected_plan_payload(
+    db_path, cas_root = _persist_generic_join_with_corrupt_selected_plan_payload(
         tmp_path,
         remove_award_route,
     )
@@ -813,16 +824,12 @@ def test_restart_refuses_selected_join_duplicate_generated_target_route(
 ) -> None:
     def duplicate_award_route(payload: dict[str, object]) -> None:
         routes = cast(list[dict[str, object]], payload["generated_work_routes"])
-        route = next(
-            route
-            for route in routes
-            if route["id"] == "vendor_selection.award_join_work"
-        )
+        route = next(route for route in routes if route["id"] == "route.review")
         duplicate = dict(route)
-        duplicate["id"] = "vendor_selection.award_join_work.v2"
+        duplicate["id"] = "route.review.v2"
         routes.append(duplicate)
 
-    db_path, cas_root = _persist_vendor_selection_with_corrupt_selected_plan_payload(
+    db_path, cas_root = _persist_generic_join_with_corrupt_selected_plan_payload(
         tmp_path,
         duplicate_award_route,
     )
@@ -837,11 +844,11 @@ def test_restart_refuses_selected_join_duplicate_generated_target_route(
 def test_restart_refuses_selected_join_id_collision_with_terminal_action(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root = _persist_vendor_selection_with_corrupt_join(
+    db_path, cas_root = _persist_generic_join_with_corrupt_join(
         tmp_path,
         lambda join: join.__setitem__(
             "id",
-            "vendor_selection.request_intake.request_ready",
+            "lifecycle.origin.complete",
         ),
     )
 
@@ -852,11 +859,11 @@ def test_restart_refuses_selected_join_id_collision_with_terminal_action(
         load_runtime_state(db_path, cas_root)
 
 
-def _persist_vendor_selection_with_corrupt_join(
+def _persist_generic_join_with_corrupt_join(
     tmp_path: Path,
     mutate_join: Callable[[dict[str, object]], None],
 ) -> tuple[Path, Path]:
-    return _persist_vendor_selection_with_corrupt_selected_plan_payload(
+    return _persist_generic_join_with_corrupt_selected_plan_payload(
         tmp_path,
         lambda payload: mutate_join(
             cast(list[dict[str, object]], payload["join_declarations"])[0]
@@ -864,11 +871,11 @@ def _persist_vendor_selection_with_corrupt_join(
     )
 
 
-def _persist_vendor_selection_with_corrupt_selected_plan_payload(
+def _persist_generic_join_with_corrupt_selected_plan_payload(
     tmp_path: Path,
     mutate_payload: Callable[[dict[str, object]], None],
 ) -> tuple[Path, Path]:
-    plan, fingerprint = vendor_selection.compile_vendor_selection()
+    plan, fingerprint = generic_lifecycle.compile_lifecycle()
     plan_ref = plan_ref_for(plan, fingerprint)
     state = RuntimeState(
         admitted_plans={
@@ -1060,9 +1067,7 @@ def test_restart_refuses_activation_that_mismatches_work_item(
         load_runtime_state(db_path, cas_root)
 
 
-def test_relation_validator_refuses_activation_plan_ref_mismatching_work_item() -> (
-    None
-):
+def test_relation_validator_refuses_activation_plan_ref_mismatching_work_item() -> None:
     state = taskmaster_runtime_state()
     other_plan_ref, other_admitted_plan = _extra_admitted_plan_ref(state)
     activation = next(iter(state.activations.values()))
@@ -1329,8 +1334,7 @@ def test_restart_refuses_duplicate_runner_observations_for_one_run(
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "runner_observations accepted-input authority invalid: "
-            "observation_identity"
+            "runner_observations accepted-input authority invalid: observation_identity"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -1339,8 +1343,8 @@ def test_restart_refuses_duplicate_runner_observations_for_one_run(
 def test_restart_refuses_runner_observation_observed_at_drift(
     tmp_path: Path,
 ) -> None:
-    state, _plan, _fingerprint = vendor_selection.packager_closed_state("a")
-    observation = _observation_for_input(state, "observe-packager-a")
+    state, _plan, _fingerprint = generic_lifecycle.origin_closed_state()
+    observation = _observation_for_input(state, "observe-origin")
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     _disable_checks_and_update_one(
@@ -1359,8 +1363,8 @@ def test_restart_refuses_runner_observation_observed_at_drift(
 def test_restart_refuses_runner_observation_receipt_authority_drift(
     tmp_path: Path,
 ) -> None:
-    state, _plan, _fingerprint = vendor_selection.packager_closed_state("a")
-    observation = _observation_for_input(state, "observe-packager-a")
+    state, _plan, _fingerprint = generic_lifecycle.origin_closed_state()
+    observation = _observation_for_input(state, "observe-origin")
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     _disable_checks_and_update_one(
@@ -1379,8 +1383,8 @@ def test_restart_refuses_runner_observation_receipt_authority_drift(
 def test_restart_refuses_runner_observation_identity_drift(
     tmp_path: Path,
 ) -> None:
-    state, _plan, _fingerprint = vendor_selection.packager_closed_state("a")
-    observation = _observation_for_input(state, "observe-packager-a")
+    state, _plan, _fingerprint = generic_lifecycle.origin_closed_state()
+    observation = _observation_for_input(state, "observe-origin")
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     _disable_checks_and_update_one(
@@ -1392,8 +1396,7 @@ def test_restart_refuses_runner_observation_identity_drift(
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "runner_observations accepted-input authority invalid: "
-            "observation_identity"
+            "runner_observations accepted-input authority invalid: observation_identity"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -1402,8 +1405,8 @@ def test_restart_refuses_runner_observation_identity_drift(
 def test_restart_refuses_runner_observation_evidence_authority_drift(
     tmp_path: Path,
 ) -> None:
-    state, _plan, _fingerprint = vendor_selection.packager_closed_state("a")
-    observation = _observation_for_input(state, "observe-packager-a")
+    state, _plan, _fingerprint = generic_lifecycle.origin_closed_state()
+    observation = _observation_for_input(state, "observe-origin")
     changed_payload = {
         **observation.payload,
         "runner_binding_id": "wrong.runner",
@@ -1441,8 +1444,7 @@ def test_restart_refuses_runner_observation_evidence_authority_drift(
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "runner_observations accepted-input authority invalid: "
-            "evidence_authority"
+            "runner_observations accepted-input authority invalid: evidence_authority"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -1466,11 +1468,9 @@ def test_restart_preserves_close_only_observation_receipt_authority(
     assert loaded_observation == observation
     assert loaded.artifacts.keys() == state.artifacts.keys()
     assert "transition-observe-worker:artifact" not in loaded.artifacts
-    assert (
-        loaded.receipts[loaded_observation.created_by_input_id]
-        .receipt_ref.input_payload_digest
-        == input_payload_digest(reconstructed)
-    )
+    assert loaded.receipts[
+        loaded_observation.created_by_input_id
+    ].receipt_ref.input_payload_digest == input_payload_digest(reconstructed)
 
 
 @pytest.mark.parametrize("field", ("payload", "observed_at"))
@@ -1639,8 +1639,7 @@ def test_restart_refuses_artifact_created_by_input_drift(tmp_path: Path) -> None
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "artifacts runner-observation provenance invalid: "
-            "artifact_source_authority"
+            "artifacts runner-observation provenance invalid: artifact_source_authority"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -1666,8 +1665,7 @@ def test_restart_refuses_artifact_transition_drift(tmp_path: Path) -> None:
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "artifacts runner-observation provenance invalid: "
-            "artifact_source_authority"
+            "artifacts runner-observation provenance invalid: artifact_source_authority"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -1710,8 +1708,7 @@ def test_restart_refuses_artifact_with_non_observation_transition(
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "artifacts runner-observation provenance invalid: "
-            "artifact_source_authority"
+            "artifacts runner-observation provenance invalid: artifact_source_authority"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -1733,8 +1730,7 @@ def test_relation_validator_refuses_artifact_with_refused_observation_transition
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "runner_observations accepted-input authority invalid: "
-            "transition_authority"
+            "runner_observations accepted-input authority invalid: transition_authority"
         ),
     ):
         validate_loaded_runtime_state(corrupt_state)
@@ -1762,8 +1758,7 @@ def test_restart_refuses_artifact_runner_observation_input_drift(
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "runner_observations accepted-input authority invalid: "
-            "transition_authority"
+            "runner_observations accepted-input authority invalid: transition_authority"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -1891,9 +1886,7 @@ def test_restart_refuses_terminal_record_source_run_for_different_work_item(
         else ""
     )
     close_values = (
-        "NULL, 'terminal_action',"
-        if table_name == "closed_work_items"
-        else ""
+        "NULL, 'terminal_action'," if table_name == "closed_work_items" else ""
     )
     _disable_checks_and_execute(
         db_path,
@@ -2006,7 +1999,7 @@ def test_restart_refuses_recovery_attempt_with_missing_source_reference(
     corrupt_value: object,
     expected_message: str,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_recovery_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_execute(
         db_path,
         f"""
@@ -2024,7 +2017,7 @@ def test_restart_refuses_recovery_attempt_with_missing_source_reference(
 def test_restart_refuses_recovery_attempt_lineage_mismatch(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_recovery_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_update_one(
         db_path,
         """
@@ -2044,7 +2037,7 @@ def test_restart_refuses_recovery_attempt_lineage_mismatch(
 def test_restart_refuses_recovery_attempt_policy_outside_selected_plan(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_recovery_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_update_one(
         db_path,
         """
@@ -2064,12 +2057,12 @@ def test_restart_refuses_recovery_attempt_policy_outside_selected_plan(
 def test_restart_refuses_recovery_attempt_action_outside_selected_policy(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_recovery_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE recovery_attempts
-        SET recovery_action_id = 'simple_loop.manager.packet_ready'
+        SET recovery_action_id = 'admission.recover_alternate'
         WHERE rowid = (SELECT rowid FROM recovery_attempts LIMIT 1)
         """,
     )
@@ -2084,16 +2077,16 @@ def test_restart_refuses_recovery_attempt_action_outside_selected_policy(
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_runtime_failure_attempt_action_drift(
+def test_restart_refuses_generic_recovery_attempt_action_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_lad_runtime_failure_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE recovery_attempts
-        SET recovery_action_id = 'execution.route_builder_blocked'
-        WHERE policy_id = 'execution.runtime_failure_recovery'
+        SET recovery_action_id = 'admission.recover_alternate'
+        WHERE policy_id = 'admission.recovery_policy'
         """,
     )
 
@@ -2107,16 +2100,16 @@ def test_restart_refuses_lad_runtime_failure_attempt_action_drift(
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_threshold_attempt_action_drift(
+def test_restart_refuses_generic_threshold_attempt_action_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_lad_threshold_recovery_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE recovery_attempts
-        SET recovery_action_id = 'execution.route_builder_blocked'
-        WHERE policy_id = 'execution.blocked_recovery'
+        SET recovery_action_id = 'admission.recover_alternate'
+        WHERE policy_id = 'admission.recovery_policy'
         """,
     )
 
@@ -2133,7 +2126,7 @@ def test_restart_refuses_lad_threshold_attempt_action_drift(
 def test_restart_refuses_recovery_attempt_record_id_key_mismatch(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_recovery_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_update_one(
         db_path,
         """
@@ -2145,9 +2138,7 @@ def test_restart_refuses_recovery_attempt_record_id_key_mismatch(
 
     with pytest.raises(
         StorageIntegrityError,
-        match=(
-            "recovery_attempts.record_id must match plan/policy/lineage/input key"
-        ),
+        match=("recovery_attempts.record_id must match plan/policy/lineage/input key"),
     ):
         load_runtime_state(db_path, cas_root)
 
@@ -2155,12 +2146,12 @@ def test_restart_refuses_recovery_attempt_record_id_key_mismatch(
 def test_restart_refuses_latest_recovery_activation_outside_policy_stage(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_recovery_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE recovery_attempts
-        SET latest_recovery_activation_id = 'activation-manager',
+        SET latest_recovery_activation_id = 'activation-generic-parent',
             latest_recovery_run_id = NULL
         WHERE rowid = (SELECT rowid FROM recovery_attempts LIMIT 1)
         """,
@@ -2179,13 +2170,13 @@ def test_restart_refuses_latest_recovery_activation_outside_policy_stage(
 def test_restart_refuses_latest_recovery_run_outside_policy_stage(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_recovery_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_recovery_runtime_state(tmp_path)
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE recovery_attempts
         SET latest_recovery_activation_id = NULL,
-            latest_recovery_run_id = 'run-manager'
+            latest_recovery_run_id = 'run-generic-parent'
         WHERE rowid = (SELECT rowid FROM recovery_attempts LIMIT 1)
         """,
     )
@@ -2193,23 +2184,24 @@ def test_restart_refuses_latest_recovery_run_outside_policy_stage(
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "recovery_attempts latest recovery run must match policy "
-            "recovery stage"
+            "recovery_attempts latest recovery run must match policy recovery stage"
         ),
     ):
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_runtime_failure_counter_key_drift(
+def test_restart_refuses_generic_counter_key_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_lad_runtime_failure_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_closed_after_recovery_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE counters
-        SET counter_id = 'execution.troubleshoot_attempt_count.builder'
-        WHERE counter_id = 'execution.runtime_failure_count.builder'
+        SET counter_id = 'admission.recovery_counter'
+        WHERE counter_id = 'admission.counter'
         """,
     )
 
@@ -2220,16 +2212,18 @@ def test_restart_refuses_lad_runtime_failure_counter_key_drift(
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_runtime_failure_closed_source_run_drift(
+def test_restart_refuses_generic_closed_source_run_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_lad_runtime_failure_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_closed_after_recovery_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE closed_work_items
-        SET source_run_id = 'missing-runtime-failure-run'
-        WHERE action_id = 'execution.close_builder_runtime_failure_exhausted'
+        SET source_run_id = 'missing-counter-run'
+        WHERE action_id = 'admission.retry'
         """,
     )
 
@@ -2240,16 +2234,18 @@ def test_restart_refuses_lad_runtime_failure_closed_source_run_drift(
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_runtime_failure_closed_action_drift(
+def test_restart_refuses_generic_closed_action_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_lad_runtime_failure_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_closed_counter_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE closed_work_items
-        SET action_id = 'execution.close_consultant_blocked'
-        WHERE action_id = 'execution.close_builder_runtime_failure_exhausted'
+        SET action_id = 'admission.child.complete'
+        WHERE action_id = 'admission.retry'
         """,
     )
 
@@ -2260,16 +2256,18 @@ def test_restart_refuses_lad_runtime_failure_closed_action_drift(
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_runtime_failure_closed_existing_source_run_drift(
+def test_restart_refuses_generic_closed_existing_source_run_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_lad_runtime_failure_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_closed_after_recovery_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE closed_work_items
-        SET source_run_id = 'run-runtime-troubleshooter'
-        WHERE action_id = 'execution.close_builder_runtime_failure_exhausted'
+        SET source_run_id = 'run-generic-recovery'
+        WHERE action_id = 'admission.retry'
         """,
     )
 
@@ -2280,47 +2278,48 @@ def test_restart_refuses_lad_runtime_failure_closed_existing_source_run_drift(
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_runtime_failure_closed_observation_input_drift(
+def test_restart_refuses_generic_closed_observation_input_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_lad_runtime_failure_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_closed_after_recovery_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE closed_work_items
-        SET source_run_id = 'run-builder'
-        WHERE action_id = 'execution.close_builder_runtime_failure_exhausted'
+        SET source_run_id = 'run-generic-parent'
+        WHERE action_id = 'admission.retry'
         """,
     )
 
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "closed_work_items.created_by_input_id must match source runner "
-            "observation"
+            "closed_work_items.created_by_input_id must match source runner observation"
         ),
     ):
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_needs_planning_when_selected_plan_regains_old_action_kind(
+def test_restart_refuses_escalation_when_selected_plan_regains_old_action_kind(
     tmp_path: Path,
 ) -> None:
-    plan, fingerprint = compile_lad()
+    plan, fingerprint = generic_admission.compile_plan()
     action = next(
         item
         for item in plan.terminal_actions
-        if str(item.id) == "execution.close_consultant_needs_plan"
+        if str(item.id) == generic_admission.ESCALATION_ACTION_ID
     )
     assert action.action_kind == "close_with_escalation"
-    state = _lad_consultant_needs_planning_state(plan, fingerprint)
+    state = _generic_escalation_runtime_state()
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     assert load_runtime_state(db_path, cas_root) == state
 
     old_action_plan = _with_terminal_action_kind(
         plan,
-        "execution.close_consultant_needs_plan",
+        generic_admission.ESCALATION_ACTION_ID,
         "escalate_to_planning",
     )
     old_kind_fingerprint = authority_fingerprint(old_action_plan)
@@ -2350,15 +2349,15 @@ def test_restart_refuses_lad_needs_planning_when_selected_plan_regains_old_actio
 
 
 def test_restart_refuses_deferred_terminal_action_kind(tmp_path: Path) -> None:
-    plan, fingerprint = compile_lad()
-    state = _lad_admitted_only_state(plan, fingerprint)
+    plan, fingerprint = generic_admission.compile_plan()
+    state = _generic_admitted_only_state(plan, fingerprint)
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     load_runtime_state(db_path, cas_root)
 
     deferred_action_plan = _with_terminal_action_kind(
         plan,
-        "execution.close_consultant_needs_plan",
+        generic_admission.ESCALATION_ACTION_ID,
         "deferred_terminal_action",
     )
     deferred_fingerprint = authority_fingerprint(deferred_action_plan)
@@ -2390,22 +2389,22 @@ def test_restart_refuses_deferred_terminal_action_kind(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("field_name", "field_value"),
     (
-        ("target_stage_kind_id", "lad_consultant"),
-        ("target_graph_node_id", "execution.lad.consultant.start"),
-        ("emitted_queue_family_id", "stage_result"),
-        ("runner_binding_id", "execution.lad.local_runner"),
+        ("target_stage_kind_id", "admission.child"),
+        ("target_graph_node_id", "admission.child.start"),
+        ("emitted_queue_family_id", "child"),
+        ("runner_binding_id", "admission.runner"),
         ("payload_projection", {"kind": "source", "path": ("artifact_payload",)}),
         (
             "dynamic_target_selector",
             {
                 "kind": "observation_payload_route_target",
-                "field_names": ("target_stage",),
+                "field_names": ("target",),
                 "targets": {
-                    "builder": {
-                        "target_stage_kind_id": "lad_builder",
-                        "target_graph_node_id": "execution.lad.builder.start",
-                        "emitted_queue_family_id": "stage_result",
-                        "runner_binding_id": "execution.lad.local_runner",
+                    "child": {
+                        "target_stage_kind_id": "admission.child",
+                        "target_graph_node_id": "admission.child.start",
+                        "emitted_queue_family_id": "child",
+                        "runner_binding_id": "admission.runner",
                     },
                 },
             },
@@ -2417,15 +2416,15 @@ def test_restart_refuses_close_with_escalation_route_authority_drift(
     field_name: str,
     field_value: object,
 ) -> None:
-    plan, fingerprint = compile_lad()
-    state = _lad_admitted_only_state(plan, fingerprint)
+    plan, fingerprint = generic_admission.compile_plan()
+    state = _generic_admitted_only_state(plan, fingerprint)
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     load_runtime_state(db_path, cas_root)
 
     tampered_plan = _with_terminal_action_fields(
         plan,
-        "execution.close_consultant_needs_plan",
+        generic_admission.ESCALATION_ACTION_ID,
         **{field_name: field_value},
     )
     tampered_fingerprint = authority_fingerprint(tampered_plan)
@@ -2457,7 +2456,9 @@ def test_restart_refuses_close_with_escalation_route_authority_drift(
 def test_restart_refuses_cooldown_wait_policy_outside_selected_plan(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_cooldown_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_cooldown_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
@@ -2477,12 +2478,14 @@ def test_restart_refuses_cooldown_wait_policy_outside_selected_plan(
 def test_restart_refuses_cooldown_wait_action_outside_selected_policy(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_cooldown_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_cooldown_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE cooldown_waits
-        SET recovery_action_id = 'simple_loop.manager.packet_ready'
+        SET recovery_action_id = 'admission.recover_alternate'
         WHERE rowid = (SELECT rowid FROM cooldown_waits LIMIT 1)
         """,
     )
@@ -2497,16 +2500,18 @@ def test_restart_refuses_cooldown_wait_action_outside_selected_policy(
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_lad_threshold_cooldown_wait_action_drift(
+def test_restart_refuses_generic_threshold_cooldown_wait_action_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_lad_threshold_cooldown_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_cooldown_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE cooldown_waits
-        SET recovery_action_id = 'execution.route_builder_blocked'
-        WHERE policy_id = 'execution.blocked_recovery'
+        SET recovery_action_id = 'admission.recover_alternate'
+        WHERE policy_id = 'admission.recovery_policy'
         """,
     )
 
@@ -2523,7 +2528,9 @@ def test_restart_refuses_lad_threshold_cooldown_wait_action_drift(
 def test_restart_refuses_cooldown_wait_missing_attempt_reference(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_cooldown_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_cooldown_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
@@ -2544,7 +2551,9 @@ def test_restart_refuses_cooldown_wait_missing_attempt_reference(
 def test_restart_refuses_cooldown_wait_lineage_mismatch(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_cooldown_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_cooldown_runtime_state()
+    )
     _disable_checks_and_update_one(
         db_path,
         """
@@ -2564,7 +2573,9 @@ def test_restart_refuses_cooldown_wait_lineage_mismatch(
 def test_restart_refuses_cooldown_wait_plan_outside_selected_pins(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_cooldown_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_cooldown_runtime_state()
+    )
     corrupt_fingerprint = f"sha256:{'f' * 64}"
     _disable_checks_and_update_one(
         db_path,
@@ -2587,14 +2598,14 @@ def test_restart_refuses_cooldown_wait_plan_outside_selected_pins(
 def test_restart_refuses_consumed_cooldown_wait_wrong_existing_source_run(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = (
-        persist_simple_loop_consumed_cooldown_after_advancement_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_consumed_cooldown_runtime_state()
     )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE cooldown_waits
-        SET source_run_id = 'run-source-retry-3'
+        SET source_run_id = 'run-generic-recovery'
         WHERE rowid = (SELECT rowid FROM cooldown_waits LIMIT 1)
         """,
     )
@@ -2609,14 +2620,14 @@ def test_restart_refuses_consumed_cooldown_wait_wrong_existing_source_run(
 def test_restart_refuses_consumed_cooldown_wait_wrong_existing_source_activation(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = (
-        persist_simple_loop_consumed_cooldown_after_advancement_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_consumed_cooldown_runtime_state()
     )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE cooldown_waits
-        SET source_activation_id = 'activation-returned-manager-2'
+        SET source_activation_id = 'activation-generic-recovery'
         WHERE rowid = (SELECT rowid FROM cooldown_waits LIMIT 1)
         """,
     )
@@ -2631,14 +2642,14 @@ def test_restart_refuses_consumed_cooldown_wait_wrong_existing_source_activation
 def test_restart_refuses_consumed_cooldown_wait_wrong_consumed_input_id(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = (
-        persist_simple_loop_consumed_cooldown_after_advancement_runtime_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_consumed_cooldown_runtime_state()
     )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE cooldown_waits
-        SET consumed_input_id = 'observe-manager-blocked-3'
+        SET consumed_input_id = 'observe-generic-return'
         WHERE rowid = (SELECT rowid FROM cooldown_waits LIMIT 1)
         """,
     )
@@ -2944,8 +2955,8 @@ def test_restart_refuses_transition_created_at_drift(tmp_path: Path) -> None:
 
 
 def test_restart_refuses_operator_wait_with_corrupt_wait_id(tmp_path: Path) -> None:
-    db_path, cas_root, _state = persist_simple_loop_operator_wait_runtime_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_operator_wait_runtime_state()
     )
     with sqlite3.connect(db_path) as connection:
         connection.execute(
@@ -2962,8 +2973,8 @@ def test_restart_refuses_operator_wait_with_corrupt_wait_id(tmp_path: Path) -> N
 def test_restart_refuses_operator_wait_missing_required_source_artifact(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_operator_wait_runtime_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_operator_wait_runtime_state()
     )
     with sqlite3.connect(db_path) as connection:
         connection.execute("UPDATE operator_waits SET source_artifact_id = NULL")
@@ -2978,8 +2989,8 @@ def test_restart_refuses_operator_wait_missing_required_source_artifact(
 def test_restart_refuses_resolved_operator_wait_missing_resolution_audit(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_resolved_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resolved_operator_wait_state()
     )
     with sqlite3.connect(db_path) as connection:
         connection.execute("UPDATE operator_waits SET target_activation_id = NULL")
@@ -2994,8 +3005,8 @@ def test_restart_refuses_resolved_operator_wait_missing_resolution_audit(
 def test_restart_refuses_operator_wait_with_corrupt_created_input_digest(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_operator_wait_runtime_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_operator_wait_runtime_state()
     )
     with sqlite3.connect(db_path) as connection:
         connection.execute(
@@ -3012,8 +3023,8 @@ def test_restart_refuses_operator_wait_with_corrupt_created_input_digest(
 def test_restart_refuses_resolved_operator_wait_with_corrupt_resolved_digest(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_resolved_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resolved_operator_wait_state()
     )
     with sqlite3.connect(db_path) as connection:
         connection.execute(
@@ -3031,8 +3042,8 @@ def test_restart_refuses_resolved_operator_wait_with_corrupt_resolved_digest(
 def test_restart_refuses_resolved_operator_wait_with_corrupt_payload_digest(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_resolved_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resolved_operator_wait_state()
     )
     with sqlite3.connect(db_path) as connection:
         connection.execute(
@@ -3050,8 +3061,8 @@ def test_restart_refuses_resolved_operator_wait_with_corrupt_payload_digest(
 def test_restart_refuses_resolved_operator_wait_with_wrong_actor_kind(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_resolved_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resolved_operator_wait_state()
     )
     with sqlite3.connect(db_path) as connection:
         connection.execute("UPDATE operator_waits SET actor_kind = 'remote_operator'")
@@ -3066,8 +3077,8 @@ def test_restart_refuses_resolved_operator_wait_with_wrong_actor_kind(
 def test_restart_refuses_active_leave_open_operator_wait_with_closed_source(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_operator_wait_runtime_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_operator_wait_runtime_state()
     )
     with sqlite3.connect(db_path) as connection:
         wait_row = connection.execute(
@@ -3114,8 +3125,8 @@ def test_restart_refuses_active_leave_open_operator_wait_with_closed_source(
 def test_restart_refuses_active_close_on_create_operator_wait_with_open_source(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_incident_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_operator_wait_runtime_state(close_on_create=True)
     )
     with sqlite3.connect(db_path) as connection:
         connection.execute(
@@ -3136,11 +3147,11 @@ def test_restart_refuses_active_close_on_create_operator_wait_with_open_source(
     ("action_id", "expected_message"),
     (
         (
-            "simple_loop.manager.invalid_prompt",
+            "admission.retry",
             "closed_work_items.action_id must match source runner observation",
         ),
         (
-            "simple_loop.manager.packet_ready",
+            "admission.recover",
             "closed_work_items.action_id must reference selected close action",
         ),
     ),
@@ -3150,8 +3161,8 @@ def test_restart_refuses_active_close_on_create_operator_wait_close_action_drift
     action_id: str,
     expected_message: str,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_incident_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_operator_wait_runtime_state(close_on_create=True)
     )
     _disable_checks_and_update_one(
         db_path,
@@ -3170,14 +3181,14 @@ def test_restart_refuses_active_close_on_create_operator_wait_close_action_drift
 def test_restart_refuses_active_close_on_create_operator_wait_audit_action_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_incident_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_operator_wait_runtime_state(close_on_create=True)
     )
     _disable_checks_and_update_one(
         db_path,
         """
         UPDATE governance_events
-        SET action_id = 'simple_loop.manager.invalid_prompt'
+        SET action_id = 'admission.retry'
         WHERE input_id = (SELECT created_input_id FROM operator_waits)
         """,
     )
@@ -3185,17 +3196,14 @@ def test_restart_refuses_active_close_on_create_operator_wait_audit_action_drift
         db_path,
         """
         UPDATE traces
-        SET action_id = 'simple_loop.manager.invalid_prompt'
+        SET action_id = 'admission.retry'
         WHERE input_id = (SELECT created_input_id FROM operator_waits)
         """,
     )
 
     with pytest.raises(
         StorageIntegrityError,
-        match=(
-            "runner_observations accepted-input authority invalid: "
-            "audit_authority"
-        ),
+        match=("runner_observations accepted-input authority invalid: audit_authority"),
     ):
         load_runtime_state(db_path, cas_root)
 
@@ -3242,8 +3250,8 @@ def test_restart_refuses_incident_route_creator_input_drift(
 def test_restart_refuses_resumed_operator_wait_source_closed_by_wait_creation_run(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_resolved_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resolved_operator_wait_state()
     )
     with sqlite3.connect(db_path) as connection:
         wait_row = connection.execute(
@@ -3283,8 +3291,7 @@ def test_restart_refuses_resumed_operator_wait_source_closed_by_wait_creation_ru
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "operator_waits resume source close must originate "
-            "from resumed activation"
+            "operator_waits resume source close must originate from resumed activation"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -3293,8 +3300,8 @@ def test_restart_refuses_resumed_operator_wait_source_closed_by_wait_creation_ru
 def test_restart_refuses_resumed_operator_wait_source_close_arbitrary_input_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = (
-        persist_simple_loop_resumed_operator_wait_source_closed_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resumed_operator_wait_source_closed_state()
     )
     _disable_checks_and_update_one(
         db_path,
@@ -3308,8 +3315,7 @@ def test_restart_refuses_resumed_operator_wait_source_close_arbitrary_input_drif
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "closed_work_items.created_by_input_id must match source runner "
-            "observation"
+            "closed_work_items.created_by_input_id must match source runner observation"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -3318,8 +3324,8 @@ def test_restart_refuses_resumed_operator_wait_source_close_arbitrary_input_drif
 def test_restart_refuses_resumed_operator_wait_source_close_source_action_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = (
-        persist_simple_loop_resumed_operator_wait_source_closed_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resumed_operator_wait_source_closed_state()
     )
     with sqlite3.connect(db_path) as connection:
         cursor = connection.execute(
@@ -3334,8 +3340,7 @@ def test_restart_refuses_resumed_operator_wait_source_close_source_action_drift(
     with pytest.raises(
         StorageIntegrityError,
         match=(
-            "operator_waits resume source close action must not be "
-            "wait source action"
+            "operator_waits resume source close action must not be wait source action"
         ),
     ):
         load_runtime_state(db_path, cas_root)
@@ -3344,14 +3349,14 @@ def test_restart_refuses_resumed_operator_wait_source_close_source_action_drift(
 def test_restart_refuses_resumed_operator_wait_source_close_non_close_action_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = (
-        persist_simple_loop_resumed_operator_wait_source_closed_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resumed_operator_wait_source_closed_state()
     )
     with sqlite3.connect(db_path) as connection:
         cursor = connection.execute(
             """
             UPDATE closed_work_items
-            SET action_id = 'simple_loop.manager.packet_ready'
+                SET action_id = 'admission.recover'
             WHERE work_item_id = (SELECT source_work_item_id FROM operator_waits)
             """
         )
@@ -3372,8 +3377,8 @@ def test_restart_refuses_resumed_operator_wait_source_close_created_input_drift(
     tmp_path: Path,
     input_column: str,
 ) -> None:
-    db_path, cas_root, _state = (
-        persist_simple_loop_resumed_operator_wait_source_closed_state(tmp_path)
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resumed_operator_wait_source_closed_state()
     )
     with sqlite3.connect(db_path) as connection:
         cursor = connection.execute(
@@ -3398,8 +3403,8 @@ def test_restart_refuses_resumed_operator_wait_source_close_created_input_drift(
 def test_restart_refuses_resumed_operator_wait_target_work_item_drift(
     tmp_path: Path,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_resolved_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resolved_operator_wait_state()
     )
     with sqlite3.connect(db_path) as connection:
         wait_row = connection.execute(
@@ -3455,7 +3460,7 @@ def test_restart_refuses_resumed_operator_wait_target_work_item_drift(
     (
         (
             "queue_family_id",
-            "gap_packet",
+            "child",
             "operator_waits resume target queue family must match recorded source",
         ),
         (
@@ -3465,7 +3470,7 @@ def test_restart_refuses_resumed_operator_wait_target_work_item_drift(
         ),
         (
             "stage_kind_id",
-            "simple_loop.worker",
+            "admission.child",
             "operator_waits resume target stage kind must match recorded source",
         ),
         (
@@ -3481,8 +3486,8 @@ def test_restart_refuses_resumed_operator_wait_target_authority_drift(
     value: str,
     message: str,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_resolved_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_resolved_operator_wait_state()
     )
     with sqlite3.connect(db_path) as connection:
         wait_row = connection.execute(
@@ -3505,7 +3510,7 @@ def test_restart_refuses_resumed_operator_wait_target_authority_drift(
     (
         (
             "queue_family_id",
-            "gap_packet",
+            "child",
             "operator_waits revise target queue family must match "
             "selected operator_wait",
         ),
@@ -3516,7 +3521,7 @@ def test_restart_refuses_resumed_operator_wait_target_authority_drift(
         ),
         (
             "stage_kind_id",
-            "simple_loop.worker",
+            "admission.child",
             "operator_waits revise target stage kind must match selected operator_wait",
         ),
         (
@@ -3533,8 +3538,8 @@ def test_restart_refuses_revised_operator_wait_target_authority_drift(
     value: str,
     message: str,
 ) -> None:
-    db_path, cas_root, _state = persist_simple_loop_revised_operator_wait_state(
-        tmp_path
+    db_path, cas_root, _state = _persist_generic_state(
+        tmp_path, _generic_revised_operator_wait_state()
     )
     with sqlite3.connect(db_path) as connection:
         wait_row = connection.execute(
@@ -3905,347 +3910,182 @@ def _extra_admitted_plan_ref(
     return plan_ref, replace(admitted_plan, plan_ref=plan_ref)
 
 
-def simple_loop_recovery_runtime_state() -> RuntimeState:
-    plan, fingerprint = compile_simple_loop()
-    state = bootstrap_to_manager_claim(plan, fingerprint)
-    return apply(
-        state,
-        decide(
-            state,
-            runner_observation(
-                state=state,
-                plan=plan,
-                fingerprint=fingerprint,
-                run_id="run-manager",
-                action_id="simple_loop.manager.blocked",
-                input_id="observe-manager-blocked",
-                artifact_payload={},
+def _apply_accepted_input(
+    state: RuntimeState,
+    transition_input: object,
+    context: object,
+) -> RuntimeState:
+    decision = decide(state, transition_input, context)
+    assert decision.accepted is True
+    return apply(state, decision)
+
+
+def _generic_parent_claimed_state() -> tuple[RuntimeState, SelectedCompiledPlan, str]:
+    plan, fingerprint = generic_admission.compile_plan()
+    state = empty_runtime_state()
+    transitions = (
+        (
+            InitializeWorkspace("generic-init"),
+            deterministic_context(transition_id="transition-generic-init"),
+        ),
+        (
+            AdmitPlan(
+                "generic-admit",
+                selected_plan=plan,
+                authority_fingerprint=fingerprint,
             ),
-            simple_loop_context("observe-manager-blocked"),
+            deterministic_context(transition_id="transition-generic-admit"),
+        ),
+        (
+            SelectDefaultPlan("generic-select", authority_fingerprint=fingerprint),
+            deterministic_context(transition_id="transition-generic-select"),
+        ),
+        (
+            EnqueueWork(
+                "generic-enqueue",
+                queue_family_id=QueueFamilyId("parent"),
+                payload=generic_fanout.packet_payload(),
+            ),
+            deterministic_context(
+                transition_id="transition-generic-enqueue",
+                work_item_id="work-generic-parent",
+                activation_id="activation-generic-parent",
+            ),
+        ),
+        (
+            ClaimWork("generic-claim", activation_id="activation-generic-parent"),
+            deterministic_context(
+                transition_id="transition-generic-claim",
+                run_id="run-generic-parent",
+                claim_id="claim-generic-parent",
+                fencing_token="fence-generic-parent",
+            ),
         ),
     )
+    for transition_input, context in transitions:
+        state = _apply_accepted_input(state, transition_input, context)
+    return state, plan, fingerprint
 
 
-def simple_loop_cooldown_runtime_state() -> RuntimeState:
-    plan, fingerprint = compile_simple_loop()
-    return bootstrap_to_manager_cooldown_wait(
-        plan,
-        fingerprint,
-        observed_at=1000,
-    )
-
-
-def simple_loop_consumed_cooldown_after_advancement_runtime_state() -> RuntimeState:
-    plan, fingerprint = compile_simple_loop()
-    waiting = bootstrap_to_manager_cooldown_wait(
-        plan,
-        fingerprint,
-        observed_at=1000,
-    )
-    wait = next(iter(waiting.cooldown_waits.values()))
-    resumed = apply_accepted_input(
-        waiting,
-        TimerDue("timer-cooldown-due", wait_id=wait.wait_id, observed_at=1900),
-        deterministic_context(
-            transition_id="transition-timer-cooldown-due",
-            activation_id="activation-troubleshooter-manager-resumed",
-        ),
-    )
-    claimed = apply_accepted_input(
-        resumed,
-        ClaimWork(
-            "claim-troubleshooter-manager-resumed",
-            activation_id="activation-troubleshooter-manager-resumed",
-        ),
-        deterministic_context(
-            transition_id="transition-claim-troubleshooter-manager-resumed",
-            run_id="run-troubleshooter-manager-resumed",
-            claim_id="claim-troubleshooter-manager-resumed",
-            fencing_token="fence-troubleshooter-manager-resumed",
-        ),
-    )
-    returned = apply_accepted_input(
-        claimed,
-        runner_observation(
-            state=claimed,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id="run-troubleshooter-manager-resumed",
-            action_id="simple_loop.troubleshooter.resolved",
-            input_id="observe-troubleshooter-resolved-after-cooldown",
-            artifact_payload=troubleshooting_report_payload(),
-        ),
-        deterministic_context(
-            transition_id="transition-observe-troubleshooter-resolved-after-cooldown",
-            activation_id="activation-returned-manager-2",
-        ),
-    )
-    third_source = apply_accepted_input(
-        returned,
-        ClaimWork(
-            "claim-returned-manager-2",
-            activation_id="activation-returned-manager-2",
-        ),
-        deterministic_context(
-            transition_id="transition-claim-returned-manager-2",
-            run_id="run-source-retry-3",
-            claim_id="claim-source-retry-3",
-            fencing_token="fence-source-retry-3",
-        ),
-    )
-    return apply_accepted_input(
-        third_source,
-        runner_observation(
-            state=third_source,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id="run-source-retry-3",
-            action_id="simple_loop.manager.blocked",
-            input_id="observe-manager-blocked-3",
-            artifact_payload={},
-        ),
-        deterministic_context(
-            transition_id="transition-observe-manager-blocked-3",
-            activation_id="activation-troubleshooter-manager-3",
-        ),
-    )
-
-
-def simple_loop_operator_wait_runtime_state() -> RuntimeState:
-    plan, fingerprint = compile_simple_loop()
-    state = bootstrap_to_manager_claim(plan, fingerprint)
-    return apply_accepted_input(
-        state,
-        runner_observation(
-            state=state,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id="run-manager",
-            action_id="simple_loop.manager.needs_operator_detail",
-            input_id="observe-manager-detail",
-            artifact_payload=detail_request_payload(),
-        ),
-        simple_loop_context("observe-manager-detail"),
-    )
-
-
-def simple_loop_resolved_operator_wait_state() -> RuntimeState:
-    waiting = simple_loop_operator_wait_runtime_state()
-    wait = next(iter(waiting.operator_waits.values()))
-    return apply_accepted_input(
-        waiting,
-        OperatorResumeWait(
-            "operator-resume-wait",
-            selected_plan_ref=wait.selected_plan_ref,
-            wait_id=wait.wait_id,
-            lineage_id=wait.lineage_id,
-            actor_id="local-operator-tim",
-            actor_kind="local_operator",
-            payload={},
-        ),
-        deterministic_context(
-            transition_id="transition-operator-resume-wait",
-            activation_id="activation-manager-resumed",
-        ),
-    )
-
-
-def simple_loop_resumed_operator_wait_source_closed_state() -> RuntimeState:
-    plan, fingerprint = compile_simple_loop()
-    resumed = simple_loop_resolved_operator_wait_state()
-    wait = next(iter(resumed.operator_waits.values()))
-    assert wait.target_activation_id is not None
-    claimed = apply_accepted_input(
-        resumed,
-        ClaimWork(
-            "claim-manager-resumed-before-close",
-            activation_id=wait.target_activation_id,
-        ),
-        deterministic_context(
-            transition_id="transition-claim-manager-resumed-before-close",
-            run_id="run-manager-resumed-before-close",
-            claim_id="claim-manager-resumed-before-close",
-            fencing_token="fence-manager-resumed-before-close",
-        ),
-    )
-    closed = apply_accepted_input(
-        claimed,
-        runner_observation(
-            state=claimed,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id="run-manager-resumed-before-close",
-            action_id="simple_loop.manager.invalid_prompt",
-            input_id="observe-manager-invalid-prompt-after-resume",
-            artifact_payload={},
-        ),
-        deterministic_context(
-            transition_id="transition-observe-manager-invalid-prompt-after-resume",
-        ),
-    )
-    assert wait.source_work_item_id in closed.closed_work_items
-    return closed
-
-
-def simple_loop_revised_operator_wait_state() -> RuntimeState:
-    waiting = simple_loop_operator_wait_runtime_state()
-    wait = next(iter(waiting.operator_waits.values()))
-    return apply_accepted_input(
-        waiting,
-        OperatorReviseWait(
-            "operator-revise-wait",
-            selected_plan_ref=wait.selected_plan_ref,
-            wait_id=wait.wait_id,
-            lineage_id=wait.lineage_id,
-            actor_id="local-operator-tim",
-            actor_kind="local_operator",
-            payload=work_prompt_payload()
-            | {"body": "Operator supplied the missing detail."},
-        ),
-        deterministic_context(
-            transition_id="transition-operator-revise-wait",
-            work_item_id="work-operator-revised-prompt",
-            activation_id="activation-operator-revised-manager",
-        ),
-    )
-
-
-def simple_loop_incident_operator_wait_state() -> RuntimeState:
-    plan, fingerprint = compile_simple_loop()
-    ready = _manager_incident_ready_after_counter_threshold(plan, fingerprint)
-    claimed = apply_accepted_input(
-        ready,
-        ClaimWork(
-            "claim-manager-incident",
-            activation_id="activation-manager-incident",
-        ),
-        simple_loop_context("claim-manager-incident"),
-    )
-    return apply_accepted_input(
-        claimed,
-        runner_observation(
-            state=claimed,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id="run-manager-incident",
-            action_id="simple_loop.manager.incident_triaged",
-            input_id="observe-manager-incident-triaged",
-            artifact_payload=incident_report_payload(),
-        ),
-        simple_loop_context("observe-manager-incident-triaged"),
-    )
-
-
-def _manager_incident_ready_after_counter_threshold(
+def _apply_generic_observation(
+    state: RuntimeState,
     plan: SelectedCompiledPlan,
     fingerprint: str,
+    *,
+    run_id: str,
+    action_id: str,
+    input_id: str,
+    context: object,
+    observed_at: int | None = None,
 ) -> RuntimeState:
-    state = bootstrap_to_reviewer_claim(plan, fingerprint)
-    reviewer_run_id = "run-reviewer"
-    for attempt in range(1, 4):
-        worker_work_id = f"work-worker-gap-{attempt}"
-        worker_activation_id = f"activation-worker-gap-{attempt}"
-        state = apply_accepted_input(
-            state,
-            runner_observation(
-                state=state,
-                plan=plan,
-                fingerprint=fingerprint,
-                run_id=reviewer_run_id,
-                action_id="simple_loop.reviewer.gaps_found",
-                input_id=f"observe-reviewer-gaps-found-{attempt}",
-                artifact_payload=gap_packet_payload(),
-            ),
-            deterministic_context(
-                transition_id=f"transition-observe-reviewer-gaps-found-{attempt}",
-                work_item_id=worker_work_id,
-                activation_id=worker_activation_id,
-            ),
-        )
-        worker_run_id = f"run-worker-gap-{attempt}"
-        state = apply_accepted_input(
-            state,
-            ClaimWork(
-                f"claim-worker-gap-{attempt}",
-                activation_id=worker_activation_id,
-            ),
-            deterministic_context(
-                transition_id=f"transition-claim-worker-gap-{attempt}",
-                run_id=worker_run_id,
-                claim_id=f"claim-worker-gap-{attempt}",
-                fencing_token=f"fence-worker-gap-{attempt}",
-            ),
-        )
-        reviewer_work_id = f"work-reviewer-after-gap-{attempt}"
-        reviewer_activation_id = f"activation-reviewer-after-gap-{attempt}"
-        state = apply_accepted_input(
-            state,
-            runner_observation(
-                state=state,
-                plan=plan,
-                fingerprint=fingerprint,
-                run_id=worker_run_id,
-                action_id="simple_loop.worker.work_done",
-                input_id=f"observe-gap-worker-done-{attempt}",
-                artifact_payload=work_result_payload()
-                | {"summary": f"Corrected gaps for attempt {attempt}."},
-            ),
-            deterministic_context(
-                transition_id=f"transition-observe-gap-worker-done-{attempt}",
-                work_item_id=reviewer_work_id,
-                activation_id=reviewer_activation_id,
-            ),
-        )
-        reviewer_run_id = f"run-reviewer-after-gap-{attempt}"
-        state = apply_accepted_input(
-            state,
-            ClaimWork(
-                f"claim-reviewer-after-gap-{attempt}",
-                activation_id=reviewer_activation_id,
-            ),
-            deterministic_context(
-                transition_id=f"transition-claim-reviewer-after-gap-{attempt}",
-                run_id=reviewer_run_id,
-                claim_id=f"claim-reviewer-after-gap-{attempt}",
-                fencing_token=f"fence-reviewer-after-gap-{attempt}",
-            ),
-        )
-    return apply_accepted_input(
+    action = next(item for item in plan.terminal_actions if str(item.id) == action_id)
+    marker = next(
+        outcome.marker
+        for outcome in plan.terminal_outcomes
+        if outcome.id == action.outcome_id
+    )
+    run = state.runs[run_id]
+    activation = state.activations[run.activation_id]
+    return _apply_accepted_input(
         state,
-        runner_observation(
-            state=state,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id=reviewer_run_id,
-            action_id="simple_loop.reviewer.incident_required",
-            input_id="observe-reviewer-incident-required",
-            artifact_payload=incident_report_payload(),
-            marker="INCIDENT_REQUIRED",
+        RunnerResultObserved(
+            input_id,
+            run_id=run_id,
+            payload=fake_runner_observation_payload(
+                run=run,
+                activation=activation,
+                plan_fingerprint=fingerprint,
+                marker=marker,
+                artifact_payload=generic_fanout.packet_payload(),
+            ),
+            observed_at=observed_at,
         ),
-        simple_loop_context("observe-reviewer-incident-required"),
+        context,
     )
 
 
-def persist_simple_loop_recovery_runtime_state(
+def _generic_recovery_runtime_state() -> RuntimeState:
+    state, plan, fingerprint = _generic_parent_claimed_state()
+    return _apply_generic_observation(
+        state,
+        plan,
+        fingerprint,
+        run_id="run-generic-parent",
+        action_id=generic_admission.RECOVERY_SOURCE_ACTION_ID,
+        input_id="observe-generic-recovery",
+        context=deterministic_context(
+            transition_id="transition-observe-generic-recovery",
+            activation_id="activation-generic-recovery",
+        ),
+    )
+
+
+def _persist_generic_recovery_runtime_state(
     tmp_path: Path,
 ) -> tuple[Path, Path, RuntimeState]:
-    state = simple_loop_recovery_runtime_state()
+    state = _generic_recovery_runtime_state()
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     return db_path, cas_root, state
 
 
-def persist_lad_runtime_failure_runtime_state(
-    tmp_path: Path,
-) -> tuple[Path, Path, RuntimeState]:
-    plan, fingerprint = compile_lad()
-    state = runtime_failure_exhausted_state(plan, fingerprint)
-    db_path, cas_root = runtime_store_paths(tmp_path)
-    persist_runtime_state(db_path, cas_root, state)
-    return db_path, cas_root, state
+def _generic_closed_counter_runtime_state() -> RuntimeState:
+    state, plan, fingerprint = _generic_parent_claimed_state()
+    closed = _apply_generic_observation(
+        state,
+        plan,
+        fingerprint,
+        run_id="run-generic-parent",
+        action_id=generic_admission.COUNTER_INCREMENT_ACTION_ID,
+        input_id="observe-generic-counter-close",
+        context=deterministic_context(
+            transition_id="transition-observe-generic-counter-close"
+        ),
+    )
+    enqueued = _apply_accepted_input(
+        closed,
+        EnqueueWork(
+            "enqueue-generic-auxiliary",
+            queue_family_id=QueueFamilyId("child"),
+            payload={"child_id": "auxiliary", "body": "Auxiliary work"},
+        ),
+        deterministic_context(
+            transition_id="transition-enqueue-generic-auxiliary",
+            work_item_id="work-generic-auxiliary",
+            activation_id="activation-generic-auxiliary",
+        ),
+    )
+    return _apply_accepted_input(
+        enqueued,
+        ClaimWork(
+            "claim-generic-auxiliary",
+            activation_id="activation-generic-auxiliary",
+        ),
+        deterministic_context(
+            transition_id="transition-claim-generic-auxiliary",
+            run_id="run-generic-auxiliary",
+            claim_id="claim-generic-auxiliary",
+            fencing_token="fence-generic-auxiliary",
+        ),
+    )
 
 
-def _lad_admitted_only_state(
+def _generic_escalation_runtime_state() -> RuntimeState:
+    state, plan, fingerprint = _generic_parent_claimed_state()
+    return _apply_generic_observation(
+        state,
+        plan,
+        fingerprint,
+        run_id="run-generic-parent",
+        action_id=generic_admission.ESCALATION_ACTION_ID,
+        input_id="observe-generic-escalation",
+        context=deterministic_context(
+            transition_id="transition-observe-generic-escalation"
+        ),
+    )
+
+
+def _generic_admitted_only_state(
     plan: SelectedCompiledPlan,
     fingerprint: str,
 ) -> RuntimeState:
@@ -4258,217 +4098,1437 @@ def _lad_admitted_only_state(
     )
 
 
-def _lad_consultant_needs_planning_state(
-    plan: SelectedCompiledPlan,
-    fingerprint: str,
+def _generic_returned_parent_claimed_state() -> tuple[
+    RuntimeState, SelectedCompiledPlan, str
+]:
+    first = _generic_recovery_runtime_state()
+    plan = next(iter(first.admitted_plans.values())).selected_plan
+    fingerprint = next(iter(first.admitted_plans))
+    recovery_activation_id = next(
+        activation.activation_id
+        for activation in first.activations.values()
+        if str(activation.stage_kind_id) == generic_admission.RECOVERY_STAGE_ID
+    )
+    claimed_recovery = _apply_accepted_input(
+        first,
+        ClaimWork("claim-generic-recovery", activation_id=recovery_activation_id),
+        deterministic_context(
+            transition_id="transition-claim-generic-recovery",
+            run_id="run-generic-recovery",
+            claim_id="claim-generic-recovery",
+            fencing_token="fence-generic-recovery",
+        ),
+    )
+    returned = _apply_generic_observation(
+        claimed_recovery,
+        plan,
+        fingerprint,
+        run_id="run-generic-recovery",
+        action_id=generic_admission.RECOVERY_RETURN_ACTION_ID,
+        input_id="observe-generic-return",
+        context=deterministic_context(
+            transition_id="transition-observe-generic-return",
+            activation_id="activation-generic-returned-parent",
+        ),
+    )
+    claimed_parent = _apply_accepted_input(
+        returned,
+        ClaimWork(
+            "claim-generic-returned-parent",
+            activation_id="activation-generic-returned-parent",
+        ),
+        deterministic_context(
+            transition_id="transition-claim-generic-returned-parent",
+            run_id="run-generic-returned-parent",
+            claim_id="claim-generic-returned-parent",
+            fencing_token="fence-generic-returned-parent",
+        ),
+    )
+    return claimed_parent, plan, fingerprint
+
+
+def _generic_cooldown_runtime_state() -> RuntimeState:
+    claimed_parent, plan, fingerprint = _generic_returned_parent_claimed_state()
+    return _apply_generic_observation(
+        claimed_parent,
+        plan,
+        fingerprint,
+        run_id="run-generic-returned-parent",
+        action_id=generic_admission.RECOVERY_SOURCE_ACTION_ID,
+        input_id="observe-generic-recovery-second",
+        observed_at=1000,
+        context=deterministic_context(
+            transition_id="transition-observe-generic-recovery-second"
+        ),
+    )
+
+
+def _generic_closed_after_recovery_runtime_state() -> RuntimeState:
+    claimed_parent, plan, fingerprint = _generic_returned_parent_claimed_state()
+    return _apply_generic_observation(
+        claimed_parent,
+        plan,
+        fingerprint,
+        run_id="run-generic-returned-parent",
+        action_id=generic_admission.COUNTER_INCREMENT_ACTION_ID,
+        input_id="observe-generic-counter-after-recovery",
+        context=deterministic_context(
+            transition_id="transition-observe-generic-counter-after-recovery"
+        ),
+    )
+
+
+def _generic_consumed_cooldown_runtime_state() -> RuntimeState:
+    waiting = _generic_cooldown_runtime_state()
+    wait = next(iter(waiting.cooldown_waits.values()))
+    return _apply_accepted_input(
+        waiting,
+        TimerDue("generic-cooldown-due", wait_id=wait.wait_id, observed_at=1900),
+        deterministic_context(
+            transition_id="transition-generic-cooldown-due",
+            activation_id="activation-generic-recovery-resumed",
+        ),
+    )
+
+
+def _generic_operator_wait_runtime_state(
+    *, close_on_create: bool = False
 ) -> RuntimeState:
-    state = bootstrap_builder_claim(plan, fingerprint)
-    state, _builder_blocked = apply_runner_observation(
-        state,
-        plan=plan,
-        fingerprint=fingerprint,
-        run_id="run-builder",
-        action_id="execution.route_builder_blocked",
-        input_id="observe-builder-blocked",
-        target_work_item_id="work-troubleshooter",
-        target_activation_id="activation-troubleshooter",
+    state, plan, fingerprint = _generic_parent_claimed_state()
+    action_id = (
+        generic_admission.CLOSE_WAIT_ACTION_ID
+        if close_on_create
+        else generic_admission.REVISE_ACTION_ID
     )
-    state = claim_activation(
+    return _apply_generic_observation(
         state,
-        activation_id="activation-troubleshooter",
-        run_id="run-troubleshooter",
-        input_id="claim-troubleshooter",
+        plan,
+        fingerprint,
+        run_id="run-generic-parent",
+        action_id=action_id,
+        input_id="observe-generic-operator-wait",
+        context=deterministic_context(
+            transition_id="transition-observe-generic-operator-wait"
+        ),
     )
-    state, _troubleshooter_blocked = apply_runner_observation(
-        state,
-        plan=plan,
-        fingerprint=fingerprint,
-        run_id="run-troubleshooter",
-        action_id="execution.route_troubleshooter_blocked",
-        input_id="observe-troubleshooter-blocked",
-        target_work_item_id="work-consultant",
-        target_activation_id="activation-consultant",
-    )
-    state = claim_activation(
-        state,
-        activation_id="activation-consultant",
-        run_id="run-consultant",
-        input_id="claim-consultant",
-    )
-    state, _needs_planning = apply_runner_observation(
-        state,
-        plan=plan,
-        fingerprint=fingerprint,
-        run_id="run-consultant",
-        action_id="execution.close_consultant_needs_plan",
-        input_id="observe-consultant-needs-plan",
-        schema_id=INCIDENT_REPORT_SCHEMA_ID,
-    )
-    return state
 
 
-def lad_threshold_recovery_runtime_state() -> RuntimeState:
-    plan, fingerprint = compile_lad()
-    state = bootstrap_builder_claim(plan, fingerprint)
-    state, _first_block = apply_runner_observation(
-        state,
-        plan=plan,
-        fingerprint=fingerprint,
-        run_id="run-builder",
-        action_id="execution.route_builder_blocked",
-        input_id="observe-builder-blocked",
-        target_activation_id="activation-troubleshooter",
+def _generic_resolved_operator_wait_state() -> RuntimeState:
+    waiting = _generic_operator_wait_runtime_state()
+    wait = next(iter(waiting.operator_waits.values()))
+    return _apply_accepted_input(
+        waiting,
+        OperatorResumeWait(
+            "generic-resume-wait",
+            selected_plan_ref=wait.selected_plan_ref,
+            wait_id=wait.wait_id,
+            lineage_id=wait.lineage_id,
+            actor_id="local-operator",
+            actor_kind="local_operator",
+            payload={},
+        ),
+        deterministic_context(
+            transition_id="transition-generic-resume-wait",
+            activation_id="activation-generic-resumed-parent",
+        ),
     )
-    state = claim_activation(
-        state,
-        activation_id="activation-troubleshooter",
-        run_id="run-troubleshooter",
-        input_id="claim-troubleshooter",
-    )
-    state, _return = apply_runner_observation(
-        state,
-        plan=plan,
-        fingerprint=fingerprint,
-        run_id="run-troubleshooter",
-        action_id="execution.return_troubleshooter_complete",
-        input_id="observe-troubleshooter-complete",
-        schema_id=REPORT_SCHEMA_ID,
-        target_activation_id="activation-builder-resume",
-    )
-    state = claim_activation(
-        state,
-        activation_id="activation-builder-resume",
-        run_id="run-builder-resume",
-        input_id="claim-builder-resume",
-    )
-    state, _threshold = apply_runner_observation(
-        state,
-        plan=plan,
-        fingerprint=fingerprint,
-        run_id="run-builder-resume",
-        action_id="execution.route_builder_blocked",
-        input_id="observe-builder-blocked-threshold",
-        target_activation_id="activation-consultant",
-    )
-    return state
 
 
-def lad_threshold_cooldown_runtime_state() -> RuntimeState:
-    plan, fingerprint = compile_lad()
-    state = lad_threshold_recovery_runtime_state()
-    state = claim_activation(
-        state,
-        activation_id="activation-consultant",
-        run_id="run-consultant",
-        input_id="claim-consultant",
+def _generic_resumed_operator_wait_source_closed_state() -> RuntimeState:
+    resumed = _generic_resolved_operator_wait_state()
+    plan = next(iter(resumed.admitted_plans.values())).selected_plan
+    fingerprint = next(iter(resumed.admitted_plans))
+    claimed = _apply_accepted_input(
+        resumed,
+        ClaimWork(
+            "claim-generic-resumed-parent",
+            activation_id="activation-generic-resumed-parent",
+        ),
+        deterministic_context(
+            transition_id="transition-claim-generic-resumed-parent",
+            run_id="run-generic-resumed-parent",
+            claim_id="claim-generic-resumed-parent",
+            fencing_token="fence-generic-resumed-parent",
+        ),
     )
-    state, _consultant_return = apply_runner_observation(
-        state,
-        plan=plan,
-        fingerprint=fingerprint,
-        run_id="run-consultant",
-        action_id="execution.return_consultant_recovered",
-        input_id="observe-consultant-recovered",
-        schema_id=REPORT_SCHEMA_ID,
-        target_activation_id="activation-builder-after-consultant",
+    return _apply_generic_observation(
+        claimed,
+        plan,
+        fingerprint,
+        run_id="run-generic-resumed-parent",
+        action_id=generic_admission.COUNTER_INCREMENT_ACTION_ID,
+        input_id="observe-generic-resumed-close",
+        context=deterministic_context(
+            transition_id="transition-observe-generic-resumed-close"
+        ),
     )
-    state = claim_activation(
-        state,
-        activation_id="activation-builder-after-consultant",
-        run_id="run-builder-after-consultant",
-        input_id="claim-builder-after-consultant",
-    )
-    state, _cooldown = apply_runner_observation(
-        state,
-        plan=plan,
-        fingerprint=fingerprint,
-        run_id="run-builder-after-consultant",
-        action_id="execution.route_builder_blocked",
-        input_id="observe-builder-blocked-cooldown",
-        observed_at=2000,
-    )
-    return state
 
 
-def persist_lad_threshold_recovery_runtime_state(
+def _generic_revised_operator_wait_state() -> RuntimeState:
+    waiting = _generic_operator_wait_runtime_state()
+    wait = next(iter(waiting.operator_waits.values()))
+    return _apply_accepted_input(
+        waiting,
+        OperatorReviseWait(
+            "generic-revise-wait",
+            selected_plan_ref=wait.selected_plan_ref,
+            wait_id=wait.wait_id,
+            lineage_id=wait.lineage_id,
+            actor_id="local-operator",
+            actor_kind="local_operator",
+            payload=generic_fanout.packet_payload(item_ids=("revised",)),
+        ),
+        deterministic_context(
+            transition_id="transition-generic-revise-wait",
+            work_item_id="work-generic-revised-parent",
+            activation_id="activation-generic-revised-parent",
+        ),
+    )
+
+
+def _persist_generic_state(
     tmp_path: Path,
+    state: RuntimeState,
 ) -> tuple[Path, Path, RuntimeState]:
-    state = lad_threshold_recovery_runtime_state()
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     return db_path, cas_root, state
 
 
-def persist_lad_threshold_cooldown_runtime_state(
+def persist_dispatch_suspended_runtime_state(
     tmp_path: Path,
 ) -> tuple[Path, Path, RuntimeState]:
-    state = lad_threshold_cooldown_runtime_state()
+    state = taskmaster_runtime_state()
+    assert state.default_plan_ref is not None
+    transition_input = SuspendDispatch(
+        "suspend-for-corruption",
+        plan_fingerprint=state.default_plan_ref.authority_fingerprint,
+        actor_id="operator-a",
+        reason="corruption proof",
+    )
+    state = apply(
+        state,
+        decide(
+            state,
+            transition_input,
+            deterministic_context(transition_id="transition-suspend-for-corruption"),
+        ),
+    )
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     return db_path, cas_root, state
 
 
-def persist_simple_loop_cooldown_runtime_state(
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    (
+        ("schema_version", 2, "dispatch_suspension.schema_version is unsupported"),
+        (
+            "plan_authority_fingerprint",
+            f"sha256:{'0' * 64}",
+            "dispatch_suspension.plan_authority_fingerprint",
+        ),
+        (
+            "suspension_id",
+            "dispatch-suspension:corrupted",
+            "dispatch_suspension.suspension_id must match suspended input",
+        ),
+        (
+            "suspended_by_input_id",
+            "corrupted-suspend-input",
+            "dispatch_suspension.suspension_id must match suspended input",
+        ),
+        (
+            "dispatch_generation",
+            0,
+            "active dispatch_suspension dispatch generation is stale",
+        ),
+        ("generation", 99, "dispatch_suspension"),
+        ("actor_id", "corrupted-actor", "dispatch_suspension"),
+        ("reason", "corrupted reason", "dispatch_suspension"),
+    ),
+)
+def test_corrupt_dispatch_suspension_row_refuses_without_mutation(
+    tmp_path: Path,
+    column: str,
+    value: object,
+    message: str,
+) -> None:
+    db_path, cas_root, state = persist_dispatch_suspended_runtime_state(tmp_path)
+    assert state.dispatch_suspension is not None
+    assert state.dispatch_suspension.dispatch_generation > 0
+    _disable_checks_and_update_one(
+        db_path,
+        f"UPDATE dispatch_suspension SET {column} = ? WHERE id = 1",
+        (value,),
+    )
+    before = _durable_bytes(tmp_path)
+
+    with pytest.raises(StorageIntegrityError, match=message):
+        load_runtime_state(db_path, cas_root)
+
+    assert _durable_bytes(tmp_path) == before
+
+
+def persist_queue_closure_runtime_state(
     tmp_path: Path,
 ) -> tuple[Path, Path, RuntimeState]:
-    state = simple_loop_cooldown_runtime_state()
+    plan, fingerprint = kernel_ping_support.compile_kernel_ping()
+    state = empty_runtime_state()
+    for transition_input in (
+        InitializeWorkspace("queue-close-init"),
+        AdmitPlan(
+            "queue-close-admit",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        SelectDefaultPlan(
+            "queue-close-select",
+            authority_fingerprint=fingerprint,
+        ),
+        EnqueueWork(
+            "queue-close-enqueue",
+            queue_family_id=QueueFamilyId("prompt"),
+            payload={"prompt_id": "queue-close", "body": "close safely"},
+        ),
+    ):
+        state = apply(
+            state,
+            decide(
+                state,
+                transition_input,
+                deterministic_context(
+                    transition_id=f"transition-{transition_input.input_id}",
+                    work_item_id="queue-close-work",
+                    activation_id="queue-close-activation",
+                ),
+            ),
+        )
+    state = apply(
+        state,
+        decide(
+            state,
+            CancelQueuedWork(
+                "queue-close-input",
+                work_item_id="queue-close-work",
+                plan_fingerprint=fingerprint,
+                actor_id="queue-operator",
+                reason="corruption proof",
+            ),
+            deterministic_context(transition_id="transition-queue-close-input"),
+        ),
+    )
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
     return db_path, cas_root, state
 
 
-def persist_simple_loop_consumed_cooldown_after_advancement_runtime_state(
+@pytest.mark.parametrize(
+    ("statement", "parameters", "message"),
+    (
+        (
+            "UPDATE queue_closures SET schema_version = ?",
+            (2,),
+            "queue_closures.schema_version is unsupported",
+        ),
+        (
+            "UPDATE queue_closures SET plan_authority_fingerprint = ?",
+            (f"sha256:{'0' * 64}",),
+            "queue_closures.plan_authority_fingerprint",
+        ),
+        (
+            "UPDATE queue_closures SET target_kind = ?",
+            ("lineage",),
+            "queue_closures.created_by_input_id",
+        ),
+        (
+            "UPDATE queue_closures SET target_id = ?",
+            ("different-work",),
+            "work-item queue closure target must match closed work",
+        ),
+        (
+            "UPDATE queue_closures SET actor_id = ?",
+            ("corrupted-actor",),
+            "queue_closures input payload digest",
+        ),
+        (
+            "UPDATE queue_closures SET reason = ?",
+            ("corrupted reason",),
+            "queue_closures input payload digest",
+        ),
+        (
+            "UPDATE queue_closures SET created_by_input_id = ?",
+            ("other-queue-input",),
+            "queue_closures must match accepted queue closure transitions",
+        ),
+        (
+            "UPDATE queue_closures SET closed_work_item_ids_json = ?",
+            ('["different-work"]',),
+            "work-item queue closure target must match closed work",
+        ),
+        (
+            "UPDATE queue_closures SET closed_activation_ids_json = ?",
+            ("[]",),
+            "queue_closures activation or run membership",
+        ),
+        (
+            "UPDATE queue_closures SET closed_run_ids_json = ?",
+            ('["different-run"]',),
+            "queue_closures activation or run membership",
+        ),
+        (
+            "UPDATE closed_work_items SET source_run_id = ?",
+            ("different-run",),
+            "queue-cancelled work cannot have runner",
+        ),
+        (
+            "UPDATE closed_work_items SET action_id = ?",
+            ("different-action",),
+            "queue-cancelled work cannot have runner",
+        ),
+        (
+            "UPDATE closed_work_items SET operator_intervention_record_id = ?",
+            ("different-intervention",),
+            "queue-cancelled work cannot have runner",
+        ),
+    ),
+)
+def test_corrupt_queue_closure_row_refuses_without_mutation(
     tmp_path: Path,
-) -> tuple[Path, Path, RuntimeState]:
-    state = simple_loop_consumed_cooldown_after_advancement_runtime_state()
+    statement: str,
+    parameters: tuple[object, ...],
+    message: str,
+) -> None:
+    db_path, cas_root, _state = persist_queue_closure_runtime_state(tmp_path)
+    _disable_checks_and_update_one(db_path, statement, parameters)
+    before = _durable_bytes(tmp_path)
+
+    with pytest.raises(StorageIntegrityError, match=message):
+        load_runtime_state(db_path, cas_root)
+
+    assert _durable_bytes(tmp_path) == before
+
+
+def _dispatch_suspension_lifecycle_state() -> tuple[RuntimeState, RuntimeState]:
+    state = taskmaster_runtime_state()
+    assert state.default_plan_ref is not None
+    fingerprint = state.default_plan_ref.authority_fingerprint
+    first_suspended = apply(
+        state,
+        decide(
+            state,
+            SuspendDispatch(
+                "suspend-lifecycle-one",
+                plan_fingerprint=fingerprint,
+                actor_id="operator-one",
+                reason="first maintenance window",
+            ),
+            deterministic_context(transition_id="transition-suspend-lifecycle-one"),
+        ),
+    )
+    first_resumed = apply(
+        first_suspended,
+        decide(
+            first_suspended,
+            ResumeDispatch(
+                "resume-lifecycle-one",
+                plan_fingerprint=fingerprint,
+                suspension_id=first_suspended.dispatch_suspension.suspension_id,
+                actor_id="operator-one",
+                reason="first maintenance complete",
+            ),
+            deterministic_context(transition_id="transition-resume-lifecycle-one"),
+        ),
+    )
+    second_suspended = apply(
+        first_resumed,
+        decide(
+            first_resumed,
+            SuspendDispatch(
+                "suspend-lifecycle-two",
+                plan_fingerprint=fingerprint,
+                actor_id="operator-two",
+                reason="second maintenance window",
+            ),
+            deterministic_context(transition_id="transition-suspend-lifecycle-two"),
+        ),
+    )
+    second_resumed = apply(
+        second_suspended,
+        decide(
+            second_suspended,
+            ResumeDispatch(
+                "resume-lifecycle-two",
+                plan_fingerprint=fingerprint,
+                suspension_id=second_suspended.dispatch_suspension.suspension_id,
+                actor_id="operator-two",
+                reason="second maintenance complete",
+            ),
+            deterministic_context(transition_id="transition-resume-lifecycle-two"),
+        ),
+    )
+    return first_resumed, second_resumed
+
+
+def test_restart_refuses_dispatch_suspension_lifecycle_rollback_without_mutation(
+    tmp_path: Path,
+) -> None:
+    first_resumed, latest_resumed = _dispatch_suspension_lifecycle_state()
+    first = first_resumed.dispatch_suspension
+    latest = latest_resumed.dispatch_suspension
+    assert first is not None
+    assert latest is not None
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, latest_resumed)
+    _disable_checks_and_update_one(
+        db_path,
+        """
+        UPDATE dispatch_suspension
+        SET suspension_id = ?, generation = ?, dispatch_generation = ?,
+            actor_id = ?, reason = ?, suspended_by_input_id = ?,
+            resumed_by_input_id = ?, resume_actor_id = ?, resume_reason = ?
+        WHERE id = 1
+        """,
+        (
+            first.suspension_id,
+            first.generation,
+            first.dispatch_generation,
+            first.actor_id,
+            first.reason,
+            first.suspended_by_input_id,
+            first.resumed_by_input_id,
+            first.resume_actor_id,
+            first.resume_reason,
+        ),
+    )
+    before = _durable_bytes(tmp_path)
+
+    with pytest.raises(StorageIntegrityError, match="dispatch_suspension"):
+        load_runtime_state(db_path, cas_root)
+
+    assert _durable_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    (
+        ("resume_actor_id", "corrupted-resume-actor"),
+        ("resume_reason", "corrupted resume reason"),
+        ("resumed_by_input_id", "resume-lifecycle-one"),
+    ),
+)
+def test_restart_refuses_dispatch_suspension_resume_metadata_drift_without_mutation(
+    tmp_path: Path,
+    column: str,
+    value: object,
+) -> None:
+    _first_resumed, latest_resumed = _dispatch_suspension_lifecycle_state()
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, latest_resumed)
+    _disable_checks_and_update_one(
+        db_path,
+        f"UPDATE dispatch_suspension SET {column} = ? WHERE id = 1",
+        (value,),
+    )
+    before = _durable_bytes(tmp_path)
+
+    with pytest.raises(StorageIntegrityError, match="dispatch_suspension"):
+        load_runtime_state(db_path, cas_root)
+
+    assert _durable_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "column",
+    ("resumed_by_input_id", "resume_actor_id", "resume_reason"),
+)
+def test_restart_refuses_incomplete_resumed_dispatch_metadata_without_mutation(
+    tmp_path: Path,
+    column: str,
+) -> None:
+    _first_resumed, latest_resumed = _dispatch_suspension_lifecycle_state()
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, latest_resumed)
+    _disable_checks_and_update_one(
+        db_path,
+        f"UPDATE dispatch_suspension SET {column} = NULL WHERE id = 1",
+    )
+    before = _durable_bytes(tmp_path)
+
+    with pytest.raises(StorageIntegrityError, match="dispatch_suspension"):
+        load_runtime_state(db_path, cas_root)
+
+    assert _durable_bytes(tmp_path) == before
+
+
+def test_restart_refuses_resumed_dispatch_generation_from_later_claim(
+    tmp_path: Path,
+) -> None:
+    _first_resumed, state = _dispatch_suspension_lifecycle_state()
+    assert state.default_plan_ref is not None
+    state = apply(
+        state,
+        decide(
+            state,
+            EnqueueWork(
+                "enqueue-after-resume",
+                queue_family_id=QueueFamilyId("prompt"),
+                payload={"body": "claim after resumed dispatch"},
+            ),
+            deterministic_context(
+                transition_id="transition-enqueue-after-resume",
+                work_item_id="work-after-resume",
+                activation_id="activation-after-resume",
+            ),
+        ),
+    )
+    state = apply(
+        state,
+        decide(
+            state,
+            ClaimWork(
+                "claim-after-resume",
+                activation_id="activation-after-resume",
+            ),
+            deterministic_context(
+                transition_id="transition-claim-after-resume",
+                run_id="run-after-resume",
+                claim_id="claim-after-resume",
+                fencing_token="fence-after-resume",
+            ),
+        ),
+    )
+    assert state.dispatch_suspension is not None
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
-    return db_path, cas_root, state
+    _disable_checks_and_update_one(
+        db_path,
+        "UPDATE dispatch_suspension SET dispatch_generation = ? WHERE id = 1",
+        (len(state.runs),),
+    )
+    before = _durable_bytes(tmp_path)
+
+    with pytest.raises(StorageIntegrityError, match="dispatch_suspension"):
+        load_runtime_state(db_path, cas_root)
+
+    assert _durable_bytes(tmp_path) == before
 
 
-def persist_simple_loop_operator_wait_runtime_state(
+def _persist_intrinsic_daemon_budget_records(
     tmp_path: Path,
-) -> tuple[Path, Path, RuntimeState]:
-    state = simple_loop_operator_wait_runtime_state()
+) -> tuple[Path, Path, str, str]:
+    state = worker_runtime_state()
+    assert state.default_plan_ref is not None
+    session = next(iter(state.runner_sessions.values()))
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
-    return db_path, cas_root, state
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        epoch = DaemonBudgetEpochRecord(
+            budget_id="budget-intrinsic-records",
+            workspace_path=str(tmp_path),
+            selected_plan_ref=state.default_plan_ref,
+            max_wall_seconds=10,
+            max_invocations=5,
+            max_total_tokens=100,
+            started_at=10,
+            wall_deadline=20,
+            last_observed_at=10,
+        )
+        store.create_or_resume_daemon_budget_epoch(epoch)
+        store.reserve_budgeted_runner_start(epoch.budget_id, session)
+        store.record_budgeted_runner_start(epoch.budget_id, session)
+        store.record_runner_session_usage(
+            RunnerSessionUsageRecord(
+                budget_id=epoch.budget_id,
+                session_id=session.session_id,
+                run_id=session.run_id,
+                dispatch_generation=session.dispatch_generation,
+                session_fencing_token=session.session_fencing_token,
+                input_tokens=1,
+                output_tokens=2,
+                total_tokens=3,
+                observed_at=10,
+                final=False,
+            )
+        )
+    finally:
+        store.close()
+    return db_path, cas_root, epoch.budget_id, session.session_id
 
 
-def persist_simple_loop_resolved_operator_wait_state(
+@pytest.mark.parametrize(
+    ("changes", "match"),
+    (
+        ({"budget_id": ""}, "budget_id must be non-blank"),
+        (
+            {"workspace_path": "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1)},
+            "workspace_path must be at most",
+        ),
+        (
+            {
+                "max_wall_seconds": None,
+                "max_invocations": None,
+                "max_total_tokens": None,
+            },
+            "requires at least one limit",
+        ),
+        ({"max_wall_seconds": True}, "max_wall_seconds must be"),
+        ({"max_wall_seconds": 0}, "max_wall_seconds must be"),
+        ({"max_wall_seconds": -1}, "max_wall_seconds must be"),
+        (
+            {"max_wall_seconds": DURABLE_INT64_MAX + 1},
+            "max_wall_seconds must be",
+        ),
+        ({"max_invocations": True}, "max_invocations must be"),
+        ({"max_invocations": 0}, "max_invocations must be"),
+        ({"max_invocations": -1}, "max_invocations must be"),
+        (
+            {"max_invocations": DURABLE_INT64_MAX + 1},
+            "max_invocations must be",
+        ),
+        ({"max_total_tokens": True}, "max_total_tokens must be"),
+        ({"max_total_tokens": 0}, "max_total_tokens must be"),
+        ({"max_total_tokens": -1}, "max_total_tokens must be"),
+        (
+            {"max_total_tokens": DURABLE_INT64_MAX + 1},
+            "max_total_tokens must be",
+        ),
+        ({"started_at": True}, "started_at must be"),
+        ({"started_at": -1}, "started_at must be"),
+        ({"started_at": DURABLE_INT64_MAX + 1}, "started_at must be"),
+        ({"last_observed_at": True}, "last_observed_at must be"),
+        ({"last_observed_at": -1}, "last_observed_at must be"),
+        (
+            {"last_observed_at": DURABLE_INT64_MAX + 1},
+            "last_observed_at must be",
+        ),
+        (
+            {"last_observed_at": 9},
+            "last_observed_at cannot precede started_at",
+        ),
+        ({"wall_deadline": 21}, "wall_deadline must equal"),
+        ({"accepted_start_count": True}, "accepted_start_count must be"),
+        ({"accepted_start_count": -1}, "accepted_start_count must be"),
+        (
+            {"accepted_start_count": DURABLE_INT64_MAX + 1},
+            "accepted_start_count must be",
+        ),
+        ({"cumulative_input_tokens": True}, "cumulative_input_tokens must be"),
+        ({"cumulative_input_tokens": -1}, "cumulative_input_tokens must be"),
+        (
+            {"cumulative_input_tokens": DURABLE_INT64_MAX + 1},
+            "cumulative_input_tokens must be",
+        ),
+        ({"cumulative_output_tokens": True}, "cumulative_output_tokens must be"),
+        ({"cumulative_output_tokens": -1}, "cumulative_output_tokens must be"),
+        (
+            {"cumulative_output_tokens": DURABLE_INT64_MAX + 1},
+            "cumulative_output_tokens must be",
+        ),
+        ({"cumulative_total_tokens": True}, "cumulative_total_tokens must be"),
+        ({"cumulative_total_tokens": -1}, "cumulative_total_tokens must be"),
+        (
+            {"cumulative_total_tokens": DURABLE_INT64_MAX + 1},
+            "cumulative_total_tokens must be",
+        ),
+        ({"cumulative_total_tokens": 1}, "token counters are contradictory"),
+        ({"status": "unknown"}, "unsupported daemon budget status"),
+        (
+            {"status": "stopped", "terminal_reason": None},
+            "requires terminal_reason",
+        ),
+        (
+            {
+                "status": "stopped",
+                "terminal_reason": "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1),
+            },
+            "terminal_reason must be at most",
+        ),
+    ),
+)
+def test_daemon_budget_epoch_constructor_refuses_intrinsic_field_boundaries(
+    changes: dict[str, object],
+    match: str,
+) -> None:
+    state = worker_runtime_state()
+    assert state.default_plan_ref is not None
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-constructor",
+        workspace_path="/workspace",
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=10,
+        max_invocations=1,
+        max_total_tokens=10,
+        started_at=10,
+        wall_deadline=20,
+        last_observed_at=10,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        replace(epoch, **changes)
+
+
+@pytest.mark.parametrize(
+    ("changes", "match"),
+    (
+        ({"budget_id": ""}, "budget_id must be non-blank"),
+        (
+            {"session_id": "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1)},
+            "session_id must be at most",
+        ),
+        ({"run_id": ""}, "run_id must be non-blank"),
+        (
+            {"session_fencing_token": ("x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1))},
+            "session_fencing_token must be at most",
+        ),
+        ({"dispatch_generation": True}, "dispatch_generation is outside"),
+        ({"dispatch_generation": 0}, "dispatch_generation is outside"),
+        ({"dispatch_generation": -1}, "dispatch_generation is outside"),
+        (
+            {"dispatch_generation": DURABLE_INT64_MAX + 1},
+            "dispatch_generation is outside",
+        ),
+        ({"input_tokens": True}, "input_tokens is outside"),
+        ({"input_tokens": -1}, "input_tokens is outside"),
+        ({"input_tokens": DURABLE_INT64_MAX + 1}, "input_tokens is outside"),
+        ({"output_tokens": True}, "output_tokens is outside"),
+        ({"output_tokens": -1}, "output_tokens is outside"),
+        ({"output_tokens": DURABLE_INT64_MAX + 1}, "output_tokens is outside"),
+        ({"total_tokens": True}, "total_tokens is outside"),
+        ({"total_tokens": -1}, "total_tokens is outside"),
+        ({"total_tokens": DURABLE_INT64_MAX + 1}, "total_tokens is outside"),
+        ({"observed_at": True}, "observed_at is outside"),
+        ({"observed_at": -1}, "observed_at is outside"),
+        ({"observed_at": DURABLE_INT64_MAX + 1}, "observed_at is outside"),
+        ({"total_tokens": 4}, "token counters are contradictory"),
+        ({"final": 1}, "final must be a boolean"),
+    ),
+)
+def test_runner_session_usage_constructor_refuses_intrinsic_field_boundaries(
+    changes: dict[str, object],
+    match: str,
+) -> None:
+    usage = RunnerSessionUsageRecord(
+        budget_id="budget-constructor",
+        session_id="session-constructor",
+        run_id="run-constructor",
+        dispatch_generation=1,
+        session_fencing_token="fence-constructor",
+        input_tokens=1,
+        output_tokens=2,
+        total_tokens=3,
+        observed_at=10,
+        final=False,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        replace(usage, **changes)
+
+
+@pytest.mark.parametrize(
+    ("statement", "parameters"),
+    (
+        ("UPDATE daemon_budget_epochs SET schema_version = ?", (2,)),
+        (
+            "UPDATE daemon_budget_epochs SET workspace_path = ?",
+            ("x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1),),
+        ),
+        (
+            "UPDATE daemon_budget_epochs SET max_wall_seconds = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET max_wall_seconds = ?", (0,)),
+        ("UPDATE daemon_budget_epochs SET max_wall_seconds = ?", (-1,)),
+        (
+            "UPDATE daemon_budget_epochs SET max_wall_seconds = ?",
+            (float(2**63),),
+        ),
+        (
+            "UPDATE daemon_budget_epochs SET max_invocations = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET max_invocations = ?", (0,)),
+        ("UPDATE daemon_budget_epochs SET max_invocations = ?", (-1,)),
+        (
+            "UPDATE daemon_budget_epochs SET max_invocations = ?",
+            (float(2**63),),
+        ),
+        (
+            "UPDATE daemon_budget_epochs SET max_total_tokens = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET max_total_tokens = ?", (0,)),
+        ("UPDATE daemon_budget_epochs SET max_total_tokens = ?", (-1,)),
+        (
+            "UPDATE daemon_budget_epochs SET max_total_tokens = ?",
+            (float(2**63),),
+        ),
+        (
+            "UPDATE daemon_budget_epochs SET started_at = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET started_at = ?", (-1,)),
+        ("UPDATE daemon_budget_epochs SET started_at = ?", (float(2**63),)),
+        (
+            "UPDATE daemon_budget_epochs SET wall_deadline = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET wall_deadline = ?", (-1,)),
+        ("UPDATE daemon_budget_epochs SET wall_deadline = ?", (float(2**63),)),
+        ("UPDATE daemon_budget_epochs SET wall_deadline = ?", (21,)),
+        (
+            "UPDATE daemon_budget_epochs SET last_observed_at = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET last_observed_at = ?", (9,)),
+        (
+            "UPDATE daemon_budget_epochs SET last_observed_at = ?",
+            (float(2**63),),
+        ),
+        (
+            "UPDATE daemon_budget_epochs SET accepted_start_count = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET accepted_start_count = ?", (-1,)),
+        (
+            "UPDATE daemon_budget_epochs SET accepted_start_count = ?",
+            (float(2**63),),
+        ),
+        (
+            "UPDATE daemon_budget_epochs SET cumulative_input_tokens = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET cumulative_input_tokens = ?", (-1,)),
+        (
+            "UPDATE daemon_budget_epochs SET cumulative_input_tokens = ?",
+            (float(2**63),),
+        ),
+        (
+            "UPDATE daemon_budget_epochs SET cumulative_output_tokens = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET cumulative_output_tokens = ?", (-1,)),
+        (
+            "UPDATE daemon_budget_epochs SET cumulative_output_tokens = ?",
+            (float(2**63),),
+        ),
+        (
+            "UPDATE daemon_budget_epochs SET cumulative_total_tokens = ?",
+            (sqlite3.Binary(b"not-an-integer"),),
+        ),
+        ("UPDATE daemon_budget_epochs SET cumulative_total_tokens = ?", (-1,)),
+        (
+            "UPDATE daemon_budget_epochs SET cumulative_total_tokens = ?",
+            (float(2**63),),
+        ),
+        ("UPDATE daemon_budget_epochs SET cumulative_total_tokens = ?", (4,)),
+        ("UPDATE daemon_budget_epochs SET status = ?", ("unknown",)),
+        (
+            """
+            UPDATE daemon_budget_epochs
+            SET status = 'stopped', terminal_reason = ?
+            """,
+            ("x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1),),
+        ),
+    ),
+)
+def test_raw_daemon_budget_epoch_intrinsic_corruption_refuses_without_mutation(
     tmp_path: Path,
-) -> tuple[Path, Path, RuntimeState]:
-    state = simple_loop_resolved_operator_wait_state()
+    statement: str,
+    parameters: tuple[object, ...],
+) -> None:
+    db_path, _cas_root, budget_id, _session_id = (
+        _persist_intrinsic_daemon_budget_records(tmp_path)
+    )
+    _disable_checks_and_update_one(db_path, statement, parameters)
+    before = _durable_bytes(tmp_path)
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(
+            ValueError,
+            match=(
+                "daemon budget epoch schema version is unsupported"
+                "|invalid daemon budget epoch row"
+            ),
+        ):
+            store.load_daemon_budget_epoch(budget_id)
+    finally:
+        store.close()
+
+    assert _durable_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    (
+        ("schema_version", 2),
+        ("budget_id", sqlite3.Binary(b"not-text")),
+        ("budget_id", "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1)),
+        ("run_id", sqlite3.Binary(b"not-text")),
+        ("run_id", "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1)),
+        ("dispatch_generation", sqlite3.Binary(b"not-an-integer")),
+        ("dispatch_generation", 0),
+        ("dispatch_generation", -1),
+        ("dispatch_generation", float(2**63)),
+        ("session_fencing_token", sqlite3.Binary(b"not-text")),
+        (
+            "session_fencing_token",
+            "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1),
+        ),
+        ("accepted_at", sqlite3.Binary(b"not-an-integer")),
+        ("accepted_at", -1),
+        ("accepted_at", float(2**63)),
+    ),
+)
+def test_raw_daemon_budget_binding_intrinsic_corruption_refuses_without_mutation(
+    tmp_path: Path,
+    column: str,
+    value: object,
+) -> None:
+    db_path, _cas_root, _budget_id, session_id = (
+        _persist_intrinsic_daemon_budget_records(tmp_path)
+    )
+    _disable_checks_and_update_one(
+        db_path,
+        f"UPDATE daemon_budget_sessions SET {column} = ?",
+        (value,),
+    )
+    before = _durable_bytes(tmp_path)
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(ValueError, match="invalid daemon budget session binding"):
+            store.daemon_budget_id_for_session(session_id)
+    finally:
+        store.close()
+
+    assert _durable_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "mirror_binding"),
+    (
+        ("schema_version", 2, False),
+        ("budget_id", sqlite3.Binary(b"not-text"), True),
+        (
+            "budget_id",
+            "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1),
+            True,
+        ),
+        ("run_id", sqlite3.Binary(b"not-text"), True),
+        ("run_id", "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1), True),
+        ("dispatch_generation", sqlite3.Binary(b"not-an-integer"), True),
+        ("dispatch_generation", 0, True),
+        ("dispatch_generation", -1, True),
+        ("dispatch_generation", float(2**63), True),
+        ("session_fencing_token", sqlite3.Binary(b"not-text"), True),
+        (
+            "session_fencing_token",
+            "x" * (RUNNER_SESSION_TEXT_MAX_BYTES + 1),
+            True,
+        ),
+        ("input_tokens", sqlite3.Binary(b"not-an-integer"), False),
+        ("input_tokens", -1, False),
+        ("input_tokens", float(2**63), False),
+        ("output_tokens", sqlite3.Binary(b"not-an-integer"), False),
+        ("output_tokens", -1, False),
+        ("output_tokens", float(2**63), False),
+        ("total_tokens", sqlite3.Binary(b"not-an-integer"), False),
+        ("total_tokens", -1, False),
+        ("total_tokens", float(2**63), False),
+        ("total_tokens", 4, False),
+        ("observed_at", sqlite3.Binary(b"not-an-integer"), False),
+        ("observed_at", -1, False),
+        ("observed_at", float(2**63), False),
+        ("final", sqlite3.Binary(b"not-an-integer"), False),
+        ("final", 2, False),
+    ),
+)
+def test_raw_runner_usage_intrinsic_corruption_refuses_without_mutation(
+    tmp_path: Path,
+    column: str,
+    value: object,
+    mirror_binding: bool,
+) -> None:
+    db_path, _cas_root, _budget_id, session_id = (
+        _persist_intrinsic_daemon_budget_records(tmp_path)
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        cursor = connection.execute(
+            f"UPDATE runner_session_usage SET {column} = ?",
+            (value,),
+        )
+        assert cursor.rowcount == 1
+        if mirror_binding:
+            cursor = connection.execute(
+                f"UPDATE daemon_budget_sessions SET {column} = ?",
+                (value,),
+            )
+            assert cursor.rowcount == 1
+    before = _durable_bytes(tmp_path)
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(
+            ValueError,
+            match=(
+                "runner session usage schema version is unsupported"
+                "|invalid runner session usage row"
+            ),
+        ):
+            store.load_runner_session_usage(session_id)
+    finally:
+        store.close()
+
+    assert _durable_bytes(tmp_path) == before
+
+
+def test_raw_daemon_budget_usage_sum_overflow_refuses_without_mutation(
+    tmp_path: Path,
+) -> None:
+    db_path, _cas_root, budget_id, _session_id = (
+        _persist_intrinsic_daemon_budget_records(tmp_path)
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            """
+            INSERT INTO runner_session_usage (
+                session_id, schema_version, budget_id, run_id,
+                dispatch_generation, session_fencing_token,
+                input_tokens, output_tokens, total_tokens, observed_at, final
+            ) VALUES (?, 1, ?, ?, 1, ?, ?, 0, ?, 10, 1)
+            """,
+            (
+                "corrupt-extra-session",
+                budget_id,
+                "corrupt-extra-run",
+                "corrupt-extra-fence",
+                DURABLE_INT64_MAX,
+                DURABLE_INT64_MAX,
+            ),
+        )
+    before = _durable_bytes(tmp_path)
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(
+            ValueError,
+            match="invalid daemon budget aggregate authority",
+        ):
+            store.load_daemon_budget_epoch(budget_id)
+    finally:
+        store.close()
+
+    assert _durable_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("table_name", "column", "missing_value"),
+    (
+        pytest.param(
+            "daemon_budget_epochs",
+            "plan_authority_fingerprint",
+            "sha256:" + ("0" * 64),
+            id="epoch-missing-selected-plan",
+        ),
+        pytest.param(
+            "daemon_budget_sessions",
+            "budget_id",
+            "missing-budget",
+            id="binding-missing-epoch",
+        ),
+        pytest.param(
+            "daemon_budget_sessions",
+            "session_id",
+            "missing-session",
+            id="binding-missing-runner-session",
+        ),
+        pytest.param(
+            "daemon_budget_sessions",
+            "run_id",
+            "missing-run",
+            id="binding-missing-run",
+        ),
+        pytest.param(
+            "runner_session_usage",
+            "budget_id",
+            "missing-budget",
+            id="usage-missing-epoch",
+        ),
+        pytest.param(
+            "runner_session_usage",
+            "session_id",
+            "missing-session",
+            id="usage-missing-runner-session",
+        ),
+        pytest.param(
+            "runner_session_usage",
+            "run_id",
+            "missing-run",
+            id="usage-missing-run",
+        ),
+    ),
+)
+def test_daemon_budget_missing_relationship_is_deferred_and_rolls_back(
+    tmp_path: Path,
+    table_name: str,
+    column: str,
+    missing_value: str,
+) -> None:
+    db_path, _cas_root, _budget_id, _session_id = (
+        _persist_intrinsic_daemon_budget_records(tmp_path)
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        before = _daemon_budget_relationship_rows(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("PRAGMA defer_foreign_keys = ON")
+        cursor = connection.execute(
+            f"UPDATE {table_name} SET {column} = ?",
+            (missing_value,),
+        )
+        assert cursor.rowcount == 1
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint"):
+            connection.execute("COMMIT")
+        assert connection.in_transaction is True
+        connection.execute("ROLLBACK")
+        assert _daemon_budget_relationship_rows(connection) == before
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "missing_run",
+        "missing_runner_session",
+        "missing_epoch",
+        "mismatched_selected_plan",
+        "mismatched_run",
+        "mismatched_dispatch_generation",
+        "mismatched_fencing_token",
+        "mismatched_accepted_timestamp",
+    ),
+)
+def test_raw_daemon_budget_binding_relationship_refuses_without_mutation(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    db_path, _cas_root, budget_id, session_id = (
+        _persist_intrinsic_daemon_budget_records(tmp_path)
+    )
+    lookup_session_id = session_id
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        if case == "missing_run":
+            connection.execute(
+                "UPDATE daemon_budget_sessions SET run_id = 'missing-run'"
+            )
+        elif case == "missing_runner_session":
+            lookup_session_id = "missing-session"
+            connection.execute(
+                "UPDATE daemon_budget_sessions SET session_id = ?",
+                (lookup_session_id,),
+            )
+        elif case == "missing_epoch":
+            connection.execute(
+                "UPDATE daemon_budget_sessions SET budget_id = 'missing-budget'"
+            )
+        elif case == "mismatched_selected_plan":
+            connection.execute("UPDATE daemon_budget_epochs SET plan_id = 'wrong-plan'")
+        elif case == "mismatched_run":
+            (run_id,) = connection.execute(
+                """
+                SELECT run_id
+                FROM runs
+                WHERE run_id != (
+                    SELECT run_id FROM daemon_budget_sessions LIMIT 1
+                )
+                ORDER BY run_id
+                LIMIT 1
+                """
+            ).fetchone()
+            connection.execute(
+                "UPDATE daemon_budget_sessions SET run_id = ?",
+                (run_id,),
+            )
+        elif case == "mismatched_dispatch_generation":
+            connection.execute(
+                """
+                UPDATE daemon_budget_sessions
+                SET dispatch_generation = dispatch_generation + 1
+                """
+            )
+        elif case == "mismatched_fencing_token":
+            connection.execute(
+                """
+                UPDATE daemon_budget_sessions
+                SET session_fencing_token = 'wrong-fence'
+                """
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE daemon_budget_sessions
+                SET accepted_at = 2
+                """
+            )
+    before = _durable_bytes(tmp_path)
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(
+            ValueError,
+            match=(
+                "daemon budget epoch is missing"
+                "|daemon budget plan pin is invalid"
+                "|runner_session_budget_identity_mismatch"
+            ),
+        ):
+            store.daemon_budget_id_for_session(lookup_session_id)
+    finally:
+        store.close()
+
+    assert _durable_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "missing_run",
+        "missing_runner_session",
+        "missing_epoch",
+        "mismatched_selected_plan",
+        "mismatched_run",
+        "mismatched_dispatch_generation",
+        "mismatched_fencing_token",
+    ),
+)
+def test_raw_runner_usage_relationship_refuses_without_mutation(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    db_path, _cas_root, _budget_id, session_id = (
+        _persist_intrinsic_daemon_budget_records(tmp_path)
+    )
+    lookup_session_id = session_id
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        if case == "missing_run":
+            for table_name in ("daemon_budget_sessions", "runner_session_usage"):
+                connection.execute(f"UPDATE {table_name} SET run_id = 'missing-run'")
+        elif case == "missing_runner_session":
+            lookup_session_id = "missing-session"
+            for table_name in ("daemon_budget_sessions", "runner_session_usage"):
+                connection.execute(
+                    f"UPDATE {table_name} SET session_id = ?",
+                    (lookup_session_id,),
+                )
+        elif case == "missing_epoch":
+            for table_name in ("daemon_budget_sessions", "runner_session_usage"):
+                connection.execute(
+                    f"UPDATE {table_name} SET budget_id = 'missing-budget'"
+                )
+        elif case == "mismatched_selected_plan":
+            connection.execute("UPDATE daemon_budget_epochs SET plan_id = 'wrong-plan'")
+        elif case == "mismatched_run":
+            (run_id,) = connection.execute(
+                """
+                SELECT run_id
+                FROM runs
+                WHERE run_id != (
+                    SELECT run_id FROM daemon_budget_sessions LIMIT 1
+                )
+                ORDER BY run_id
+                LIMIT 1
+                """
+            ).fetchone()
+            for table_name in ("daemon_budget_sessions", "runner_session_usage"):
+                connection.execute(
+                    f"UPDATE {table_name} SET run_id = ?",
+                    (run_id,),
+                )
+        elif case == "mismatched_dispatch_generation":
+            for table_name in ("daemon_budget_sessions", "runner_session_usage"):
+                connection.execute(
+                    f"""
+                    UPDATE {table_name}
+                    SET dispatch_generation = dispatch_generation + 1
+                    """
+                )
+        else:
+            for table_name in ("daemon_budget_sessions", "runner_session_usage"):
+                connection.execute(
+                    f"""
+                    UPDATE {table_name}
+                    SET session_fencing_token = 'wrong-fence'
+                    """
+                )
+    before = _durable_bytes(tmp_path)
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(ValueError, match="runner_usage_evidence_refused"):
+            store.load_runner_session_usage(lookup_session_id)
+    finally:
+        store.close()
+
+    assert _durable_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "case",
+    ("mismatched_run", "mismatched_dispatch_generation", "mismatched_fencing_token"),
+)
+def test_budget_binding_transaction_refuses_wrong_session_authority(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    state = worker_runtime_state()
+    assert state.default_plan_ref is not None
+    session = next(iter(state.runner_sessions.values()))
     db_path, cas_root = runtime_store_paths(tmp_path)
     persist_runtime_state(db_path, cas_root, state)
-    return db_path, cas_root, state
+    store = SQLiteRuntimeStore.open(db_path)
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-binding-transaction",
+        workspace_path=str(tmp_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=2,
+        max_total_tokens=None,
+        started_at=10,
+        wall_deadline=None,
+        last_observed_at=10,
+    )
+    store.create_or_resume_daemon_budget_epoch(epoch)
+    if case == "mismatched_run":
+        (run_id,) = store._connection.execute(
+            """
+            SELECT run_id
+            FROM runs
+            WHERE run_id != ?
+            ORDER BY run_id
+            LIMIT 1
+            """,
+            (session.run_id,),
+        ).fetchone()
+        candidate = replace(session, run_id=run_id)
+    elif case == "mismatched_dispatch_generation":
+        candidate = replace(
+            session,
+            dispatch_generation=session.dispatch_generation + 1,
+        )
+    else:
+        candidate = replace(session, session_fencing_token="wrong-fence")
+    before = _durable_bytes(tmp_path)
+    try:
+        with pytest.raises(
+            ValueError,
+            match="runner_session_budget_identity_mismatch",
+        ):
+            store.reserve_budgeted_runner_start(epoch.budget_id, candidate)
+    finally:
+        store.close()
 
-
-def persist_simple_loop_resumed_operator_wait_source_closed_state(
-    tmp_path: Path,
-) -> tuple[Path, Path, RuntimeState]:
-    state = simple_loop_resumed_operator_wait_source_closed_state()
-    db_path, cas_root = runtime_store_paths(tmp_path)
-    persist_runtime_state(db_path, cas_root, state)
-    return db_path, cas_root, state
-
-
-def persist_simple_loop_revised_operator_wait_state(
-    tmp_path: Path,
-) -> tuple[Path, Path, RuntimeState]:
-    state = simple_loop_revised_operator_wait_state()
-    db_path, cas_root = runtime_store_paths(tmp_path)
-    persist_runtime_state(db_path, cas_root, state)
-    return db_path, cas_root, state
-
-
-def persist_simple_loop_incident_operator_wait_state(
-    tmp_path: Path,
-) -> tuple[Path, Path, RuntimeState]:
-    state = simple_loop_incident_operator_wait_state()
-    db_path, cas_root = runtime_store_paths(tmp_path)
-    persist_runtime_state(db_path, cas_root, state)
-    return db_path, cas_root, state
+    assert _durable_bytes(tmp_path) == before
 
 
 def _disable_checks_and_update_one(
@@ -4492,3 +5552,521 @@ def _disable_checks_and_execute(
         connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute("PRAGMA ignore_check_constraints = ON")
         connection.execute(statement, parameters)
+
+
+def _daemon_budget_relationship_rows(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[object, ...], ...]:
+    rows: list[tuple[object, ...]] = []
+    for table_name in (
+        "admitted_plan_pins",
+        "runs",
+        "runner_sessions",
+        "daemon_budget_epochs",
+        "daemon_budget_sessions",
+        "runner_session_usage",
+    ):
+        rows.extend(
+            (table_name, *row)
+            for row in connection.execute(
+                f"SELECT * FROM {table_name} ORDER BY 1"
+            ).fetchall()
+        )
+    return tuple(rows)
+
+
+def _generic_claimed_recovery_state() -> RuntimeState:
+    state = _generic_recovery_runtime_state()
+    activation = next(
+        item
+        for item in state.activations.values()
+        if str(item.stage_kind_id) == generic_admission.RECOVERY_STAGE_ID
+    )
+    return _apply_accepted_input(
+        state,
+        ClaimWork("claim-generic-recovery", activation_id=activation.activation_id),
+        deterministic_context(
+            transition_id="transition-claim-generic-recovery",
+            run_id="run-generic-recovery",
+            claim_id="claim-generic-recovery",
+            fencing_token="fence-generic-recovery",
+        ),
+    )
+
+
+def _generic_operator_needed_quarantine_state() -> RuntimeState:
+    claimed = _generic_claimed_recovery_state()
+    plan = next(iter(claimed.admitted_plans.values())).selected_plan
+    fingerprint = next(iter(claimed.admitted_plans))
+    return _apply_generic_observation(
+        claimed,
+        plan,
+        fingerprint,
+        run_id="run-generic-recovery",
+        action_id=generic_admission.RECOVERY_QUARANTINE_ACTION_ID,
+        input_id="observe-generic-quarantine",
+        context=deterministic_context(
+            transition_id="transition-observe-generic-quarantine"
+        ),
+    )
+
+
+def _generic_lineage_intervention_state(kind: str) -> RuntimeState:
+    quarantined = _generic_operator_needed_quarantine_state()
+    quarantine = next(iter(quarantined.lineage_quarantines.values()))
+    input_id = f"operator-{kind}-generic-lineage"
+    common = {
+        "input_id": input_id,
+        "option_id": f"admission.{kind}",
+        "selected_plan_ref": quarantine.selected_plan_ref,
+        "quarantine_id": quarantine.quarantine_id,
+        "lineage_id": None,
+        "actor_id": "local-operator",
+        "actor_kind": "local_operator",
+        "reason": f"operator {kind}d generic lineage",
+    }
+    if kind == "resume":
+        constructor = getattr(operator_api, "OperatorResumeLineageInput")
+        transition_input = operator_api.build_resume_lineage(
+            quarantined,
+            constructor(**common, payload=None),
+        )
+        context = deterministic_context(
+            transition_id=f"transition-{input_id}",
+            activation_id="activation-generic-operator-resumed",
+        )
+    elif kind == "close":
+        constructor = getattr(operator_api, "OperatorCloseLineageInput")
+        transition_input = operator_api.build_close_lineage(
+            quarantined,
+            constructor(**common, payload={}),
+        )
+        context = deterministic_context(transition_id=f"transition-{input_id}")
+    else:
+        constructor = getattr(operator_api, "OperatorReviseLineageInput")
+        transition_input = operator_api.build_revise_lineage(
+            quarantined,
+            constructor(
+                **common,
+                payload=generic_fanout.packet_payload(item_ids=("revised",)),
+            ),
+        )
+        context = deterministic_context(
+            transition_id=f"transition-{input_id}",
+            work_item_id="work-generic-operator-revised",
+            activation_id="activation-generic-operator-revised",
+        )
+    return _apply_accepted_input(quarantined, transition_input, context)
+
+
+def test_generic_restart_preserves_first_recovery_attempt_state(
+    tmp_path: Path,
+) -> None:
+    state = _generic_recovery_runtime_state()
+    loaded = persist_and_load_runtime_state(tmp_path, state)
+    attempt = next(iter(loaded.recovery_attempts.values()))
+    assert loaded.recovery_attempts == state.recovery_attempts
+    assert str(attempt.policy_id) == generic_admission.RECOVERY_POLICY_ID
+    assert attempt.attempt_count == 1
+    assert attempt.phase == "active_recovery"
+
+
+def test_generic_restart_preserves_claimed_recovery_attempt_latest_run(
+    tmp_path: Path,
+) -> None:
+    state = _generic_claimed_recovery_state()
+    loaded = persist_and_load_runtime_state(tmp_path, state)
+    attempt = next(iter(loaded.recovery_attempts.values()))
+    assert attempt.latest_recovery_run_id == "run-generic-recovery"
+
+
+def test_generic_restart_preserves_pending_cooldown_and_due_timer(
+    tmp_path: Path,
+) -> None:
+    waiting = _generic_cooldown_runtime_state()
+    loaded = persist_and_load_runtime_state(tmp_path, waiting)
+    wait = next(iter(loaded.cooldown_waits.values()))
+    early = decide(
+        loaded,
+        TimerDue("generic-early", wait_id=wait.wait_id, observed_at=1899),
+        deterministic_context(transition_id="transition-generic-early"),
+    )
+    due = decide(
+        loaded,
+        TimerDue("generic-due", wait_id=wait.wait_id, observed_at=1900),
+        deterministic_context(
+            transition_id="transition-generic-due",
+            activation_id="activation-generic-due-recovery",
+        ),
+    )
+    assert early.accepted is False
+    assert early.refusal is not None and early.refusal.reason == "wait_not_due"
+    assert due.accepted is True
+
+
+def test_generic_restart_preserves_no_artifact_observation_receipt(
+    tmp_path: Path,
+) -> None:
+    state = _generic_cooldown_runtime_state()
+    observation = _observation_for_input(state, "observe-generic-recovery-second")
+    loaded = persist_and_load_runtime_state(tmp_path, state)
+    assert (
+        _observation_for_input(loaded, "observe-generic-recovery-second") == observation
+    )
+    assert all(
+        artifact.created_by_input_id != observation.created_by_input_id
+        for artifact in loaded.artifacts.values()
+    )
+
+
+@pytest.mark.parametrize("field", ("payload", "observed_at"))
+def test_generic_restart_refuses_no_artifact_observation_drift(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    state = _generic_cooldown_runtime_state()
+    observation = _observation_for_input(state, "observe-generic-recovery-second")
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        if field == "observed_at":
+            connection.execute(
+                "UPDATE runner_observations SET observed_at = observed_at + 1 "
+                "WHERE observation_id = ?",
+                (observation.observation_id,),
+            )
+        else:
+            payload_digest = ContentAddressedByteStore(cas_root).put_bytes(
+                dumps_cas_object(
+                    encode_payload({**observation.payload, "marker": "CORRUPT"})
+                )
+            )
+            connection.execute(
+                "UPDATE runner_observations SET payload_digest = ? "
+                "WHERE observation_id = ?",
+                (payload_digest, observation.observation_id),
+            )
+    with pytest.raises(StorageIntegrityError, match="receipt_authority"):
+        load_runtime_state(db_path, cas_root)
+
+
+def test_generic_restart_preserves_consumed_cooldown_and_claimed_run(
+    tmp_path: Path,
+) -> None:
+    consumed = _generic_consumed_cooldown_runtime_state()
+    activation = consumed.activations["activation-generic-recovery-resumed"]
+    claimed = _apply_accepted_input(
+        consumed,
+        ClaimWork("claim-generic-resumed", activation_id=activation.activation_id),
+        deterministic_context(
+            transition_id="transition-claim-generic-resumed",
+            run_id="run-generic-recovery-resumed",
+            claim_id="claim-generic-recovery-resumed",
+            fencing_token="fence-generic-recovery-resumed",
+        ),
+    )
+    loaded = persist_and_load_runtime_state(tmp_path, claimed)
+    wait = next(iter(loaded.cooldown_waits.values()))
+    assert wait.consumed_input_id == "generic-cooldown-due"
+    assert next(iter(loaded.recovery_attempts.values())).latest_recovery_run_id == (
+        "run-generic-recovery-resumed"
+    )
+
+
+def test_generic_restart_preserves_consumed_cooldown_after_attempt_advances(
+    tmp_path: Path,
+) -> None:
+    consumed = _generic_consumed_cooldown_runtime_state()
+    loaded = persist_and_load_runtime_state(tmp_path, consumed)
+    wait = next(iter(loaded.cooldown_waits.values()))
+    duplicate = decide(
+        loaded,
+        TimerDue("generic-due-again", wait_id=wait.wait_id, observed_at=1901),
+        deterministic_context(transition_id="transition-generic-due-again"),
+    )
+    assert duplicate.accepted is False
+    assert duplicate.refusal is not None
+    assert duplicate.refusal.reason == "wait_already_consumed"
+
+
+def test_generic_restart_preserves_lineage_quarantine_and_status(
+    tmp_path: Path,
+) -> None:
+    state = _generic_operator_needed_quarantine_state()
+    loaded = persist_and_load_runtime_state(tmp_path, state)
+    quarantine = next(iter(loaded.lineage_quarantines.values()))
+    assert quarantine.status == "active"
+    assert str(quarantine.policy_id) == generic_admission.RECOVERY_POLICY_ID
+
+
+def test_generic_restart_preserves_quarantine_and_allows_resume(
+    tmp_path: Path,
+) -> None:
+    state = _generic_operator_needed_quarantine_state()
+    loaded = persist_and_load_runtime_state(tmp_path, state)
+    resumed = _generic_lineage_intervention_state("resume")
+    assert loaded.lineage_quarantines == state.lineage_quarantines
+    assert next(iter(resumed.lineage_quarantines.values())).status == "superseded"
+
+
+def test_generic_restart_refuses_quarantine_with_active_attempt(
+    tmp_path: Path,
+) -> None:
+    state = _generic_operator_needed_quarantine_state()
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE recovery_attempts SET phase = 'active_recovery'")
+    with pytest.raises(StorageIntegrityError, match="quarantine_eligible"):
+        load_runtime_state(db_path, cas_root)
+
+
+@pytest.mark.parametrize("kind", ("resume", "close", "revise"))
+def test_generic_restart_preserves_operator_intervention_state(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    state = _generic_lineage_intervention_state(kind)
+    loaded = persist_and_load_runtime_state(tmp_path, state)
+    assert loaded.operator_interventions == state.operator_interventions
+    assert next(iter(loaded.lineage_quarantines.values())).status == "superseded"
+
+
+@pytest.mark.parametrize(
+    ("column_name", "corrupt_value", "expected_message"),
+    (
+        ("action_id", "missing-action", "lineage_quarantines.action_id"),
+        (
+            "original_source_run_id",
+            "missing-run",
+            "lineage_quarantines.original_source_run_id",
+        ),
+        (
+            "emitting_recovery_run_id",
+            "missing-run",
+            "lineage_quarantines.emitting_recovery_run_id",
+        ),
+    ),
+)
+def test_generic_restart_refuses_corrupt_lineage_quarantine_rows(
+    tmp_path: Path,
+    column_name: str,
+    corrupt_value: str,
+    expected_message: str,
+) -> None:
+    state = _generic_operator_needed_quarantine_state()
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            f"UPDATE lineage_quarantines SET {column_name} = ?",
+            (corrupt_value,),
+        )
+    with pytest.raises(StorageIntegrityError, match=expected_message):
+        load_runtime_state(db_path, cas_root)
+
+
+@pytest.mark.parametrize(
+    ("column_name", "corrupt_value", "expected_message"),
+    (
+        ("policy_id", "missing.policy", "operator_interventions.policy_id"),
+        ("option_id", "missing.option", "operator_interventions.option_id"),
+        ("actor_kind", "runtime", "operator_interventions.actor_kind"),
+        ("quarantine_id", "missing", "operator_interventions.quarantine_id"),
+        (
+            "recovery_attempt_record_id",
+            "missing",
+            "operator_interventions.recovery_attempt_record_id",
+        ),
+        (
+            "target_work_item_id",
+            "missing",
+            "operator_interventions.target_work_item_id",
+        ),
+    ),
+)
+def test_generic_restart_refuses_corrupt_operator_intervention_rows(
+    tmp_path: Path,
+    column_name: str,
+    corrupt_value: str,
+    expected_message: str,
+) -> None:
+    state = _generic_lineage_intervention_state("close")
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            f"UPDATE operator_interventions SET {column_name} = ?",
+            (corrupt_value,),
+        )
+    with pytest.raises(StorageIntegrityError, match=expected_message):
+        load_runtime_state(db_path, cas_root)
+
+
+@pytest.mark.parametrize(
+    ("column_name", "corrupt_value", "expected_message"),
+    (
+        (
+            "target_activation_id",
+            "missing",
+            "operator_interventions.target_activation_id",
+        ),
+        (
+            "payload_reference",
+            "work_item:other:payload",
+            "operator_interventions payload_reference",
+        ),
+        (
+            "payload_digest",
+            f"sha256:{'0' * 64}",
+            "operator_interventions payload_digest",
+        ),
+    ),
+)
+def test_generic_restart_refuses_corrupt_revise_intervention_rows(
+    tmp_path: Path,
+    column_name: str,
+    corrupt_value: str,
+    expected_message: str,
+) -> None:
+    state = _generic_lineage_intervention_state("revise")
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            f"UPDATE operator_interventions SET {column_name} = ?",
+            (corrupt_value,),
+        )
+    with pytest.raises(StorageIntegrityError, match=expected_message):
+        load_runtime_state(db_path, cas_root)
+
+
+def test_generic_restart_preserves_active_operator_wait_and_resolves_after_load(
+    tmp_path: Path,
+) -> None:
+    waiting = _generic_operator_wait_runtime_state()
+    loaded = persist_and_load_runtime_state(tmp_path, waiting)
+    wait = next(iter(loaded.operator_waits.values()))
+    resolved = _apply_accepted_input(
+        loaded,
+        OperatorResumeWait(
+            "generic-resume-after-load",
+            selected_plan_ref=wait.selected_plan_ref,
+            wait_id=wait.wait_id,
+            lineage_id=wait.lineage_id,
+            actor_id="local-operator",
+            actor_kind="local_operator",
+            payload={},
+        ),
+        deterministic_context(
+            transition_id="transition-generic-resume-after-load",
+            activation_id="activation-generic-resumed-after-load",
+        ),
+    )
+    assert resolved.operator_waits[wait.wait_id].status == "resolved"
+
+
+def test_generic_restart_preserves_resolved_wait_and_refuses_second_resolution(
+    tmp_path: Path,
+) -> None:
+    resolved = _generic_resolved_operator_wait_state()
+    loaded = persist_and_load_runtime_state(tmp_path, resolved)
+    wait = next(iter(loaded.operator_waits.values()))
+    duplicate = decide(
+        loaded,
+        OperatorResumeWait(
+            "generic-resume-duplicate",
+            selected_plan_ref=wait.selected_plan_ref,
+            wait_id=wait.wait_id,
+            lineage_id=wait.lineage_id,
+            actor_id="local-operator",
+            actor_kind="local_operator",
+            payload={},
+        ),
+        deterministic_context(transition_id="transition-generic-resume-duplicate"),
+    )
+    assert duplicate.accepted is False
+    assert duplicate.refusal is not None
+    assert duplicate.refusal.reason == "operator_wait_not_active"
+
+
+def test_generic_restart_allows_resolved_wait_source_compiled_close(
+    tmp_path: Path,
+) -> None:
+    state = _generic_resumed_operator_wait_source_closed_state()
+    loaded = persist_and_load_runtime_state(tmp_path, state)
+    wait = next(iter(loaded.operator_waits.values()))
+    assert wait.status == "resolved"
+    assert wait.source_work_item_id in loaded.closed_work_items
+
+
+def test_generic_restart_refuses_corrupt_wait_or_close_link(tmp_path: Path) -> None:
+    state = _generic_operator_wait_runtime_state()
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE operator_waits SET operator_wait_id = 'admission.missing_wait'"
+        )
+    with pytest.raises(StorageIntegrityError, match="operator_wait_id"):
+        load_runtime_state(db_path, cas_root)
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    (
+        ("source_action_id", generic_admission.COUNTER_INCREMENT_ACTION_ID),
+        ("source_stage_kind_id", generic_admission.CHILD_STAGE_ID),
+        ("source_graph_node_id", generic_admission.CHILD_NODE_ID),
+        ("source_queue_family_id", "child"),
+        ("source_runner_binding_id", "missing.runner"),
+    ),
+)
+def test_generic_restart_refuses_corrupt_operator_wait_source_links(
+    tmp_path: Path,
+    column: str,
+    value: str,
+) -> None:
+    state = _generic_operator_wait_runtime_state()
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(f"UPDATE operator_waits SET {column} = ?", (value,))
+    with pytest.raises(StorageIntegrityError):
+        load_runtime_state(db_path, cas_root)
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    (
+        ("queue_family_id", "child"),
+        ("graph_node_id", generic_admission.CHILD_NODE_ID),
+        ("stage_kind_id", generic_admission.CHILD_STAGE_ID),
+        ("runner_binding_id", "missing.runner"),
+    ),
+)
+def test_generic_restart_refuses_corrupt_revise_wait_target_route(
+    tmp_path: Path,
+    column: str,
+    value: str,
+) -> None:
+    state = _generic_revised_operator_wait_state()
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        wait = connection.execute(
+            "SELECT target_work_item_id, target_activation_id FROM operator_waits"
+        ).fetchone()
+        assert wait is not None
+        work_item_id, activation_id = wait
+        if column == "queue_family_id":
+            connection.execute(
+                "UPDATE work_items SET queue_family_id = ? WHERE work_item_id = ?",
+                (value, work_item_id),
+            )
+        connection.execute(
+            f"UPDATE activations SET {column} = ? WHERE activation_id = ?",
+            (value, activation_id),
+        )
+    with pytest.raises(StorageIntegrityError):
+        load_runtime_state(db_path, cas_root)

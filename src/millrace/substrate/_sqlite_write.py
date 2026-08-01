@@ -29,6 +29,7 @@ from millrace.substrate._sqlite_rows import (
     CooldownWaitRow,
     CounterRow,
     DefaultPlanRow,
+    DispatchSuspensionRow,
     EffectProposalRow,
     EffectReconciliationRow,
     FanoutRow,
@@ -39,6 +40,7 @@ from millrace.substrate._sqlite_rows import (
     OperatorWaitRow,
     PauseStateRow,
     QuarantineRow,
+    QueueClosureRow,
     RecoveryAttemptRow,
     RefusalRow,
     RemediationWorkRow,
@@ -64,6 +66,7 @@ from millrace.substrate._sqlite_rows import (
     encode_cooldown_wait_row,
     encode_counter_row,
     encode_default_plan_row,
+    encode_dispatch_suspension_row,
     encode_effect_proposal_row,
     encode_effect_reconciliation_row,
     encode_fanout_row,
@@ -74,6 +77,7 @@ from millrace.substrate._sqlite_rows import (
     encode_operator_wait_row,
     encode_pause_state_row,
     encode_quarantine_row,
+    encode_queue_closure_row,
     encode_recovery_attempt_row,
     encode_refusal_row,
     encode_remediation_work_row,
@@ -234,6 +238,13 @@ def persist_runtime_state_rows(
         for order, record in enumerate(state.closed_work_items.values())
     )
     pause_state_row = encode_pause_state_row(state.pause)
+    dispatch_suspension_row = encode_dispatch_suspension_row(
+        state.dispatch_suspension
+    )
+    queue_closure_rows = tuple(
+        encode_queue_closure_row(record, created_at_order=order)
+        for order, record in enumerate(state.queue_closures.values())
+    )
     quarantine_rows = tuple(
         encode_quarantine_row(record, created_at_order=order)
         for order, record in enumerate(state.quarantines.values())
@@ -337,6 +348,8 @@ def persist_runtime_state_rows(
             closure_blocked_rows=closure_blocked_rows,
             closed_work_item_rows=closed_work_item_rows,
             pause_state_row=pause_state_row,
+            dispatch_suspension_row=dispatch_suspension_row,
+            queue_closure_rows=queue_closure_rows,
             quarantine_rows=quarantine_rows,
             lineage_quarantine_rows=lineage_quarantine_rows,
             recovery_attempt_rows=recovery_attempt_rows,
@@ -355,6 +368,9 @@ def persist_runtime_state_rows(
 
     connection.execute("BEGIN IMMEDIATE")
     try:
+        # Budget evidence references replace-managed run/session rows. Defer the
+        # relationship check until their authoritative rows are reinserted.
+        connection.execute("PRAGMA defer_foreign_keys = ON")
         _replace_runtime_rows(
             connection,
             state=state,
@@ -385,6 +401,8 @@ def persist_runtime_state_rows(
             closure_blocked_rows=closure_blocked_rows,
             closed_work_item_rows=closed_work_item_rows,
             pause_state_row=pause_state_row,
+            dispatch_suspension_row=dispatch_suspension_row,
+            queue_closure_rows=queue_closure_rows,
             quarantine_rows=quarantine_rows,
             lineage_quarantine_rows=lineage_quarantine_rows,
             recovery_attempt_rows=recovery_attempt_rows,
@@ -998,6 +1016,46 @@ _RUNTIME_TABLE_SIGNATURE_COLUMNS = (
         "id",
     ),
     (
+        "dispatch_suspension",
+        (
+            "schema_version",
+            "suspension_id",
+            "plan_id",
+            "plan_authority_fingerprint",
+            "plan_format_version",
+            "generation",
+            "dispatch_generation",
+            "actor_id",
+            "reason",
+            "suspended_by_input_id",
+            "status",
+            "resumed_by_input_id",
+            "resume_actor_id",
+            "resume_reason",
+        ),
+        "id",
+    ),
+    (
+        "queue_closures",
+        (
+            "closure_id",
+            "schema_version",
+            "plan_id",
+            "plan_authority_fingerprint",
+            "plan_format_version",
+            "target_kind",
+            "target_id",
+            "actor_id",
+            "reason",
+            "created_by_input_id",
+            "closed_work_item_ids_json",
+            "closed_activation_ids_json",
+            "closed_run_ids_json",
+            "created_at_order",
+        ),
+        "created_at_order",
+    ),
+    (
         "quarantine_records",
         (
             "record_id",
@@ -1263,6 +1321,8 @@ def _refuse_same_history_runtime_rewrite(
     closure_blocked_rows: tuple[ClosureBlockedRow, ...],
     closed_work_item_rows: tuple[ClosedWorkItemRow, ...],
     pause_state_row: PauseStateRow | None,
+    dispatch_suspension_row: DispatchSuspensionRow | None,
+    queue_closure_rows: tuple[QueueClosureRow, ...],
     quarantine_rows: tuple[QuarantineRow, ...],
     lineage_quarantine_rows: tuple[LineageQuarantineRow, ...],
     recovery_attempt_rows: tuple[RecoveryAttemptRow, ...],
@@ -1308,6 +1368,8 @@ def _refuse_same_history_runtime_rewrite(
         closure_blocked_rows=closure_blocked_rows,
         closed_work_item_rows=closed_work_item_rows,
         pause_state_row=pause_state_row,
+        dispatch_suspension_row=dispatch_suspension_row,
+        queue_closure_rows=queue_closure_rows,
         quarantine_rows=quarantine_rows,
         lineage_quarantine_rows=lineage_quarantine_rows,
         recovery_attempt_rows=recovery_attempt_rows,
@@ -1370,6 +1432,8 @@ def _candidate_runtime_signature(
     closure_blocked_rows: tuple[ClosureBlockedRow, ...],
     closed_work_item_rows: tuple[ClosedWorkItemRow, ...],
     pause_state_row: PauseStateRow | None,
+    dispatch_suspension_row: DispatchSuspensionRow | None,
+    queue_closure_rows: tuple[QueueClosureRow, ...],
     quarantine_rows: tuple[QuarantineRow, ...],
     lineage_quarantine_rows: tuple[LineageQuarantineRow, ...],
     recovery_attempt_rows: tuple[RecoveryAttemptRow, ...],
@@ -1409,6 +1473,12 @@ def _candidate_runtime_signature(
         "closure_blocked_records": closure_blocked_rows,
         "closed_work_items": closed_work_item_rows,
         "pause_state": () if pause_state_row is None else (pause_state_row,),
+        "dispatch_suspension": (
+            ()
+            if dispatch_suspension_row is None
+            else (dispatch_suspension_row,)
+        ),
+        "queue_closures": queue_closure_rows,
         "quarantine_records": quarantine_rows,
         "lineage_quarantines": lineage_quarantine_rows,
         "recovery_attempts": recovery_attempt_rows,
@@ -1493,6 +1563,8 @@ def _replace_runtime_rows(
     closure_blocked_rows: tuple[ClosureBlockedRow, ...],
     closed_work_item_rows: tuple[ClosedWorkItemRow, ...],
     pause_state_row: PauseStateRow | None,
+    dispatch_suspension_row: DispatchSuspensionRow | None,
+    queue_closure_rows: tuple[QueueClosureRow, ...],
     quarantine_rows: tuple[QuarantineRow, ...],
     lineage_quarantine_rows: tuple[LineageQuarantineRow, ...],
     recovery_attempt_rows: tuple[RecoveryAttemptRow, ...],
@@ -1541,6 +1613,8 @@ def _replace_runtime_rows(
         closure_blocked_rows=closure_blocked_rows,
         closed_work_item_rows=closed_work_item_rows,
         pause_state_row=pause_state_row,
+        dispatch_suspension_row=dispatch_suspension_row,
+        queue_closure_rows=queue_closure_rows,
         quarantine_rows=quarantine_rows,
         lineage_quarantine_rows=lineage_quarantine_rows,
         recovery_attempt_rows=recovery_attempt_rows,
@@ -1567,6 +1641,8 @@ def _replace_runtime_rows(
         "recovery_attempts",
         "lineage_quarantines",
         "quarantine_records",
+        "dispatch_suspension",
+        "queue_closures",
         "pause_state",
         "closed_work_items",
         "closure_blocked_records",
@@ -2462,6 +2538,85 @@ def _replace_runtime_rows(
                 pause_state_row.paused_at_order,
             ),
         )
+    if dispatch_suspension_row is not None:
+        connection.execute(
+            """
+            INSERT INTO dispatch_suspension (
+                id,
+                schema_version,
+                suspension_id,
+                plan_id,
+                plan_authority_fingerprint,
+                plan_format_version,
+                generation,
+                dispatch_generation,
+                actor_id,
+                reason,
+                suspended_by_input_id,
+                status,
+                resumed_by_input_id,
+                resume_actor_id,
+                resume_reason
+            )
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dispatch_suspension_row.schema_version,
+                dispatch_suspension_row.suspension_id,
+                dispatch_suspension_row.plan_id,
+                dispatch_suspension_row.plan_authority_fingerprint,
+                dispatch_suspension_row.plan_format_version,
+                dispatch_suspension_row.generation,
+                dispatch_suspension_row.dispatch_generation,
+                dispatch_suspension_row.actor_id,
+                dispatch_suspension_row.reason,
+                dispatch_suspension_row.suspended_by_input_id,
+                dispatch_suspension_row.status,
+                dispatch_suspension_row.resumed_by_input_id,
+                dispatch_suspension_row.resume_actor_id,
+                dispatch_suspension_row.resume_reason,
+            ),
+        )
+    connection.executemany(
+        """
+        INSERT INTO queue_closures (
+            closure_id,
+            schema_version,
+            plan_id,
+            plan_authority_fingerprint,
+            plan_format_version,
+            target_kind,
+            target_id,
+            actor_id,
+            reason,
+            created_by_input_id,
+            closed_work_item_ids_json,
+            closed_activation_ids_json,
+            closed_run_ids_json,
+            created_at_order
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        tuple(
+            (
+                row.closure_id,
+                row.schema_version,
+                row.plan_id,
+                row.plan_authority_fingerprint,
+                row.plan_format_version,
+                row.target_kind,
+                row.target_id,
+                row.actor_id,
+                row.reason,
+                row.created_by_input_id,
+                row.closed_work_item_ids_json,
+                row.closed_activation_ids_json,
+                row.closed_run_ids_json,
+                row.created_at_order,
+            )
+            for row in queue_closure_rows
+        ),
+    )
     connection.executemany(
         """
         INSERT INTO quarantine_records (

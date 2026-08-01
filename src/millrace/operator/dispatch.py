@@ -58,6 +58,7 @@ def join_evidence_progress_for_status(
     return projection.observed_schema_ids, projection.ready
 
 _POLICY_REFUSALS = {
+    "dispatch_suspended",
     "workspace_paused",
     "lineage_quarantined",
     "operator_wait_active",
@@ -136,6 +137,81 @@ class ReadyDispatchDiagnostic:
 class ReadyDispatchProjection:
     candidates: tuple[ReadyDispatchCandidate, ...]
     diagnostics: tuple[ReadyDispatchDiagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchSuspensionProjection:
+    is_suspended: bool
+    suspension_id: str | None = None
+    status: str | None = None
+    plan_fingerprint: str | None = None
+    generation: int = 0
+    dispatch_generation: int = 0
+    actor_id: str | None = None
+    reason: str | None = None
+    suspended_by_input_id: str | None = None
+    resumed_by_input_id: str | None = None
+    resume_actor_id: str | None = None
+    resume_reason: str | None = None
+    accepted_may_start_count: int = 0
+    accepted_run_ids: tuple[str, ...] = ()
+    accepted_activation_ids: tuple[str, ...] = ()
+    accepted_work_item_ids: tuple[str, ...] = ()
+    omitted_identity_count: int = 0
+
+
+def dispatch_suspension_projection(
+    state: RuntimeState,
+    *,
+    max_identities: int = 20,
+) -> DispatchSuspensionProjection:
+    if type(max_identities) is not int or max_identities < 0:
+        raise ValueError("max_identities must be a non-negative integer")
+    record = state.dispatch_suspension
+    if record is None:
+        return DispatchSuspensionProjection(is_suspended=False)
+    may_start = tuple(
+        run
+        for run in sorted(
+            state.runs.values(),
+            key=lambda candidate: candidate.run_ref.run_id,
+        )
+        if run_may_start_while_dispatch_suspended(state, run)
+    )
+    retained = may_start[:max_identities]
+    return DispatchSuspensionProjection(
+        is_suspended=record.status == "active",
+        suspension_id=record.suspension_id,
+        status=record.status,
+        plan_fingerprint=record.selected_plan_ref.authority_fingerprint,
+        generation=record.generation,
+        dispatch_generation=record.dispatch_generation,
+        actor_id=record.actor_id,
+        reason=record.reason,
+        suspended_by_input_id=record.suspended_by_input_id,
+        resumed_by_input_id=record.resumed_by_input_id,
+        resume_actor_id=record.resume_actor_id,
+        resume_reason=record.resume_reason,
+        accepted_may_start_count=len(may_start),
+        accepted_run_ids=tuple(run.run_ref.run_id for run in retained),
+        accepted_activation_ids=tuple(run.activation_id for run in retained),
+        accepted_work_item_ids=tuple(run.work_item_id for run in retained),
+        omitted_identity_count=len(may_start) - len(retained),
+    )
+
+
+def run_may_start_while_dispatch_suspended(
+    state: RuntimeState,
+    run: RunRecord,
+) -> bool:
+    """Return whether an already accepted run may initiate under suspension."""
+    record = state.dispatch_suspension
+    if record is None or record.status != "active":
+        return False
+    if run.current_session_id is None:
+        return True
+    session = state.runner_sessions.get(run.current_session_id)
+    return session is not None and session.state == "created"
 
 
 def build_dispatch_envelope_for_run(
@@ -1140,11 +1216,14 @@ def _graph_order(presentation: Mapping[str, AuthorityValue]) -> int:
 
 __all__ = (
     "DispatchProjectionError",
+    "DispatchSuspensionProjection",
     "ReadyDispatchCandidate",
     "ReadyDispatchDiagnostic",
     "ReadyDispatchProjection",
     "build_dispatch_envelope_for_run",
+    "dispatch_suspension_projection",
     "join_evidence_progress_for_status",
     "list_ready_dispatch_candidates",
     "ready_diagnostic_from_claim_refusal",
+    "run_may_start_while_dispatch_suspended",
 )

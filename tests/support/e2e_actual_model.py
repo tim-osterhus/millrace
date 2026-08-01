@@ -788,21 +788,9 @@ def redact_review_text(value: object, canary: str) -> str:
 
 def smoke_matrix(
     *,
-    package_source_mode: str,
     pyproject_path: Path,
 ) -> tuple[SmokeRow, ...]:
-    if package_source_mode not in PACKAGE_SOURCE_MODES:
-        raise ValueError("package_source_mode must be path, archive, or installed")
     _assert_no_hidden_millrace_plus_dependency(pyproject_path)
-    package_rows = (
-        ("plus.simple_loop", "simple_loop", "work_prompt", False),
-        ("plus.execution_lad", "execution.lad", "task", False),
-        ("plus.execution_lad_integrator", "execution.lad_integrator", "task", False),
-        ("plus.planning_lad", "planning.lad", "spec", False),
-        ("plus.lad_full_spec", "lad.full", "spec", False),
-        ("plus.lad_full_learning_request", "lad.full", "learning_request", False),
-        ("plus.vendor_selection", "vendor_selection", "purchase_request", False),
-    )
     return (
         SmokeRow(
             row_id="base.kernel_ping",
@@ -813,21 +801,6 @@ def smoke_matrix(
             external_queue="prompt",
             package_source_mode=None,
             owns_live_row=True,
-        ),
-        *(
-            SmokeRow(
-                row_id=row_id,
-                source="millrace-plus package",
-                workflow_id=workflow_id,
-                workflow_version="0.1",
-                entrypoint="default",
-                external_queue=queue,
-                package_source_mode=package_source_mode,
-                owns_live_row=owns_live,
-                package_id="millrace.plus.official",
-                package_version="0.22.0",
-            )
-            for row_id, workflow_id, queue, owns_live in package_rows
         ),
     )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -13,8 +14,8 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DIST_INFO = "millrace_ai-0.22.0.dist-info"
-SDIST_ROOT = "millrace_ai-0.22.0"
+DIST_INFO = "millrace_ai-0.22.1.dist-info"
+SDIST_ROOT = "millrace_ai-0.22.1"
 DONOR_WORKFLOWS = {
     "lad_execution.py",
     "lad_learning.py",
@@ -49,6 +50,29 @@ FORBIDDEN_ARTIFACT_TEXT = (
     "after the v0.22 distributions are " + "published",
     "transitional " + "source fixtures",
 )
+
+
+def test_planning_lad_review_is_absent_from_millrace() -> None:
+    prohibited = "planning." + "lad_review"
+    assert PROJECT_ROOT.is_dir()
+    offenders: list[str] = []
+    for path in sorted(PROJECT_ROOT.rglob("*")):
+        if not path.is_file() or path.suffix not in {
+            ".md",
+            ".py",
+            ".toml",
+            ".json",
+        }:
+            continue
+        if any(
+            part in {".git", ".venv", "dist", "__pycache__"}
+            for part in path.parts
+        ):
+            continue
+        if prohibited in path.read_text(encoding="utf-8"):
+            offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
+
+    assert offenders == []
 
 
 def test_runner_session_release_docs_cover_public_and_compatibility_contracts() -> None:
@@ -147,7 +171,7 @@ def _metadata_contract(raw: bytes) -> None:
     headers, body = raw.split(b"\n\n", 1)
     message = BytesParser(policy=default).parsebytes(headers + b"\n\n")
     assert message["Name"] == "millrace-ai"
-    assert message["Version"] == "0.22.0"
+    assert message["Version"] == "0.22.1"
     assert message["Requires-Python"] == ">=3.11"
     assert message["License-Expression"] == "Apache-2.0"
     assert message.get_all("License-File") == ["LICENSE"]
@@ -200,7 +224,7 @@ def test_release_metadata_is_final_and_complete() -> None:
 
     assert project == {
         "name": "millrace-ai",
-        "version": "0.22.0",
+        "version": "0.22.1",
         "description": (
             "A governed runtime for compiler-validated, durable agent workflows."
         ),
@@ -217,6 +241,42 @@ def test_release_metadata_is_final_and_complete() -> None:
             "Issues": "https://github.com/tim-osterhus/millrace/issues",
         },
     }
+
+
+def test_publish_workflow_matches_package_version_and_artifact_hashes() -> None:
+    version = tomllib.loads(
+        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "publish-to-pypi.yml"
+    ).read_text(encoding="utf-8")
+    tag = f"v{version}"
+    artifacts = {
+        f"millrace_ai-{version}-py3-none-any.whl",
+        f"millrace_ai-{version}.tar.gz",
+    }
+
+    assert set(re.findall(r"\bv\d+\.\d+\.\d+\b", workflow)) == {tag}
+    assert re.findall(r"(?m)^\s+- (v\d+\.\d+\.\d+)$", workflow) == [tag]
+    assert workflow.count(f"github.ref == 'refs/tags/{tag}'") == 2
+    assert set(
+        re.findall(
+            r"millrace_ai-\d+\.\d+\.\d+(?:-py3-none-any\.whl|\.tar\.gz)",
+            workflow,
+        )
+    ) == artifacts
+
+    hash_entries = re.findall(
+        r"(?m)^\s+([0-9a-f]{64})  dist/(millrace_ai-\S+)$",
+        workflow,
+    )
+    assert {artifact for _digest, artifact in hash_entries} == artifacts
+    for artifact in artifacts:
+        digests = [
+            digest for digest, candidate in hash_entries if candidate == artifact
+        ]
+        assert len(digests) == 2
+        assert len(set(digests)) == 1
 
 
 def test_public_document_set_uses_final_release_paths() -> None:
@@ -245,7 +305,7 @@ def test_public_docs_are_self_contained_and_links_are_release_safe() -> None:
     millforge_guide = (PROJECT_ROOT / "docs/millforge-runner.md").read_text(
         encoding="utf-8"
     )
-    canonical_root = "https://github.com/tim-osterhus/millrace/blob/v0.22.0/"
+    canonical_root = "https://github.com/tim-osterhus/millrace/blob/v0.22.1/"
     current_relative_docs = {
         "docs/runner-session-architecture.md",
         "docs/daemon-lifecycle.md",
@@ -365,8 +425,8 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         ],
         cwd=PROJECT_ROOT,
     )
-    wheel = build_dir / "millrace_ai-0.22.0-py3-none-any.whl"
-    sdist = build_dir / "millrace_ai-0.22.0.tar.gz"
+    wheel = build_dir / "millrace_ai-0.22.1-py3-none-any.whl"
+    sdist = build_dir / "millrace_ai-0.22.1.tar.gz"
     assert wheel.is_file()
     assert sdist.is_file()
     _assert_wheel_contract(wheel)
@@ -404,7 +464,7 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         ],
         cwd=tmp_path,
     )
-    rebuilt_wheel = rebuilt_dir / "millrace_ai-0.22.0-py3-none-any.whl"
+    rebuilt_wheel = rebuilt_dir / "millrace_ai-0.22.1-py3-none-any.whl"
     assert rebuilt_wheel.is_file()
     _assert_wheel_contract(rebuilt_wheel)
 
@@ -434,7 +494,7 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
                 (
                     "from importlib.metadata import version;"
                     "import importlib, millrace;"
-                    "assert version('millrace-ai') == '0.22.0';"
+                    "assert version('millrace-ai') == '0.22.1';"
                     "\ntry: importlib.import_module('millrace.testing')\n"
                     "except ModuleNotFoundError: pass\n"
                     "else: raise AssertionError('millrace.testing shipped')"
@@ -444,4 +504,4 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         )
         assert smoke.stdout == ""
         version_result = _run([str(millrace), "--version"], cwd=tmp_path)
-        assert version_result.stdout == "millrace 0.22.0\n"
+        assert version_result.stdout == "millrace 0.22.1\n"

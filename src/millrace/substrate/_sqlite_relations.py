@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
+from hashlib import sha256
 
 from millrace.contracts import ActionId, ArtifactSchemaId, PartitionId, StageKindId
 from millrace.contracts.compiled_plan import (
@@ -38,6 +39,7 @@ from millrace.contracts.state import (
     EffectProposalRecord,
     EffectReconciliationRecord,
     FanoutRecord,
+    InputReceipt,
     LineageQuarantineRecord,
     OperatorWaitRecord,
     PlanRef,
@@ -53,8 +55,14 @@ from millrace.contracts.state import (
     WorkItem,
 )
 from millrace.contracts.transition import (
+    CancelQueuedLineage,
+    CancelQueuedWork,
+    ClaimWork,
     ReconcileEffect,
+    ResumeDispatch,
     RunnerResultObserved,
+    SuspendDispatch,
+    input_payload_digest,
     operator_payload_digest,
 )
 from millrace.kernel.fanout_policy import (
@@ -486,6 +494,327 @@ def _recovery_action_matches_policy_source(
     )
 
 
+def _validate_dispatch_suspension(state: RuntimeState) -> None:
+    record = state.dispatch_suspension
+    if record is None:
+        return
+    _validate_plan_ref(
+        "dispatch_suspension",
+        "dispatch_suspension.plan_authority_fingerprint",
+        record.selected_plan_ref,
+        state.admitted_plans,
+    )
+    expected_id = (
+        "dispatch-suspension:"
+        + sha256(record.suspended_by_input_id.encode("utf-8")).hexdigest()
+    )
+    if record.suspension_id != expected_id:
+        raise StorageIntegrityError(
+            "dispatch_suspension.suspension_id must match suspended input"
+        )
+    suspend_receipt, _suspend_transition = _validate_dispatch_control_input(
+        state,
+        input_id=record.suspended_by_input_id,
+        expected_kind=SuspendDispatch.input_kind,
+        field_name="dispatch_suspension.suspended_by_input_id",
+    )
+    expected_suspend_digest = input_payload_digest(
+        SuspendDispatch(
+            record.suspended_by_input_id,
+            plan_fingerprint=record.selected_plan_ref.authority_fingerprint,
+            actor_id=record.actor_id,
+            reason=record.reason,
+        )
+    )
+    if suspend_receipt.receipt_ref.input_payload_digest != expected_suspend_digest:
+        raise StorageIntegrityError(
+            "dispatch_suspension suspend input payload digest disagrees with record"
+        )
+    if record.status == "active" and record.dispatch_generation != len(state.runs):
+        raise StorageIntegrityError(
+            "active dispatch_suspension dispatch generation is stale"
+        )
+
+    dispatch_transitions = tuple(
+        (order, transition)
+        for order, transition in enumerate(state.transitions)
+        if transition.accepted
+        and transition.input_kind
+        in {SuspendDispatch.input_kind, ResumeDispatch.input_kind}
+    )
+    active_suspension_transition: tuple[int, TransitionRecord] | None = None
+    completed_lifecycle_count = 0
+    for order, transition in dispatch_transitions:
+        if transition.input_kind == SuspendDispatch.input_kind:
+            if active_suspension_transition is not None:
+                raise StorageIntegrityError(
+                    "dispatch_suspension accepted lifecycle has consecutive suspends"
+                )
+            active_suspension_transition = (order, transition)
+            continue
+        if active_suspension_transition is None:
+            raise StorageIntegrityError(
+                "dispatch_suspension accepted lifecycle resumes without suspension"
+            )
+        completed_lifecycle_count += 1
+        active_suspension_transition = None
+
+    expected_generation = completed_lifecycle_count + (
+        1 if active_suspension_transition is not None else 0
+    )
+    if record.generation != expected_generation:
+        raise StorageIntegrityError(
+            "dispatch_suspension.generation disagrees with accepted lifecycle"
+        )
+    if active_suspension_transition is None:
+        if record.status != "resumed":
+            raise StorageIntegrityError(
+                "dispatch_suspension status disagrees with accepted lifecycle"
+            )
+    elif (
+        record.status != "active"
+        or record.suspended_by_input_id != active_suspension_transition[1].input_id
+    ):
+        raise StorageIntegrityError(
+            "dispatch_suspension active record disagrees with accepted lifecycle"
+        )
+
+    suspend_transition_order = next(
+        order
+        for order, transition in dispatch_transitions
+        if transition.input_id == record.suspended_by_input_id
+    )
+    expected_dispatch_generation = sum(
+        transition.accepted and transition.input_kind == ClaimWork.input_kind
+        for transition in state.transitions[:suspend_transition_order]
+    )
+    if record.dispatch_generation != expected_dispatch_generation:
+        raise StorageIntegrityError(
+            "dispatch_suspension.dispatch_generation disagrees with accepted claims"
+        )
+    if record.status == "resumed":
+        assert record.resumed_by_input_id is not None
+        assert record.resume_actor_id is not None
+        assert record.resume_reason is not None
+        resume_receipt, _resume_transition = _validate_dispatch_control_input(
+            state,
+            input_id=record.resumed_by_input_id,
+            expected_kind=ResumeDispatch.input_kind,
+            field_name="dispatch_suspension.resumed_by_input_id",
+        )
+        expected_resume_digest = input_payload_digest(
+            ResumeDispatch(
+                record.resumed_by_input_id,
+                plan_fingerprint=record.selected_plan_ref.authority_fingerprint,
+                suspension_id=record.suspension_id,
+                actor_id=record.resume_actor_id,
+                reason=record.resume_reason,
+            )
+        )
+        if resume_receipt.receipt_ref.input_payload_digest != expected_resume_digest:
+            raise StorageIntegrityError(
+                "dispatch_suspension resume input payload digest disagrees with record"
+            )
+        if not dispatch_transitions or (
+            dispatch_transitions[-1][1].input_id != record.resumed_by_input_id
+        ):
+            raise StorageIntegrityError(
+                "dispatch_suspension resumed record disagrees with accepted lifecycle"
+            )
+
+
+def _validate_queue_closures(state: RuntimeState) -> None:
+    accepted_inputs = {
+        transition.input_id
+        for transition in state.transitions
+        if transition.accepted
+        and transition.input_kind
+        in {CancelQueuedWork.input_kind, CancelQueuedLineage.input_kind}
+    }
+    if accepted_inputs != {
+        record.created_by_input_id for record in state.queue_closures.values()
+    }:
+        raise StorageIntegrityError(
+            "queue_closures must match accepted queue closure transitions"
+        )
+
+    for record in state.queue_closures.values():
+        _validate_plan_ref(
+            "queue_closures",
+            "queue_closures.plan_authority_fingerprint",
+            record.selected_plan_ref,
+            state.admitted_plans,
+        )
+        expected_id = (
+            "queue-closure:"
+            + sha256(record.created_by_input_id.encode("utf-8")).hexdigest()
+        )
+        if record.closure_id != expected_id:
+            raise StorageIntegrityError(
+                "queue_closures.closure_id must match created input"
+            )
+        transition_type = (
+            CancelQueuedWork
+            if record.target_kind == "work_item"
+            else CancelQueuedLineage
+        )
+        receipt, _transition = _validate_dispatch_control_input(
+            state,
+            input_id=record.created_by_input_id,
+            expected_kind=transition_type.input_kind,
+            field_name="queue_closures.created_by_input_id",
+        )
+        if record.target_kind == "work_item":
+            expected_input: CancelQueuedWork | CancelQueuedLineage = CancelQueuedWork(
+                record.created_by_input_id,
+                work_item_id=record.target_id,
+                plan_fingerprint=record.selected_plan_ref.authority_fingerprint,
+                actor_id=record.actor_id,
+                reason=record.reason,
+            )
+            target_work_item = state.work_items.get(record.target_id)
+            members: tuple[WorkItem, ...] = (
+                () if target_work_item is None else (target_work_item,)
+            )
+        else:
+            expected_input = CancelQueuedLineage(
+                record.created_by_input_id,
+                lineage_id=record.target_id,
+                plan_fingerprint=record.selected_plan_ref.authority_fingerprint,
+                actor_id=record.actor_id,
+                reason=record.reason,
+            )
+            members = tuple(
+                work_item
+                for work_item in state.work_items.values()
+                if work_item.lineage_id == record.target_id
+            )
+        if receipt.receipt_ref.input_payload_digest != input_payload_digest(
+            expected_input
+        ):
+            raise StorageIntegrityError(
+                "queue_closures input payload digest disagrees with record"
+            )
+        if not members:
+            raise StorageIntegrityError("queue_closures target work is missing")
+        work_items = members
+        expected_work_ids = tuple(
+            sorted(work_item.ref.work_item_id for work_item in work_items)
+        )
+        if (
+            not expected_work_ids
+            or expected_work_ids != record.closed_work_item_ids
+            or any(
+                work_item.ref.plan_ref != record.selected_plan_ref
+                for work_item in work_items
+            )
+        ):
+            raise StorageIntegrityError(
+                "queue_closures closed work membership or plan pin is invalid"
+            )
+        expected_activation_ids = tuple(
+            sorted(
+                activation.activation_id
+                for activation in state.activations.values()
+                if activation.work_item_id in expected_work_ids
+            )
+        )
+        expected_run_ids = tuple(
+            sorted(
+                run.run_ref.run_id
+                for run in state.runs.values()
+                if run.work_item_id in expected_work_ids
+            )
+        )
+        if (
+            record.closed_activation_ids != expected_activation_ids
+            or record.closed_run_ids != expected_run_ids
+        ):
+            raise StorageIntegrityError(
+                "queue_closures activation or run membership is invalid"
+            )
+        for work_item_id in expected_work_ids:
+            closed = state.closed_work_items.get(work_item_id)
+            if (
+                closed is None
+                or closed.close_kind != "queue_cancellation"
+                or closed.created_by_input_id != record.created_by_input_id
+            ):
+                raise StorageIntegrityError(
+                    "queue_closures must own every closed work record"
+                )
+        sessions = tuple(
+            session
+            for session in state.runner_sessions.values()
+            if session.run_id in expected_run_ids
+        )
+        if any(
+            session.state == "lost"
+            or session.cleanup_disposition in {"pending", "orphan_risk"}
+            or session.state
+            in {
+                "created",
+                "starting",
+                "running",
+                "cancellation_requested",
+                "terminating",
+            }
+            for session in sessions
+        ):
+            raise StorageIntegrityError(
+                "queue_closures cannot retain live or unresolved runner aftermath"
+            )
+        sessions_by_id = {session.session_id for session in sessions}
+        for run_id in expected_run_ids:
+            run = state.runs[run_id]
+            if (
+                run.current_session_id is None
+                and not any(
+                    observation.run_id == run_id
+                    for observation in state.runner_observations.values()
+                )
+            ) or (
+                run.current_session_id is not None
+                and run.current_session_id not in sessions_by_id
+            ):
+                raise StorageIntegrityError(
+                    "queue_closures cannot retain an unresolved accepted claim"
+                )
+
+
+def _validate_dispatch_control_input(
+    state: RuntimeState,
+    *,
+    input_id: str,
+    expected_kind: str,
+    field_name: str,
+) -> tuple[InputReceipt, TransitionRecord]:
+    receipt = state.receipts.get(input_id)
+    if receipt is None or not receipt.accepted:
+        raise StorageIntegrityError(
+            f"{field_name} must reference an accepted input receipt"
+        )
+    transition = next(
+        (
+            candidate
+            for candidate in state.transitions
+            if candidate.record_id == receipt.transition_id
+        ),
+        None,
+    )
+    if (
+        transition is None
+        or not transition.accepted
+        or transition.input_id != input_id
+        or transition.input_kind != expected_kind
+        or transition.input_family != "workflow_operator_command"
+    ):
+        raise StorageIntegrityError(
+            f"{field_name} must reference an accepted dispatch transition"
+        )
+    return receipt, transition
+
+
 def validate_loaded_runtime_state(state: RuntimeState) -> None:
     _validate_selected_terminal_action_authority(state)
     _validate_selected_enqueue_route_authority(state)
@@ -593,6 +922,8 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
             )
 
     _validate_runner_session_relations(state)
+    _validate_dispatch_suspension(state)
+    _validate_queue_closures(state)
 
     _validate_unique(
         "runs.claim_id",
@@ -740,6 +1071,22 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
                 frozenset(state.operator_interventions),
                 "operator_interventions",
             )
+        elif closed.close_kind == "queue_cancellation":
+            _validate_reference(
+                "closed_work_items.work_item_id",
+                closed.work_item_id,
+                work_item_ids,
+                "work_items",
+            )
+            if (
+                closed.source_run_id is not None
+                or closed.action_id is not None
+                or closed.operator_intervention_record_id is not None
+            ):
+                raise StorageIntegrityError(
+                    "queue-cancelled work cannot have runner, action, "
+                    "or intervention provenance"
+                )
         else:
             raise StorageIntegrityError("closed_work_items.close_kind is unsupported")
 

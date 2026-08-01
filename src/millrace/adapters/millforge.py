@@ -17,10 +17,12 @@ from types import MappingProxyType
 from typing import Any, Protocol, cast
 
 from millrace.adapters.runner_contract import (
+    REVIEWED_TOKEN_USAGE_MAPPING,
     AdapterErrorResult,
     AdapterInvocationOutcome,
     AdapterInvocationRequest,
     AdapterSuccessResult,
+    AdapterTokenUsage,
     DispatchEcho,
     RedactionPolicy,
     RunnerCancellationOperationResult,
@@ -193,6 +195,7 @@ class MillforgeAdapter:
     """Translate one selected Millrace dispatch through a local facade."""
 
     adapter_kind = MILLFORGE_ADAPTER_KIND
+    token_usage_mapping_capability = REVIEWED_TOKEN_USAGE_MAPPING
 
     def __init__(self, config: MillforgeAdapterConfig) -> None:
         if not isinstance(config, MillforgeAdapterConfig):
@@ -1487,30 +1490,58 @@ def _translate_result(
     result: object,
     adapter_provenance: RunnerAdapterProvenance,
 ) -> AdapterInvocationOutcome:
+    try:
+        token_usage = _millforge_token_usage(result)
+    except (TypeError, ValueError):
+        return _result_error(request, "result_parse_failed")
     result_class = _enum_value(getattr(result, "result_class", None))
     if result_class == "timed_out":
-        return _result_error(request, "timeout")
+        return _result_error(request, "timeout", token_usage=token_usage)
     if result_class == "cancelled":
-        return _result_error(request, "cancelled")
+        return _result_error(request, "cancelled", token_usage=token_usage)
     if _enum_value(
         getattr(result, "status", None)
     ) != "completed" or result_class not in {"domain_terminal", "domain_rejected"}:
-        return _result_error(request, "invocation_failed")
+        return _result_error(
+            request,
+            "invocation_failed",
+            token_usage=token_usage,
+        )
     intent = getattr(result, "terminal_intent", None)
     if not _result_identity_matches(result, intent, prepared.provider_request):
-        return _result_error(request, "result_parse_failed")
+        return _result_error(
+            request,
+            "result_parse_failed",
+            token_usage=token_usage,
+        )
     result_id = getattr(intent, "terminal_result", None)
     if not isinstance(result_id, str):
-        return _result_error(request, "result_parse_failed")
+        return _result_error(
+            request,
+            "result_parse_failed",
+            token_usage=token_usage,
+        )
     mapping = prepared.mappings.get(result_id)
     if mapping is None:
-        return _result_error(request, "result_parse_failed")
+        return _result_error(
+            request,
+            "result_parse_failed",
+            token_usage=token_usage,
+        )
     option = prepared.options.get(str(mapping.outcome_id))
     if option is None:
-        return _result_error(request, "result_parse_failed")
+        return _result_error(
+            request,
+            "result_parse_failed",
+            token_usage=token_usage,
+        )
     artifact_payload = _artifact_payload(prepared, result, intent, option)
     if artifact_payload is _INVALID_PAYLOAD:
-        return _result_error(request, "result_parse_failed")
+        return _result_error(
+            request,
+            "result_parse_failed",
+            token_usage=token_usage,
+        )
     return AdapterSuccessResult.from_unredacted(
         adapter_id=request.adapter_id,
         dispatch_echo=DispatchEcho.from_dispatch_envelope(
@@ -1526,6 +1557,7 @@ def _translate_result(
             "result_class": result_class,
         },
         artifact_payload_candidate=cast(Mapping[str, object] | None, artifact_payload),
+        token_usage=token_usage,
     )
 
 
@@ -1533,7 +1565,10 @@ _INVALID_PAYLOAD = object()
 
 
 def _result_error(
-    request: AdapterInvocationRequest, error_kind: str
+    request: AdapterInvocationRequest,
+    error_kind: str,
+    *,
+    token_usage: AdapterTokenUsage | None = None,
 ) -> AdapterErrorResult:
     return AdapterErrorResult.from_unredacted(
         adapter_id=request.adapter_id,
@@ -1545,7 +1580,37 @@ def _result_error(
             selected_adapter_kind=request.selected_adapter_kind,
         ),
         diagnostics={"reason": "provider_result"},
+        token_usage=token_usage,
     )
+
+
+def _millforge_token_usage(result: object) -> AdapterTokenUsage | None:
+    usage = getattr(result, "usage", None)
+    if usage is None:
+        return None
+    token_usage = getattr(usage, "token_usage", None)
+    if token_usage is None:
+        return None
+    return AdapterTokenUsage(
+        input_tokens=_strict_nonnegative_int(
+            getattr(token_usage, "input_tokens", None),
+            "usage.token_usage.input_tokens",
+        ),
+        output_tokens=_strict_nonnegative_int(
+            getattr(token_usage, "output_tokens", None),
+            "usage.token_usage.output_tokens",
+        ),
+        total_tokens=_strict_nonnegative_int(
+            getattr(token_usage, "total_tokens", None),
+            "usage.token_usage.total_tokens",
+        ),
+    )
+
+
+def _strict_nonnegative_int(value: object, field_name: str) -> int:
+    if type(value) is not int or value < 0 or value > 2**63 - 1:
+        raise ValueError(f"{field_name} must be a non-negative durable integer")
+    return value
 
 
 def _result_identity_matches(result: object, intent: object, request: object) -> bool:

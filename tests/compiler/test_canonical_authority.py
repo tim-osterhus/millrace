@@ -19,7 +19,8 @@ from millrace.compiler.canonical import (
 )
 from millrace.contracts import CompiledPlanEnvelope, SelectedCompiledPlan
 from millrace.contracts.diagnostics import Diagnostic
-from millrace.workflows import kernel_ping, simple_loop
+from millrace.workflows import kernel_ping
+from support import generic_operator_wait
 
 Source = dict[str, object]
 Record = dict[str, object]
@@ -163,26 +164,26 @@ def _source_with_reordered_top_level_declarations(source: Source) -> Source:
     return source
 
 
-def _simple_loop_source() -> Source:
-    return simple_loop.workflow_source()
+def _operator_wait_source() -> Source:
+    return generic_operator_wait.source()
 
 
 def _add_second_operator_wait_source_action(source: Source) -> None:
-    second_outcome_id = "simple_loop.manager.needs_operator_detail_secondary"
-    second_action_id = "simple_loop.manager.needs_operator_detail_secondary"
-    manager_stage = next(
+    second_outcome_id = "kernel_ping.taskmaster.needs_operator_detail_secondary"
+    second_action_id = "kernel_ping.taskmaster.needs_operator_detail_secondary"
+    taskmaster_stage = next(
         record
         for record in _records(source, "stage_kinds")
-        if record["id"] == "simple_loop.manager"
+        if record["id"] == "kernel_ping.taskmaster"
     )
-    manager_stage["declared_outcome_ids"] = (
-        *cast(tuple[str, ...], manager_stage["declared_outcome_ids"]),
+    taskmaster_stage["declared_outcome_ids"] = (
+        *cast(tuple[str, ...], taskmaster_stage["declared_outcome_ids"]),
         second_outcome_id,
     )
     _records(source, "terminal_outcomes").append(
         {
             "id": second_outcome_id,
-            "stage_kind_id": "simple_loop.manager",
+            "stage_kind_id": "kernel_ping.taskmaster",
             "marker": "NEEDS_OPERATOR_DETAIL_SECONDARY",
             "presentation": {"display_name": second_outcome_id},
         }
@@ -190,17 +191,17 @@ def _add_second_operator_wait_source_action(source: Source) -> None:
     _records(source, "terminal_actions").append(
         {
             "id": second_action_id,
-            "stage_kind_id": "simple_loop.manager",
+            "stage_kind_id": "kernel_ping.taskmaster",
             "outcome_id": second_outcome_id,
             "kind": "operator_wait",
-            "artifact_schema_id": "simple_loop.detail_request",
+            "artifact_schema_id": "kernel_ping.task_incident",
             "presentation": {"display_name": second_action_id},
         }
     )
     operator_wait = next(
         record
         for record in _records(source, "operator_waits")
-        if record["id"] == "simple_loop.manager_detail_wait"
+        if record["id"] == generic_operator_wait.REVISE_WAIT_ID
     )
     operator_wait["source_action_ids"] = (
         *cast(tuple[str, ...], operator_wait["source_action_ids"]),
@@ -238,12 +239,12 @@ def test_top_level_declaration_order_does_not_change_selected_authority() -> Non
 
 
 def test_operator_wait_resolution_order_does_not_change_selected_authority() -> None:
-    base_source = _simple_loop_source()
-    reordered_source = _simple_loop_source()
+    base_source = _operator_wait_source()
+    reordered_source = _operator_wait_source()
     operator_wait = next(
         record
         for record in _records(reordered_source, "operator_waits")
-        if record["id"] == "simple_loop.manager_detail_wait"
+        if record["id"] == generic_operator_wait.REVISE_WAIT_ID
     )
     operator_wait["allowed_resolution_kinds"] = (
         "revise_recorded_source",
@@ -251,10 +252,8 @@ def test_operator_wait_resolution_order_does_not_change_selected_authority() -> 
         "resume_recorded_source",
     )
 
-    base_result = compile_workflow(base_source, selected_runner_policy=_CODEX_POLICY)
-    reordered_result = compile_workflow(
-        reordered_source, selected_runner_policy=_CODEX_POLICY
-    )
+    base_result = compile_workflow(base_source)
+    reordered_result = compile_workflow(reordered_source)
     assert base_result.plan is not None
     assert reordered_result.plan is not None
     base_plan = base_result.plan
@@ -268,23 +267,21 @@ def test_operator_wait_resolution_order_does_not_change_selected_authority() -> 
 
 
 def test_operator_wait_source_action_order_does_not_change_selected_authority() -> None:
-    base_source = _simple_loop_source()
-    reordered_source = _simple_loop_source()
+    base_source = _operator_wait_source()
+    reordered_source = _operator_wait_source()
     _add_second_operator_wait_source_action(base_source)
     _add_second_operator_wait_source_action(reordered_source)
     operator_wait = next(
         record
         for record in _records(reordered_source, "operator_waits")
-        if record["id"] == "simple_loop.manager_detail_wait"
+        if record["id"] == generic_operator_wait.REVISE_WAIT_ID
     )
     operator_wait["source_action_ids"] = tuple(
         reversed(cast(tuple[str, ...], operator_wait["source_action_ids"]))
     )
 
-    base_result = compile_workflow(base_source, selected_runner_policy=_CODEX_POLICY)
-    reordered_result = compile_workflow(
-        reordered_source, selected_runner_policy=_CODEX_POLICY
-    )
+    base_result = compile_workflow(base_source)
+    reordered_result = compile_workflow(reordered_source)
     assert base_result.plan is not None
     assert reordered_result.plan is not None
     base_plan = base_result.plan

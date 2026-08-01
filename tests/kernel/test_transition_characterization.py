@@ -86,6 +86,8 @@ def _manual_decision(
         expected_run_fencing_tokens={},
         expected_run_unobserved=(),
         expected_pause_absent=False,
+        expected_dispatch_suspension_absent=False,
+        expected_dispatch_suspension_generation=None,
         expected_lineage_quarantine_absent=(),
         mutations=(mutation,),
         governance_events=governance_events,

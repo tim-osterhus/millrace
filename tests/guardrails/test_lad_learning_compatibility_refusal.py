@@ -66,12 +66,9 @@ def test_generic_runtime_omits_lad_c_learning_authority_surfaces() -> None:
     assert offenders == []
 
 
-def test_selected_lad_learning_workflow_data_is_outside_guardrail() -> None:
+def test_lad_learning_workflow_donor_is_absent() -> None:
     fixture_path = PACKAGE_ROOT / "workflows" / "lad_learning.py"
-    text = fixture_path.read_text(encoding="utf-8")
-
-    assert "learning_request" in text
-    assert "librarian" in text
+    assert not fixture_path.exists()
 
 
 def test_detector_catches_lad_c_learning_authority_probe() -> None:

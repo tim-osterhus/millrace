@@ -100,7 +100,10 @@ def open_runtime_context(namespace: object, *, command: str) -> OpenRuntimeConte
     try:
         store = SQLiteRuntimeStore.open(paths.db_path)
     except StoreSchemaUpgradeRequired as exc:
-        raise workspace_upgrade_required(command) from exc
+        raise workspace_upgrade_required(
+            command,
+            current_schema_version=exc.current_schema_version,
+        ) from exc
     except StoreNotInitialized as exc:
         raise store_not_initialized(command, paths) from exc
     return OpenRuntimeContext(
@@ -262,6 +265,54 @@ def decide_apply_persist(
     return decision, next_state
 
 
+def terminalize_daemon_budget_with_suspension(
+    runtime: OpenRuntimeContext,
+    *,
+    budget_id: str,
+    observed_at: int,
+    status: str,
+    reason: str,
+    command: str,
+) -> None:
+    """Persist budget terminalization and its admission gate as one SQLite unit."""
+    from millrace.contracts.transition import SuspendDispatch
+
+    connection = runtime.store._connection
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        connection.execute("PRAGMA defer_foreign_keys = ON")
+        epoch = runtime.store.load_daemon_budget_epoch(budget_id)
+        if epoch is None:
+            raise ValueError("daemon budget epoch is missing")
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        if state.dispatch_suspension is None or (
+            state.dispatch_suspension.status != "active"
+        ):
+            decide_apply_persist(
+                runtime,
+                state,
+                SuspendDispatch(
+                    f"daemon-budget:{epoch.budget_id}:suspend",
+                    plan_fingerprint=epoch.selected_plan_ref.authority_fingerprint,
+                    actor_id="daemon_budget",
+                    reason=reason,
+                ),
+                command=command,
+            )
+        if epoch.status == "active":
+            runtime.store._stop_daemon_budget_epoch(
+                budget_id,
+                observed_at=observed_at,
+                status=status,
+                reason=reason,
+            )
+        connection.execute("COMMIT")
+    except Exception:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
+
+
 def contextual_input_id(transition_input: TransitionInput) -> str:
     return _contextual_input_id(transition_input)
 
@@ -302,15 +353,19 @@ def store_not_initialized(command: str, paths: CliWorkspacePaths) -> CliCommandE
     )
 
 
-def workspace_upgrade_required(command: str) -> CliCommandError:
+def workspace_upgrade_required(
+    command: str,
+    *,
+    current_schema_version: int,
+) -> CliCommandError:
     return CliCommandError(
         command=command,
         code="workspace_upgrade_required",
         message="Workspace schema upgrade is required.",
         exit_code=ExitCode.PERSISTENCE_FAILURE,
         details={
-            "current_schema_version": 6,
-            "required_schema_version": 7,
+            "current_schema_version": current_schema_version,
+            "required_schema_version": 8,
         },
     )
 

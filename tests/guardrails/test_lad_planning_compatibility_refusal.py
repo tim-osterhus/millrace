@@ -313,13 +313,9 @@ def test_generic_runtime_omits_lad_b_legacy_compatibility_authority() -> None:
     assert _runtime_authority_findings(PACKAGE_ROOT) == []
 
 
-def test_selected_lad_planning_workflow_data_is_outside_guardrail() -> None:
+def test_lad_planning_workflow_donor_is_absent() -> None:
     workflow_path = PACKAGE_ROOT / "workflows" / "lad_planning.py"
-    workflow_text = workflow_path.read_text(encoding="utf-8")
-
-    assert "planning.lad" in workflow_text
-    assert "lad_planner" in workflow_text
-    assert "spec" in workflow_text
+    assert not workflow_path.exists()
     assert _runtime_authority_findings(PACKAGE_ROOT) == []
 
 

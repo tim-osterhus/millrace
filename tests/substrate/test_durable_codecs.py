@@ -8,25 +8,15 @@ from typing import cast
 
 import pytest
 
-from millrace.compiler import SelectedRunnerAdapterPolicy, compile_workflow
+from millrace.compiler import compile_workflow
 from millrace.contracts.compiled_plan import (
     AuthorityValue,
     SelectedCompiledPlan,
     authority_fingerprint,
 )
-from millrace.workflows import kernel_ping, lad_execution
-from support import lad_learning
+from millrace.workflows import kernel_ping
+from support import generic_admission, generic_effect, generic_lifecycle
 from support.kernel_ping import compile_kernel_ping
-from support.simple_loop import compile_simple_loop
-
-_CODEX_POLICY = SelectedRunnerAdapterPolicy(
-    default_adapter_kind="codex",
-    supported_adapter_kinds=frozenset({"codex"}),
-    component_bound_adapter_kinds=frozenset(),
-    default_component_selector=None,
-    default_component_required_capability_ids=frozenset(),
-    default_component_requires_complete_mappings=False,
-)
 
 
 def _canonical_object_bytes(value: Mapping[str, object]) -> bytes:
@@ -126,6 +116,29 @@ def _component_free_capability_plan() -> SelectedCompiledPlan:
     assert result.plan is not None
     assert result.plan.runner_bindings[0].component_pin is None
     return result.plan
+
+
+def _partitionless_plan() -> tuple[SelectedCompiledPlan, str]:
+    source = generic_lifecycle.source()
+    stages = cast(list[dict[str, object]], source["stage_kinds"])
+    stages[-1]["partition_id"] = None
+    return generic_lifecycle.compile_lifecycle(source)
+
+
+def _generated_work_plan() -> tuple[SelectedCompiledPlan, str]:
+    source = generic_lifecycle.source()
+    for fanout in cast(list[dict[str, object]], source["fanout_declarations"]):
+        fanout["source_state_policy"] = "accepted_terminal_observation"
+        fanout["dependency_policy"] = "none"
+    source["concurrency_policies"] = [
+        {
+            "id": "lifecycle.primary_limit",
+            "partition_id": "primary",
+            "max_active_runs": 1,
+            "coexist_partition_ids": (),
+        }
+    ]
+    return generic_lifecycle.compile_lifecycle(source)
 
 
 _RUNNER_COMPONENT_AUTHORITY_FIELDS = (
@@ -500,12 +513,7 @@ def test_selected_plan_codec_round_trips_non_empty_capability_authority() -> Non
     )
     from millrace.substrate.records import SELECTED_COMPILED_PLAN_OBJECT_KIND
 
-    result = compile_workflow(
-        lad_execution.workflow_source(), selected_runner_policy=_CODEX_POLICY
-    )
-    assert result.plan is not None
-    plan = result.plan
-    fingerprint = authority_fingerprint(plan)
+    plan, fingerprint = generic_lifecycle.compile_lifecycle()
 
     object_bytes = dumps_cas_object(encode_selected_compiled_plan(plan))
     object_record = _object_from_bytes(object_bytes)
@@ -578,7 +586,7 @@ def test_selected_plan_codec_round_trips_generated_work_authority() -> None:
     )
     from millrace.substrate.records import SELECTED_COMPILED_PLAN_OBJECT_KIND
 
-    plan, fingerprint = lad_learning.compile_lad_learning()
+    plan, fingerprint = _generated_work_plan()
 
     object_bytes = dumps_cas_object(encode_selected_compiled_plan(plan))
     object_record = _object_from_bytes(object_bytes)
@@ -587,11 +595,9 @@ def test_selected_plan_codec_round_trips_generated_work_authority() -> None:
     fanouts = cast(list[dict[str, object]], payload["fanout_declarations"])
     concurrency = cast(list[dict[str, object]], payload["concurrency_policies"])
 
-    assert {
-        route["id"] for route in generated_routes
-    } >= {
-        "learning.trigger.analyst",
-        "learning.trigger.librarian",
+    assert {route["id"] for route in generated_routes} >= {
+        "route.alpha",
+        "route.beta",
     }
     assert any(
         fanout["source_state_policy"] == "accepted_terminal_observation"
@@ -599,9 +605,9 @@ def test_selected_plan_codec_round_trips_generated_work_authority() -> None:
         for fanout in fanouts
     )
     assert any(
-        policy["partition_id"] == "learning"
+        policy["partition_id"] == "primary"
         and policy["max_active_runs"] == 1
-        and policy["coexist_partition_ids"] == ["planning", "execution"]
+        and policy["coexist_partition_ids"] == []
         for policy in concurrency
     )
 
@@ -627,20 +633,15 @@ def test_selected_plan_codec_round_trips_selected_graph_authority() -> None:
     )
     from millrace.substrate.records import SELECTED_COMPILED_PLAN_OBJECT_KIND
 
-    result = compile_workflow(
-        lad_execution.workflow_source(), selected_runner_policy=_CODEX_POLICY
-    )
-    assert result.plan is not None
-    plan = result.plan
-    fingerprint = authority_fingerprint(plan)
+    plan, fingerprint = generic_lifecycle.compile_lifecycle()
 
     object_bytes = dumps_cas_object(encode_selected_compiled_plan(plan))
     object_record = _object_from_bytes(object_bytes)
     payload = cast(dict[str, object], object_record["payload"])
     graphs = cast(list[dict[str, object]], payload["graphs"])
 
-    assert graphs[0]["id"] == "execution.lad.graph"
-    assert graphs[0]["node_ids"][0] == "execution.lad.builder.start"
+    assert graphs[0]["id"] == "lifecycle.graph"
+    assert graphs[0]["node_ids"][0] == "lifecycle.origin.start"
 
     decoded_envelope = loads_cas_object(
         object_bytes,
@@ -659,11 +660,8 @@ def test_selected_plan_codec_rejects_missing_capability_authority_key() -> None:
     )
     from millrace.substrate.errors import InvalidCasObject
 
-    result = compile_workflow(
-        lad_execution.workflow_source(), selected_runner_policy=_CODEX_POLICY
-    )
-    assert result.plan is not None
-    envelope = encode_selected_compiled_plan(result.plan)
+    plan, _fingerprint = generic_lifecycle.compile_lifecycle()
+    envelope = encode_selected_compiled_plan(plan)
     payload = dict(envelope.payload)
     payload.pop("capabilities")
     corrupt_envelope = replace(envelope, payload=payload)
@@ -679,11 +677,8 @@ def test_selected_plan_codec_rejects_missing_graph_authority_key() -> None:
     )
     from millrace.substrate.errors import InvalidCasObject
 
-    result = compile_workflow(
-        lad_execution.workflow_source(), selected_runner_policy=_CODEX_POLICY
-    )
-    assert result.plan is not None
-    envelope = encode_selected_compiled_plan(result.plan)
+    plan, _fingerprint = generic_lifecycle.compile_lifecycle()
+    envelope = encode_selected_compiled_plan(plan)
     payload = dict(envelope.payload)
     payload.pop("graphs")
     corrupt_envelope = replace(envelope, payload=payload)
@@ -733,15 +728,15 @@ def test_selected_plan_codec_round_trips_partitionless_stage_as_json_null() -> N
     )
     from millrace.substrate.records import SELECTED_COMPILED_PLAN_OBJECT_KIND
 
-    plan, fingerprint = compile_simple_loop()
+    plan, fingerprint = _partitionless_plan()
     object_bytes = dumps_cas_object(encode_selected_compiled_plan(plan))
     object_record = _object_from_bytes(object_bytes)
     payload = cast(dict[str, object], object_record["payload"])
-    troubleshooter = _stage_kind_record(payload, "simple_loop.troubleshooter")
+    partitionless = _stage_kind_record(payload, "review_stage")
 
     assert b'"partition_id":null' in object_bytes
     assert b'"partition_id":"None"' not in object_bytes
-    assert troubleshooter["partition_id"] is None
+    assert partitionless["partition_id"] is None
 
     decoded_envelope = loads_cas_object(
         object_bytes,
@@ -751,12 +746,12 @@ def test_selected_plan_codec_round_trips_partitionless_stage_as_json_null() -> N
 
     assert decoded_plan == plan
     assert authority_fingerprint(decoded_plan) == fingerprint
-    decoded_troubleshooter = next(
+    decoded_partitionless = next(
         stage
         for stage in decoded_plan.stage_kinds
-        if str(stage.id) == "simple_loop.troubleshooter"
+        if str(stage.id) == "review_stage"
     )
-    assert decoded_troubleshooter.partition_id is None
+    assert decoded_partitionless.partition_id is None
 
 
 def test_selected_plan_codec_round_trips_recovery_policy_authority() -> None:
@@ -768,14 +763,14 @@ def test_selected_plan_codec_round_trips_recovery_policy_authority() -> None:
     )
     from millrace.substrate.records import SELECTED_COMPILED_PLAN_OBJECT_KIND
 
-    plan, fingerprint = compile_simple_loop()
+    plan, fingerprint = generic_admission.compile_plan()
     object_bytes = dumps_cas_object(encode_selected_compiled_plan(plan))
     object_record = _object_from_bytes(object_bytes)
     payload = cast(dict[str, object], object_record["payload"])
     policies = cast(list[object], payload["recovery_policies"])
     policy = cast(dict[str, object], policies[0])
 
-    assert policy["id"] == "simple_loop.blocked_recovery"
+    assert policy["id"] == generic_admission.RECOVERY_POLICY_ID
     assert policy["recorded_source_selector"] == (
         "latest_recovery_attempt_for_lineage"
     )
@@ -801,7 +796,7 @@ def test_selected_plan_codec_round_trips_intervention_option_authority() -> None
     )
     from millrace.substrate.records import SELECTED_COMPILED_PLAN_OBJECT_KIND
 
-    plan, fingerprint = compile_simple_loop()
+    plan, fingerprint = generic_admission.compile_plan()
     object_bytes = dumps_cas_object(encode_selected_compiled_plan(plan))
     object_record = _object_from_bytes(object_bytes)
     payload = cast(dict[str, object], object_record["payload"])
@@ -817,41 +812,41 @@ def test_selected_plan_codec_round_trips_intervention_option_authority() -> None
     }
 
     assert set(by_id) == {
-        "simple_loop.resume_lineage",
-        "simple_loop.close_lineage",
-        "simple_loop.revise_lineage",
+        "admission.resume",
+        "admission.close",
+        "admission.revise",
     }
-    assert by_id["simple_loop.resume_lineage"]["kind"] == "resume_lineage"
-    assert by_id["simple_loop.resume_lineage"]["resume_target_selector"] == (
+    assert by_id["admission.resume"]["kind"] == "resume_lineage"
+    assert by_id["admission.resume"]["resume_target_selector"] == (
         "recorded_source"
     )
-    assert by_id["simple_loop.revise_lineage"]["kind"] == "revise_lineage"
-    assert by_id["simple_loop.revise_lineage"]["payload_schema_id"] == (
-        "simple_loop.work_packet"
+    assert by_id["admission.revise"]["kind"] == "revise_lineage"
+    assert by_id["admission.revise"]["payload_schema_id"] == (
+        "fanout.packet"
     )
-    assert by_id["simple_loop.revise_lineage"]["target_queue_family_id"] == (
-        "work_packet"
+    assert by_id["admission.revise"]["target_queue_family_id"] == (
+        "child"
     )
-    assert by_id["simple_loop.revise_lineage"]["target_stage_kind_id"] == (
-        "simple_loop.worker"
+    assert by_id["admission.revise"]["target_stage_kind_id"] == (
+        generic_admission.CHILD_STAGE_ID
     )
-    assert by_id["simple_loop.revise_lineage"]["target_graph_node_id"] == (
-        "simple_loop.worker.start"
+    assert by_id["admission.revise"]["target_graph_node_id"] == (
+        generic_admission.CHILD_NODE_ID
     )
-    assert by_id["simple_loop.revise_lineage"]["target_runner_binding_id"] == (
-        "simple_loop.default_agent_runner"
+    assert by_id["admission.revise"]["target_runner_binding_id"] == (
+        generic_admission.RUNNER_ID
     )
-    assert by_id["simple_loop.close_lineage"]["kind"] == "close_lineage"
-    assert by_id["simple_loop.close_lineage"]["close_behavior"] == (
+    assert by_id["admission.close"]["kind"] == "close_lineage"
+    assert by_id["admission.close"]["close_behavior"] == (
         "close_ready_or_active_work_in_lineage"
     )
     assert set(waits_by_id) == {
-        "simple_loop.manager_detail_wait",
-        "simple_loop.manager_incident_wait",
+        generic_admission.REVISE_WAIT_ID,
+        generic_admission.CLOSE_WAIT_ID,
     }
-    assert waits_by_id["simple_loop.manager_detail_wait"]["wait_scope"] == "lineage"
-    assert waits_by_id["simple_loop.manager_detail_wait"]["timeout_policy"] == "none"
-    assert waits_by_id["simple_loop.manager_detail_wait"]["expiry_policy"] == "none"
+    assert waits_by_id[generic_admission.REVISE_WAIT_ID]["wait_scope"] == "lineage"
+    assert waits_by_id[generic_admission.REVISE_WAIT_ID]["timeout_policy"] == "none"
+    assert waits_by_id[generic_admission.REVISE_WAIT_ID]["expiry_policy"] == "none"
 
     decoded_envelope = loads_cas_object(
         object_bytes,
@@ -877,7 +872,7 @@ def test_operator_intervention_row_codec_round_trips_record() -> None:
     )
 
     plan_ref = PlanRef(
-        plan_id="simple_loop:0.1",
+        plan_id="admission.workflow:0.1",
         authority_fingerprint=f"sha256:{'a' * 64}",
         plan_format_version=SelectedCompiledPlan.schema_version,
     )
@@ -885,10 +880,10 @@ def test_operator_intervention_row_codec_round_trips_record() -> None:
         record_id="operator-intervention:operator-close-lineage",
         created_by_input_id="operator-close-lineage",
         input_payload_digest=f"sha256:{'b' * 64}",
-        option_id="simple_loop.close_lineage",
+        option_id="admission.close",
         kind="close_lineage",
         result="closed",
-        policy_id=RecoveryPolicyId("simple_loop.blocked_recovery"),
+        policy_id=RecoveryPolicyId(generic_admission.RECOVERY_POLICY_ID),
         lineage_id="work-prompt",
         quarantine_id="lineage-quarantine:1",
         recovery_attempt_record_id="recovery-attempt:1",
@@ -956,26 +951,24 @@ def test_operator_wait_row_codec_round_trips_record() -> None:
     )
 
     plan_ref = PlanRef(
-        plan_id="simple_loop:0.1",
+        plan_id="kernel_ping:0.1",
         authority_fingerprint=f"sha256:{'a' * 64}",
         plan_format_version=SelectedCompiledPlan.schema_version,
     )
     wait = OperatorWaitRecord(
         wait_id="operator-wait:1",
-        operator_wait_id=OperatorWaitId("simple_loop.manager_detail_wait"),
-        source_action_id=ActionId("simple_loop.manager.needs_operator_detail"),
+        operator_wait_id=OperatorWaitId(generic_admission.REVISE_WAIT_ID),
+        source_action_id=ActionId(generic_admission.REVISE_ACTION_ID),
         lineage_id="work-prompt",
         selected_plan_ref=plan_ref,
         selected_plan_fingerprint=plan_ref.authority_fingerprint,
         source_work_item_id="work-prompt",
         source_activation_id="activation-manager",
         source_run_id="run-manager",
-        source_stage_kind_id=StageKindId("simple_loop.manager"),
-        source_graph_node_id="simple_loop.manager.start",
-        source_queue_family_id=QueueFamilyId("work_prompt"),
-        source_runner_binding_id=RunnerBindingId(
-            "simple_loop.default_agent_runner"
-        ),
+        source_stage_kind_id=StageKindId(generic_admission.PARENT_STAGE_ID),
+        source_graph_node_id=generic_admission.PARENT_NODE_ID,
+        source_queue_family_id=QueueFamilyId("parent"),
+        source_runner_binding_id=RunnerBindingId(generic_admission.RUNNER_ID),
         source_artifact_id="artifact-detail-request",
         status="resolved",
         created_input_id="observe-manager-detail",
@@ -1031,7 +1024,7 @@ def test_operator_wait_row_codec_round_trips_record() -> None:
     assert operator_wait_from_row(decoded_row) == wait
 
 
-def test_learning_effect_rows_round_trip_and_refuse_exact_key_drift() -> None:
+def test_effect_rows_round_trip_and_refuse_exact_key_drift() -> None:
     from millrace.contracts.ids import (
         ActionId,
         ArtifactSchemaId,
@@ -1056,57 +1049,57 @@ def test_learning_effect_rows_round_trip_and_refuse_exact_key_drift() -> None:
     from millrace.substrate.errors import StorageIntegrityError
 
     plan_ref = PlanRef(
-        plan_id="lad.full@0.1",
+        plan_id="kernel_ping:0.1",
         authority_fingerprint=f"sha256:{'a' * 64}",
         plan_format_version=SelectedCompiledPlan.schema_version,
     )
     proposal = EffectProposalRecord(
         effect_id="transition-observe-effect:effect",
         dedupe_key=(
-            f"{lad_learning.LIBRARIAN_EFFECT_DECLARATION_ID}:"
+            f"{generic_effect.EFFECT_DECLARATION_ID}:"
             "transition-observe-effect:artifact"
         ),
         effect_declaration_id=EffectDeclarationId(
-            lad_learning.LIBRARIAN_EFFECT_DECLARATION_ID
+            generic_effect.EFFECT_DECLARATION_ID
         ),
         selected_plan_ref=plan_ref,
         selected_plan_fingerprint=plan_ref.authority_fingerprint,
-        terminal_action_id=ActionId("learning.close_librarian_complete"),
+        terminal_action_id=ActionId(generic_effect.EFFECT_ACTION_ID),
         artifact_id="transition-observe-effect:artifact",
         artifact_schema_id=ArtifactSchemaId(
-            lad_learning.LEARNING_SKILL_INSTALL_REPORT_SCHEMA_ID
+            "kernel_ping.task_artifact"
         ),
         artifact_payload_digest=f"sha256:{'b' * 64}",
-        source_run_id="run-librarian",
-        source_action_id=ActionId("learning.close_librarian_complete"),
-        source_input_id="observe-librarian-effect",
-        source_work_item_id="work-librarian",
-        source_activation_id="activation-librarian",
-        source_graph_node_id="learning.standard.librarian",
-        source_stage_kind_id=StageKindId("librarian"),
-        source_runner_binding_id=RunnerBindingId("learning.standard.local_runner"),
-        source_queue_family_id=QueueFamilyId("learning_request"),
-        lineage_id="root-spec-1",
-        provider_ref=lad_learning.FAKE_LOCAL_EFFECT_PROVIDER_REF,
-        capability_policy_ref=lad_learning.FAKE_LOCAL_EFFECT_CAPABILITY_POLICY_REF,
-        target_ref_kind="workspace_skill_install_report",
-        target_ref_schema="learning.effects.target.workspace_skill_install_report.v1",
-        target_skill_id="planning.skills.planner_core",
-        target_path_ref="skills/stage/planning/planner-core/SKILL.md",
+        source_run_id="run-taskmaster",
+        source_action_id=ActionId(generic_effect.EFFECT_ACTION_ID),
+        source_input_id="observe-taskmaster-effect",
+        source_work_item_id="work-prompt",
+        source_activation_id="activation-taskmaster",
+        source_graph_node_id="kernel_ping.taskmaster.start",
+        source_stage_kind_id=StageKindId("kernel_ping.taskmaster"),
+        source_runner_binding_id=RunnerBindingId("kernel_ping.taskmaster_runner"),
+        source_queue_family_id=QueueFamilyId("prompt"),
+        lineage_id="work-prompt",
+        provider_ref="provider.fake_local.workspace",
+        capability_policy_ref="policy.fake_local.no_real_side_effects",
+        target_ref_kind="workspace_record",
+        target_ref_schema="kernel_ping.effects.target.workspace_record.v1",
+        target_skill_id=None,
+        target_path_ref="records/taskmaster.json",
         status="pending",
-        created_input_id="observe-librarian-effect",
-        created_transition_id="transition-observe-librarian-effect",
+        created_input_id="observe-taskmaster-effect",
+        created_transition_id="transition-observe-taskmaster-effect",
     )
     reconciliation = EffectReconciliationRecord(
         reconciliation_id="transition-reconcile-effect:reconciliation",
         effect_id=proposal.effect_id,
         selected_plan_ref=plan_ref,
         selected_plan_fingerprint=plan_ref.authority_fingerprint,
-        provider_ref=lad_learning.FAKE_LOCAL_EFFECT_PROVIDER_REF,
+        provider_ref="provider.fake_local.workspace",
         status="applied",
         fake_local_result_digest=f"sha256:{'c' * 64}",
-        created_input_id="reconcile-librarian-effect",
-        created_transition_id="transition-reconcile-librarian-effect",
+        created_input_id="reconcile-taskmaster-effect",
+        created_transition_id="transition-reconcile-taskmaster-effect",
     )
 
     proposal_row = encode_effect_proposal_row(proposal, created_at_order=7)
@@ -1203,25 +1196,23 @@ def test_cooldown_wait_row_codec_round_trips_record() -> None:
     )
 
     plan_ref = PlanRef(
-        plan_id="simple_loop:0.1",
+        plan_id="admission.workflow:0.1",
         authority_fingerprint=f"sha256:{'a' * 64}",
         plan_format_version=SelectedCompiledPlan.schema_version,
     )
     wait = CooldownWaitRecord(
         wait_id="cooldown-wait:1",
-        policy_id=RecoveryPolicyId("simple_loop.blocked_recovery"),
+        policy_id=RecoveryPolicyId(generic_admission.RECOVERY_POLICY_ID),
         lineage_id="work-prompt",
         recovery_attempt_record_id="recovery-attempt:1",
         attempt_count=2,
         source_run_id="run-manager-retry",
         source_work_item_id="work-prompt",
         source_activation_id="activation-returned-manager",
-        recovery_action_id=ActionId("simple_loop.manager.blocked"),
-        target_stage_kind_id=StageKindId("simple_loop.troubleshooter"),
-        target_graph_node_id="simple_loop.troubleshooter.start",
-        target_runner_binding_id=RunnerBindingId(
-            "simple_loop.default_agent_runner"
-        ),
+        recovery_action_id=ActionId(generic_admission.RECOVERY_SOURCE_ACTION_ID),
+        target_stage_kind_id=StageKindId(generic_admission.RECOVERY_STAGE_ID),
+        target_graph_node_id=generic_admission.RECOVERY_NODE_ID,
+        target_runner_binding_id=RunnerBindingId(generic_admission.RUNNER_ID),
         plan_ref=plan_ref,
         created_input_id="observe-manager-blocked-2",
         created_at=1000,
@@ -1274,13 +1265,13 @@ def test_selected_plan_codec_refuses_malformed_partition_id_decode(
     from millrace.substrate.errors import InvalidCasObject
     from millrace.substrate.records import SELECTED_COMPILED_PLAN_OBJECT_KIND
 
-    plan, _fingerprint = compile_simple_loop()
+    plan, _fingerprint = _partitionless_plan()
     object_record = _object_from_bytes(
         dumps_cas_object(encode_selected_compiled_plan(plan))
     )
     payload = cast(dict[str, object], object_record["payload"])
-    troubleshooter = _stage_kind_record(payload, "simple_loop.troubleshooter")
-    troubleshooter["partition_id"] = partition_id
+    partitionless = _stage_kind_record(payload, "review_stage")
+    partitionless["partition_id"] = partition_id
     decoded_envelope = loads_cas_object(
         _canonical_object_bytes(object_record),
         expected_object_kind=SELECTED_COMPILED_PLAN_OBJECT_KIND,

@@ -26,11 +26,13 @@ from millrace.contracts.state import (
     ClosureEvaluationRecord,
     ClosureTargetRecord,
     ClosureTerminalRecord,
+    DaemonBudgetEpochRecord,
     EffectProposalRecord,
     EffectReconciliationRecord,
     FanoutRecord,
     GovernanceEventRecord,
     OperatorWaitRecord,
+    QueueClosureRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
     RunRecord,
@@ -43,8 +45,53 @@ from millrace.contracts.transition import (
     RunnerResultObserved,
     artifact_payload_digest,
 )
-from millrace.operator.dispatch import join_evidence_progress_for_status
+from millrace.operator.dispatch import (
+    DispatchSuspensionProjection,
+    dispatch_suspension_projection,
+    join_evidence_progress_for_status,
+)
 from millrace.operator.intake import OperatorInputError
+
+
+def daemon_budget_projection(
+    epoch: DaemonBudgetEpochRecord,
+) -> dict[str, object]:
+    return {
+        "budget_id": epoch.budget_id,
+        "workspace_path": epoch.workspace_path,
+        "plan_id": epoch.selected_plan_ref.plan_id,
+        "plan_authority_fingerprint": (
+            epoch.selected_plan_ref.authority_fingerprint
+        ),
+        "plan_format_version": epoch.selected_plan_ref.plan_format_version,
+        "max_wall_seconds": epoch.max_wall_seconds,
+        "max_invocations": epoch.max_invocations,
+        "max_total_tokens": epoch.max_total_tokens,
+        "started_at": epoch.started_at,
+        "wall_deadline": epoch.wall_deadline,
+        "last_observed_at": epoch.last_observed_at,
+        "accepted_start_count": epoch.accepted_start_count,
+        "cumulative_input_tokens": epoch.cumulative_input_tokens,
+        "cumulative_output_tokens": epoch.cumulative_output_tokens,
+        "cumulative_total_tokens": epoch.cumulative_total_tokens,
+        "status": epoch.status,
+        "terminal_reason": epoch.terminal_reason,
+        "invocation_overshoot": (
+            0
+            if epoch.max_invocations is None
+            else max(0, epoch.accepted_start_count - epoch.max_invocations)
+        ),
+        "token_overshoot": (
+            0
+            if epoch.max_total_tokens is None
+            else max(0, epoch.cumulative_total_tokens - epoch.max_total_tokens)
+        ),
+        "wall_cleanup_grace_overshoot": (
+            0
+            if epoch.wall_deadline is None
+            else max(0, epoch.last_observed_at - epoch.wall_deadline)
+        ),
+    }
 
 _ClosureLatestT = TypeVar(
     "_ClosureLatestT",
@@ -99,6 +146,33 @@ class QueueFamilyStatus:
     closed_count: int
     quarantined_count: int
     operator_wait_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class QueueClosureStatus:
+    closure_id: str
+    plan_fingerprint: AuthorityFingerprint
+    target_kind: str
+    target_id: str
+    actor_id: str
+    reason: str
+    input_id: str
+    closed_work_item_count: int
+    closed_work_item_ids: tuple[str, ...]
+    closed_activation_count: int
+    closed_activation_ids: tuple[str, ...]
+    closed_run_count: int
+    closed_run_ids: tuple[str, ...]
+    omitted_work_item_count: int
+    omitted_activation_count: int
+    omitted_run_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class QueueClosureProjection:
+    count: int
+    records: tuple[QueueClosureStatus, ...]
+    omitted_record_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,6 +576,8 @@ class OperatorStatus:
     generated_work: tuple[GeneratedWorkStatus, ...]
     joins: tuple[JoinStatus, ...]
     pause: PauseStatus
+    dispatch_suspension: DispatchSuspensionProjection
+    queue_closures: QueueClosureProjection
     quarantines: tuple[QuarantineStatus, ...]
     recovery_attempts: tuple[RecoveryAttemptStatus, ...]
     cooldown_waits: tuple[CooldownWaitStatus, ...]
@@ -608,6 +684,8 @@ def operator_status(
             selected_fingerprint,
         ),
         pause=_pause_status(state),
+        dispatch_suspension=dispatch_suspension_projection(state),
+        queue_closures=queue_closure_projection(state),
         quarantines=_quarantine_statuses(state),
         recovery_attempts=_recovery_attempt_statuses(
             state,
@@ -647,6 +725,62 @@ def operator_status(
             selected_fingerprint,
         ),
         recent_events=_recent_event_statuses(state, max_events),
+    )
+
+
+def queue_closure_projection(
+    state: RuntimeState,
+    *,
+    max_records: int = 20,
+    max_ids: int = 20,
+) -> QueueClosureProjection:
+    if (
+        type(max_records) is not int
+        or max_records < 0
+        or type(max_ids) is not int
+        or max_ids < 0
+    ):
+        raise ValueError("queue closure projection bounds must be non-negative")
+    records = tuple(state.queue_closures.values())
+    retained = records[-max_records:] if max_records else ()
+    return QueueClosureProjection(
+        count=len(records),
+        records=tuple(
+            _queue_closure_status(record, max_ids=max_ids)
+            for record in retained
+        ),
+        omitted_record_count=len(records) - len(retained),
+    )
+
+
+def _queue_closure_status(
+    record: QueueClosureRecord,
+    *,
+    max_ids: int,
+) -> QueueClosureStatus:
+    return QueueClosureStatus(
+        closure_id=record.closure_id,
+        plan_fingerprint=record.selected_plan_ref.authority_fingerprint,
+        target_kind=record.target_kind,
+        target_id=record.target_id,
+        actor_id=record.actor_id,
+        reason=record.reason,
+        input_id=record.created_by_input_id,
+        closed_work_item_count=len(record.closed_work_item_ids),
+        closed_work_item_ids=record.closed_work_item_ids[:max_ids],
+        closed_activation_count=len(record.closed_activation_ids),
+        closed_activation_ids=record.closed_activation_ids[:max_ids],
+        closed_run_count=len(record.closed_run_ids),
+        closed_run_ids=record.closed_run_ids[:max_ids],
+        omitted_work_item_count=max(
+            0,
+            len(record.closed_work_item_ids) - max_ids,
+        ),
+        omitted_activation_count=max(
+            0,
+            len(record.closed_activation_ids) - max_ids,
+        ),
+        omitted_run_count=max(0, len(record.closed_run_ids) - max_ids),
     )
 
 
@@ -2529,6 +2663,7 @@ __all__ = (
     "ClosureRemediationStatus",
     "ClosureTargetStatus",
     "CounterStatus",
+    "DispatchSuspensionProjection",
     "EffectStatus",
     "GeneratedWorkStatus",
     "JoinStatus",
@@ -2540,9 +2675,13 @@ __all__ = (
     "PauseStatus",
     "QuarantineStatus",
     "QueueFamilyStatus",
+    "QueueClosureProjection",
+    "QueueClosureStatus",
     "RecentEventStatus",
     "RecoveryAttemptStatus",
     "SelectedPlanStatus",
     "StageKindStatus",
+    "daemon_budget_projection",
     "operator_status",
+    "queue_closure_projection",
 )

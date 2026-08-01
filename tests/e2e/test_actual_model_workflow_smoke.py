@@ -668,11 +668,7 @@ def test_redaction_canary_scans_artifacts_and_review_output(tmp_path: Path) -> N
     )
 
 
-@pytest.mark.parametrize("package_source_mode", ["path", "archive", "installed"])
-def test_matrix_rows_make_package_source_modes_explicit_without_base_dependency(
-    tmp_path: Path,
-    package_source_mode: str,
-) -> None:
+def test_matrix_contains_only_the_base_kernel_ping_live_row(tmp_path: Path) -> None:
     pyproject_path = tmp_path / "pyproject.toml"
     pyproject_path.write_text(
         """
@@ -682,10 +678,7 @@ dependencies = []
         encoding="utf-8",
     )
 
-    rows = smoke_matrix(
-        package_source_mode=package_source_mode,
-        pyproject_path=pyproject_path,
-    )
+    rows = smoke_matrix(pyproject_path=pyproject_path)
 
     assert rows[0] == SmokeRow(
         row_id="base.kernel_ping",
@@ -697,45 +690,13 @@ dependencies = []
         package_source_mode=None,
         owns_live_row=True,
     )
-    assert {
-        row.row_id: (row.workflow_id, row.external_queue, row.package_source_mode)
-        for row in rows[1:]
-    } == {
-        "plus.simple_loop": ("simple_loop", "work_prompt", package_source_mode),
-        "plus.execution_lad": ("execution.lad", "task", package_source_mode),
-        "plus.execution_lad_integrator": (
-            "execution.lad_integrator",
-            "task",
-            package_source_mode,
-        ),
-        "plus.planning_lad": ("planning.lad", "spec", package_source_mode),
-        "plus.lad_full_spec": ("lad.full", "spec", package_source_mode),
-        "plus.lad_full_learning_request": (
-            "lad.full",
-            "learning_request",
-            package_source_mode,
-        ),
-        "plus.vendor_selection": (
-            "vendor_selection",
-            "purchase_request",
-            package_source_mode,
-        ),
-    }
-    assert all(row.package_id == "millrace.plus.official" for row in rows[1:])
-    assert all(row.package_version == "0.22.0" for row in rows[1:])
+    assert len(rows) == 1
 
 
-@pytest.mark.parametrize("package_source_mode", ["path", "archive", "installed"])
-def test_matrix_uses_actual_source_pyproject_for_base_dependency_guard(
-    package_source_mode: str,
-) -> None:
-    rows = smoke_matrix(
-        package_source_mode=package_source_mode,
-        pyproject_path=SOURCE_ROOT / "pyproject.toml",
-    )
+def test_matrix_uses_actual_source_pyproject_for_base_dependency_guard() -> None:
+    rows = smoke_matrix(pyproject_path=SOURCE_ROOT / "pyproject.toml")
 
-    assert rows[0].workflow_id == "kernel_ping"
-    assert all(row.package_source_mode == package_source_mode for row in rows[1:])
+    assert tuple(row.workflow_id for row in rows) == ("kernel_ping",)
 
 
 @pytest.mark.parametrize(
@@ -762,7 +723,7 @@ dependencies = [{dependency!r}]
     )
 
     with pytest.raises(AssertionError, match="hidden base dependency"):
-        smoke_matrix(package_source_mode="path", pyproject_path=pyproject_path)
+        smoke_matrix(pyproject_path=pyproject_path)
 
 
 @MILLFORGE_REQUIRED

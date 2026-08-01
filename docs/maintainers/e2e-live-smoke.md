@@ -12,6 +12,10 @@ The Codex branch is not a completed current official-Plus Codex live proof.
 Preflight or offline success must not be reported as completed live workflow
 evidence.
 
+Source release readiness, publication, and a credentialed live run are three
+separate claims. Offline checks can support the first claim only. They neither
+publish artifacts nor authorize model execution.
+
 ## Offline Checks
 
 Run the maintained modules without the live marker first:

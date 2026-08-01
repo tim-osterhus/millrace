@@ -20,6 +20,7 @@ from millrace.adapters.cli.context import (
     CliWorkspacePaths,
     OpenRuntimeContext,
     require_nonblank,
+    terminalize_daemon_budget_with_suspension,
     workspace_paths,
 )
 from millrace.adapters.cli.context import (
@@ -33,12 +34,22 @@ from millrace.adapters.cli.run import (
     reconcile_pending_runner_sessions,
     run_bounded_execution_unit,
 )
-from millrace.adapters.runner_contract import AdapterLocalConfig
+from millrace.adapters.runner_contract import (
+    AdapterLocalConfig,
+    AdapterResolverError,
+    has_reviewed_token_usage_mapping,
+    resolve_adapter,
+)
+from millrace.contracts.state import (
+    DURABLE_INT64_MAX,
+    DaemonBudgetEpochRecord,
+    RunnerSessionRecord,
+)
 from millrace.substrate.errors import SubstrateError
 
 _COMMAND = "run.daemon"
 _LOCK_FILENAME = "daemon.lock"
-_SUCCESS_REASONS = frozenset({"max_ticks", "signal"})
+_SUCCESS_REASONS = frozenset({"max_ticks", "signal", "budget_exhausted"})
 _RUNNER_FAILURE_REASONS = frozenset(
     {
         "adapter_failure",
@@ -79,6 +90,10 @@ class DaemonRunOptions:
     local_config: AdapterLocalConfig | None
     monitor: str
     actor_id: str
+    budget_id: str | None = None
+    max_wall_seconds: int | None = None
+    max_invocations: int | None = None
+    max_total_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +112,7 @@ class DaemonRunSummary:
     last_result: dict[str, object] = field(default_factory=dict)
     diagnostics: tuple[dict[str, object], ...] = ()
     runner_session: dict[str, object] | None = None
+    budget: dict[str, object] | None = None
 
     def data(self) -> dict[str, object]:
         return {
@@ -116,6 +132,7 @@ class DaemonRunSummary:
             "runner_session": (
                 None if self.runner_session is None else dict(self.runner_session)
             ),
+            "budget": None if self.budget is None else dict(self.budget),
         }
 
 
@@ -237,6 +254,40 @@ def daemon_options_from_namespace(namespace: object) -> DaemonRunOptions:
         option="--actor-id",
         command=_COMMAND,
     )
+    budget_id = _optional_nonblank(namespace, "budget_id", "--budget-id")
+    max_wall_seconds = _optional_positive_limit(
+        namespace,
+        "max_wall_seconds",
+        "--max-wall-seconds",
+    )
+    max_invocations = _optional_positive_limit(
+        namespace,
+        "max_invocations",
+        "--max-invocations",
+    )
+    max_total_tokens = _optional_positive_limit(
+        namespace,
+        "max_total_tokens",
+        "--max-total-tokens",
+    )
+    if (
+        any(
+            value is not None
+            for value in (
+                max_wall_seconds,
+                max_invocations,
+                max_total_tokens,
+            )
+        )
+        and budget_id is None
+    ):
+        raise CliCommandError(
+            command=_COMMAND,
+            code="budget_id_required",
+            message="Any daemon budget limit requires --budget-id.",
+            exit_code=ExitCode.CLI_USAGE,
+            details={},
+        )
     return DaemonRunOptions(
         paths=workspace_paths(namespace),
         idle_sleep_seconds=idle_sleep_seconds,
@@ -246,6 +297,10 @@ def daemon_options_from_namespace(namespace: object) -> DaemonRunOptions:
         local_config=local_config,
         monitor=monitor,
         actor_id=actor_id,
+        budget_id=budget_id,
+        max_wall_seconds=max_wall_seconds,
+        max_invocations=max_invocations,
+        max_total_tokens=max_total_tokens,
     )
 
 
@@ -254,6 +309,7 @@ def run_daemon_loop(
     *,
     progress_stream: TextIO | None = None,
     monotonic: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], float] = time.time,
 ) -> DaemonRunSummary:
     _validate_options(options)
     try:
@@ -280,7 +336,13 @@ def run_daemon_loop(
         preflight = _preflight_state_load(options)
         if preflight is not None:
             return preflight
-        return _run_locked_loop(options, progress_stream=progress_stream)
+        budget = _prepare_budget_epoch(options, now=int(wall_clock()))
+        return _run_locked_loop(
+            options,
+            progress_stream=progress_stream,
+            wall_clock=wall_clock,
+            budget=budget,
+        )
     finally:
         daemon_lock.release()
 
@@ -299,6 +361,8 @@ def _run_locked_loop(
     options: DaemonRunOptions,
     *,
     progress_stream: TextIO | None,
+    wall_clock: Callable[[], float],
+    budget: DaemonBudgetEpochRecord | None,
 ) -> DaemonRunSummary:
     iterations = 0
     units_started = 0
@@ -311,9 +375,26 @@ def _run_locked_loop(
     last_handled_run_id: str | None = None
 
     with _SignalStop() as stop:
+
+        def wall_expired() -> bool:
+            return (
+                budget is not None
+                and budget.wall_deadline is not None
+                and int(wall_clock()) >= budget.wall_deadline
+            )
+
+        _account_budgeted_starts(options)
+        recovered_exhaustion = _budget_exhaustion_reason(options)
+        if recovered_exhaustion is not None:
+            _finish_budget(
+                options,
+                observed_at=int(wall_clock()),
+                reason=recovered_exhaustion,
+            )
         startup = _reconcile_startup_sessions(
             options,
-            daemon_stop_requested=lambda: stop.requested,
+            daemon_stop_requested=lambda: stop.requested or wall_expired(),
+            max_timeout_seconds=_remaining_wall_seconds(budget, wall_clock),
         )
         if startup.code != "no_runner_session_reconciliation":
             last_result = _result_data(startup)
@@ -334,14 +415,45 @@ def _run_locked_loop(
                     stopped_reason=stopped_reason,
                     last_result=last_result,
                     last_handled_run_id=last_handled_run_id,
-                    diagnostics=tuple(
-                        dict(item) for item in startup.diagnostics
-                    ),
+                    diagnostics=tuple(dict(item) for item in startup.diagnostics),
                 )
+        if wall_expired():
+            _finish_budget(
+                options,
+                observed_at=int(wall_clock()),
+                reason="wall_time_exhausted",
+            )
+            return _summary(
+                options,
+                stopped_reason="budget_exhausted",
+                last_result=last_result,
+                last_handled_run_id=last_handled_run_id,
+            )
         while options.max_ticks is None or iterations < options.max_ticks:
+            exhausted = _budget_exhaustion_reason(options)
+            if exhausted is not None:
+                _finish_budget(
+                    options,
+                    observed_at=int(wall_clock()),
+                    reason=exhausted,
+                )
+                return _summary(
+                    options,
+                    iterations=iterations,
+                    units_started=units_started,
+                    units_succeeded=units_succeeded,
+                    units_refused=units_refused,
+                    adapter_failures=adapter_failures,
+                    idle_iterations=idle_iterations,
+                    lifecycle_transitions_applied=lifecycle_transitions_applied,
+                    stopped_reason="budget_exhausted",
+                    last_result=last_result,
+                    last_handled_run_id=last_handled_run_id,
+                )
             result = _run_one_bounded_unit(
                 options,
-                daemon_stop_requested=lambda: stop.requested,
+                daemon_stop_requested=lambda: stop.requested or wall_expired(),
+                max_timeout_seconds=_remaining_wall_seconds(budget, wall_clock),
             )
             iterations += 1
             last_result = _result_data(result)
@@ -367,6 +479,30 @@ def _run_locked_loop(
                     stream=progress_stream,
                     iteration=iterations,
                     result=result,
+                )
+
+            if (
+                wall_expired()
+                and result.adapter_error_kind == "cancelled"
+                and result.code != "runner_session_orphan_risk"
+            ):
+                _finish_budget(
+                    options,
+                    observed_at=int(wall_clock()),
+                    reason="wall_time_exhausted",
+                )
+                return _summary(
+                    options,
+                    iterations=iterations,
+                    units_started=units_started,
+                    units_succeeded=units_succeeded,
+                    units_refused=units_refused,
+                    adapter_failures=adapter_failures,
+                    idle_iterations=idle_iterations,
+                    lifecycle_transitions_applied=lifecycle_transitions_applied,
+                    stopped_reason="budget_exhausted",
+                    last_result=last_result,
+                    last_handled_run_id=last_handled_run_id,
                 )
 
             if (
@@ -457,6 +593,7 @@ def _reconcile_startup_sessions(
     options: DaemonRunOptions,
     *,
     daemon_stop_requested: Callable[[], bool],
+    max_timeout_seconds: float | None = None,
 ) -> BoundedExecutionUnitResult:
     runtime = open_runtime_context(options.paths, command=_COMMAND)
     try:
@@ -465,7 +602,18 @@ def _reconcile_startup_sessions(
             adapter_kind=options.adapter_kind,
             local_config=options.local_config,
             actor_id=options.actor_id,
+            on_start_reserved=(
+                None
+                if options.budget_id is None
+                else lambda session: _reserve_budgeted_start(options, session)
+            ),
+            on_accepted_start=(
+                None
+                if options.budget_id is None
+                else lambda session: _account_budgeted_start(options, session)
+            ),
             daemon_stop_requested=daemon_stop_requested,
+            max_timeout_seconds=max_timeout_seconds,
         )
     finally:
         runtime.close()
@@ -475,6 +623,7 @@ def _run_one_bounded_unit(
     options: DaemonRunOptions,
     *,
     daemon_stop_requested: Callable[[], bool],
+    max_timeout_seconds: float | None = None,
 ) -> BoundedExecutionUnitResult:
     runtime = open_runtime_context(options.paths, command=_COMMAND)
     try:
@@ -488,7 +637,18 @@ def _run_one_bounded_unit(
             adapter_kind=options.adapter_kind,
             local_config=options.local_config,
             actor_id=options.actor_id,
+            on_start_reserved=(
+                None
+                if options.budget_id is None
+                else lambda session: _reserve_budgeted_start(options, session)
+            ),
+            on_accepted_start=(
+                None
+                if options.budget_id is None
+                else lambda session: _account_budgeted_start(options, session)
+            ),
             daemon_stop_requested=daemon_stop_requested,
+            max_timeout_seconds=max_timeout_seconds,
         )
     finally:
         runtime.close()
@@ -516,6 +676,251 @@ def _preflight_state_load(options: DaemonRunOptions) -> DaemonRunSummary | None:
             diagnostics=(_exception_diagnostic(exc),),
         )
     return None
+
+
+def _prepare_budget_epoch(
+    options: DaemonRunOptions,
+    *,
+    now: int,
+) -> DaemonBudgetEpochRecord | None:
+    limits = (
+        options.max_wall_seconds,
+        options.max_invocations,
+        options.max_total_tokens,
+    )
+    if all(value is None for value in limits):
+        if options.budget_id is not None:
+            raise CliCommandError(
+                command=_COMMAND,
+                code="budget_limit_required",
+                message="--budget-id requires at least one daemon budget limit.",
+                exit_code=ExitCode.CLI_USAGE,
+                details={"budget_id": options.budget_id},
+            )
+        return None
+    if options.max_total_tokens is not None:
+        try:
+            adapter = resolve_adapter(
+                require_nonblank(
+                    options.adapter_kind or "",
+                    option="--adapter-kind",
+                    command=_COMMAND,
+                ),
+                options.local_config or AdapterLocalConfig(),
+            )
+        except (AdapterResolverError, CliCommandError, TypeError, ValueError) as exc:
+            raise CliCommandError(
+                command=_COMMAND,
+                code="runner_usage_mapping_unsupported",
+                message=(
+                    "--max-total-tokens requires a resolved reviewed usage mapping."
+                ),
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+                details={"adapter_kind": options.adapter_kind},
+            ) from exc
+        if not has_reviewed_token_usage_mapping(adapter):
+            raise CliCommandError(
+                command=_COMMAND,
+                code="runner_usage_mapping_unsupported",
+                message=(
+                    "--max-total-tokens requires a resolved reviewed usage mapping."
+                ),
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+                details={"adapter_kind": options.adapter_kind},
+            )
+    runtime = open_runtime_context(options.paths, command=_COMMAND)
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        plan_ref = state.default_plan_ref
+        if plan_ref is None:
+            raise CliCommandError(
+                command=_COMMAND,
+                code="budget_plan_pin_refused",
+                message="A daemon budget requires a selected default plan.",
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+                details={},
+            )
+        budget_id = options.budget_id
+        if budget_id is None:
+            raise AssertionError("validated daemon budget is missing budget_id")
+        try:
+            existing = runtime.store.load_daemon_budget_epoch(budget_id)
+        except ValueError as exc:
+            raise CliCommandError(
+                command=_COMMAND,
+                code="daemon_budget_epoch_refused",
+                message="Daemon budget epoch was refused.",
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+                details={"budget_id": budget_id},
+            ) from exc
+        started_at = now if existing is None else existing.started_at
+        try:
+            epoch = DaemonBudgetEpochRecord(
+                budget_id=budget_id,
+                workspace_path=str(options.paths.workspace_path),
+                selected_plan_ref=plan_ref,
+                max_wall_seconds=options.max_wall_seconds,
+                max_invocations=options.max_invocations,
+                max_total_tokens=options.max_total_tokens,
+                started_at=started_at,
+                wall_deadline=(
+                    None
+                    if options.max_wall_seconds is None
+                    else started_at + options.max_wall_seconds
+                ),
+                last_observed_at=now,
+            )
+        except ValueError as exc:
+            raise CliCommandError(
+                command=_COMMAND,
+                code="daemon_budget_limit_out_of_range",
+                message="Daemon budget limits exceed durable bounds.",
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+                details={"budget_id": budget_id},
+            ) from exc
+        try:
+            return runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+        except ValueError as exc:
+            code = str(exc)
+            if code not in {
+                "daemon_budget_immutable_limits_changed",
+                "daemon_budget_clock_discontinuity",
+            }:
+                code = "daemon_budget_epoch_refused"
+            raise CliCommandError(
+                command=_COMMAND,
+                code=code,
+                message="Daemon budget epoch was refused.",
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+                details={"budget_id": budget_id},
+            ) from exc
+    finally:
+        runtime.close()
+
+
+def _remaining_wall_seconds(
+    budget: DaemonBudgetEpochRecord | None,
+    wall_clock: Callable[[], float],
+) -> float | None:
+    if budget is None or budget.wall_deadline is None:
+        return None
+    return max(0.001, float(budget.wall_deadline) - wall_clock())
+
+
+def _account_budgeted_starts(options: DaemonRunOptions) -> None:
+    if options.budget_id is None:
+        return
+    runtime = open_runtime_context(options.paths, command=_COMMAND)
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        epoch = runtime.store.load_daemon_budget_epoch(options.budget_id)
+        if epoch is None:
+            raise ValueError("daemon budget epoch is missing")
+        for session_id in runtime.store.pending_budgeted_runner_start_session_ids(
+            options.budget_id
+        ):
+            session = state.runner_sessions.get(session_id)
+            if session is None:
+                raise ValueError("runner_session_budget_identity_mismatch")
+            run = state.runs.get(session.run_id)
+            if run is None or run.run_ref.plan_ref != epoch.selected_plan_ref:
+                raise ValueError("runner_session_budget_identity_mismatch")
+            if session.start_intent_at is None:
+                continue
+            runtime.store.record_budgeted_runner_start(options.budget_id, session)
+    finally:
+        runtime.close()
+
+
+def _account_budgeted_start(
+    options: DaemonRunOptions,
+    session: RunnerSessionRecord,
+) -> None:
+    if options.budget_id is None:
+        return
+    runtime = open_runtime_context(options.paths, command=_COMMAND)
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        epoch = runtime.store.load_daemon_budget_epoch(options.budget_id)
+        run = state.runs.get(session.run_id)
+        if (
+            epoch is None
+            or run is None
+            or run.run_ref.plan_ref != epoch.selected_plan_ref
+        ):
+            raise ValueError("runner_session_budget_identity_mismatch")
+        runtime.store.record_budgeted_runner_start(options.budget_id, session)
+    finally:
+        runtime.close()
+
+
+def _reserve_budgeted_start(
+    options: DaemonRunOptions,
+    session: RunnerSessionRecord,
+) -> None:
+    if options.budget_id is None:
+        return
+    runtime = open_runtime_context(options.paths, command=_COMMAND)
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        epoch = runtime.store.load_daemon_budget_epoch(options.budget_id)
+        run = state.runs.get(session.run_id)
+        if (
+            epoch is None
+            or run is None
+            or run.run_ref.plan_ref != epoch.selected_plan_ref
+        ):
+            raise ValueError("runner_session_budget_identity_mismatch")
+        runtime.store.reserve_budgeted_runner_start(options.budget_id, session)
+    finally:
+        runtime.close()
+
+
+def _budget_exhaustion_reason(options: DaemonRunOptions) -> str | None:
+    if options.budget_id is None:
+        return None
+    runtime = open_runtime_context(options.paths, command=_COMMAND)
+    try:
+        epoch = runtime.store.load_daemon_budget_epoch(options.budget_id)
+    finally:
+        runtime.close()
+    if epoch is None:
+        return "budget_epoch_missing"
+    if epoch.status != "active":
+        return epoch.terminal_reason or "budget_epoch_terminal"
+    if (
+        epoch.max_invocations is not None
+        and epoch.accepted_start_count >= epoch.max_invocations
+    ):
+        return "invocation_limit_exhausted"
+    if (
+        epoch.max_total_tokens is not None
+        and epoch.cumulative_total_tokens >= epoch.max_total_tokens
+    ):
+        return "token_limit_exhausted"
+    return None
+
+
+def _finish_budget(
+    options: DaemonRunOptions,
+    *,
+    observed_at: int,
+    reason: str,
+) -> None:
+    if options.budget_id is None:
+        return
+    runtime = open_runtime_context(options.paths, command=_COMMAND)
+    try:
+        terminalize_daemon_budget_with_suspension(
+            runtime,
+            budget_id=options.budget_id,
+            observed_at=observed_at,
+            status="exhausted",
+            reason=reason,
+            command=_COMMAND,
+        )
+    finally:
+        runtime.close()
 
 
 def _acquire_daemon_lock(
@@ -629,6 +1034,26 @@ def _optional_nonblank(
     return require_nonblank(str(value), option=option, command=_COMMAND)
 
 
+def _optional_positive_limit(
+    namespace: object,
+    attribute: str,
+    option: str,
+) -> int | None:
+    value = getattr(namespace, attribute, None)
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed < 1 or parsed > DURABLE_INT64_MAX:
+        raise CliCommandError(
+            command=_COMMAND,
+            code=f"invalid_{attribute}",
+            message=f"{option} must be a positive integer.",
+            exit_code=ExitCode.CLI_USAGE,
+            details={attribute: parsed},
+        )
+    return parsed
+
+
 def _non_idle_stop_reason(result: BoundedExecutionUnitResult) -> str | None:
     if result.code in {
         "lifecycle_transition_applied",
@@ -693,6 +1118,7 @@ def _summary(
         last_result=result_data,
         diagnostics=diagnostics,
         runner_session=_summary_runner_session(options, last_handled_run_id),
+        budget=_summary_budget(options),
     )
 
 
@@ -716,6 +1142,30 @@ def _summary_runner_session(
     if projection is None:
         return None
     return projection
+
+
+def _summary_budget(options: DaemonRunOptions) -> dict[str, object] | None:
+    from millrace.adapters.cli.status import _daemon_budget_projections
+
+    if options.budget_id is None:
+        return None
+    try:
+        runtime = open_runtime_context(options.paths, command=_COMMAND)
+        try:
+            state = runtime.store.load_runtime_state(runtime.cas_store)
+            projections = _daemon_budget_projections(runtime, state)
+        finally:
+            runtime.close()
+    except (CliCommandError, OSError, SubstrateError, ValueError):
+        return None
+    return next(
+        (
+            projection
+            for projection in projections
+            if projection["budget_id"] == options.budget_id
+        ),
+        None,
+    )
 
 
 def _exception_diagnostic(exc: Exception) -> dict[str, object]:

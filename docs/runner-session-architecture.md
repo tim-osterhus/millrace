@@ -15,15 +15,18 @@ the selected binding or add workflow meaning.
 
 `adapters/cli/session_coordinator.py` is the stable orchestration facade. It
 owns session creation, external start, live-handle driving, and state routing.
-Three private modules own the remaining mechanics:
+Four private modules own the remaining mechanics:
 
 - `session_reconciliation.py` owns restart reconciliation and locator checks.
 - `session_cancellation.py` owns cancellation, escalation, and cleanup.
 - `session_completion.py` owns completion persistence, replay, and diagnostics.
+- `session_persistence.py` owns CAS evidence loading and governed usage
+  persistence.
 
-The dependency graph is acyclic. The coordinator may use all three private
+The dependency graph is acyclic. The coordinator may use all four private
 modules. Reconciliation may use cancellation and completion. Cancellation may
-use completion. Completion does not use another session module.
+use completion. Completion may use persistence. Persistence does not use
+another session module.
 
 Reconciliation returns verified live state through one immutable record with
 four fields: `session`, `request`, `handle`, and `deadline`. The private modules
@@ -117,9 +120,10 @@ and non-authoritative; they never enter `RuntimeState.runner_observations`.
 
 ## Persistence Compatibility
 
-Runner sessions use store schema 7 and CAS-backed bounded evidence. There is
-no automatic schema-6-to-7 migration. An exact schema-version-6 workspace is
-refused unchanged as `workspace_upgrade_required`; see
+Runner sessions use store schema 8 and CAS-backed bounded evidence. There is
+no automatic migration from schema 6 or schema 7. An exact schema-version-6 or
+schema-version-7 workspace is refused as `workspace_upgrade_required` with
+the database, CAS, and runner-event sidecar byte-for-byte unchanged; see
 [v0.22 compatibility](v0.22-compatibility.md).
 
 See [Daemon lifecycle](daemon-lifecycle.md) for startup, restart, signal, and

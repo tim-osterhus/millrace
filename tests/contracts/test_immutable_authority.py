@@ -9,6 +9,7 @@ import pytest
 from millrace.compiler import SelectedRunnerAdapterPolicy, compile_workflow
 from millrace.compiler.canonical import authority_fingerprint
 from millrace.contracts import (
+    ActionId,
     CapabilityId,
     OutcomeId,
     RecoveryPolicyDeclaration,
@@ -21,7 +22,7 @@ from millrace.contracts import (
     StageKindId,
     TerminalActionDeclaration,
 )
-from millrace.workflows import kernel_ping, simple_loop
+from millrace.workflows import kernel_ping
 
 Source = dict[str, object]
 Record = dict[str, object]
@@ -234,23 +235,22 @@ def test_compiled_plan_is_source_mutation_proof() -> None:
 
 
 def test_partitionless_stage_kind_remains_immutable_authority() -> None:
-    source = simple_loop.workflow_source()
-    plan = _compile_codex_plan(source)
-    troubleshooter = next(
+    source = _source()
+    worker_source = next(
         stage
-        for stage in plan.stage_kinds
-        if str(stage.id) == "simple_loop.troubleshooter"
+        for stage in _records(source, "stage_kinds")
+        if stage["id"] == "kernel_ping.worker"
+    )
+    worker_source["partition_id"] = None
+    plan = _compile_plan(source)
+    worker = next(
+        stage for stage in plan.stage_kinds if str(stage.id) == "kernel_ping.worker"
     )
     original_fingerprint = authority_fingerprint(plan)
 
-    troubleshooter_source = next(
-        stage
-        for stage in _records(source, "stage_kinds")
-        if stage["id"] == "simple_loop.troubleshooter"
-    )
-    troubleshooter_source["partition_id"] = "management"
+    worker_source["partition_id"] = "craft"
 
-    assert troubleshooter.partition_id is None
+    assert worker.partition_id is None
     assert authority_fingerprint(plan) == original_fingerprint
 
 
@@ -427,29 +427,27 @@ def test_nested_declaration_sequences_normalize_caller_owned_lists() -> None:
 
 
 def test_recovery_policy_declaration_sequences_normalize_caller_owned_lists() -> None:
-    plan = _compile_codex_plan(simple_loop.workflow_source())
-    policy = plan.recovery_policies[0]
-    source_recovery_action_ids = list(policy.source_recovery_action_ids)
-    return_action_ids = list(policy.return_action_ids)
-    quarantine_action_ids = list(policy.quarantine_action_ids)
-    return_allowed_phases = list(policy.return_allowed_phases)
-    reset_trigger_action_ids = list(policy.reset_trigger_action_ids)
+    source_recovery_action_ids = [ActionId("recovery.source.blocked")]
+    return_action_ids = [ActionId("recovery.worker.resolved")]
+    quarantine_action_ids = [ActionId("recovery.worker.operator_needed")]
+    return_allowed_phases = ["active_recovery", "quarantine_eligible"]
+    reset_trigger_action_ids = [ActionId("recovery.source.completed")]
 
     policy_declaration = RecoveryPolicyDeclaration(
-        id=RecoveryPolicyId(str(policy.id)),
+        id=RecoveryPolicyId("recovery.policy"),
         source_recovery_action_ids=cast(Any, source_recovery_action_ids),
         return_action_ids=cast(Any, return_action_ids),
         quarantine_action_ids=cast(Any, quarantine_action_ids),
-        recovery_stage_kind_id=policy.recovery_stage_kind_id,
-        recorded_source_selector=policy.recorded_source_selector,
-        attempt_scope=policy.attempt_scope,
-        immediate_recovery_limit=policy.immediate_recovery_limit,
-        cooldown_starts_at_attempt=policy.cooldown_starts_at_attempt,
-        quarantine_threshold_attempt=policy.quarantine_threshold_attempt,
-        threshold_behavior=policy.threshold_behavior,
+        recovery_stage_kind_id=StageKindId("recovery.worker"),
+        recorded_source_selector="latest_recovery_attempt_for_lineage",
+        attempt_scope="lineage",
+        immediate_recovery_limit=1,
+        cooldown_starts_at_attempt=2,
+        quarantine_threshold_attempt=3,
+        threshold_behavior="runtime_quarantine_at_threshold",
         return_allowed_phases=cast(Any, return_allowed_phases),
         reset_trigger_action_ids=cast(Any, reset_trigger_action_ids),
-        default_cooldown_seconds=policy.default_cooldown_seconds,
+        default_cooldown_seconds=900,
     )
 
     source_recovery_action_ids.clear()
@@ -459,13 +457,20 @@ def test_recovery_policy_declaration_sequences_normalize_caller_owned_lists() ->
     reset_trigger_action_ids.clear()
 
     assert policy_declaration.source_recovery_action_ids == (
-        policy.source_recovery_action_ids
+        ActionId("recovery.source.blocked"),
     )
-    assert policy_declaration.return_action_ids == policy.return_action_ids
-    assert policy_declaration.quarantine_action_ids == policy.quarantine_action_ids
-    assert policy_declaration.return_allowed_phases == policy.return_allowed_phases
-    assert (
-        policy_declaration.reset_trigger_action_ids == policy.reset_trigger_action_ids
+    assert policy_declaration.return_action_ids == (
+        ActionId("recovery.worker.resolved"),
+    )
+    assert policy_declaration.quarantine_action_ids == (
+        ActionId("recovery.worker.operator_needed"),
+    )
+    assert policy_declaration.return_allowed_phases == (
+        "active_recovery",
+        "quarantine_eligible",
+    )
+    assert policy_declaration.reset_trigger_action_ids == (
+        ActionId("recovery.source.completed"),
     )
 
 

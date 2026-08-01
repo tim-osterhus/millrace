@@ -268,7 +268,7 @@ def _replace_session_digest(
     )
 
 
-def test_store_schema_seven_owns_runner_session_tables(tmp_path) -> None:
+def test_store_schema_eight_owns_versioned_runtime_tables(tmp_path) -> None:
     db_path = tmp_path / "runtime.sqlite3"
     store = SQLiteRuntimeStore.initialize(db_path)
     store.close()
@@ -285,12 +285,14 @@ def test_store_schema_seven_owns_runner_session_tables(tmp_path) -> None:
         }
         run_columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
 
-    assert version == (7,)
+    assert version == (8,)
     assert {
         "runner_sessions",
         "runner_session_cancellation_requests",
         "runner_session_cancellation_attempts",
         "runner_session_completions",
+        "dispatch_suspension",
+        "queue_closures",
     }.issubset(tables)
     assert {"current_session_id", "last_dispatch_generation"}.issubset(run_columns)
 

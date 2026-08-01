@@ -101,6 +101,13 @@ immutable plan with a content fingerprint. The operator selects that exact
 plan for execution. The runtime follows the selected plan rather than
 re-reading mutable workflow files while work is running.
 
+## Does a planning task card authorize implementation?
+
+No. A planning result or exported task-card artifact records proposed work. It
+does not grant implementation authority. To execute that work, an operator
+must select an execution-capable compiled plan and later enqueue the task
+explicitly into an external queue family declared by that plan.
+
 ## Can an agent change the workflow or choose its own next step?
 
 No. An agent may return a result and supporting evidence, but it cannot add a
@@ -159,6 +166,34 @@ Millrace persists control state in SQLite and immutable plans, payloads, and
 artifacts in content-addressed storage. After a restart, it validates that
 state and resumes eligible workflow work. It does not pretend that an external
 runner process survived if that process actually stopped.
+
+## What is the difference between pause and dispatch suspension?
+
+A workflow pause is selected workflow behavior. Operator dispatch suspension
+is a separate global control that temporarily refuses new claims:
+
+```bash
+millrace dispatch suspend --plan-fingerprint FINGERPRINT \
+  --input-id ID --reason TEXT
+millrace dispatch resume --plan-fingerprint FINGERPRINT \
+  --suspension-id ID --input-id ID --reason TEXT
+```
+
+Suspension does not clear a workflow pause, close queued work, abandon an
+accepted claim, or cancel active work. Status, runs, trace, and doctor expose
+the exact suspension and a bounded list of accepted work that may still start.
+
+## What is the difference between queue cancellation and runner cancellation?
+
+`millrace queue cancel WORK_ITEM_ID` and `millrace queue cancel-lineage
+LINEAGE_ID` close eligible workflow work atomically through Millrace's existing
+close-work transition. They preserve the queue, closure receipt, governance
+event, trace, and queue-closure audit record. They do not signal an adapter.
+
+`millrace runs cancel RUN_ID --input-id ID` controls a potentially live runner
+session. Queue cancellation refuses accepted work that may still start and any
+live, lost, cleanup-pending, or orphan-risk session aftermath. After a clean
+terminal session, an operator may explicitly close the workflow work.
 
 ## Do I need Millrace OS, Millforge, or Millrace Plus?
 

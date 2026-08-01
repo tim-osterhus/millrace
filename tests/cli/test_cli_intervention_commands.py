@@ -105,17 +105,17 @@ def _workspace_with_default_kernel_ping(tmp_path: Path) -> tuple[Path, str]:
     return workspace, fingerprint
 
 
-def test_operator_wait_and_lineage_interventions_use_builder_paths(
+def test_operator_wait_and_lineage_interventions_use_operator_builders(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     import millrace.operator.intake as intake
     from millrace.contracts import EnqueueWork, QueueFamilyId
-    from support import vendor_selection
+    from support import generic_operator_wait
 
     wait_workspace = tmp_path / "wait-workspace"
     wait_state, _plan, _fingerprint, wait_id = (
-        vendor_selection.operator_required_wait_state()
+        generic_operator_wait.active_revise_wait_state()
     )
     _persist_state(wait_workspace, wait_state)
     original_resume_wait = intake.build_resume_wait
@@ -157,7 +157,7 @@ def test_operator_wait_and_lineage_interventions_use_builder_paths(
         return EnqueueWork(
             input_id=operator_input.input_id,
             queue_family_id=QueueFamilyId("prompt"),
-            payload={"body": "builder path proof"},
+            payload={"body": "operator path proof"},
         )
 
     monkeypatch.setattr(intake, "build_resume_lineage", fake_resume_lineage)
@@ -171,7 +171,7 @@ def test_operator_wait_and_lineage_interventions_use_builder_paths(
             "local-operator-tim",
             "interventions",
             "resume-lineage",
-            "simple_loop.resume_lineage",
+            "operator.resume_lineage",
             "--quarantine-id",
             "quarantine-a",
             "--reason",
@@ -193,14 +193,15 @@ def test_operator_wait_and_lineage_interventions_use_builder_paths(
     assert _json(lineage_stdout)["data"]["transition_disposition"] == "accepted"
 
 
-def test_intervention_cli_matches_builder_payload_and_reason_contract(
+def test_intervention_cli_matches_payload_and_reason_contract(
     tmp_path: Path,
 ) -> None:
-    from support import vendor_selection
+    from support import generic_operator_wait
+    from support import kernel_ping as kernel_ping_support
 
     wait_workspace = tmp_path / "wait-workspace"
     wait_state, _plan, _fingerprint, wait_id = (
-        vendor_selection.operator_required_wait_state()
+        generic_operator_wait.active_revise_wait_state()
     )
     _persist_state(wait_workspace, wait_state)
 
@@ -233,7 +234,7 @@ def test_intervention_cli_matches_builder_payload_and_reason_contract(
             "revise",
             wait_id,
             "--payload-json",
-            json.dumps(vendor_selection.operator_decision_payload(wait_id=wait_id)),
+            json.dumps(kernel_ping_support.task_artifact_payload()),
             "--input-id",
             "operator-revise-wait",
         ]
@@ -249,7 +250,7 @@ def test_intervention_cli_matches_builder_payload_and_reason_contract(
             str(lineage_workspace),
             "interventions",
             "revise-lineage",
-            "simple_loop.revise_lineage",
+            "operator.revise_lineage",
             "--quarantine-id",
             "quarantine-a",
             "--payload-json",
@@ -271,7 +272,7 @@ def test_intervention_cli_matches_builder_payload_and_reason_contract(
             str(lineage_workspace),
             "interventions",
             "close-lineage",
-            "simple_loop.close_lineage",
+            "operator.close_lineage",
             "--lineage-id",
             "work-prompt",
             "--payload-json",

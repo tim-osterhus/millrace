@@ -29,6 +29,7 @@ from millrace.contracts.state import (
     ClosureTerminalRecord,
     CooldownWaitRecord,
     CounterRecord,
+    DispatchSuspensionRecord,
     EffectProposalRecord,
     EffectReconciliationRecord,
     ExternalEnqueueRoute,
@@ -42,6 +43,7 @@ from millrace.contracts.state import (
     PauseRecord,
     PlanRef,
     QuarantineRecord,
+    QueueClosureRecord,
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
@@ -94,6 +96,7 @@ from millrace.substrate._sqlite_rows import (
     decode_cooldown_wait_row,
     decode_counter_row,
     decode_default_plan_row,
+    decode_dispatch_suspension_row,
     decode_effect_proposal_row,
     decode_effect_reconciliation_row,
     decode_fanout_row,
@@ -104,6 +107,7 @@ from millrace.substrate._sqlite_rows import (
     decode_operator_wait_row,
     decode_pause_state_row,
     decode_quarantine_row,
+    decode_queue_closure_row,
     decode_recovery_attempt_row,
     decode_refusal_row,
     decode_remediation_work_row,
@@ -117,6 +121,7 @@ from millrace.substrate._sqlite_rows import (
     decode_transition_row,
     decode_work_dependency_row,
     decode_work_item_row,
+    dispatch_suspension_from_row,
     effect_proposal_from_row,
     effect_reconciliation_from_row,
     fanout_from_row,
@@ -129,6 +134,7 @@ from millrace.substrate._sqlite_rows import (
     plan_ref_from_run_row,
     plan_ref_from_work_item_row,
     quarantine_from_row,
+    queue_closure_from_row,
     recovery_attempt_from_row,
     refusal_from_row,
     remediation_work_from_row,
@@ -236,6 +242,8 @@ def _load_runtime_state_rows_in_transaction(
         closure_blocked_records=_load_closure_blocked_records(connection),
         closed_work_items=_load_closed_work_items(connection),
         pause=_load_pause(connection),
+        dispatch_suspension=_load_dispatch_suspension(connection),
+        queue_closures=_load_queue_closures(connection),
         quarantines=_load_quarantines(connection),
         lineage_quarantines=_load_lineage_quarantines(connection),
         recovery_attempts=_load_recovery_attempts(connection),
@@ -1231,6 +1239,68 @@ def _load_pause(connection: sqlite3.Connection) -> PauseRecord | None:
     if row is None:
         return None
     return pause_from_row(decode_pause_state_row(cast(tuple[object, ...], row)))
+
+
+def _load_dispatch_suspension(
+    connection: sqlite3.Connection,
+) -> DispatchSuspensionRecord | None:
+    row = connection.execute(
+        """
+        SELECT
+            schema_version,
+            suspension_id,
+            plan_id,
+            plan_authority_fingerprint,
+            plan_format_version,
+            generation,
+            dispatch_generation,
+            actor_id,
+            reason,
+            suspended_by_input_id,
+            status,
+            resumed_by_input_id,
+            resume_actor_id,
+            resume_reason
+        FROM dispatch_suspension
+        WHERE id = 1
+        """
+    ).fetchone()
+    if row is None:
+        return None
+    return dispatch_suspension_from_row(
+        decode_dispatch_suspension_row(cast(tuple[object, ...], row))
+    )
+
+
+def _load_queue_closures(
+    connection: sqlite3.Connection,
+) -> dict[str, QueueClosureRecord]:
+    rows = tuple(
+        decode_queue_closure_row(cast(tuple[object, ...], row))
+        for row in connection.execute(
+            """
+            SELECT
+                schema_version,
+                closure_id,
+                plan_id,
+                plan_authority_fingerprint,
+                plan_format_version,
+                target_kind,
+                target_id,
+                actor_id,
+                reason,
+                created_by_input_id,
+                closed_work_item_ids_json,
+                closed_activation_ids_json,
+                closed_run_ids_json,
+                created_at_order
+            FROM queue_closures
+            ORDER BY created_at_order
+            """
+        ).fetchall()
+    )
+    records = tuple(queue_closure_from_row(row) for row in rows)
+    return {record.closure_id: record for record in records}
 
 
 def _load_quarantines(connection: sqlite3.Connection) -> dict[str, QuarantineRecord]:

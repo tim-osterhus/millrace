@@ -4,6 +4,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -51,9 +52,106 @@ from substrate._runtime_store_support import (
     persist_runtime_state,
     runtime_store_paths,
 )
-from support.lad_planning import artifact_payload, compile_lad_planning
+from support import generic_lifecycle
 
-COMPLETION_BEHAVIOR_ID = "planning.closure.completion"
+COMPLETION_BEHAVIOR_ID = "lifecycle.completion"
+
+
+def _compile_closure_plan() -> tuple[SelectedCompiledPlan, str]:
+    source = generic_lifecycle.source()
+    review_stage = next(
+        stage
+        for stage in cast(list[dict[str, object]], source["stage_kinds"])
+        if stage["id"] == "review_stage"
+    )
+    review_stage["declared_outcome_ids"] = (
+        "lifecycle.review.passed",
+        "lifecycle.review.gap",
+        "lifecycle.review.blocked",
+    )
+    cast(list[dict[str, object]], source["terminal_outcomes"]).extend(
+        {
+            "id": outcome_id,
+            "stage_kind_id": "review_stage",
+            "marker": marker,
+        }
+        for outcome_id, marker in (
+            ("lifecycle.review.passed", "REVIEW_PASSED"),
+            ("lifecycle.review.gap", "REVIEW_GAP"),
+            ("lifecycle.review.blocked", "REVIEW_BLOCKED"),
+        )
+    )
+    cast(list[dict[str, object]], source["terminal_actions"]).extend(
+        (
+            {
+                "id": "lifecycle.review.pass",
+                "stage_kind_id": "review_stage",
+                "outcome_id": "lifecycle.review.passed",
+                "kind": "complete_work_item",
+                "artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+            },
+            {
+                "id": "lifecycle.review.gap",
+                "stage_kind_id": "review_stage",
+                "outcome_id": "lifecycle.review.gap",
+                "kind": "closure_gap",
+                "artifact_schema_id": generic_lifecycle.ALPHA_REPORT_SCHEMA_ID,
+            },
+            {
+                "id": "lifecycle.review.block",
+                "stage_kind_id": "review_stage",
+                "outcome_id": "lifecycle.review.blocked",
+                "kind": "block_work_item",
+                "artifact_schema_id": generic_lifecycle.ALPHA_REPORT_SCHEMA_ID,
+            },
+        )
+    )
+    source["completion_behaviors"] = [
+        {
+            "id": COMPLETION_BEHAVIOR_ID,
+            "trigger": "backlog_drained",
+            "readiness_rule": "no_open_lineage_work",
+            "request_kind": "closure_target",
+            "target_selector": "active_closure_target",
+            "target_stage_kind_id": "review_stage",
+            "target_graph_node_id": "lifecycle.review.start",
+            "runner_binding_id": "lifecycle.runner",
+            "request_queue_family_id": "joined_bundle",
+            "pass_action_id": "lifecycle.review.pass",
+            "gap_action_id": "lifecycle.review.gap",
+            "blocked_action_id": "lifecycle.review.block",
+            "verdict_artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+            "remediation_policy_id": "lifecycle.remediation",
+            "accepted_root_source_kinds": ("origin", "manual"),
+            "root_source_resolution": "runtime_inventory",
+            "evidence_window_policy": "lineage",
+            "rubric_policy": "reuse_or_create",
+            "blocked_work_policy": "suppress",
+            "skip_if_closed": True,
+        }
+    ]
+    source["remediation_policies"] = [
+        {
+            "id": "lifecycle.remediation",
+            "source_action_id": "lifecycle.review.gap",
+            "target_queue_family_id": "alpha_branch",
+            "target_stage_kind_id": "alpha_stage",
+            "target_graph_node_id": "lifecycle.alpha.start",
+            "target_runner_binding_id": "lifecycle.runner",
+            "payload_schema_id": generic_lifecycle.ALPHA_REPORT_SCHEMA_ID,
+            "guidance_source": "source_artifact",
+            "dedupe_key": "closure_target_and_source_artifact",
+            "duplicate_policy": "refuse",
+            "suppression_policy": "suppress_repeated_same_evidence",
+            "root_source_kind": "origin",
+        }
+    ]
+    return generic_lifecycle.compile_lifecycle(source)
+
+
+def _artifact_payload(kind: str) -> Mapping[str, AuthorityValue]:
+    report_kind = "beta" if kind == generic_lifecycle.BETA_REPORT_SCHEMA_ID else "alpha"
+    return generic_lifecycle.report_payload(report_kind)
 
 
 def _plan_ref(plan: SelectedCompiledPlan, fingerprint: str) -> PlanRef:
@@ -99,9 +197,9 @@ def _closure_target(
         selected_plan_ref=plan_ref,
         completion_behavior_id=behavior.id,
         lineage_id=lineage_id,
-        root_source_kind="spec",
+        root_source_kind="origin",
         root_source_id=f"root-source-{target_id}",
-        closure_root_work_item_id=f"root-spec-{target_id}",
+        closure_root_work_item_id=f"root-origin-{target_id}",
         request_kind=behavior.request_kind,
         target_graph_node_id=behavior.target_graph_node_id,
         evidence_window={"kind": "lineage", "lineage_id": lineage_id},
@@ -141,7 +239,7 @@ def _store_payload(cas_root: Path, payload: Mapping[str, AuthorityValue]) -> str
     )
 
 
-def _arbiter_source_records(
+def _evaluator_source_records(
     *,
     plan: SelectedCompiledPlan,
     plan_ref: PlanRef,
@@ -160,10 +258,10 @@ def _arbiter_source_records(
     TransitionRecord,
 ]:
     lineage_id = f"lineage-{suffix}"
-    work_item_id = f"work-arbiter-{suffix}"
-    activation_id = f"activation-arbiter-{suffix}"
-    run_id = f"run-arbiter-{suffix}"
-    input_id = f"observe-arbiter-{suffix}"
+    work_item_id = f"work-evaluator-{suffix}"
+    activation_id = f"activation-evaluator-{suffix}"
+    run_id = f"run-evaluator-{suffix}"
+    input_id = f"observe-evaluator-{suffix}"
     work_item = WorkItem(
         ref=WorkItemRef(work_item_id=work_item_id, plan_ref=plan_ref, generation=0),
         queue_family_id=behavior.request_queue_family_id,
@@ -203,7 +301,7 @@ def _arbiter_source_records(
         runner_binding_id=behavior.runner_binding_id,
         created_by_input_id=f"claim-{suffix}",
     )
-    arbiter = ClosureEvaluationRecord(
+    evaluator = ClosureEvaluationRecord(
         record_id=f"closure-evaluator:{activation_id}",
         closure_target_id=closure_target_id,
         completion_behavior_id=behavior.id,
@@ -264,7 +362,15 @@ def _arbiter_source_records(
         input_family="workflow_observation",
         accepted=True,
     )
-    return work_item, activation, run, arbiter, observation, artifact_record, transition
+    return (
+        work_item,
+        activation,
+        run,
+        evaluator,
+        observation,
+        artifact_record,
+        transition,
+    )
 
 
 actions_by_id: tuple[TerminalActionDeclaration, ...]
@@ -272,11 +378,11 @@ actions_by_id: tuple[TerminalActionDeclaration, ...]
 
 def _closure_state() -> RuntimeState:
     global actions_by_id
-    plan, fingerprint = compile_lad_planning()
+    plan, fingerprint = _compile_closure_plan()
     plan_ref = _plan_ref(plan, fingerprint)
     behavior, policy, actions = _selected_authority(plan)
     actions_by_id = tuple(actions.values())
-    complete_terminal_id = "closure-terminal:transition-observe-arbiter-complete"
+    complete_terminal_id = "closure-terminal:transition-observe-evaluator-complete"
     complete_target = _closure_target(
         target_id="closure-target-complete",
         plan_ref=plan_ref,
@@ -297,7 +403,7 @@ def _closure_state() -> RuntimeState:
         behavior=behavior,
         lineage_id="lineage-blocked",
     )
-    complete = _arbiter_source_records(
+    complete = _evaluator_source_records(
         plan=plan,
         plan_ref=plan_ref,
         behavior=behavior,
@@ -305,14 +411,11 @@ def _closure_state() -> RuntimeState:
         suffix="complete",
         source_action_id=behavior.pass_action_id,
         artifact=(
-            "transition-observe-arbiter-complete:artifact",
-            artifact_payload(
-                "planning.artifacts.verdict",
-                summary="closure pass verdict",
-            ),
+            "transition-observe-evaluator-complete:artifact",
+            _artifact_payload(generic_lifecycle.BETA_REPORT_SCHEMA_ID),
         ),
     )
-    incident = _arbiter_source_records(
+    incident = _evaluator_source_records(
         plan=plan,
         plan_ref=plan_ref,
         behavior=behavior,
@@ -320,11 +423,11 @@ def _closure_state() -> RuntimeState:
         suffix="incident",
         source_action_id=behavior.gap_action_id,
         artifact=(
-            "transition-observe-arbiter-incident:artifact",
-            artifact_payload("planning.artifacts.incident_report"),
+            "transition-observe-evaluator-incident:artifact",
+            _artifact_payload(generic_lifecycle.ALPHA_REPORT_SCHEMA_ID),
         ),
     )
-    blocked = _arbiter_source_records(
+    blocked = _evaluator_source_records(
         plan=plan,
         plan_ref=plan_ref,
         behavior=behavior,
@@ -333,7 +436,7 @@ def _closure_state() -> RuntimeState:
         source_action_id=behavior.blocked_action_id,
         artifact=None,
     )
-    incident_record_id = "remediation-record:transition-observe-arbiter-incident"
+    incident_record_id = "remediation-record:transition-observe-evaluator-incident"
     remediation_work = WorkItem(
         ref=WorkItemRef(
             work_item_id="work-remediation-target",
@@ -348,7 +451,7 @@ def _closure_state() -> RuntimeState:
             }
         },
         lineage_id=incident_target.lineage_id,
-        created_by_input_id="observe-arbiter-incident",
+        created_by_input_id="observe-evaluator-incident",
     )
     remediation_activation = Activation(
         activation_id="activation-remediation-target",
@@ -360,7 +463,7 @@ def _closure_state() -> RuntimeState:
         stage_kind_id=policy.target_stage_kind_id,
         runner_binding_id=policy.target_runner_binding_id,
         generation=0,
-        created_by_input_id="observe-arbiter-incident",
+        created_by_input_id="observe-evaluator-incident",
     )
     terminal = ClosureTerminalRecord(
         record_id=complete_terminal_id,
@@ -369,10 +472,10 @@ def _closure_state() -> RuntimeState:
         terminal_kind="passed",
         source_run_id=complete[2].run_ref.run_id,
         source_action_id=behavior.pass_action_id,
-        source_artifact_id="transition-observe-arbiter-complete:artifact",
+        source_artifact_id="transition-observe-evaluator-complete:artifact",
         selected_plan_ref=plan_ref,
         lineage_id=complete_target.lineage_id,
-        created_by_input_id="observe-arbiter-complete",
+        created_by_input_id="observe-evaluator-complete",
     )
     remediation = RemediationWorkRecord(
         record_id=incident_record_id,
@@ -380,16 +483,16 @@ def _closure_state() -> RuntimeState:
         closure_target_id=incident_target.closure_target_id,
         source_run_id=incident[2].run_ref.run_id,
         source_action_id=behavior.gap_action_id,
-        source_artifact_id="transition-observe-arbiter-incident:artifact",
+        source_artifact_id="transition-observe-evaluator-incident:artifact",
         target_work_item_id=remediation_work.ref.work_item_id,
         target_activation_id=remediation_activation.activation_id,
         selected_plan_ref=plan_ref,
         lineage_id=incident_target.lineage_id,
-        dedupe_key=f"{incident_target.closure_target_id}:transition-observe-arbiter-incident:artifact",
-        created_by_input_id="observe-arbiter-incident",
+        dedupe_key=f"{incident_target.closure_target_id}:transition-observe-evaluator-incident:artifact",
+        created_by_input_id="observe-evaluator-incident",
     )
     blocked_record = ClosureBlockedRecord(
-        record_id="closure-blocked:transition-observe-arbiter-blocked",
+        record_id="closure-blocked:transition-observe-evaluator-blocked",
         closure_target_id=blocked_target.closure_target_id,
         completion_behavior_id=behavior.id,
         source_run_id=blocked[2].run_ref.run_id,
@@ -397,7 +500,7 @@ def _closure_state() -> RuntimeState:
         selected_plan_ref=plan_ref,
         lineage_id=blocked_target.lineage_id,
         operator_required=True,
-        created_by_input_id="observe-arbiter-blocked",
+        created_by_input_id="observe-evaluator-blocked",
     )
     root_work_items = tuple(
         _root_inventory_work_item(target)
@@ -510,6 +613,44 @@ def test_closure_records_survive_restart(tmp_path: Path) -> None:
     assert loaded.closure_blocked_records == state.closure_blocked_records
 
 
+@pytest.mark.parametrize(
+    "coexisting_records",
+    (
+        "closure_evaluations",
+        "closure_terminal_records",
+        "remediation_work_records",
+        "closure_blocked_records",
+        "runner_observations",
+        "artifacts",
+        "receipts",
+        "governance_events",
+        "traces",
+        "transitions",
+    ),
+)
+def test_restart_refuses_closure_root_drift_with_coexisting_generic_records(
+    tmp_path: Path,
+    coexisting_records: str,
+) -> None:
+    state = _closure_state()
+    assert getattr(state, coexisting_records)
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE closure_targets
+            SET closure_root_work_item_id = ?
+            WHERE closure_target_id = ?
+            """,
+            ("wrong-root-work-item", "closure-target-complete"),
+        )
+
+    with pytest.raises(StorageIntegrityError, match="closure_root_work_item_id"):
+        load_runtime_state(db_path, cas_root)
+
+
 def test_restart_refuses_corrupt_closure_target_authority_link(
     tmp_path: Path,
 ) -> None:
@@ -562,7 +703,7 @@ def test_restart_refuses_closure_root_lineage_drift(tmp_path: Path) -> None:
             SET lineage_id = ?
             WHERE work_item_id = ?
             """,
-            ("different-lineage", "root-spec-closure-target-complete"),
+            ("different-lineage", "root-origin-closure-target-complete"),
         )
 
     with pytest.raises(StorageIntegrityError, match="lineage"):
@@ -621,7 +762,7 @@ def test_restart_refuses_closure_root_queue_family_drift(tmp_path: Path) -> None
             SET queue_family_id = ?
             WHERE work_item_id = ?
             """,
-            ("stage_result", "root-spec-closure-target-complete"),
+            ("joined_bundle", "root-origin-closure-target-complete"),
         )
         connection.execute(
             """
@@ -629,7 +770,7 @@ def test_restart_refuses_closure_root_queue_family_drift(tmp_path: Path) -> None
             SET queue_family_id = ?
             WHERE work_item_id = ?
             """,
-            ("stage_result", "root-spec-closure-target-complete"),
+            ("joined_bundle", "root-origin-closure-target-complete"),
         )
 
     with pytest.raises(StorageIntegrityError, match="root source"):
@@ -648,7 +789,7 @@ def test_restart_refuses_closure_root_plan_ref_drift(tmp_path: Path) -> None:
             SET plan_authority_fingerprint = ?
             WHERE work_item_id = ?
             """,
-            ("sha256:drifted-root-plan", "root-spec-closure-target-complete"),
+            ("sha256:drifted-root-plan", "root-origin-closure-target-complete"),
         )
 
     with pytest.raises(StorageIntegrityError, match="work_items"):
@@ -667,7 +808,7 @@ def test_restart_refuses_closure_root_payload_source_kind_drift(
             "title": "Drifted inventory",
             "body": "Root source inventory with wrong kind.",
             "root_source": {
-                "kind": "idea",
+                "kind": "manual",
                 "source_id": "root-source-closure-target-complete",
             },
         },
@@ -680,7 +821,7 @@ def test_restart_refuses_closure_root_payload_source_kind_drift(
             SET payload_digest = ?
             WHERE work_item_id = ?
             """,
-            (drifted_payload_digest, "root-spec-closure-target-complete"),
+            (drifted_payload_digest, "root-origin-closure-target-complete"),
         )
 
     with pytest.raises(StorageIntegrityError, match="root source"):
@@ -741,8 +882,8 @@ def test_restart_refuses_closure_terminal_without_matching_evaluator(
             WHERE record_id = ?
             """,
             (
-                "run-arbiter-incident",
-                "closure-terminal:transition-observe-arbiter-complete",
+                "run-evaluator-incident",
+                "closure-terminal:transition-observe-evaluator-complete",
             ),
         )
 
@@ -764,7 +905,7 @@ def test_restart_refuses_remediation_missing_required_source_artifact(
             SET source_artifact_id = NULL
             WHERE record_id = ?
             """,
-            ("remediation-record:transition-observe-arbiter-incident",),
+            ("remediation-record:transition-observe-evaluator-incident",),
         )
 
     with pytest.raises(StorageIntegrityError, match="source_artifact_id"):
@@ -785,7 +926,7 @@ def test_restart_refuses_remediation_wrong_dedupe_key(tmp_path: Path) -> None:
             """,
             (
                 "wrong-dedupe-key",
-                "remediation-record:transition-observe-arbiter-incident",
+                "remediation-record:transition-observe-evaluator-incident",
             ),
         )
 
@@ -799,7 +940,7 @@ def test_persist_refuses_duplicate_remediation_dedupe_key(tmp_path: Path) -> Non
     duplicate = replace(
         remediation,
         record_id="remediation-record:duplicate",
-        created_by_input_id="observe-arbiter-incident-duplicate",
+        created_by_input_id="observe-evaluator-incident-duplicate",
     )
     duplicated = replace(
         state,

@@ -44,6 +44,7 @@ from millrace.contracts.transition import (
     RecordLineageQuarantine,
     RecordOperatorIntervention,
     RecordOperatorWait,
+    RecordQueueClosure,
     RecordRecoveryAttempt,
     RecordRefusal,
     RecordRemediationWork,
@@ -55,6 +56,7 @@ from millrace.contracts.transition import (
     RecordWorkDependency,
     RouteActivation,
     SelectDefaultPlanRef,
+    SetDispatchSuspension,
     SetPause,
     SetQuarantine,
     SupersedeLineageQuarantine,
@@ -147,8 +149,12 @@ def apply(state: RuntimeState, decision: TransitionDecision) -> RuntimeState:
             next_state = _apply_record_closure_blocked(next_state, mutation)
         elif isinstance(mutation, CloseWorkItem):
             next_state = _apply_close_work_item(next_state, mutation)
+        elif isinstance(mutation, RecordQueueClosure):
+            next_state = _apply_record_queue_closure(next_state, mutation)
         elif isinstance(mutation, SetPause):
             next_state = _apply_set_pause(next_state, mutation)
+        elif isinstance(mutation, SetDispatchSuspension):
+            next_state = _apply_set_dispatch_suspension(next_state, mutation)
         elif isinstance(mutation, SetQuarantine):
             next_state = _apply_set_quarantine(next_state, mutation)
         elif isinstance(mutation, RecordLineageQuarantine):
@@ -290,6 +296,7 @@ def _validate_durable_id_uniqueness(
     existing_closed_work_item_record_ids = _non_empty_ids(
         record.record_id for record in state.closed_work_items.values()
     )
+    existing_queue_closure_ids = _non_empty_ids(state.queue_closures)
     existing_pause_ids = (
         {state.pause.record_id}
         if state.pause is not None and state.pause.record_id
@@ -334,6 +341,7 @@ def _validate_durable_id_uniqueness(
     seen_closure_blocked_ids: set[str] = set()
     seen_closed_work_item_ids: set[str] = set()
     seen_closed_work_item_record_ids: set[str] = set()
+    seen_queue_closure_ids: set[str] = set()
     seen_pause_ids: set[str] = set()
     seen_quarantine_ids: set[str] = set()
     seen_quarantine_record_ids: set[str] = set()
@@ -666,6 +674,21 @@ def _validate_durable_id_uniqueness(
                 seen_ids=seen_closed_work_item_record_ids,
                 message="closed work item already exists",
             )
+        elif isinstance(mutation, RecordQueueClosure):
+            closure_record = mutation.record
+            if closure_record is None:
+                raise UnsupportedMutationError("queue closure record is missing")
+            _ensure_record_id_agrees(
+                mutation.record_id,
+                closure_record.closure_id,
+                message="queue closure record id disagrees",
+            )
+            _ensure_new_durable_id(
+                closure_record.closure_id,
+                existing_ids=existing_queue_closure_ids,
+                seen_ids=seen_queue_closure_ids,
+                message="queue closure record already exists",
+            )
         elif isinstance(mutation, SetPause):
             pause = mutation.record
             if pause is None:
@@ -841,6 +864,21 @@ def _recheck_expectations(
 ) -> None:
     if decision.expected_pause_absent and state.pause is not None:
         raise StateConcurrencyError("pause state changed")
+    suspension = state.dispatch_suspension
+    suspension_active = suspension is not None and suspension.status == "active"
+    if decision.expected_dispatch_suspension_absent and suspension_active:
+        raise StateConcurrencyError("dispatch suspension changed")
+    expected_suspension_generation = (
+        decision.expected_dispatch_suspension_generation
+    )
+    actual_suspension_generation = (
+        None if suspension is None else suspension.generation
+    )
+    if (
+        expected_suspension_generation is not None
+        and actual_suspension_generation != expected_suspension_generation
+    ):
+        raise StateConcurrencyError("dispatch suspension changed")
 
     active_lineage_quarantine_keys = active_lineage_quarantine_scope_keys(state)
     for scope_key in decision.expected_lineage_quarantine_absent:
@@ -867,6 +905,14 @@ def _recheck_expectations(
             ):
                 raise StateConcurrencyError("default plan fingerprint changed")
 
+    for mutation in decision.mutations:
+        if (
+            isinstance(mutation, RecordQueueClosure)
+            and mutation.record is not None
+            and state.default_plan_ref != mutation.record.selected_plan_ref
+        ):
+            raise StateConcurrencyError("default plan fingerprint changed")
+
     for work_item_id, generation in decision.expected_work_item_generations.items():
         work_item = state.work_items.get(work_item_id)
         if work_item is None or work_item.ref.generation != generation:
@@ -887,6 +933,14 @@ def _recheck_expectations(
         if activation is None or activation.plan_ref != plan_ref:
             raise StateConcurrencyError("activation plan ref changed")
 
+    for activation_id, claimed_by_run_id in decision.expected_activation_claims.items():
+        activation = state.activations.get(activation_id)
+        if (
+            activation is None
+            or activation.claimed_by_run_id != claimed_by_run_id
+        ):
+            raise StateConcurrencyError("activation claim state changed")
+
     for activation_id in decision.expected_activation_unclaimed:
         activation = state.activations.get(activation_id)
         if activation is None or activation.claimed_by_run_id is not None:
@@ -901,6 +955,32 @@ def _recheck_expectations(
         run = state.runs.get(run_id)
         if run is None or run.run_ref.fencing_token != fencing_token:
             raise StateConcurrencyError("run fencing token changed")
+
+    for run_id, session_id in decision.expected_run_current_session_ids.items():
+        run = state.runs.get(run_id)
+        if run is None or run.current_session_id != session_id:
+            raise StateConcurrencyError("run session state changed")
+
+    for session_id, snapshot in decision.expected_runner_session_snapshots.items():
+        session = state.runner_sessions.get(session_id)
+        if (
+            session is None
+            or (session.state, session.cleanup_disposition) != snapshot
+        ):
+            raise StateConcurrencyError("runner session state changed")
+
+    for lineage_id, expected_work_item_ids in (
+        decision.expected_lineage_work_item_ids.items()
+    ):
+        actual_work_item_ids = tuple(
+            sorted(
+                work_item.ref.work_item_id
+                for work_item in state.work_items.values()
+                if work_item.lineage_id == lineage_id
+            )
+        )
+        if actual_work_item_ids != expected_work_item_ids:
+            raise StateConcurrencyError("lineage membership changed")
 
     # Runner observations are accepted once per run; stale duplicate decisions
     # must fail before a second observation mutation is attempted.
@@ -1486,6 +1566,26 @@ def _apply_close_work_item(
     )
 
 
+def _apply_record_queue_closure(
+    state: RuntimeState,
+    mutation: RecordQueueClosure,
+) -> RuntimeState:
+    record = mutation.record
+    if record is None:
+        raise UnsupportedMutationError("queue closure record is missing")
+    existing = state.queue_closures.get(record.closure_id)
+    if existing is not None and existing != record:
+        raise StateConcurrencyError("queue closure record already exists")
+    return replace(
+        state,
+        queue_closures=_mapping_with(
+            state.queue_closures,
+            record.closure_id,
+            record,
+        ),
+    )
+
+
 def _apply_set_pause(
     state: RuntimeState,
     mutation: SetPause,
@@ -1496,6 +1596,22 @@ def _apply_set_pause(
     if state.pause is not None and state.pause != record:
         raise StateConcurrencyError("pause already exists")
     return replace(state, pause=record)
+
+
+def _apply_set_dispatch_suspension(
+    state: RuntimeState,
+    mutation: SetDispatchSuspension,
+) -> RuntimeState:
+    if state.dispatch_suspension != mutation.expected_record:
+        raise StateConcurrencyError("dispatch suspension changed")
+    if len(state.runs) != mutation.expected_dispatch_generation:
+        raise StateConcurrencyError("dispatch generation changed")
+    if (
+        mutation.expected_default_plan_ref is not None
+        and state.default_plan_ref != mutation.expected_default_plan_ref
+    ):
+        raise StateConcurrencyError("default plan fingerprint changed")
+    return replace(state, dispatch_suspension=mutation.record)
 
 
 def _apply_set_quarantine(

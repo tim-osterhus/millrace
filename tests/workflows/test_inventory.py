@@ -12,12 +12,11 @@ from millrace.contracts import SelectedCompiledPlan
 from millrace.workflows import kernel_ping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SOURCE_ONLY_DONOR_MODULES = {
-    "lad_execution",
-    "lad_learning",
-    "lad_planning",
-    "simple_loop",
-    "vendor_selection",
+PUBLIC_WORKFLOW_SOURCE_FILES = {
+    "README.md",
+    "__init__.py",
+    "inventory.py",
+    "kernel_ping.py",
 }
 
 
@@ -126,12 +125,13 @@ def test_inventory_kernel_ping_source_compiles_to_direct_authority() -> None:
     )
 
 
-def test_donor_workflow_modules_are_documented_source_only_fixtures() -> None:
+def test_workflow_source_directory_matches_public_inventory_surface() -> None:
     workflows_readme = PROJECT_ROOT / "src" / "millrace" / "workflows" / "README.md"
     workflows_dir = PROJECT_ROOT / "src" / "millrace" / "workflows"
     readme = workflows_readme.read_text(encoding="utf-8")
 
-    assert "source-only" in readme
-    for module_name in SOURCE_ONLY_DONOR_MODULES:
-        assert (workflows_dir / f"{module_name}.py").is_file()
-        assert module_name in readme
+    assert {path.name for path in workflows_dir.iterdir() if path.is_file()} == (
+        PUBLIC_WORKFLOW_SOURCE_FILES
+    )
+    assert "kernel_ping" in readme
+    assert "diagnostic" in readme

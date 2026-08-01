@@ -35,9 +35,7 @@ from millrace.contracts.transition import (
 from millrace.kernel import UnsupportedMutationError, apply, decide, empty_runtime_state
 from millrace.kernel.lookups import operator_wait_for_action, plan_ref_for
 from millrace.testing import deterministic_context
-from millrace.workflows import kernel_ping, lad_execution, simple_loop
-from support import generic_fanout, vendor_selection
-from support import kernel_ping as kernel_ping_support
+from support import generic_admission, generic_fanout, generic_lifecycle
 
 _CODEX_POLICY = SelectedRunnerAdapterPolicy(
     default_adapter_kind="codex",
@@ -52,11 +50,11 @@ _CODEX_POLICY = SelectedRunnerAdapterPolicy(
 def _compile_source(
     source: dict[str, object],
     *,
-    codex_donor: bool = False,
+    use_test_runner_policy: bool = False,
 ) -> tuple[SelectedCompiledPlan, str]:
     result = compile_workflow(
         source,
-        **({"selected_runner_policy": _CODEX_POLICY} if codex_donor else {}),
+        **({"selected_runner_policy": _CODEX_POLICY} if use_test_runner_policy else {}),
     )
     assert result.plan is not None
     return result.plan, authority_fingerprint(result.plan)
@@ -64,9 +62,10 @@ def _compile_source(
 
 def _collapse_to_one_codex_runner(source: dict[str, object]) -> dict[str, object]:
     runner = cast(list[dict[str, object]], source["runner_bindings"])[0]
-    runner["id"] = "kernel_ping.fake_local_runner"
     runner["adapter_kind"] = "codex"
-    runner["stage_kind_ids"] = ("kernel_ping.taskmaster", "kernel_ping.worker")
+    runner["stage_kind_ids"] = tuple(
+        stage["id"] for stage in cast(list[dict[str, object]], source["stage_kinds"])
+    )
     source["runner_bindings"] = [runner]
     for stage in cast(list[dict[str, object]], source["stage_kinds"]):
         stage["runner_binding_id"] = runner["id"]
@@ -79,7 +78,7 @@ def _collapse_to_one_codex_runner(source: dict[str, object]) -> dict[str, object
 
 
 def _compile_component_plan() -> SelectedCompiledPlan:
-    source = kernel_ping.workflow_source()
+    source = generic_admission.source()
     source["capabilities"] = [
         {
             "id": "capability.runner.audit",
@@ -118,24 +117,24 @@ def _compile_component_plan() -> SelectedCompiledPlan:
             },
             "terminal_result_mappings": (
                 {
-                    "stage_kind_id": "kernel_ping.taskmaster",
+                    "stage_kind_id": generic_admission.PARENT_STAGE_ID,
                     "runner_result_id": "BLOCKED",
-                    "outcome_id": "kernel_ping.taskmaster.blocked",
+                    "outcome_id": "admission.escalation_ready",
                 },
                 {
-                    "stage_kind_id": "kernel_ping.taskmaster",
+                    "stage_kind_id": generic_admission.PARENT_STAGE_ID,
                     "runner_result_id": "COMPLETE",
-                    "outcome_id": "kernel_ping.taskmaster.task_complete",
+                    "outcome_id": "admission.parent_done",
                 },
             ),
         }
     )
-    plan, _fingerprint = _compile_source(source)
+    plan, _fingerprint = _compile_source(source, use_test_runner_policy=True)
     return plan
 
 
 def _compile_component_free_capability_plan() -> SelectedCompiledPlan:
-    source = kernel_ping.workflow_source()
+    source = generic_admission.source()
     source["capabilities"] = [
         {
             "id": "capability.runner.invoke",
@@ -148,7 +147,7 @@ def _compile_component_free_capability_plan() -> SelectedCompiledPlan:
     runner["required_capability_ids"] = ("capability.runner.invoke",)
     runner.pop("component_pin", None)
     runner.pop("terminal_result_mappings", None)
-    plan, _fingerprint = _compile_source(source)
+    plan, _fingerprint = _compile_source(source, use_test_runner_policy=True)
     assert plan.runner_bindings[0].component_pin is None
     return plan
 
@@ -205,7 +204,7 @@ def test_direct_admit_plan_refuses_component_free_capability_cardinality(
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "runner_component_capability:kernel_ping.fake_local_runner",
+        "runner_component_capability:admission.runner",
     )
 
 
@@ -214,59 +213,59 @@ def test_direct_admit_plan_refuses_component_free_capability_cardinality(
     (
         (
             "noncanonical_component_array",
-            "runner_component_pin_noncanonical:kernel_ping.fake_local_runner",
+            "runner_component_pin_noncanonical:admission.runner",
         ),
         (
             "mapping_without_pin",
-            "runner_component_mapping_without_pin:kernel_ping.fake_local_runner",
+            "runner_component_mapping_without_pin:admission.runner",
         ),
         (
             "duplicate_mapping",
-            "runner_component_mapping_duplicate:kernel_ping.fake_local_runner",
+            "runner_component_mapping_duplicate:admission.runner",
         ),
         (
             "duplicate_target",
-            "runner_component_mapping_outcome_duplicate:kernel_ping.fake_local_runner",
+            "runner_component_mapping_outcome_duplicate:admission.runner",
         ),
         (
             "unknown_result",
-            "runner_component_mapping_result:kernel_ping.fake_local_runner",
+            "runner_component_mapping_result:admission.runner",
         ),
         (
             "foreign_stage",
-            "runner_component_mapping_stage:kernel_ping.fake_local_runner",
+            "runner_component_mapping_stage:admission.runner",
         ),
         (
             "foreign_outcome",
-            "runner_component_mapping_outcome_stage:kernel_ping.fake_local_runner",
+            "runner_component_mapping_outcome_stage:admission.runner",
         ),
         (
             "missing_component_capability",
-            "runner_component_capability:kernel_ping.fake_local_runner",
+            "runner_component_capability:admission.runner",
         ),
         (
             "duplicate_selected_capability",
-            "runner_component_capability:kernel_ping.fake_local_runner",
+            "runner_component_capability:admission.runner",
         ),
         (
             "reordered_terminal_mappings",
-            "runner_component_mapping_noncanonical:kernel_ping.fake_local_runner",
+            "runner_component_mapping_noncanonical:admission.runner",
         ),
         (
             "noncanonical_component_capabilities",
-            "runner_component_pin_noncanonical:kernel_ping.fake_local_runner",
+            "runner_component_pin_noncanonical:admission.runner",
         ),
         (
             "missing_outcome",
-            "runner_component_mapping_outcome:kernel_ping.fake_local_runner",
+            "runner_component_mapping_outcome:admission.runner",
         ),
         (
             "undeclared_outcome",
-            "runner_component_mapping_outcome_declared:kernel_ping.fake_local_runner",
+            "runner_component_mapping_outcome_declared:admission.runner",
         ),
         (
             "missing_selected_capability",
-            "runner_component_capability:kernel_ping.fake_local_runner",
+            "runner_component_capability:admission.runner",
         ),
     ),
 )
@@ -301,27 +300,27 @@ def test_direct_admit_plan_refuses_invalid_runner_component_authority(
         object.__setattr__(
             mapping,
             "outcome_id",
-            OutcomeId("kernel_ping.taskmaster.blocked"),
+            OutcomeId("admission.escalation_ready"),
         )
     elif corruption == "unknown_result":
         object.__setattr__(mapping, "runner_result_id", "UNKNOWN")
     elif corruption == "foreign_stage":
-        object.__setattr__(mapping, "stage_kind_id", StageKindId("kernel_ping.worker"))
+        object.__setattr__(mapping, "stage_kind_id", StageKindId("admission.child"))
         object.__setattr__(
             mapping,
             "outcome_id",
-            OutcomeId("kernel_ping.worker.work_complete"),
+            OutcomeId("admission.child.done"),
         )
         object.__setattr__(
             binding,
             "stage_kind_ids",
-            (StageKindId("kernel_ping.taskmaster"),),
+            (StageKindId(generic_admission.PARENT_STAGE_ID),),
         )
     elif corruption == "foreign_outcome":
         object.__setattr__(
             mapping,
             "outcome_id",
-            OutcomeId("kernel_ping.worker.work_complete"),
+            OutcomeId("admission.child.done"),
         )
     elif corruption == "missing_component_capability":
         object.__setattr__(binding, "required_capability_ids", ())
@@ -346,7 +345,7 @@ def test_direct_admit_plan_refuses_invalid_runner_component_authority(
         taskmaster = next(
             stage
             for stage in plan.stage_kinds
-            if str(stage.id) == "kernel_ping.taskmaster"
+            if str(stage.id) == generic_admission.PARENT_STAGE_ID
         )
         object.__setattr__(
             taskmaster,
@@ -354,7 +353,7 @@ def test_direct_admit_plan_refuses_invalid_runner_component_authority(
             tuple(
                 outcome_id
                 for outcome_id in taskmaster.declared_outcome_ids
-                if str(outcome_id) != "kernel_ping.taskmaster.blocked"
+                if str(outcome_id) != "admission.escalation_ready"
             ),
         )
     else:
@@ -720,7 +719,7 @@ def _assert_admit_and_select_default_refuse_selected_authority(
 
 
 def test_initialize_admit_and_select_default_plan_use_control_authority() -> None:
-    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    plan, fingerprint = generic_admission.compile_plan()
     state = empty_runtime_state()
 
     initialize = InitializeWorkspace("init")
@@ -793,71 +792,79 @@ def test_fanout_non_closing_source_action_refuses_selected_plan_admission() -> N
 
 
 def test_join_without_target_generated_route_refuses_selected_plan_admission() -> None:
-    plan, _fingerprint = vendor_selection.compile_vendor_selection()
+    plan, _fingerprint = generic_lifecycle.compile_lifecycle()
     tampered = replace(
         plan,
         generated_work_routes=tuple(
-            route
-            for route in plan.generated_work_routes
-            if route.id != "vendor_selection.award_join_work"
+            route for route in plan.generated_work_routes if route.id != "route.review"
         ),
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         tampered,
-        "join_target_route:candidate_evidence_join",
+        f"join_target_route:{generic_lifecycle.JOIN_ID}",
     )
 
 
 def test_duplicate_join_target_route_refuses_selected_plan_admission() -> None:
-    plan, _fingerprint = vendor_selection.compile_vendor_selection()
+    plan, _fingerprint = generic_lifecycle.compile_lifecycle()
     target_route = next(
-        route
-        for route in plan.generated_work_routes
-        if route.id == "vendor_selection.award_join_work"
+        route for route in plan.generated_work_routes if route.id == "route.review"
     )
     tampered = replace(
         plan,
         generated_work_routes=(
             *plan.generated_work_routes,
-            replace(cast(Any, target_route), id="vendor_selection.award_join_work.v2"),
+            replace(cast(Any, target_route), id="route.review.v2"),
         ),
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         tampered,
-        "join_target_route:candidate_evidence_join",
+        f"join_target_route:{generic_lifecycle.JOIN_ID}",
     )
 
 
 def test_join_stage_schema_mismatch_refuses_selected_plan_admission() -> None:
-    plan, _fingerprint = vendor_selection.compile_vendor_selection()
-    tampered = _plan_with_join_fields(
+    plan, _fingerprint = generic_lifecycle.compile_lifecycle()
+    tampered = replace(
         plan,
-        required_artifact_schema_ids=(ArtifactSchemaId("OperatorDecision"),),
+        stage_kinds=tuple(
+            replace(
+                stage,
+                artifact_schema_ids=tuple(
+                    schema_id
+                    for schema_id in stage.artifact_schema_ids
+                    if str(schema_id) != generic_lifecycle.ALPHA_REPORT_SCHEMA_ID
+                ),
+            )
+            if str(stage.id) == "review_stage"
+            else stage
+            for stage in plan.stage_kinds
+        ),
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         tampered,
-        "join_required_stage_schema:candidate_evidence_join",
+        f"join_required_stage_schema:{generic_lifecycle.JOIN_ID}",
     )
 
 
 def test_join_id_collision_refuses_selected_plan_admission() -> None:
-    plan, _fingerprint = vendor_selection.compile_vendor_selection()
+    plan, _fingerprint = generic_lifecycle.compile_lifecycle()
     tampered = _plan_with_join_fields(
         plan,
-        id="vendor_selection.request_intake.request_ready",
+        id="lifecycle.origin.complete",
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         tampered,
-        "join_id_collision:vendor_selection.request_intake.request_ready",
+        "join_id_collision:lifecycle.origin.complete",
     )
 
 
 def test_admit_plan_refuses_mismatched_fingerprint_before_plan_pin() -> None:
-    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    plan, fingerprint = generic_admission.compile_plan()
     mismatched_fingerprint = f"{fingerprint}-mismatch"
     state = empty_runtime_state()
 
@@ -882,7 +889,7 @@ def test_admit_plan_refuses_mismatched_fingerprint_before_plan_pin() -> None:
 
 
 def test_admit_decision_retains_frozen_plan_after_caller_list_mutation() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     required_extensions = ["ext.alpha"]
     plan = _plan_with_required_extensions(source_plan, required_extensions)
     fingerprint = authority_fingerprint(plan)
@@ -905,7 +912,7 @@ def test_admit_decision_retains_frozen_plan_after_caller_list_mutation() -> None
 
 
 def test_admitted_plan_pin_retains_frozen_plan_after_caller_list_mutation() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     required_extensions = ["ext.alpha"]
     plan = _plan_with_required_extensions(source_plan, required_extensions)
     fingerprint = authority_fingerprint(plan)
@@ -933,7 +940,7 @@ def test_admitted_plan_pin_retains_frozen_plan_after_caller_list_mutation() -> N
 
 
 def test_apply_revalidates_admit_plan_ref_before_pinning() -> None:
-    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    plan, fingerprint = generic_admission.compile_plan()
     state = empty_runtime_state()
     decision = decide(
         state,
@@ -962,7 +969,7 @@ def test_apply_revalidates_admit_plan_ref_before_pinning() -> None:
 
 
 def test_admit_plan_refuses_unsupported_runtime_terminal_action_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_kind(source_plan, "operator_wait")
     fingerprint = authority_fingerprint(plan)
     state = empty_runtime_state()
@@ -986,17 +993,15 @@ def test_admit_plan_refuses_unsupported_runtime_terminal_action_kind() -> None:
     assert admitted.default_plan_ref is None
     assert admitted.receipts["admit-unsupported-action"].accepted is False
     assert admitted.refusals[-1].detail == (
-        "operator_wait_missing_authority:kernel_ping.close_worker_success"
+        "operator_wait_missing_authority:admission.child.complete"
     )
 
 
 def test_admit_and_select_default_refuse_old_terminal_action_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_fields(
         source_plan,
-        "execution.close_consultant_needs_plan",
+        "admission.escalate",
         action_kind="escalate_to_planning",
     )
 
@@ -1007,7 +1012,7 @@ def test_admit_and_select_default_refuse_old_terminal_action_kind() -> None:
 
 
 def test_admit_and_select_default_refuse_deferred_terminal_action_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_kind(
         source_plan,
         "deferred_terminal_action",
@@ -1020,7 +1025,7 @@ def test_admit_and_select_default_refuse_deferred_terminal_action_kind() -> None
 
 
 def test_admit_and_select_default_accept_opaque_runner_adapter_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_runner_adapter_kind(source_plan, "opaque_local")
     fingerprint = authority_fingerprint(plan)
     state = empty_runtime_state()
@@ -1057,22 +1062,22 @@ def test_admit_and_select_default_accept_opaque_runner_adapter_kind() -> None:
 @pytest.mark.parametrize(
     ("field_name", "field_value"),
     (
-        ("target_stage_kind_id", StageKindId("lad_consultant")),
-        ("target_graph_node_id", "execution.lad.consultant.start"),
-        ("emitted_queue_family_id", QueueFamilyId("stage_result")),
-        ("runner_binding_id", RunnerBindingId("execution.lad.local_runner")),
+        ("target_stage_kind_id", StageKindId(generic_admission.PARENT_STAGE_ID)),
+        ("target_graph_node_id", generic_admission.PARENT_NODE_ID),
+        ("emitted_queue_family_id", QueueFamilyId("parent")),
+        ("runner_binding_id", RunnerBindingId(generic_admission.RUNNER_ID)),
         ("payload_projection", {"kind": "source", "path": ("artifact_payload",)}),
         (
             "dynamic_target_selector",
             {
                 "kind": "observation_payload_route_target",
-                "field_names": ("target_stage",),
+                "field_names": ("target",),
                 "targets": {
-                    "builder": {
-                        "target_stage_kind_id": "lad_builder",
-                        "target_graph_node_id": "execution.lad.builder.start",
-                        "emitted_queue_family_id": "stage_result",
-                        "runner_binding_id": "execution.lad.local_runner",
+                    "parent": {
+                        "target_stage_kind_id": generic_admission.PARENT_STAGE_ID,
+                        "target_graph_node_id": generic_admission.PARENT_NODE_ID,
+                        "emitted_queue_family_id": "parent",
+                        "runner_binding_id": generic_admission.RUNNER_ID,
                     },
                 },
             },
@@ -1083,12 +1088,10 @@ def test_admit_and_select_default_refuse_close_with_escalation_route_authority(
     field_name: str,
     field_value: object,
 ) -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_fields(
         source_plan,
-        "execution.close_consultant_needs_plan",
+        "admission.escalate",
         action_kind="close_with_escalation",
         **{field_name: field_value},
     )
@@ -1097,19 +1100,17 @@ def test_admit_and_select_default_refuse_close_with_escalation_route_authority(
         plan,
         (
             "terminal_close_with_escalation_route_authority:"
-            f"execution.close_consultant_needs_plan.{field_name}"
+            f"admission.escalate.{field_name}"
         ),
     )
 
 
 def test_admit_plan_refuses_terminal_action_artifact_schema_mismatch() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_artifact_schema(
         source_plan,
-        "execution.close_updater_complete",
-        "execution.artifacts.incident_report",
+        "admission.complete",
+        "fanout.child",
     )
     fingerprint = authority_fingerprint(plan)
     state = empty_runtime_state()
@@ -1128,7 +1129,7 @@ def test_admit_plan_refuses_terminal_action_artifact_schema_mismatch() -> None:
     assert decision.refusal is not None
     assert decision.refusal.reason == "unsupported_selected_authority"
     assert decision.refusal.detail == (
-        "terminal_action_artifact_schema:execution.close_updater_complete"
+        "terminal_action_artifact_schema:admission.complete"
     )
 
     after = apply(state, decision)
@@ -1138,18 +1139,16 @@ def test_admit_plan_refuses_terminal_action_artifact_schema_mismatch() -> None:
 
 
 def test_admit_plan_refuses_disallowed_dynamic_route_target() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_dynamic_route_target(
         source_plan,
-        "execution.route_consultant_complete",
-        "consultant",
+        "admission.dynamic_route",
+        "recovery",
         {
-            "target_stage_kind_id": "lad_consultant",
-            "target_graph_node_id": "execution.lad.consultant.start",
-            "emitted_queue_family_id": "stage_result",
-            "runner_binding_id": "execution.lad.local_runner",
+            "target_stage_kind_id": generic_admission.RECOVERY_STAGE_ID,
+            "target_graph_node_id": generic_admission.RECOVERY_NODE_ID,
+            "emitted_queue_family_id": "parent",
+            "runner_binding_id": generic_admission.RUNNER_ID,
         },
     )
     fingerprint = authority_fingerprint(plan)
@@ -1171,7 +1170,7 @@ def test_admit_plan_refuses_disallowed_dynamic_route_target() -> None:
     assert decision.refusal is not None
     assert decision.refusal.reason == "unsupported_selected_authority"
     assert decision.refusal.detail == (
-        "dynamic_route_disallowed_target:execution.route_consultant_complete"
+        "dynamic_route_disallowed_target:admission.dynamic_route"
     )
 
     after = apply(state, decision)
@@ -1181,7 +1180,7 @@ def test_admit_plan_refuses_disallowed_dynamic_route_target() -> None:
 
 
 def test_admit_plan_refuses_existing_unsupported_runtime_terminal_action_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_kind(source_plan, "operator_wait")
     fingerprint = authority_fingerprint(plan)
     state = _state_with_admitted_plan(plan, fingerprint)
@@ -1207,12 +1206,12 @@ def test_admit_plan_refuses_existing_unsupported_runtime_terminal_action_kind() 
     assert admitted.default_plan_ref is None
     assert admitted.receipts["admit-existing-unsupported-action"].accepted is False
     assert admitted.refusals[-1].detail == (
-        "operator_wait_missing_authority:kernel_ping.close_worker_success"
+        "operator_wait_missing_authority:admission.child.complete"
     )
 
 
 def test_admit_plan_refuses_existing_deferred_terminal_action_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_kind(
         source_plan,
         "deferred_terminal_action",
@@ -1242,7 +1241,7 @@ def test_admit_plan_refuses_existing_deferred_terminal_action_kind() -> None:
 
 
 def test_select_default_refuses_unsupported_runtime_terminal_action_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_kind(source_plan, "operator_wait")
     fingerprint = authority_fingerprint(plan)
     state = _state_with_admitted_plan(plan, fingerprint)
@@ -1265,12 +1264,12 @@ def test_select_default_refuses_unsupported_runtime_terminal_action_kind() -> No
     assert selected.default_plan_ref is None
     assert selected.receipts["select-unsupported-action"].accepted is False
     assert selected.refusals[-1].detail == (
-        "operator_wait_missing_authority:kernel_ping.close_worker_success"
+        "operator_wait_missing_authority:admission.child.complete"
     )
 
 
 def test_select_default_refuses_deferred_terminal_action_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_terminal_action_kind(
         source_plan,
         "deferred_terminal_action",
@@ -1299,7 +1298,7 @@ def test_select_default_refuses_deferred_terminal_action_kind() -> None:
 
 
 def test_admit_plan_accepts_partitionless_stage_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_partitionless_stage(source_plan)
     fingerprint = authority_fingerprint(plan)
     state = empty_runtime_state()
@@ -1325,7 +1324,7 @@ def test_admit_plan_accepts_partitionless_stage_kind() -> None:
 
 
 def test_select_default_accepts_partitionless_stage_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_partitionless_stage(source_plan)
     fingerprint = authority_fingerprint(plan)
     state = _state_with_admitted_plan(plan, fingerprint)
@@ -1349,17 +1348,17 @@ def test_select_default_accepts_partitionless_stage_kind() -> None:
     assert selected.refusals == ()
 
 
-def test_admit_simple_loop_accepts_full_selected_authority() -> None:
-    plan, fingerprint = _compile_source(simple_loop.workflow_source(), codex_donor=True)
+def test_admit_neutral_plan_accepts_full_selected_authority() -> None:
+    plan, fingerprint = generic_admission.compile_plan()
 
     decision = decide(
         empty_runtime_state(),
         AdmitPlan(
-            "admit-simple-loop",
+            "admit-neutral-plan",
             selected_plan=plan,
             authority_fingerprint=fingerprint,
         ),
-        deterministic_context(transition_id="transition-admit-simple-loop"),
+        deterministic_context(transition_id="transition-admit-neutral-plan"),
     )
 
     assert decision.accepted is True
@@ -1391,30 +1390,26 @@ def test_admit_and_select_default_refuse_unsupported_capability_authority(
     field_values: dict[str, object],
     detail: str,
 ) -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_capability_fields(source_plan, **field_values)
 
     _assert_admit_and_select_default_refuse_selected_authority(plan, detail)
 
 
 def test_admit_and_select_default_refuse_unknown_route_graph_node() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
-    plan = _plan_without_graph_node(source_plan, "execution.lad.builder.start")
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
+    plan = _plan_without_graph_node(source_plan, generic_admission.PARENT_NODE_ID)
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "graph_node_missing:execution.lad.builder.start",
+        f"graph_node_missing:{generic_admission.PARENT_NODE_ID}",
     )
 
 
 def test_admit_and_select_default_refuse_unknown_external_route_payload_schema() -> (
     None
 ):
-    source_plan, _source_fingerprint = _compile_source(kernel_ping.workflow_source())
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     route_id = source_plan.external_enqueue_routes[0].id
     plan = _plan_with_external_route_payload_schema(
         source_plan,
@@ -1429,70 +1424,62 @@ def test_admit_and_select_default_refuse_unknown_external_route_payload_schema()
 
 
 def test_admit_and_select_default_refuse_duplicate_operator_wait_owner() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_duplicate_operator_wait_owner(source_plan)
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "operator_wait_duplicate_owner:simple_loop.manager.needs_operator_detail",
+        "operator_wait_duplicate_owner:admission.wait_for_close",
     )
 
 
 def test_operator_wait_lookup_refuses_duplicate_owner() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_duplicate_operator_wait_owner(source_plan)
 
     with pytest.raises(ValueError, match="ambiguous operator wait authority"):
         operator_wait_for_action(
             plan,
-            "simple_loop.manager.needs_operator_detail",
+            "admission.wait_for_close",
         )
 
 
 def test_admit_and_select_default_refuse_duplicate_operator_wait_action() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     source_action_id = source_plan.operator_waits[0].source_action_ids[0]
     plan = _plan_with_operator_wait_fields(
         source_plan,
-        "simple_loop.manager_detail_wait",
+        "admission.detail_wait",
         source_action_ids=(source_action_id, source_action_id),
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "operator_wait_source_action:simple_loop.manager_detail_wait",
+        "operator_wait_source_action:admission.detail_wait",
     )
 
 
 def test_admit_and_select_default_refuse_empty_operator_wait_source_actions() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_operator_wait_fields(
         source_plan,
-        "simple_loop.manager_detail_wait",
+        "admission.detail_wait",
         source_action_ids=(),
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "operator_wait_source_action:simple_loop.manager_detail_wait",
+        "operator_wait_source_action:admission.detail_wait",
     )
 
 
 @pytest.mark.parametrize(
     ("allowed_resolution_kinds", "detail"),
     (
-        ((), "operator_wait_resolution_kind:simple_loop.manager_detail_wait"),
+        ((), "operator_wait_resolution_kind:admission.detail_wait"),
         (
             ("resume_recorded_source", "resume_recorded_source"),
-            "operator_wait_resolution_kind:simple_loop.manager_detail_wait",
+            "operator_wait_resolution_kind:admission.detail_wait",
         ),
     ),
 )
@@ -1500,12 +1487,10 @@ def test_admit_and_select_default_refuse_invalid_operator_wait_resolution_sets(
     allowed_resolution_kinds: tuple[str, ...],
     detail: str,
 ) -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_operator_wait_fields(
         source_plan,
-        "simple_loop.manager_detail_wait",
+        "admission.detail_wait",
         allowed_resolution_kinds=allowed_resolution_kinds,
         audit_metadata_requirements=(),
     )
@@ -1518,47 +1503,47 @@ def test_admit_and_select_default_refuse_invalid_operator_wait_resolution_sets(
     (
         (
             {"wait_scope": "workspace"},
-            "operator_wait_scope:simple_loop.manager_detail_wait",
+            "operator_wait_scope:admission.detail_wait",
         ),
         (
             {"source_work_item_behavior": "pause"},
-            "operator_wait_source_work_item_behavior:simple_loop.manager_detail_wait",
+            "operator_wait_source_work_item_behavior:admission.detail_wait",
         ),
         (
             {"unrelated_lineages_continue": False},
-            "operator_wait_unrelated_lineages_continue:simple_loop.manager_detail_wait",
+            "operator_wait_unrelated_lineages_continue:admission.detail_wait",
         ),
         (
             {"actor_kind": "remote_operator"},
-            "operator_wait_actor_kind:simple_loop.manager_detail_wait",
+            "operator_wait_actor_kind:admission.detail_wait",
         ),
         (
             {"audit_metadata_requirements": ()},
-            "operator_wait_audit_metadata_requirements:simple_loop.manager_detail_wait",
+            "operator_wait_audit_metadata_requirements:admission.detail_wait",
         ),
         (
             {"correlation_key": "lineage_id"},
-            "operator_wait_correlation_key:simple_loop.manager_detail_wait",
+            "operator_wait_correlation_key:admission.detail_wait",
         ),
         (
             {"idempotency": "none"},
-            "operator_wait_idempotency:simple_loop.manager_detail_wait",
+            "operator_wait_idempotency:admission.detail_wait",
         ),
         (
             {"timeout_policy": "fifteen_minutes"},
-            "operator_wait_timeout_policy:simple_loop.manager_detail_wait",
+            "operator_wait_timeout_policy:admission.detail_wait",
         ),
         (
             {"expiry_policy": "after_timeout"},
-            "operator_wait_expiry_policy:simple_loop.manager_detail_wait",
+            "operator_wait_expiry_policy:admission.detail_wait",
         ),
         (
             {"cancellation_policy": "runtime_cancel"},
-            "operator_wait_cancellation_policy:simple_loop.manager_detail_wait",
+            "operator_wait_cancellation_policy:admission.detail_wait",
         ),
         (
             {"status_effect": "blocked"},
-            "operator_wait_status_effect:simple_loop.manager_detail_wait",
+            "operator_wait_status_effect:admission.detail_wait",
         ),
     ),
 )
@@ -1566,12 +1551,10 @@ def test_admit_and_select_default_refuse_operator_wait_fixed_policy_fields(
     field_values: dict[str, object],
     detail: str,
 ) -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_operator_wait_fields(
         source_plan,
-        "simple_loop.manager_detail_wait",
+        "admission.detail_wait",
         **field_values,
     )
 
@@ -1585,74 +1568,68 @@ def test_admit_and_select_default_refuse_operator_wait_fixed_policy_fields(
 def test_admit_and_select_default_refuse_close_on_create_non_close_resolution(
     resolution_kind: str,
 ) -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_operator_wait_fields(
         source_plan,
-        "simple_loop.manager_incident_wait",
+        "admission.close_wait",
         allowed_resolution_kinds=("close_recorded_source", resolution_kind),
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "operator_wait_source_work_item_behavior:simple_loop.manager_incident_wait",
+        "operator_wait_source_work_item_behavior:admission.close_wait",
     )
 
 
 def test_admit_and_select_default_refuse_operator_wait_revise_fields() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
+    detail_wait = next(
+        wait
+        for wait in source_plan.operator_waits
+        if str(wait.id) == generic_admission.REVISE_WAIT_ID
     )
-    detail_wait = source_plan.operator_waits[0]
     plan = _plan_with_operator_wait_fields(
         source_plan,
-        "simple_loop.manager_incident_wait",
+        "admission.close_wait",
         payload_schema_id=detail_wait.payload_schema_id,
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "operator_wait_target:simple_loop.manager_incident_wait",
+        "operator_wait_target:admission.close_wait",
     )
 
 
 def test_admit_and_select_default_refuse_operator_wait_missing_revise_target() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_operator_wait_fields(
         source_plan,
-        "simple_loop.manager_detail_wait",
+        "admission.detail_wait",
         target_runner_binding_id=None,
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "operator_wait_target:simple_loop.manager_detail_wait",
+        "operator_wait_target:admission.detail_wait",
     )
 
 
-def test_admit_and_select_default_refuse_operator_wait_revise_route_schema_mismatch() -> None:  # noqa: E501
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+def test_admit_and_select_default_refuse_operator_wait_route_schema_mismatch() -> None:
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_external_route_payload_schema(
         source_plan,
-        route_id="simple_loop.external_work_prompt",
-        payload_schema_id="simple_loop.detail_request",
+        route_id="admission.parent_route",
+        payload_schema_id="fanout.child",
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "operator_wait_target:simple_loop.manager_detail_wait",
+        "operator_wait_target:admission.detail_wait",
     )
 
 
 def test_admit_and_select_default_refuse_mutated_resume_target_selector() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_intervention_option_fields(
         source_plan,
         "resume_lineage",
@@ -1661,14 +1638,12 @@ def test_admit_and_select_default_refuse_mutated_resume_target_selector() -> Non
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "intervention_option_resume_target_selector:simple_loop.resume_lineage",
+        "intervention_option_resume_target_selector:admission.resume",
     )
 
 
 def test_admit_and_select_default_refuse_mutated_close_behavior() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_intervention_option_fields(
         source_plan,
         "close_lineage",
@@ -1677,14 +1652,12 @@ def test_admit_and_select_default_refuse_mutated_close_behavior() -> None:
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "intervention_option_close_behavior:simple_loop.close_lineage",
+        "intervention_option_close_behavior:admission.close",
     )
 
 
 def test_admit_and_select_default_refuse_truncated_audit_requirements() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     option = next(
         item
         for item in source_plan.intervention_options
@@ -1698,14 +1671,12 @@ def test_admit_and_select_default_refuse_truncated_audit_requirements() -> None:
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "intervention_option_audit_metadata_requirements:simple_loop.resume_lineage",
+        "intervention_option_audit_metadata_requirements:admission.resume",
     )
 
 
 def test_admit_and_select_default_refuse_orphan_wait_state() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_orphan_wait_state(source_plan)
 
     _assert_admit_and_select_default_refuse_selected_authority(
@@ -1715,33 +1686,27 @@ def test_admit_and_select_default_refuse_orphan_wait_state() -> None:
 
 
 def test_admit_and_select_default_refuse_wait_state_missing_policy() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_missing_wait_policy(source_plan)
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "wait_state_policy:simple_loop.blocked_recovery.cooldown",
+        "wait_state_policy:admission.recovery_cooldown",
     )
 
 
 def test_admit_and_select_default_refuse_counter_missing_stage_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_counter_stage_kind(source_plan, "test.missing_stage")
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "counter_stage_kind:simple_loop.reviewer_gap_counter",
+        f"counter_stage_kind:{generic_admission.COUNTER_ID}",
     )
 
 
 def test_admit_and_select_default_refuse_counter_threshold_action_reuse() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     counter = source_plan.counters[0]
     plan = replace(
         source_plan,
@@ -1750,60 +1715,54 @@ def test_admit_and_select_default_refuse_counter_threshold_action_reuse() -> Non
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "counter_threshold_action:simple_loop.reviewer_gap_counter",
+        f"counter_threshold_action:{generic_admission.COUNTER_ID}",
     )
 
 
 def test_admit_and_select_default_refuse_duplicate_counter_action_owner() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_duplicate_counter(source_plan)
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "counter_duplicate_action:execution.route_checker_fix_needed",
+        f"counter_duplicate_action:{generic_admission.COUNTER_INCREMENT_ACTION_ID}",
     )
 
 
 def test_admit_and_select_default_refuse_duplicate_counter_threshold_owner() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_duplicate_counter(
         source_plan,
-        increment_action_id="execution.route_checker_pass",
+        increment_action_id=generic_admission.COUNTER_THRESHOLD_ACTION_ID,
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "counter_duplicate_action:execution.escalate_checker_fix_exhausted",
+        f"counter_duplicate_action:{generic_admission.COUNTER_THRESHOLD_ACTION_ID}",
     )
 
 
 def test_admit_and_select_default_refuse_recovery_counter_missing_policy_source() -> (
     None
 ):
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     policies = list(source_plan.recovery_policies)
     for index, policy in enumerate(policies):
-        if str(policy.id) == "execution.fix_needed_recovery":
+        if str(policy.id) == generic_admission.RECOVERY_POLICY_ID:
             policies[index] = replace(
                 policy,
                 source_recovery_action_ids=(
-                    ActionId("execution.route_doublechecker_fix_needed"),
+                    ActionId(generic_admission.ALTERNATE_RECOVERY_SOURCE_ACTION_ID),
                 ),
             )
             break
     else:
-        raise AssertionError("missing execution.fix_needed_recovery policy")
+        raise AssertionError("missing neutral recovery policy")
     plan = replace(source_plan, recovery_policies=tuple(policies))
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "counter_recovery_policy_source:execution.fix_cycle_count.checker",
+        f"counter_recovery_policy_source:{generic_admission.RECOVERY_COUNTER_ID}",
     )
 
 
@@ -1811,12 +1770,12 @@ def test_admit_and_select_default_refuse_recovery_counter_missing_policy_source(
     ("policy_id", "threshold_action_id"),
     (
         (
-            "execution.fix_needed_recovery",
-            "execution.escalate_checker_fix_exhausted",
+            generic_admission.RECOVERY_POLICY_ID,
+            generic_admission.RECOVERY_THRESHOLD_ACTION_ID,
         ),
         (
-            "execution.blocked_recovery",
-            "execution.escalate_builder_blocked_exhausted",
+            generic_admission.RECOVERY_POLICY_ID,
+            "admission.complete",
         ),
     ),
 )
@@ -1824,9 +1783,7 @@ def test_admit_and_select_default_refuse_threshold_action_as_policy_source(
     policy_id: str,
     threshold_action_id: str,
 ) -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     policies = list(source_plan.recovery_policies)
     for index, policy in enumerate(policies):
         if str(policy.id) == policy_id:
@@ -1848,32 +1805,28 @@ def test_admit_and_select_default_refuse_threshold_action_as_policy_source(
 def test_admit_and_select_default_refuse_recovery_route_wrong_stage_graph_node() -> (
     None
 ):
-    source_plan, _source_fingerprint = _compile_source(
-        lad_execution.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     actions = list(source_plan.terminal_actions)
     for index, action in enumerate(actions):
-        if str(action.id) == "execution.escalate_checker_fix_exhausted":
+        if str(action.id) == generic_admission.RECOVERY_SOURCE_ACTION_ID:
             actions[index] = replace(
                 action,
-                target_graph_node_id="execution.lad.consultant.start",
+                target_graph_node_id=generic_admission.CHILD_NODE_ID,
             )
             break
     else:
-        raise AssertionError("missing checker fix threshold action")
+        raise AssertionError("missing neutral recovery action")
     plan = replace(source_plan, terminal_actions=tuple(actions))
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
         "terminal_recovery_route_graph_node_stage:"
-        "execution.escalate_checker_fix_exhausted",
+        f"{generic_admission.RECOVERY_SOURCE_ACTION_ID}",
     )
 
 
 def test_admit_and_select_default_refuse_revise_option_without_target() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_intervention_option_fields(
         source_plan,
         "revise_lineage",
@@ -1882,30 +1835,26 @@ def test_admit_and_select_default_refuse_revise_option_without_target() -> None:
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "intervention_option_target:simple_loop.revise_lineage",
+        "intervention_option_target:admission.revise",
     )
 
 
 def test_admit_and_select_default_refuse_revise_option_route_schema_mismatch() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_intervention_option_fields(
         source_plan,
         "revise_lineage",
-        payload_schema_id=ArtifactSchemaId("simple_loop.work_prompt"),
+        payload_schema_id=ArtifactSchemaId(generic_admission.OTHER_SCHEMA_ID),
     )
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "intervention_option_target:simple_loop.revise_lineage",
+        "intervention_option_target:admission.revise",
     )
 
 
 def test_admit_and_select_default_refuse_mutated_source_recovery_actions() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     policy = source_plan.recovery_policies[0]
     plan = _plan_with_recovery_policy_fields(
         source_plan,
@@ -1914,14 +1863,12 @@ def test_admit_and_select_default_refuse_mutated_source_recovery_actions() -> No
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "recovery_policy_source_action:simple_loop.blocked_recovery",
+        "recovery_policy_source_action:admission.recovery_policy",
     )
 
 
 def test_admit_and_select_default_refuse_mutated_return_actions() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     policy = source_plan.recovery_policies[0]
     plan = _plan_with_recovery_policy_fields(
         source_plan,
@@ -1930,14 +1877,12 @@ def test_admit_and_select_default_refuse_mutated_return_actions() -> None:
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "recovery_policy_return_action:simple_loop.blocked_recovery",
+        "recovery_policy_return_action:admission.recovery_policy",
     )
 
 
 def test_admit_and_select_default_refuse_mutated_quarantine_actions() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     policy = source_plan.recovery_policies[0]
     plan = _plan_with_recovery_policy_fields(
         source_plan,
@@ -1946,14 +1891,12 @@ def test_admit_and_select_default_refuse_mutated_quarantine_actions() -> None:
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "recovery_policy_quarantine_action:simple_loop.blocked_recovery",
+        "recovery_policy_quarantine_action:admission.recovery_policy",
     )
 
 
 def test_admit_and_select_default_refuse_missing_recovery_stage_kind() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_recovery_policy_fields(
         source_plan,
         recovery_stage_kind_id=StageKindId("test.missing_stage"),
@@ -1961,14 +1904,12 @@ def test_admit_and_select_default_refuse_missing_recovery_stage_kind() -> None:
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "recovery_policy_stage_kind:simple_loop.blocked_recovery",
+        "recovery_policy_stage_kind:admission.recovery_policy",
     )
 
 
 def test_admit_and_select_default_refuse_mutated_return_allowed_phases() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_recovery_policy_fields(
         source_plan,
         return_allowed_phases=("active_recovery", "unsupported_phase"),
@@ -1976,14 +1917,12 @@ def test_admit_and_select_default_refuse_mutated_return_allowed_phases() -> None
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "recovery_policy_return_allowed_phases:simple_loop.blocked_recovery",
+        "recovery_policy_return_allowed_phases:admission.recovery_policy",
     )
 
 
 def test_admit_and_select_default_refuse_mutated_reset_trigger_actions() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     policy = source_plan.recovery_policies[0]
     plan = _plan_with_recovery_policy_fields(
         source_plan,
@@ -1995,14 +1934,12 @@ def test_admit_and_select_default_refuse_mutated_reset_trigger_actions() -> None
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "recovery_policy_reset_trigger_action:simple_loop.blocked_recovery",
+        "recovery_policy_reset_trigger_action:admission.recovery_policy",
     )
 
 
 def test_admit_and_select_default_refuse_mutated_immediate_recovery_limit() -> None:
-    source_plan, _source_fingerprint = _compile_source(
-        simple_loop.workflow_source(), codex_donor=True
-    )
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_recovery_policy_fields(
         source_plan,
         immediate_recovery_limit=2,
@@ -2010,14 +1947,14 @@ def test_admit_and_select_default_refuse_mutated_immediate_recovery_limit() -> N
 
     _assert_admit_and_select_default_refuse_selected_authority(
         plan,
-        "recovery_policy_immediate_recovery_limit:simple_loop.blocked_recovery",
+        "recovery_policy_immediate_recovery_limit:admission.recovery_policy",
     )
 
 
 def test_plan_admission_receipts_are_idempotent_by_input_digest() -> None:
-    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
-    alternate_plan, alternate_fingerprint = _compile_source(
-        kernel_ping_support.no_pause_workflow_source()
+    plan, fingerprint = generic_admission.compile_plan()
+    alternate_plan, alternate_fingerprint = generic_admission.compile_plan(
+        generic_admission.alternate_source()
     )
     state = empty_runtime_state()
 
@@ -2072,9 +2009,9 @@ def test_plan_admission_receipts_are_idempotent_by_input_digest() -> None:
 
 
 def test_admit_plan_refuses_conflicting_authority_for_existing_fingerprint() -> None:
-    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
-    conflicting_plan, _conflicting_fingerprint = _compile_source(
-        kernel_ping_support.no_pause_workflow_source()
+    plan, fingerprint = generic_admission.compile_plan()
+    conflicting_plan, _conflicting_fingerprint = generic_admission.compile_plan(
+        generic_admission.alternate_source()
     )
     state = empty_runtime_state()
 

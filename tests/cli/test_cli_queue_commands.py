@@ -244,6 +244,288 @@ def test_queue_enqueue_persists_and_reloads_generic_work(tmp_path: Path) -> None
     assert status["data"]["queue_families"][0]["ready_count"] == 1
 
 
+def test_queue_cancel_closes_one_queued_work_item_and_replays(
+    tmp_path: Path,
+) -> None:
+    workspace, fingerprint = _workspace_with_default_plan(tmp_path)
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "queue",
+            "enqueue",
+            "prompt",
+            "--payload-json",
+            '{"body":"cancel this queued work"}',
+            "--input-id",
+            "enqueue-cancel-target",
+        ]
+    )
+    assert exit_code == 0, (stdout, stderr)
+    work_item_id = str(_json(stdout)["data"]["work_item_id"])
+    args = [
+        "--json",
+        "--workspace",
+        str(workspace),
+        "--actor-id",
+        "queue-operator",
+        "queue",
+        "cancel",
+        work_item_id,
+        "--plan-fingerprint",
+        fingerprint,
+        "--input-id",
+        "cancel-one-work",
+        "--reason",
+        "superseded before dispatch",
+    ]
+
+    exit_code, stdout, stderr = _invoke(args)
+
+    assert exit_code == 0, (stdout, stderr)
+    payload = _json(stdout)
+    assert payload["command"] == "queue.cancel"
+    assert payload["code"] == "queued_work_cancelled"
+    assert payload["data"]["closed_work_item_ids"] == [work_item_id]
+    state = _state(workspace)
+    assert state.closed_work_items[work_item_id].close_kind == "queue_cancellation"
+    assert len(state.queue_closures) == 1
+    audit = next(iter(state.queue_closures.values()))
+    assert audit.actor_id == "queue-operator"
+    assert audit.reason == "superseded before dispatch"
+    assert audit.target_kind == "work_item"
+    for surface in ("status", "trace", "doctor"):
+        surface_args = (
+            [surface, "show"] if surface == "trace" else [surface]
+        )
+        exit_code, stdout, stderr = _invoke(
+            [
+                "--json",
+                "--workspace",
+                str(workspace),
+                *surface_args,
+            ]
+        )
+        assert exit_code == 0, (surface, stdout, stderr)
+        projection = _json(stdout)["data"]["queue_closures"]
+        assert projection["count"] == 1
+        assert projection["records"][0]["target_id"] == work_item_id
+        assert projection["records"][0]["actor_id"] == "queue-operator"
+
+    replay_state = state
+    exit_code, stdout, stderr = _invoke(args)
+    assert exit_code == 0, (stdout, stderr)
+    assert _json(stdout)["data"]["transition_disposition"] == "replayed"
+    assert _state(workspace) == replay_state
+
+
+def test_queue_cancel_lineage_uses_selected_plan_and_stable_success_code(
+    tmp_path: Path,
+) -> None:
+    workspace, fingerprint = _workspace_with_default_plan(tmp_path)
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "queue",
+            "enqueue",
+            "prompt",
+            "--payload-json",
+            '{"body":"cancel this lineage"}',
+            "--input-id",
+            "enqueue-lineage-target",
+        ]
+    )
+    assert exit_code == 0, (stdout, stderr)
+    work_item_id = str(_json(stdout)["data"]["work_item_id"])
+    lineage_id = _state(workspace).work_items[work_item_id].lineage_id
+    assert lineage_id is not None
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "queue",
+            "cancel-lineage",
+            lineage_id,
+            "--plan-fingerprint",
+            fingerprint,
+            "--input-id",
+            "cancel-lineage",
+            "--reason",
+            "the selected lineage is obsolete",
+        ]
+    )
+
+    assert exit_code == 0, (stdout, stderr)
+    payload = _json(stdout)
+    assert payload["command"] == "queue.cancel-lineage"
+    assert payload["code"] == "queued_lineage_cancelled"
+    assert payload["data"]["closed_work_item_ids"] == [work_item_id]
+    audit = next(iter(_state(workspace).queue_closures.values()))
+    assert audit.target_kind == "lineage"
+    assert audit.target_id == lineage_id
+
+
+def test_queue_cancel_returns_stable_refusal_codes(tmp_path: Path) -> None:
+    workspace, fingerprint = _workspace_with_default_plan(tmp_path)
+
+    def assert_refusal(args: list[str], expected_code: str) -> None:
+        exit_code, stdout, stderr = _invoke(args)
+        assert exit_code == 3
+        assert stdout == ""
+        assert _json(stderr)["code"] == expected_code
+
+    assert_refusal(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "queue",
+            "cancel",
+            "missing-work",
+            "--plan-fingerprint",
+            fingerprint,
+            "--input-id",
+            "cancel-missing-work",
+            "--reason",
+            "missing work refuses stably",
+        ],
+        "queued_work_not_found",
+    )
+    assert_refusal(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "queue",
+            "cancel-lineage",
+            "missing-lineage",
+            "--plan-fingerprint",
+            fingerprint,
+            "--input-id",
+            "cancel-missing-lineage",
+            "--reason",
+            "missing lineage refuses stably",
+        ],
+        "queued_lineage_not_found",
+    )
+    assert_refusal(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "queue",
+            "cancel",
+            "missing-work",
+            "--plan-fingerprint",
+            f"sha256:{'0' * 64}",
+            "--input-id",
+            "cancel-wrong-selected-plan",
+            "--reason",
+            "wrong selected plan refuses first",
+        ],
+        "selected_plan_mismatch",
+    )
+
+    def enqueue(input_id: str) -> str:
+        exit_code, stdout, stderr = _invoke(
+            [
+                "--json",
+                "--workspace",
+                str(workspace),
+                "queue",
+                "enqueue",
+                "prompt",
+                "--payload-json",
+                json.dumps({"body": input_id}),
+                "--input-id",
+                input_id,
+            ]
+        )
+        assert exit_code == 0, (stdout, stderr)
+        return str(_json(stdout)["data"]["work_item_id"])
+
+    closed_work_item_id = enqueue("enqueue-close-once")
+    close_args = [
+        "--json",
+        "--workspace",
+        str(workspace),
+        "queue",
+        "cancel",
+        closed_work_item_id,
+        "--plan-fingerprint",
+        fingerprint,
+        "--input-id",
+        "cancel-close-once",
+        "--reason",
+        "close only once",
+    ]
+    exit_code, stdout, stderr = _invoke(close_args)
+    assert exit_code == 0, (stdout, stderr)
+    assert_refusal(
+        [
+            *close_args[:-4],
+            "--input-id",
+            "cancel-closed-work",
+            "--reason",
+            "already closed",
+        ],
+        "queued_work_not_cancelable",
+    )
+
+    first_conflict_target = enqueue("enqueue-first-conflict-target")
+    second_conflict_target = enqueue("enqueue-second-conflict-target")
+    conflict_args = [
+        "--json",
+        "--workspace",
+        str(workspace),
+        "queue",
+        "cancel",
+        first_conflict_target,
+        "--plan-fingerprint",
+        fingerprint,
+        "--input-id",
+        "cancel-conflicting-input",
+        "--reason",
+        "first request owns this input id",
+    ]
+    exit_code, stdout, stderr = _invoke(conflict_args)
+    assert exit_code == 0, (stdout, stderr)
+    assert_refusal(
+        [*conflict_args[:5], second_conflict_target, *conflict_args[6:]],
+        "idempotency_conflict",
+    )
+
+    plan_mismatch_work_item_id = enqueue("enqueue-plan-mismatch")
+    export_b = tmp_path / "plan-b.export.json"
+    fingerprint_b = _compile_export_from_source(
+        export_b,
+        kernel_ping_support.no_pause_workflow_source(),
+    )
+    _admit_and_select_plan(workspace, export_b, fingerprint_b, suffix="plan-b")
+    assert_refusal(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "queue",
+            "cancel",
+            plan_mismatch_work_item_id,
+            "--plan-fingerprint",
+            fingerprint_b,
+            "--input-id",
+            "cancel-work-plan-mismatch",
+            "--reason",
+            "work remains pinned to plan a",
+        ],
+        "queued_work_plan_mismatch",
+    )
+
+
 def test_queue_enqueue_generated_input_id_includes_effective_default_plan(
     tmp_path: Path,
 ) -> None:

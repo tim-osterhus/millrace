@@ -612,6 +612,8 @@ def test_observations_require_known_run_and_deferred_mutations_remain_inert() ->
         expected_run_fencing_tokens={},
         expected_run_unobserved=(),
         expected_pause_absent=False,
+        expected_dispatch_suspension_absent=False,
+        expected_dispatch_suspension_generation=None,
         expected_lineage_quarantine_absent=(),
         mutations=(CloseWorkItem(record_id="close-work"),),
         governance_events=(),

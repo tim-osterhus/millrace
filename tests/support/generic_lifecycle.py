@@ -734,9 +734,13 @@ def admitted_state(
     return state, plan, fingerprint
 
 
-def origin_claimed_state() -> tuple[RuntimeState, SelectedCompiledPlan, str]:
+def origin_queued_state() -> tuple[RuntimeState, SelectedCompiledPlan, str]:
     state, plan, fingerprint = admitted_state()
-    state = enqueue_origin(state)
+    return enqueue_origin(state), plan, fingerprint
+
+
+def origin_claimed_state() -> tuple[RuntimeState, SelectedCompiledPlan, str]:
+    state, plan, fingerprint = origin_queued_state()
     state = claim_activation(
         state,
         activation_id="activation-origin",

@@ -67,13 +67,9 @@ def test_generic_runtime_has_no_lad_plane_branches() -> None:
     assert offenders == []
 
 
-def test_selected_full_lad_workflow_data_is_outside_guardrail() -> None:
+def test_full_lad_workflow_donor_is_absent() -> None:
     fixture_path = PACKAGE_ROOT / "workflows" / "lad_learning.py"
-    text = fixture_path.read_text(encoding="utf-8")
-
-    assert "lad.full" in text
-    assert "learning_request" in text
-    assert "learning.trigger.execution.needs_planning" in text
+    assert not fixture_path.exists()
 
 
 def test_detector_catches_full_lad_legacy_authority_probe() -> None:

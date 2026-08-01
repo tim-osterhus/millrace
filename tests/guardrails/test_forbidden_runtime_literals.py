@@ -119,6 +119,15 @@ VENDOR_SELECTION_HOSTED_LITERALS = (
 
 TEXT_FILE_SUFFIXES = frozenset({".md", ".py", ".rst", ".txt"})
 
+OFFICIAL_WORKFLOW_IDENTIFIERS = (
+    "execution.lad",
+    "execution.lad_integrator",
+    "planning.lad",
+    "lad.full",
+    "simple_loop",
+    "vendor_selection",
+)
+
 
 def _kernel_package() -> Path:
     package_path = PACKAGE_ROOT / "kernel"
@@ -150,6 +159,25 @@ def _literal_matches(
     return matches
 
 
+def _official_workflow_identifier_matches(root: Path) -> list[tuple[Path, str]]:
+    matches: list[tuple[Path, str]] = []
+    lad_identifier = re.compile(r"(?<![A-Za-z0-9_])lad_[a-z0-9_]+")
+    for path in sorted(root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for literal in OFFICIAL_WORKFLOW_IDENTIFIERS:
+            if literal in text:
+                matches.append((path.relative_to(root), literal))
+        matches.extend(
+            (path.relative_to(root), match.group())
+            for match in lad_identifier.finditer(text)
+        )
+    return matches
+
+
+def test_production_source_omits_official_workflow_identifiers() -> None:
+    assert _official_workflow_identifier_matches(PACKAGE_ROOT) == []
+
+
 def test_lad_b_literal_guardrail_still_catches_probe_in_generic_source(
     tmp_path: Path,
 ) -> None:
@@ -169,15 +197,16 @@ def test_kernel_package_omits_workflow_fixture_and_legacy_literals() -> None:
     assert _literal_matches(_kernel_package()) == []
 
 
-def test_hosted_workflow_docs_are_outside_kernel_literal_guardrail() -> None:
+def test_workflow_docs_describe_only_the_base_diagnostic_surface() -> None:
     workflows_readme = PACKAGE_ROOT / "workflows" / "README.md"
     assert workflows_readme.exists(), (
         f"missing hosted workflow docs: {workflows_readme}"
     )
     workflow_docs = workflows_readme.read_text(encoding="utf-8")
     assert "kernel_ping" in workflow_docs
-    assert "simple_loop" in workflow_docs
-    assert "LAD" in workflow_docs
+    assert "diagnostic" in workflow_docs
+    assert "simple_loop" not in workflow_docs
+    assert "LAD" not in workflow_docs
     assert _literal_matches(_kernel_package()) == []
 
 

@@ -44,6 +44,10 @@ GLOBAL_OPTIONS_WITH_VALUES = {
     "--max-events",
     "--idle-sleep",
     "--max-ticks",
+    "--budget-id",
+    "--max-wall-seconds",
+    "--max-invocations",
+    "--max-total-tokens",
     "--activation-id",
     "--adapter-kind",
     "--adapter-config-json",
@@ -244,6 +248,29 @@ def _build_parser() -> tuple[
                 type=int,
                 metavar="N",
                 help="Maximum bounded-unit calls before stopping.",
+            )
+            daemon_parser.add_argument(
+                "--budget-id",
+                metavar="ID",
+                help="Caller-selected durable daemon budget epoch ID.",
+            )
+            daemon_parser.add_argument(
+                "--max-wall-seconds",
+                type=int,
+                metavar="SECONDS",
+                help="Maximum wall-clock seconds for the budget epoch.",
+            )
+            daemon_parser.add_argument(
+                "--max-invocations",
+                type=int,
+                metavar="N",
+                help="Maximum durably accepted external runner starts.",
+            )
+            daemon_parser.add_argument(
+                "--max-total-tokens",
+                type=int,
+                metavar="N",
+                help="Maximum adapter-reported input and output tokens.",
             )
             daemon_parser.add_argument(
                 "--activation-id",
@@ -501,6 +528,36 @@ def _add_queue_commands(
     enqueue.set_defaults(command="queue.enqueue")
     help_parsers["queue.enqueue"] = enqueue
 
+    cancel = subparsers.add_parser(
+        "cancel",
+        help="Close one eligible queued work item without runner signaling.",
+    )
+    cancel.add_argument("work_item_id", metavar="WORK_ITEM_ID")
+    cancel.add_argument(
+        "--plan-fingerprint",
+        required=True,
+        metavar="FINGERPRINT",
+    )
+    _add_input_id_option(cancel)
+    cancel.add_argument("--reason", required=True, metavar="TEXT")
+    cancel.set_defaults(command="queue.cancel")
+    help_parsers["queue.cancel"] = cancel
+
+    cancel_lineage = subparsers.add_parser(
+        "cancel-lineage",
+        help="Atomically close one complete eligible selected-plan lineage.",
+    )
+    cancel_lineage.add_argument("lineage_id", metavar="LINEAGE_ID")
+    cancel_lineage.add_argument(
+        "--plan-fingerprint",
+        required=True,
+        metavar="FINGERPRINT",
+    )
+    _add_input_id_option(cancel_lineage)
+    cancel_lineage.add_argument("--reason", required=True, metavar="TEXT")
+    cancel_lineage.set_defaults(command="queue.cancel-lineage")
+    help_parsers["queue.cancel-lineage"] = cancel_lineage
+
     list_parser = subparsers.add_parser(
         "list",
         help="List selected-plan queue family status.",
@@ -642,6 +699,27 @@ def _add_dispatch_commands(
     _add_optional_input_id_option(claim)
     claim.set_defaults(command="dispatch.claim")
     help_parsers["dispatch.claim"] = claim
+
+    suspend = subparsers.add_parser(
+        "suspend",
+        help="Suspend acceptance of new claims for the selected plan.",
+    )
+    suspend.add_argument("--plan-fingerprint", required=True, metavar="FINGERPRINT")
+    suspend.add_argument("--input-id", required=True, metavar="ID")
+    suspend.add_argument("--reason", required=True, metavar="TEXT")
+    suspend.set_defaults(command="dispatch.suspend")
+    help_parsers["dispatch.suspend"] = suspend
+
+    resume = subparsers.add_parser(
+        "resume",
+        help="Resume dispatch for the exact active suspension.",
+    )
+    resume.add_argument("--plan-fingerprint", required=True, metavar="FINGERPRINT")
+    resume.add_argument("--suspension-id", required=True, metavar="ID")
+    resume.add_argument("--input-id", required=True, metavar="ID")
+    resume.add_argument("--reason", required=True, metavar="TEXT")
+    resume.set_defaults(command="dispatch.resume")
+    help_parsers["dispatch.resume"] = resume
 
     show = subparsers.add_parser(
         "show",
@@ -1033,8 +1111,8 @@ def _render_command_exception(
             message="Workspace schema upgrade is required.",
             exit_code=ExitCode.PERSISTENCE_FAILURE,
             details={
-                "current_schema_version": 6,
-                "required_schema_version": 7,
+                "current_schema_version": exc.current_schema_version,
+                "required_schema_version": 8,
             },
         )
         return render_error(error, json_mode=json_mode)

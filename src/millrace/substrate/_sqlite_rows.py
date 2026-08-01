@@ -34,6 +34,7 @@ from millrace.contracts.state import (
     ClosureTerminalRecord,
     CooldownWaitRecord,
     CounterRecord,
+    DispatchSuspensionRecord,
     EffectProposalRecord,
     EffectReconciliationRecord,
     FanoutRecord,
@@ -45,6 +46,7 @@ from millrace.contracts.state import (
     PauseRecord,
     PlanRef,
     QuarantineRecord,
+    QueueClosureRecord,
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
@@ -446,6 +448,42 @@ class PauseStateRow:
     action_id: str
     created_by_input_id: str
     paused_at_order: int
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchSuspensionRow:
+    schema_version: int
+    suspension_id: str
+    plan_id: str
+    plan_authority_fingerprint: str
+    plan_format_version: int
+    generation: int
+    dispatch_generation: int
+    actor_id: str
+    reason: str
+    suspended_by_input_id: str
+    status: str
+    resumed_by_input_id: str | None
+    resume_actor_id: str | None
+    resume_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class QueueClosureRow:
+    schema_version: int
+    closure_id: str
+    plan_id: str
+    plan_authority_fingerprint: str
+    plan_format_version: int
+    target_kind: str
+    target_id: str
+    actor_id: str
+    reason: str
+    created_by_input_id: str
+    closed_work_item_ids_json: str
+    closed_activation_ids_json: str
+    closed_run_ids_json: str
+    created_at_order: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -2430,6 +2468,103 @@ def decode_pause_state_row(row: tuple[object, ...]) -> PauseStateRow:
     )
 
 
+def encode_dispatch_suspension_row(
+    record: DispatchSuspensionRecord | None,
+) -> DispatchSuspensionRow | None:
+    if record is None:
+        return None
+    return DispatchSuspensionRow(
+        schema_version=record.schema_version,
+        suspension_id=record.suspension_id,
+        plan_id=record.selected_plan_ref.plan_id,
+        plan_authority_fingerprint=(
+            record.selected_plan_ref.authority_fingerprint
+        ),
+        plan_format_version=record.selected_plan_ref.plan_format_version,
+        generation=record.generation,
+        dispatch_generation=record.dispatch_generation,
+        actor_id=record.actor_id,
+        reason=record.reason,
+        suspended_by_input_id=record.suspended_by_input_id,
+        status=record.status,
+        resumed_by_input_id=record.resumed_by_input_id,
+        resume_actor_id=record.resume_actor_id,
+        resume_reason=record.resume_reason,
+    )
+
+
+def decode_dispatch_suspension_row(
+    row: tuple[object, ...],
+) -> DispatchSuspensionRow:
+    schema_version = _expect_positive_int(
+        row,
+        0,
+        "dispatch_suspension.schema_version",
+    )
+    if schema_version != DispatchSuspensionRecord.schema_version:
+        raise StorageIntegrityError(
+            "dispatch_suspension.schema_version is unsupported"
+        )
+    status = _expect_text(row, 10, "dispatch_suspension.status")
+    if status not in {"active", "resumed"}:
+        raise StorageIntegrityError("dispatch_suspension.status is unsupported")
+    return DispatchSuspensionRow(
+        schema_version=schema_version,
+        suspension_id=_expect_text(
+            row,
+            1,
+            "dispatch_suspension.suspension_id",
+        ),
+        plan_id=_expect_text(row, 2, "dispatch_suspension.plan_id"),
+        plan_authority_fingerprint=_expect_text(
+            row,
+            3,
+            "dispatch_suspension.plan_authority_fingerprint",
+        ),
+        plan_format_version=_expect_positive_int(
+            row,
+            4,
+            "dispatch_suspension.plan_format_version",
+        ),
+        generation=_expect_positive_int(
+            row,
+            5,
+            "dispatch_suspension.generation",
+        ),
+        dispatch_generation=_expect_nonnegative_int(
+            row,
+            6,
+            "dispatch_suspension.dispatch_generation",
+        ),
+        actor_id=_expect_text(row, 7, "dispatch_suspension.actor_id"),
+        reason=_expect_text(row, 8, "dispatch_suspension.reason"),
+        suspended_by_input_id=_expect_text(
+            row,
+            9,
+            "dispatch_suspension.suspended_by_input_id",
+        ),
+        status=status,
+        resumed_by_input_id=_expect_optional_text(
+            row,
+            11,
+            "dispatch_suspension.resumed_by_input_id",
+            allow_empty=False,
+        ),
+        resume_actor_id=_expect_optional_text(
+            row,
+            12,
+            "dispatch_suspension.resume_actor_id",
+            allow_empty=False,
+        ),
+        resume_reason=_expect_optional_text(
+            row,
+            13,
+            "dispatch_suspension.resume_reason",
+            allow_empty=False,
+        ),
+    )
+
+
 def encode_quarantine_row(
     record: QuarantineRecord,
     *,
@@ -3720,6 +3855,156 @@ def pause_from_row(row: PauseStateRow) -> PauseRecord:
         action_id=ActionId(row.action_id),
         created_by_input_id=row.created_by_input_id,
     )
+
+
+def dispatch_suspension_from_row(
+    row: DispatchSuspensionRow,
+) -> DispatchSuspensionRecord:
+    try:
+        return DispatchSuspensionRecord(
+            suspension_id=row.suspension_id,
+            selected_plan_ref=PlanRef(
+                plan_id=row.plan_id,
+                authority_fingerprint=row.plan_authority_fingerprint,
+                plan_format_version=row.plan_format_version,
+            ),
+            generation=row.generation,
+            dispatch_generation=row.dispatch_generation,
+            actor_id=row.actor_id,
+            reason=row.reason,
+            suspended_by_input_id=row.suspended_by_input_id,
+            status=row.status,
+            resumed_by_input_id=row.resumed_by_input_id,
+            resume_actor_id=row.resume_actor_id,
+            resume_reason=row.resume_reason,
+        )
+    except ValueError as exc:
+        raise StorageIntegrityError(
+            f"invalid dispatch_suspension row: {exc}"
+        ) from exc
+
+
+def encode_queue_closure_row(
+    record: QueueClosureRecord,
+    *,
+    created_at_order: int,
+) -> QueueClosureRow:
+    plan_ref = record.selected_plan_ref
+    return QueueClosureRow(
+        schema_version=record.schema_version,
+        closure_id=record.closure_id,
+        plan_id=plan_ref.plan_id,
+        plan_authority_fingerprint=plan_ref.authority_fingerprint,
+        plan_format_version=plan_ref.plan_format_version,
+        target_kind=record.target_kind,
+        target_id=record.target_id,
+        actor_id=record.actor_id,
+        reason=record.reason,
+        created_by_input_id=record.created_by_input_id,
+        closed_work_item_ids_json=_json_string_tuple(
+            record.closed_work_item_ids
+        ),
+        closed_activation_ids_json=_json_string_tuple(
+            record.closed_activation_ids
+        ),
+        closed_run_ids_json=_json_string_tuple(record.closed_run_ids),
+        created_at_order=created_at_order,
+    )
+
+
+def decode_queue_closure_row(row: tuple[object, ...]) -> QueueClosureRow:
+    schema_version = _expect_nonnegative_int(
+        row,
+        0,
+        "queue_closures.schema_version",
+    )
+    if schema_version != QueueClosureRecord.schema_version:
+        raise StorageIntegrityError(
+            "queue_closures.schema_version is unsupported"
+        )
+    target_kind = _expect_text(row, 5, "queue_closures.target_kind")
+    if target_kind not in {"work_item", "lineage"}:
+        raise StorageIntegrityError("queue_closures.target_kind is unsupported")
+    return QueueClosureRow(
+        schema_version=schema_version,
+        closure_id=_expect_text(row, 1, "queue_closures.closure_id"),
+        plan_id=_expect_text(row, 2, "queue_closures.plan_id"),
+        plan_authority_fingerprint=_expect_text(
+            row,
+            3,
+            "queue_closures.plan_authority_fingerprint",
+        ),
+        plan_format_version=_expect_plan_format_version(
+            row,
+            4,
+            "queue_closures.plan_format_version",
+        ),
+        target_kind=target_kind,
+        target_id=_expect_text(row, 6, "queue_closures.target_id"),
+        actor_id=_expect_text(row, 7, "queue_closures.actor_id"),
+        reason=_expect_text(row, 8, "queue_closures.reason"),
+        created_by_input_id=_expect_text(
+            row,
+            9,
+            "queue_closures.created_by_input_id",
+        ),
+        closed_work_item_ids_json=_json_string_tuple(
+            _expect_json_string_tuple(
+                row,
+                10,
+                "queue_closures.closed_work_item_ids_json",
+            )
+        ),
+        closed_activation_ids_json=_json_string_tuple(
+            _expect_json_string_tuple(
+                row,
+                11,
+                "queue_closures.closed_activation_ids_json",
+            )
+        ),
+        closed_run_ids_json=_json_string_tuple(
+            _expect_json_string_tuple(
+                row,
+                12,
+                "queue_closures.closed_run_ids_json",
+            )
+        ),
+        created_at_order=_expect_nonnegative_int(
+            row,
+            13,
+            "queue_closures.created_at_order",
+        ),
+    )
+
+
+def queue_closure_from_row(row: QueueClosureRow) -> QueueClosureRecord:
+    try:
+        return QueueClosureRecord(
+            closure_id=row.closure_id,
+            selected_plan_ref=PlanRef(
+                plan_id=row.plan_id,
+                authority_fingerprint=row.plan_authority_fingerprint,
+                plan_format_version=row.plan_format_version,
+            ),
+            target_kind=row.target_kind,
+            target_id=row.target_id,
+            actor_id=row.actor_id,
+            reason=row.reason,
+            created_by_input_id=row.created_by_input_id,
+            closed_work_item_ids=_json_string_tuple_to_tuple(
+                row.closed_work_item_ids_json
+            ),
+            closed_activation_ids=_json_string_tuple_to_tuple(
+                row.closed_activation_ids_json
+            ),
+            closed_run_ids=_json_string_tuple_to_tuple(
+                row.closed_run_ids_json
+            ),
+        )
+    except ValueError as exc:
+        raise StorageIntegrityError(
+            f"invalid queue_closures row: {exc}"
+        ) from exc
 
 
 def quarantine_from_row(row: QuarantineRow) -> QuarantineRecord:

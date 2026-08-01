@@ -5,22 +5,12 @@ from typing import cast
 
 import pytest
 
-from millrace.compiler import SelectedRunnerAdapterPolicy, compile_workflow
+from millrace.compiler import compile_workflow
 from millrace.compiler.canonical import authority_fingerprint
-from millrace.contracts import ArtifactSchemaId
 from millrace.contracts.compiled_plan import AuthorityValue
 from millrace.kernel.projection import ProjectionContext, evaluate_projection
 from millrace.kernel.schema import validate_schema
-from millrace.workflows import kernel_ping, simple_loop
-
-_CODEX_POLICY = SelectedRunnerAdapterPolicy(
-    default_adapter_kind="codex",
-    supported_adapter_kinds=frozenset({"codex"}),
-    component_bound_adapter_kinds=frozenset(),
-    default_component_selector=None,
-    default_component_required_capability_ids=frozenset(),
-    default_component_requires_complete_mappings=False,
-)
+from millrace.workflows import kernel_ping
 
 
 def _assert_accepted(schema: Mapping[str, object], payload: object) -> None:
@@ -34,18 +24,6 @@ def _assert_rejected(schema: Mapping[str, object], payload: object) -> tuple[str
     assert result.accepted is False
     assert result.issues != ()
     return tuple(issue.reason for issue in result.issues)
-
-
-def _simple_loop_schema(schema_id: str) -> Mapping[str, object]:
-    result = compile_workflow(
-        simple_loop.workflow_source(), selected_runner_policy=_CODEX_POLICY
-    )
-    assert result.plan is not None
-    return next(
-        schema.schema
-        for schema in result.plan.artifact_schemas
-        if schema.id == ArtifactSchemaId(schema_id)
-    )
 
 
 def test_schema_validates_declared_object_array_and_scalar_subset() -> None:
@@ -172,66 +150,6 @@ def test_schema_const_and_enum_use_type_strict_scalar_equality() -> None:
     assert "enum_mismatch" in _assert_rejected({"enum": (1,)}, True)
     assert "const_mismatch" in _assert_rejected({"const": True}, 1)
     assert "enum_mismatch" in _assert_rejected({"enum": (True,)}, 1)
-
-
-def test_simple_loop_schemas_reject_blank_required_text() -> None:
-    work_packet_schema = _simple_loop_schema("simple_loop.work_packet")
-    work_packet = {
-        "artifact_kind": "simple_loop.work_packet",
-        "source_prompt_id": "prompt-1",
-        "title": "Route context",
-        "objective": "Preserve downstream context",
-        "completion_definition": "Reviewer can evaluate the result.",
-    }
-    for field_name in (
-        "source_prompt_id",
-        "title",
-        "objective",
-        "completion_definition",
-    ):
-        invalid = dict(work_packet)
-        invalid[field_name] = ""
-        assert "string_too_short" in _assert_rejected(work_packet_schema, invalid)
-
-    work_result_schema = _simple_loop_schema("simple_loop.work_result")
-    assert "string_too_short" in _assert_rejected(
-        work_result_schema,
-        {"artifact_kind": "simple_loop.work_result", "summary": ""},
-    )
-
-    incident_schema = _simple_loop_schema("simple_loop.incident_report")
-    assert "string_too_short" in _assert_rejected(
-        incident_schema,
-        {"artifact_kind": "simple_loop.incident_report", "reason": ""},
-    )
-
-
-def test_simple_loop_array_schemas_reject_blank_and_non_string_items() -> None:
-    detail_request_schema = _simple_loop_schema("simple_loop.detail_request")
-    assert "string_too_short" in _assert_rejected(
-        detail_request_schema,
-        {
-            "artifact_kind": "simple_loop.detail_request",
-            "missing_details": ("",),
-        },
-    )
-    assert "type_mismatch" in _assert_rejected(
-        detail_request_schema,
-        {
-            "artifact_kind": "simple_loop.detail_request",
-            "missing_details": (1,),
-        },
-    )
-
-    gap_packet_schema = _simple_loop_schema("simple_loop.gap_packet")
-    assert "string_too_short" in _assert_rejected(
-        gap_packet_schema,
-        {"artifact_kind": "simple_loop.gap_packet", "gaps": ("",)},
-    )
-    assert "type_mismatch" in _assert_rejected(
-        gap_packet_schema,
-        {"artifact_kind": "simple_loop.gap_packet", "gaps": (1,)},
-    )
 
 
 def test_projection_evaluates_declared_literal_source_object_and_array_forms() -> None:

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import TypeAlias
 
 from millrace.contracts.compiled_plan import SelectedCompiledPlan
-from millrace.contracts.state import RUNNER_SESSION_TEXT_MAX_BYTES
+from millrace.contracts.state import DURABLE_INT64_MAX, RUNNER_SESSION_TEXT_MAX_BYTES
 from millrace.substrate.errors import (
     StoreNotInitialized,
     StoreSchemaUpgradeRequired,
@@ -24,6 +24,7 @@ from millrace.substrate.records import (
 
 StoreSchemaMetadata: TypeAlias = Mapping[str, str | int]
 _PLAN_FORMAT_VERSION = SelectedCompiledPlan.schema_version
+_QUEUE_CLOSURE_IDS_JSON_MAX_BYTES = 1024 * 1024
 _PACKAGE_COMMAND_OPERATIONS_SQL = ", ".join(
     f"'{operation_id}'" for operation_id in WORKFLOW_PACKAGE_COMMAND_OPERATION_IDS
 )
@@ -611,7 +612,11 @@ _RUNTIME_TABLE_SQL = (
         action_id TEXT,
         operator_intervention_record_id TEXT,
         close_kind TEXT NOT NULL CHECK (
-            close_kind IN ('terminal_action', 'operator_intervention')
+            close_kind IN (
+                'terminal_action',
+                'operator_intervention',
+                'queue_cancellation'
+            )
         ),
         created_by_input_id TEXT NOT NULL,
         closed_at_order INTEGER NOT NULL CHECK (closed_at_order >= 0),
@@ -627,6 +632,12 @@ _RUNTIME_TABLE_SQL = (
                 AND source_run_id IS NULL
                 AND action_id IS NULL
                 AND operator_intervention_record_id IS NOT NULL
+            )
+            OR (
+                close_kind = 'queue_cancellation'
+                AND source_run_id IS NULL
+                AND action_id IS NULL
+                AND operator_intervention_record_id IS NULL
             )
         )
     )
@@ -767,6 +778,278 @@ _RUNTIME_TABLE_SQL = (
         action_id TEXT NOT NULL,
         created_by_input_id TEXT NOT NULL,
         paused_at_order INTEGER NOT NULL CHECK (paused_at_order >= 0)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS dispatch_suspension (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        suspension_id TEXT NOT NULL CHECK (
+            length(CAST(suspension_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        plan_id TEXT NOT NULL,
+        plan_authority_fingerprint TEXT NOT NULL,
+        plan_format_version INTEGER NOT NULL CHECK (
+            plan_format_version = {_PLAN_FORMAT_VERSION}
+        ),
+        generation INTEGER NOT NULL CHECK (generation > 0),
+        dispatch_generation INTEGER NOT NULL CHECK (dispatch_generation >= 0),
+        actor_id TEXT NOT NULL CHECK (
+            length(CAST(actor_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        reason TEXT NOT NULL CHECK (
+            length(CAST(reason AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        suspended_by_input_id TEXT NOT NULL CHECK (
+            length(CAST(suspended_by_input_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        status TEXT NOT NULL CHECK (status IN ('active', 'resumed')),
+        resumed_by_input_id TEXT CHECK (
+            resumed_by_input_id IS NULL
+            OR length(CAST(resumed_by_input_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        resume_actor_id TEXT CHECK (
+            resume_actor_id IS NULL
+            OR length(CAST(resume_actor_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        resume_reason TEXT CHECK (
+            resume_reason IS NULL
+            OR length(CAST(resume_reason AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        CHECK (
+            (
+                status = 'active'
+                AND resumed_by_input_id IS NULL
+                AND resume_actor_id IS NULL
+                AND resume_reason IS NULL
+            )
+            OR (
+                status = 'resumed'
+                AND resumed_by_input_id IS NOT NULL
+                AND resume_actor_id IS NOT NULL
+                AND resume_reason IS NOT NULL
+            )
+        )
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS daemon_budget_epochs (
+        budget_id TEXT PRIMARY KEY CHECK (
+            length(CAST(budget_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        workspace_path TEXT NOT NULL CHECK (
+            length(CAST(workspace_path AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        plan_id TEXT NOT NULL,
+        plan_authority_fingerprint TEXT NOT NULL,
+        plan_format_version INTEGER NOT NULL CHECK (
+            plan_format_version = {_PLAN_FORMAT_VERSION}
+        ),
+        max_wall_seconds INTEGER CHECK (
+            max_wall_seconds IS NULL
+            OR (
+                typeof(max_wall_seconds) = 'integer'
+                AND max_wall_seconds BETWEEN 1 AND {DURABLE_INT64_MAX}
+            )
+        ),
+        max_invocations INTEGER CHECK (
+            max_invocations IS NULL
+            OR (
+                typeof(max_invocations) = 'integer'
+                AND max_invocations BETWEEN 1 AND {DURABLE_INT64_MAX}
+            )
+        ),
+        max_total_tokens INTEGER CHECK (
+            max_total_tokens IS NULL
+            OR (
+                typeof(max_total_tokens) = 'integer'
+                AND max_total_tokens BETWEEN 1 AND {DURABLE_INT64_MAX}
+            )
+        ),
+        started_at INTEGER NOT NULL CHECK (
+            typeof(started_at) = 'integer'
+            AND started_at BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        wall_deadline INTEGER CHECK (
+            wall_deadline IS NULL
+            OR (
+                typeof(wall_deadline) = 'integer'
+                AND wall_deadline BETWEEN 0 AND {DURABLE_INT64_MAX}
+            )
+        ),
+        last_observed_at INTEGER NOT NULL CHECK (
+            typeof(last_observed_at) = 'integer'
+            AND last_observed_at BETWEEN started_at AND {DURABLE_INT64_MAX}
+        ),
+        accepted_start_count INTEGER NOT NULL CHECK (
+            typeof(accepted_start_count) = 'integer'
+            AND accepted_start_count BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        cumulative_input_tokens INTEGER NOT NULL CHECK (
+            typeof(cumulative_input_tokens) = 'integer'
+            AND cumulative_input_tokens BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        cumulative_output_tokens INTEGER NOT NULL CHECK (
+            typeof(cumulative_output_tokens) = 'integer'
+            AND cumulative_output_tokens BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        cumulative_total_tokens INTEGER NOT NULL CHECK (
+            typeof(cumulative_total_tokens) = 'integer'
+            AND cumulative_total_tokens BETWEEN 0 AND {DURABLE_INT64_MAX}
+            AND
+            cumulative_total_tokens
+                = cumulative_input_tokens + cumulative_output_tokens
+        ),
+        status TEXT NOT NULL CHECK (
+            status IN ('active', 'exhausted', 'refused', 'stopped')
+        ),
+        terminal_reason TEXT CHECK (
+            terminal_reason IS NULL
+            OR length(CAST(terminal_reason AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        CHECK (
+            max_wall_seconds IS NOT NULL
+            OR max_invocations IS NOT NULL
+            OR max_total_tokens IS NOT NULL
+        ),
+        CHECK (
+            (max_wall_seconds IS NULL AND wall_deadline IS NULL)
+            OR wall_deadline = started_at + max_wall_seconds
+        ),
+        CHECK (
+            (status = 'active' AND terminal_reason IS NULL)
+            OR (status != 'active' AND terminal_reason IS NOT NULL)
+        ),
+        FOREIGN KEY (
+            plan_authority_fingerprint
+        ) REFERENCES admitted_plan_pins(authority_fingerprint)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS runner_session_usage (
+        session_id TEXT PRIMARY KEY CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        budget_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        dispatch_generation INTEGER NOT NULL CHECK (
+            typeof(dispatch_generation) = 'integer'
+            AND dispatch_generation BETWEEN 1 AND {DURABLE_INT64_MAX}
+        ),
+        session_fencing_token TEXT NOT NULL CHECK (
+            length(CAST(session_fencing_token AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        input_tokens INTEGER NOT NULL CHECK (
+            typeof(input_tokens) = 'integer'
+            AND input_tokens BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        output_tokens INTEGER NOT NULL CHECK (
+            typeof(output_tokens) = 'integer'
+            AND output_tokens BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        total_tokens INTEGER NOT NULL CHECK (
+            typeof(total_tokens) = 'integer'
+            AND total_tokens BETWEEN 0 AND {DURABLE_INT64_MAX}
+            AND
+            total_tokens = input_tokens + output_tokens
+        ),
+        observed_at INTEGER NOT NULL CHECK (
+            typeof(observed_at) = 'integer'
+            AND observed_at BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        final INTEGER NOT NULL CHECK (final IN (0, 1)),
+        FOREIGN KEY (budget_id) REFERENCES daemon_budget_epochs(budget_id),
+        FOREIGN KEY (session_id) REFERENCES runner_sessions(session_id),
+        FOREIGN KEY (run_id) REFERENCES runs(run_id)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS daemon_budget_sessions (
+        session_id TEXT PRIMARY KEY CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        budget_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        dispatch_generation INTEGER NOT NULL CHECK (
+            typeof(dispatch_generation) = 'integer'
+            AND dispatch_generation BETWEEN 1 AND {DURABLE_INT64_MAX}
+        ),
+        session_fencing_token TEXT NOT NULL CHECK (
+            length(CAST(session_fencing_token AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        accepted_at INTEGER CHECK (
+            accepted_at IS NULL
+            OR (
+                typeof(accepted_at) = 'integer'
+                AND accepted_at BETWEEN 0 AND {DURABLE_INT64_MAX}
+            )
+        ),
+        FOREIGN KEY (budget_id) REFERENCES daemon_budget_epochs(budget_id),
+        FOREIGN KEY (session_id) REFERENCES runner_sessions(session_id),
+        FOREIGN KEY (run_id) REFERENCES runs(run_id)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS queue_closures (
+        closure_id TEXT PRIMARY KEY CHECK (
+            length(CAST(closure_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        plan_id TEXT NOT NULL,
+        plan_authority_fingerprint TEXT NOT NULL,
+        plan_format_version INTEGER NOT NULL CHECK (
+            plan_format_version = {_PLAN_FORMAT_VERSION}
+        ),
+        target_kind TEXT NOT NULL CHECK (
+            target_kind IN ('work_item', 'lineage')
+        ),
+        target_id TEXT NOT NULL CHECK (
+            length(CAST(target_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        actor_id TEXT NOT NULL CHECK (
+            length(CAST(actor_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        reason TEXT NOT NULL CHECK (
+            length(CAST(reason AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        created_by_input_id TEXT NOT NULL CHECK (
+            length(CAST(created_by_input_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        closed_work_item_ids_json TEXT NOT NULL CHECK (
+            length(CAST(closed_work_item_ids_json AS BLOB))
+                BETWEEN 3 AND {_QUEUE_CLOSURE_IDS_JSON_MAX_BYTES}
+        ),
+        closed_activation_ids_json TEXT NOT NULL CHECK (
+            length(CAST(closed_activation_ids_json AS BLOB))
+                BETWEEN 2 AND {_QUEUE_CLOSURE_IDS_JSON_MAX_BYTES}
+        ),
+        closed_run_ids_json TEXT NOT NULL CHECK (
+            length(CAST(closed_run_ids_json AS BLOB))
+                BETWEEN 2 AND {_QUEUE_CLOSURE_IDS_JSON_MAX_BYTES}
+        ),
+        created_at_order INTEGER NOT NULL CHECK (created_at_order >= 0)
     )
     """,
     """
@@ -1501,6 +1784,81 @@ EXPECTED_TABLE_COLUMNS = {
         "created_by_input_id",
         "paused_at_order",
     ),
+    "dispatch_suspension": (
+        "id",
+        "schema_version",
+        "suspension_id",
+        "plan_id",
+        "plan_authority_fingerprint",
+        "plan_format_version",
+        "generation",
+        "dispatch_generation",
+        "actor_id",
+        "reason",
+        "suspended_by_input_id",
+        "status",
+        "resumed_by_input_id",
+        "resume_actor_id",
+        "resume_reason",
+    ),
+    "daemon_budget_epochs": (
+        "budget_id",
+        "schema_version",
+        "workspace_path",
+        "plan_id",
+        "plan_authority_fingerprint",
+        "plan_format_version",
+        "max_wall_seconds",
+        "max_invocations",
+        "max_total_tokens",
+        "started_at",
+        "wall_deadline",
+        "last_observed_at",
+        "accepted_start_count",
+        "cumulative_input_tokens",
+        "cumulative_output_tokens",
+        "cumulative_total_tokens",
+        "status",
+        "terminal_reason",
+    ),
+    "runner_session_usage": (
+        "session_id",
+        "schema_version",
+        "budget_id",
+        "run_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "observed_at",
+        "final",
+    ),
+    "daemon_budget_sessions": (
+        "session_id",
+        "schema_version",
+        "budget_id",
+        "run_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "accepted_at",
+    ),
+    "queue_closures": (
+        "closure_id",
+        "schema_version",
+        "plan_id",
+        "plan_authority_fingerprint",
+        "plan_format_version",
+        "target_kind",
+        "target_id",
+        "actor_id",
+        "reason",
+        "created_by_input_id",
+        "closed_work_item_ids_json",
+        "closed_activation_ids_json",
+        "closed_run_ids_json",
+        "created_at_order",
+    ),
     "quarantine_records": (
         "record_id",
         "work_item_id",
@@ -1829,10 +2187,8 @@ def validate_metadata(metadata: StoreSchemaMetadata) -> None:
         raise StoreNotInitialized("SQLite store is missing initialization marker")
 
     schema_version = metadata["store_schema_version"]
-    if schema_version == 6:
-        raise StoreSchemaUpgradeRequired(
-            "SQLite store schema version 6 requires an explicit workspace upgrade"
-        )
+    if schema_version in {6, 7}:
+        raise StoreSchemaUpgradeRequired(schema_version)
     if schema_version != SQLITE_STORE_SCHEMA_VERSION:
         raise UnsupportedStoreSchemaVersion(
             "unsupported SQLite store schema version: "

@@ -73,6 +73,11 @@ millrace --workspace "$WORKSPACE" plan select-default \
 The admitted plan contains its selected runner bindings and package pins. A
 later default change does not remap an active plan.
 
+Planning output does not authorize implementation. If a planning workflow
+produces task cards, select a separate execution-capable compiled plan and
+explicitly enqueue each approved task into its declared external execution
+family. Artifact creation alone never performs that enqueue.
+
 ## 4. Queue Work
 
 ```bash
@@ -127,6 +132,50 @@ records a durable request; it does not signal a process directly. Read a
 finite bounded event page with
 `millrace --workspace "$WORKSPACE" runs follow RUN_ID --after-sequence N`.
 Status, run, trace, follow, and doctor projections are read-only.
+
+To stop only new claim acceptance, use the selected plan fingerprint and a
+durable input identity:
+
+```bash
+millrace --workspace "$WORKSPACE" dispatch suspend \
+  --plan-fingerprint "$PLAN_FINGERPRINT" \
+  --input-id suspend-dispatch-001 \
+  --reason "operator maintenance"
+```
+
+The result returns a `suspension_id`. Resume only that exact suspension:
+
+```bash
+millrace --workspace "$WORKSPACE" dispatch resume \
+  --plan-fingerprint "$PLAN_FINGERPRINT" \
+  --suspension-id SUSPENSION_ID \
+  --input-id resume-dispatch-001 \
+  --reason "maintenance complete"
+```
+
+This control does not cancel active work or invalidate a claim accepted before
+the suspension. It is separate from workflow-authored pause state.
+
+To close eligible queued workflow work without deleting it or signaling a
+runner:
+
+```bash
+millrace --workspace "$WORKSPACE" queue cancel WORK_ITEM_ID \
+  --plan-fingerprint "$PLAN_FINGERPRINT" \
+  --input-id cancel-work-001 \
+  --reason "superseded before dispatch"
+
+millrace --workspace "$WORKSPACE" queue cancel-lineage LINEAGE_ID \
+  --plan-fingerprint "$PLAN_FINGERPRINT" \
+  --input-id cancel-lineage-001 \
+  --reason "the complete lineage is obsolete"
+```
+
+Lineage closure preflights every selected-plan member and commits the complete
+set or none of it. Accepted claims that may still start, live sessions, lost
+sessions, and unresolved cleanup or orphan risk block queue closure. Use
+`runs cancel`, not `queue cancel`, for runner-session cancellation. Status,
+trace, and doctor expose bounded queue-closure audit projections.
 
 Use `millrace <group> --help` for exact arguments. The
 [system overview](how-millrace-works.md) explains the authority boundaries

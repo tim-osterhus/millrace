@@ -64,6 +64,7 @@ from millrace.operator.prompt_material import (
     SelectedAssetMaterializationError,
     build_selected_asset_material,
 )
+from millrace.substrate.errors import StorageIntegrityError
 
 _COMMAND = "run.bounded"
 _DEFAULT_REDACTION_POLICY = RedactionPolicy(policy_id="cli-default")
@@ -100,7 +101,10 @@ def run_bounded_execution_unit(
     local_config: AdapterLocalConfig | None = None,
     local_config_path: Path | None = None,
     actor_id: str = "local_operator",
+    on_start_reserved: Callable[[RunnerSessionRecord], None] | None = None,
+    on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
+    max_timeout_seconds: float | None = None,
 ) -> BoundedExecutionUnitResult:
     if not isinstance(runtime, OpenRuntimeContext):
         raise TypeError("runtime must be OpenRuntimeContext")
@@ -128,11 +132,26 @@ def run_bounded_execution_unit(
         )
         if preflight is not None:
             return preflight
-        claimed = _claim_activation(
-            runtime,
-            state,
-            activation_id=selected.activation_id,
-        )
+        try:
+            claimed = _claim_activation(
+                runtime,
+                state,
+                activation_id=selected.activation_id,
+            )
+        except StorageIntegrityError as exc:
+            if (
+                str(exc)
+                != "stale runtime state diverges from durable transition history"
+            ):
+                raise
+            latest = runtime.store.load_runtime_state(runtime.cas_store)
+            suspension = latest.dispatch_suspension
+            if suspension is None or suspension.status != "active":
+                raise
+            return BoundedExecutionUnitResult(
+                code="no_ready_work",
+                diagnostics=({"reason": "dispatch_suspended"},),
+            )
         if isinstance(claimed, BoundedExecutionUnitResult):
             return claimed
         active = claimed
@@ -163,12 +182,15 @@ def run_bounded_execution_unit(
                 session=session,
             ),
             explicit_retry_intent=normalized_activation_id is not None,
+            on_start_reserved=on_start_reserved,
+            on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
             effective_timeout_seconds=_effective_invocation_timeout_seconds(
                 selected_plan=active.selected_plan,
                 runner_binding_id=str(active.run.runner_binding_id),
                 selected_kind=selected_kind,
                 effective_config=effective_config,
+                max_timeout_seconds=max_timeout_seconds,
             ),
         )
     except SelectedAssetMaterializationError as exc:
@@ -207,7 +229,10 @@ def reconcile_pending_runner_sessions(
     adapter_kind: str | None = None,
     local_config: AdapterLocalConfig | None = None,
     actor_id: str = "local_operator",
+    on_start_reserved: Callable[[RunnerSessionRecord], None] | None = None,
+    on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
+    max_timeout_seconds: float | None = None,
 ) -> BoundedExecutionUnitResult:
     """Reconcile durable session work before selecting new daemon work."""
 
@@ -242,13 +267,9 @@ def reconcile_pending_runner_sessions(
         }:
             active_sessions.append(candidate)
     if not (terminal_replays or active_sessions or created_sessions):
-        return BoundedExecutionUnitResult(
-            code="no_runner_session_reconciliation"
-        )
+        return BoundedExecutionUnitResult(code="no_runner_session_reconciliation")
 
-    latest = BoundedExecutionUnitResult(
-        code="no_runner_session_reconciliation"
-    )
+    latest = BoundedExecutionUnitResult(code="no_runner_session_reconciliation")
     blocker: BoundedExecutionUnitResult | None = None
 
     def reconcile_candidate(activation_id: str) -> None:
@@ -259,13 +280,15 @@ def reconcile_pending_runner_sessions(
             adapter_kind=adapter_kind,
             local_config=local_config,
             actor_id=actor_id,
+            on_start_reserved=on_start_reserved,
+            on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
+            max_timeout_seconds=max_timeout_seconds,
         )
-        if (
-            _runner_reconciliation_blocker_priority(latest.code)
-            > _runner_reconciliation_blocker_priority(
-                blocker.code if blocker is not None else None
-            )
+        if _runner_reconciliation_blocker_priority(
+            latest.code
+        ) > _runner_reconciliation_blocker_priority(
+            blocker.code if blocker is not None else None
         ):
             blocker = latest
 
@@ -925,6 +948,7 @@ def _effective_invocation_timeout_seconds(
     runner_binding_id: str,
     selected_kind: str,
     effective_config: AdapterLocalConfig,
+    max_timeout_seconds: float | None = None,
 ) -> float:
     selected = float(
         _selected_invocation_timeout_seconds(selected_plan, runner_binding_id)
@@ -932,6 +956,14 @@ def _effective_invocation_timeout_seconds(
     adapter = effective_config.adapters.get(selected_kind)
     config = _adapter_config(adapter)
     local = getattr(config, "timeout_seconds", None)
+    if max_timeout_seconds is not None:
+        if (
+            type(max_timeout_seconds) not in {int, float}
+            or max_timeout_seconds <= 0
+            or not isfinite(float(max_timeout_seconds))
+        ):
+            raise ValueError("max_timeout_seconds must be finite and positive")
+        selected = min(selected, float(max_timeout_seconds))
     if local is None:
         return selected
     if type(local) not in {int, float}:

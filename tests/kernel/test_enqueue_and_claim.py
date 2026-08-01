@@ -11,14 +11,19 @@ from millrace.compiler import SelectedRunnerAdapterPolicy, compile_workflow
 from millrace.compiler.canonical import authority_fingerprint
 from millrace.contracts import QueueFamilyId, RunnerBindingId, SelectedCompiledPlan
 from millrace.contracts.ids import StageKindId
-from millrace.contracts.state import RuntimeState
+from millrace.contracts.runner import runner_session_locator_bytes
+from millrace.contracts.state import PauseRecord, RuntimeState
 from millrace.contracts.transition import (
     AdmitPlan,
+    AdvanceRunnerSession,
     ClaimWork,
+    CreateRunnerSession,
     EnqueueWork,
     InitializeWorkspace,
+    ResumeDispatch,
     RunnerResultObserved,
     SelectDefaultPlan,
+    SuspendDispatch,
 )
 from millrace.kernel import StateConcurrencyError, apply, empty_runtime_state
 from millrace.operator import operator_status
@@ -959,6 +964,576 @@ def test_enqueue_apply_rechecks_default_plan_before_creating_new_work() -> None:
         apply(changed_default, stale_decision)
     assert changed_default.work_items == {}
     assert changed_default.activations == {}
+
+
+def test_suspend_apply_rechecks_default_selected_plan_without_stranding_resume() -> (
+    None
+):
+    plan_a, fingerprint_a = _compile_source(kernel_ping.workflow_source())
+    plan_b, fingerprint_b = _compile_source(
+        kernel_ping_support.no_pause_workflow_source()
+    )
+    state = _admitted_default_state(plan_a, fingerprint_a, suffix="suspend-plan-a")
+
+    stale_suspend = decide(
+        state,
+        SuspendDispatch(
+            "suspend-under-plan-a",
+            plan_fingerprint=fingerprint_a,
+            actor_id="operator-a",
+            reason="must not cross default selection",
+        ),
+        deterministic_context(transition_id="transition-suspend-under-plan-a"),
+    )
+    assert stale_suspend.accepted is True
+
+    changed_default = _with_admitted_default(
+        state,
+        plan_b,
+        fingerprint_b,
+        suffix="suspend-plan-b",
+    )
+    with pytest.raises(StateConcurrencyError, match="default plan fingerprint changed"):
+        apply(changed_default, stale_suspend)
+    assert changed_default.dispatch_suspension is None
+
+    suspended = apply(state, stale_suspend)
+    assert suspended.dispatch_suspension is not None
+    changed_default_while_suspended = _with_admitted_default(
+        suspended,
+        plan_b,
+        fingerprint_b,
+        suffix="resume-plan-b",
+    )
+    resume = decide(
+        changed_default_while_suspended,
+        ResumeDispatch(
+            "resume-under-original-plan",
+            plan_fingerprint=fingerprint_a,
+            suspension_id=suspended.dispatch_suspension.suspension_id,
+            actor_id="operator-a",
+            reason="exact active suspension may resume",
+        ),
+        deterministic_context(transition_id="transition-resume-under-original-plan"),
+    )
+    assert resume.accepted is True
+    resumed = apply(changed_default_while_suspended, resume)
+    assert resumed.dispatch_suspension is not None
+    assert resumed.dispatch_suspension.status == "resumed"
+
+
+def test_dispatch_suspension_gates_only_new_claim_acceptance() -> None:
+    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    state = _admitted_default_state(plan, fingerprint, suffix="suspend")
+    state = apply(
+        state,
+        decide(
+            state,
+            EnqueueWork(
+                "enqueue-suspend",
+                queue_family_id=QueueFamilyId("prompt"),
+                payload={"body": "suspend before claim"},
+            ),
+            deterministic_context(
+                transition_id="transition-enqueue-suspend",
+                work_item_id="work-suspend",
+                activation_id="activation-suspend",
+            ),
+        ),
+    )
+
+    suspension = SuspendDispatch(
+        "suspend-dispatch",
+        plan_fingerprint=fingerprint,
+        actor_id="operator-a",
+        reason="bounded maintenance",
+    )
+    suspend_decision = decide(
+        state,
+        suspension,
+        deterministic_context(transition_id="transition-suspend-dispatch"),
+    )
+    assert suspend_decision.accepted is True
+    suspended = apply(state, suspend_decision)
+    assert suspended.dispatch_suspension is not None
+    assert suspended.dispatch_suspension.status == "active"
+    assert suspended.dispatch_suspension.dispatch_generation == 0
+
+    claim_decision = decide(
+        suspended,
+        ClaimWork("claim-while-suspended", activation_id="activation-suspend"),
+        deterministic_context(transition_id="transition-claim-while-suspended"),
+    )
+    assert claim_decision.accepted is False
+    assert claim_decision.refusal is not None
+    assert claim_decision.refusal.reason == "dispatch_suspended"
+    assert apply(suspended, claim_decision).runs == {}
+
+
+def test_dispatch_resume_requires_exact_identity_and_replays_safely() -> None:
+    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    state = _admitted_default_state(plan, fingerprint, suffix="resume")
+    suspend_input = SuspendDispatch(
+        "suspend-resume",
+        plan_fingerprint=fingerprint,
+        actor_id="operator-a",
+        reason="pause new claims",
+    )
+    state = apply(
+        state,
+        decide(
+            state,
+            suspend_input,
+            deterministic_context(transition_id="transition-suspend-resume"),
+        ),
+    )
+    assert state.dispatch_suspension is not None
+    suspension_id = state.dispatch_suspension.suspension_id
+
+    wrong_identity = decide(
+        state,
+        ResumeDispatch(
+            "resume-wrong",
+            plan_fingerprint=fingerprint,
+            suspension_id="wrong-suspension",
+            actor_id="operator-a",
+            reason="wrong identity",
+        ),
+        deterministic_context(transition_id="transition-resume-wrong"),
+    )
+    assert wrong_identity.accepted is False
+    assert wrong_identity.refusal is not None
+    assert wrong_identity.refusal.reason == "dispatch_suspension_identity_mismatch"
+
+    resume_input = ResumeDispatch(
+        "resume-correct",
+        plan_fingerprint=fingerprint,
+        suspension_id=suspension_id,
+        actor_id="operator-a",
+        reason="maintenance complete",
+    )
+    resume_decision = decide(
+        state,
+        resume_input,
+        deterministic_context(transition_id="transition-resume-correct"),
+    )
+    assert resume_decision.accepted is True
+    resumed = apply(state, resume_decision)
+    assert resumed.dispatch_suspension is not None
+    assert resumed.dispatch_suspension.status == "resumed"
+
+    replay = decide(
+        resumed,
+        resume_input,
+        deterministic_context(transition_id="transition-resume-replay"),
+    )
+    assert replay.accepted is True
+    assert replay.mutations == ()
+    assert apply(resumed, replay) == resumed
+
+    conflict = decide(
+        resumed,
+        replace(resume_input, reason="conflicting replay"),
+        deterministic_context(transition_id="transition-resume-conflict"),
+    )
+    assert conflict.accepted is False
+    assert conflict.refusal is not None
+    assert conflict.refusal.reason == "idempotency_conflict"
+
+
+def test_dispatch_resume_refuses_stale_dispatch_generation() -> None:
+    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    state = _admitted_default_state(plan, fingerprint, suffix="stale-resume")
+    suspended = apply(
+        state,
+        decide(
+            state,
+            SuspendDispatch(
+                "suspend-before-stale-resume",
+                plan_fingerprint=fingerprint,
+                actor_id="operator-a",
+                reason="test stale generation fence",
+            ),
+            deterministic_context(
+                transition_id="transition-suspend-before-stale-resume"
+            ),
+        ),
+    )
+    assert suspended.dispatch_suspension is not None
+    stale = replace(
+        suspended,
+        dispatch_suspension=replace(
+            suspended.dispatch_suspension,
+            dispatch_generation=suspended.dispatch_suspension.dispatch_generation + 1,
+        ),
+    )
+
+    resume = decide(
+        stale,
+        ResumeDispatch(
+            "resume-with-stale-generation",
+            plan_fingerprint=fingerprint,
+            suspension_id=stale.dispatch_suspension.suspension_id,
+            actor_id="operator-a",
+            reason="must refuse stale generation",
+        ),
+        deterministic_context(
+            transition_id="transition-resume-with-stale-generation"
+        ),
+    )
+
+    assert resume.accepted is False
+    assert resume.refusal is not None
+    assert resume.refusal.reason == "stale_dispatch_generation"
+    assert apply(stale, resume).dispatch_suspension == stale.dispatch_suspension
+
+
+def test_claim_and_suspend_decisions_are_mutually_fenced() -> None:
+    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    state = _admitted_default_state(plan, fingerprint, suffix="race")
+    state = apply(
+        state,
+        decide(
+            state,
+            EnqueueWork(
+                "enqueue-race",
+                queue_family_id=QueueFamilyId("prompt"),
+                payload={"body": "race claim and suspension"},
+            ),
+            deterministic_context(
+                transition_id="transition-enqueue-race",
+                work_item_id="work-race",
+                activation_id="activation-race",
+            ),
+        ),
+    )
+    claim_decision = decide(
+        state,
+        ClaimWork("claim-race", activation_id="activation-race"),
+        deterministic_context(
+            transition_id="transition-claim-race",
+            run_id="run-race",
+            claim_id="claim-race",
+            fencing_token="fence-race",
+        ),
+    )
+    suspend_decision = decide(
+        state,
+        SuspendDispatch(
+            "suspend-race",
+            plan_fingerprint=fingerprint,
+            actor_id="operator-a",
+            reason="race fence",
+        ),
+        deterministic_context(transition_id="transition-suspend-race"),
+    )
+    assert claim_decision.accepted is True
+    assert suspend_decision.accepted is True
+
+    suspended = apply(state, suspend_decision)
+    with pytest.raises(StateConcurrencyError, match="dispatch suspension changed"):
+        apply(suspended, claim_decision)
+
+    claimed = apply(state, claim_decision)
+    with pytest.raises(StateConcurrencyError, match="dispatch generation changed"):
+        apply(claimed, suspend_decision)
+
+
+def test_dispatch_suspension_round_trips_through_sqlite(tmp_path: Path) -> None:
+    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    state = _admitted_default_state(plan, fingerprint, suffix="persist-suspend")
+    state = apply(
+        state,
+        decide(
+            state,
+            SuspendDispatch(
+                "persist-suspend",
+                plan_fingerprint=fingerprint,
+                actor_id="operator-a",
+                reason="persist exact suspension identity",
+            ),
+            deterministic_context(
+                transition_id="transition-persist-suspend",
+            ),
+        ),
+    )
+
+    loaded = _persist_and_load_state(tmp_path, state)
+
+    assert loaded == state
+    assert loaded.dispatch_suspension == state.dispatch_suspension
+
+
+def test_dispatch_resume_preserves_workflow_pause_state() -> None:
+    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    state = _admitted_default_state(plan, fingerprint, suffix="pause-coexist")
+    state = apply(
+        state,
+        decide(
+            state,
+            SuspendDispatch(
+                "suspend-with-pause",
+                plan_fingerprint=fingerprint,
+                actor_id="operator-a",
+                reason="operator gate",
+            ),
+            deterministic_context(
+                transition_id="transition-suspend-with-pause",
+            ),
+        ),
+    )
+    assert state.dispatch_suspension is not None
+    pause = PauseRecord(
+        record_id="workflow-pause",
+        source_run_id="workflow-run",
+        work_item_id="workflow-work",
+        action_id=plan.terminal_actions[0].id,
+        created_by_input_id="workflow-pause-input",
+    )
+    state = replace(state, pause=pause)
+
+    resumed = apply(
+        state,
+        decide(
+            state,
+            ResumeDispatch(
+                "resume-with-pause",
+                plan_fingerprint=fingerprint,
+                suspension_id=state.dispatch_suspension.suspension_id,
+                actor_id="operator-a",
+                reason="operator gate complete",
+            ),
+            deterministic_context(
+                transition_id="transition-resume-with-pause",
+            ),
+        ),
+    )
+
+    assert resumed.pause == pause
+    assert resumed.dispatch_suspension is not None
+    assert resumed.dispatch_suspension.status == "resumed"
+
+
+def test_preaccepted_claim_can_create_live_session_after_suspended_restart(
+    tmp_path: Path,
+) -> None:
+    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    state = _admitted_default_state(plan, fingerprint, suffix="restart-suspend")
+    state = apply(
+        state,
+        decide(
+            state,
+            EnqueueWork(
+                "enqueue-restart-suspend",
+                queue_family_id=QueueFamilyId("prompt"),
+                payload={"body": "accepted before suspension"},
+            ),
+            deterministic_context(
+                transition_id="transition-enqueue-restart-suspend",
+                work_item_id="work-restart-suspend",
+                activation_id="activation-restart-suspend",
+            ),
+        ),
+    )
+    state = apply(
+        state,
+        decide(
+            state,
+            ClaimWork(
+                "claim-restart-suspend",
+                activation_id="activation-restart-suspend",
+            ),
+            deterministic_context(
+                transition_id="transition-claim-restart-suspend",
+                run_id="run-restart-suspend",
+                claim_id="claim-restart-suspend",
+                fencing_token="fence-restart-suspend",
+            ),
+        ),
+    )
+    state = apply(
+        state,
+        decide(
+            state,
+            SuspendDispatch(
+                "suspend-after-accepted-claim",
+                plan_fingerprint=fingerprint,
+                actor_id="operator-a",
+                reason="restart while accepted claim has no session",
+            ),
+            deterministic_context(
+                transition_id="transition-suspend-after-accepted-claim",
+            ),
+        ),
+    )
+    loaded = _persist_and_load_state(tmp_path, state)
+    run = loaded.runs["run-restart-suspend"]
+
+    create_session = decide(
+        loaded,
+        CreateRunnerSession(
+            "create-session-after-suspended-restart",
+            run_ref=run.run_ref,
+            session_id="session-restart-suspend",
+            session_fencing_token="session-fence-restart-suspend",
+            created_at=1,
+            explicit_retry_intent=False,
+        ),
+        deterministic_context(
+            transition_id="transition-create-session-after-suspended-restart",
+        ),
+    )
+
+    assert create_session.accepted is True
+    after_session = apply(loaded, create_session)
+    assert after_session.dispatch_suspension == loaded.dispatch_suspension
+    assert after_session.runs[run.run_ref.run_id].current_session_id == (
+        "session-restart-suspend"
+    )
+    created_session = after_session.runner_sessions["session-restart-suspend"]
+    assert created_session.state == "created"
+
+    starting = apply(
+        after_session,
+        decide(
+            after_session,
+            AdvanceRunnerSession(
+                "start-session-after-suspended-restart",
+                run_ref=run.run_ref,
+                session_id=created_session.session_id,
+                dispatch_generation=created_session.dispatch_generation,
+                session_fencing_token=created_session.session_fencing_token,
+                expected_state="created",
+                next_state="starting",
+                occurred_at=2,
+            ),
+            deterministic_context(
+                transition_id="transition-start-session-after-suspended-restart",
+            ),
+        ),
+    )
+    locator_digest = ContentAddressedByteStore(tmp_path / "cas").put_bytes(
+        runner_session_locator_bytes({"provider_request_id": "live session"})
+    )
+    live = apply(
+        starting,
+        decide(
+            starting,
+            AdvanceRunnerSession(
+                "run-session-after-suspended-restart",
+                run_ref=run.run_ref,
+                session_id=created_session.session_id,
+                dispatch_generation=created_session.dispatch_generation,
+                session_fencing_token=created_session.session_fencing_token,
+                expected_state="starting",
+                next_state="running",
+                occurred_at=3,
+                durable_locator_digest=locator_digest,
+            ),
+            deterministic_context(
+                transition_id="transition-run-session-after-suspended-restart",
+            ),
+        ),
+    )
+
+    reloaded = _persist_and_load_state(tmp_path, live)
+    assert reloaded.dispatch_suspension == loaded.dispatch_suspension
+    assert reloaded.runner_sessions[created_session.session_id].state == "running"
+    assert reloaded.runner_session_cancellation_requests == {}
+
+
+def test_preaccepted_claim_can_complete_after_suspension_and_restart(
+    tmp_path: Path,
+) -> None:
+    plan, fingerprint = _compile_source(kernel_ping.workflow_source())
+    state = _admitted_default_state(plan, fingerprint, suffix="complete-suspend")
+    state = apply(
+        state,
+        decide(
+            state,
+            EnqueueWork(
+                "enqueue-complete-suspend",
+                queue_family_id=QueueFamilyId("prompt"),
+                payload={"body": "complete after suspension"},
+            ),
+            deterministic_context(
+                transition_id="transition-enqueue-complete-suspend",
+                work_item_id="work-complete-suspend",
+                activation_id="activation-complete-suspend",
+            ),
+        ),
+    )
+    state = apply(
+        state,
+        decide(
+            state,
+            ClaimWork(
+                "claim-complete-suspend",
+                activation_id="activation-complete-suspend",
+            ),
+            deterministic_context(
+                transition_id="transition-claim-complete-suspend",
+                run_id="run-complete-suspend",
+                claim_id="claim-complete-suspend",
+                fencing_token="fence-complete-suspend",
+            ),
+        ),
+    )
+    state = apply(
+        state,
+        decide(
+            state,
+            SuspendDispatch(
+                "suspend-before-completion",
+                plan_fingerprint=fingerprint,
+                actor_id="operator-a",
+                reason="accepted work may finish",
+            ),
+            deterministic_context(
+                transition_id="transition-suspend-before-completion",
+            ),
+        ),
+    )
+    suspension = state.dispatch_suspension
+    assert suspension is not None
+    run = state.runs["run-complete-suspend"]
+    activation = state.activations[run.activation_id]
+    completion = decide(
+        state,
+        RunnerResultObserved(
+            "observe-complete-after-suspend",
+            run_id=run.run_ref.run_id,
+            payload=fake_runner_observation_payload(
+                run=run,
+                activation=activation,
+                plan_fingerprint=fingerprint,
+                marker="TASK_COMPLETE",
+                artifact_payload=kernel_ping_support.task_artifact_payload(
+                    source_prompt_id="work-complete-suspend",
+                    objective="Complete accepted work after suspension",
+                ),
+            ),
+            observed_at=None,
+        ),
+        deterministic_context(
+            transition_id="transition-observe-complete-after-suspend",
+        ),
+    )
+    assert completion.accepted is True, completion.refusal
+    completed = apply(state, completion)
+    assert completed.dispatch_suspension == suspension
+    session_id = completed.runs[run.run_ref.run_id].current_session_id
+    assert session_id is not None
+    assert completed.runner_sessions[session_id].state == "completed"
+    assert any(
+        observation.run_id == run.run_ref.run_id
+        for observation in completed.runner_observations.values()
+    )
+    assert completed.runner_session_cancellation_requests == {}
+
+    reloaded = _persist_and_load_state(tmp_path, completed)
+    assert reloaded.dispatch_suspension == suspension
+    assert reloaded.runner_sessions[session_id].state == "completed"
 
 
 def test_plan_admission_indexes_declared_external_enqueue_route_not_stage_scan() -> (

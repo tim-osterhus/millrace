@@ -1,11 +1,11 @@
 <div align="center">
   <p>
-    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI v0.22.0" src="https://img.shields.io/badge/pypi-v0.22.0-C75A2A.svg"></a>
+    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI v0.22.1" src="https://img.shields.io/badge/pypi-v0.22.1-C75A2A.svg"></a>
     <a href="https://www.python.org/downloads/"><img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12+-blue.svg"></a>
-    <a href="https://github.com/tim-osterhus/millrace/blob/v0.22.0/LICENSE"><img alt="License" src="https://img.shields.io/github/license/tim-osterhus/millrace.svg"></a>
+    <a href="https://github.com/tim-osterhus/millrace/blob/v0.22.1/LICENSE"><img alt="License" src="https://img.shields.io/github/license/tim-osterhus/millrace.svg"></a>
   </p>
   <img
-    src="https://raw.githubusercontent.com/tim-osterhus/millrace/v0.22.0/docs/assets/images/millrace-icon-signal-transparent-glow.png"
+    src="https://raw.githubusercontent.com/tim-osterhus/millrace/v0.22.1/docs/assets/images/millrace-icon-signal-transparent-glow.png"
     alt="Millrace signal mark"
     width="180"
   />
@@ -47,7 +47,7 @@ as many recovery mechanisms or branching paths as you like, and the compiler
 makes sure you're only running valid plans.
 
 For more information, check out the
-[FAQ](https://github.com/tim-osterhus/millrace/blob/v0.22.0/FAQ.md).
+[FAQ](https://github.com/tim-osterhus/millrace/blob/v0.22.1/FAQ.md).
 
 ## Start With Your Agent
 
@@ -67,7 +67,7 @@ Then delegate work:
 > selected plan, state, waits, and evidence.
 
 Manual setup is documented in
-[Getting started](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/getting-started.md).
+[Getting started](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/getting-started.md).
 
 ## Runtime Rules
 
@@ -76,6 +76,10 @@ Manual setup is documented in
 - Each stage receives only its selected assets and context.
 - Model output is evidence, not runtime truth.
 - Retries, reroutes, pauses, and operator decisions remain on record.
+- Operator dispatch suspension gates only new claim acceptance. Already
+  accepted or active work keeps its durable authority.
+- Queue cancellation closes eligible workflow work through the normal audited
+  close-work transition. It never deletes queue state or signals a runner.
 - Supported commands change state; direct file edits do not.
 
 ## Workflows
@@ -90,19 +94,19 @@ These are package data, not hard-coded kernel behavior.
 
 ## Documentation
 
-[Getting started](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/getting-started.md) ·
-[How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/how-millrace-works.md) ·
+[Getting started](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/getting-started.md) ·
+[How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/how-millrace-works.md) ·
 [Runner-session architecture](docs/runner-session-architecture.md) ·
 [Daemon lifecycle](docs/daemon-lifecycle.md) ·
-[Workflow packages](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/workflow-packages.md) ·
-[Millforge runner](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/millforge-runner.md) ·
-[Codex runner](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/codex-runner.md) ·
-[Errors](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/errors.md) ·
-[Migrating from v0.21](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/migrating-from-v0.21.md) ·
-[v0.22 support](https://github.com/tim-osterhus/millrace/blob/v0.22.0/docs/v0.22-compatibility.md)
+[Workflow packages](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/workflow-packages.md) ·
+[Millforge runner](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/millforge-runner.md) ·
+[Codex runner](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/codex-runner.md) ·
+[Errors](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/errors.md) ·
+[Migrating from v0.21](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/migrating-from-v0.21.md) ·
+[v0.22 support](https://github.com/tim-osterhus/millrace/blob/v0.22.1/docs/v0.22-compatibility.md)
 
 Millrace v0.22 is local and single-operator. It supports Linux, macOS, and WSL.
 
 ## License
 
-[Apache License 2.0](https://github.com/tim-osterhus/millrace/blob/v0.22.0/LICENSE)
+[Apache License 2.0](https://github.com/tim-osterhus/millrace/blob/v0.22.1/LICENSE)

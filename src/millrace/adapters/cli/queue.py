@@ -11,8 +11,15 @@ from millrace.adapters.cli.context import (
     decide_apply_persist,
     open_runtime_context,
     parse_json_payload,
+    require_nonblank,
 )
-from millrace.adapters.cli.output import CliSuccess, ExitCode, success_result
+from millrace.adapters.cli.output import (
+    CliSuccess,
+    ExitCode,
+    json_ready,
+    success_result,
+)
+from millrace.contracts.transition import CancelQueuedLineage, CancelQueuedWork
 from millrace.operator.intake import (
     OperatorEnqueueInput,
     OperatorInputError,
@@ -27,6 +34,10 @@ def handle_queue_command(namespace: object) -> CliSuccess:
         return _enqueue(namespace)
     if command == "queue.list":
         return _list(namespace)
+    if command == "queue.cancel":
+        return _cancel(namespace)
+    if command == "queue.cancel-lineage":
+        return _cancel_lineage(namespace)
     raise CliCommandError(
         command=command,
         code="command_not_implemented",
@@ -128,6 +139,133 @@ def _list(namespace: object) -> CliSuccess:
                 }
                 for family in status.queue_families
             ]
+        },
+    )
+
+
+def _cancel(namespace: object) -> CliSuccess:
+    command = "queue.cancel"
+    transition_input = CancelQueuedWork(
+        require_nonblank(
+            str(getattr(namespace, "input_id")),
+            option="--input-id",
+            command=command,
+        ),
+        work_item_id=require_nonblank(
+            str(getattr(namespace, "work_item_id")),
+            option="WORK_ITEM_ID",
+            command=command,
+        ),
+        plan_fingerprint=require_nonblank(
+            str(getattr(namespace, "plan_fingerprint")),
+            option="--plan-fingerprint",
+            command=command,
+        ),
+        actor_id=require_nonblank(
+            str(getattr(namespace, "actor_id", "local_operator")),
+            option="--actor-id",
+            command=command,
+        ),
+        reason=require_nonblank(
+            str(getattr(namespace, "reason")),
+            option="--reason",
+            command=command,
+        ),
+    )
+    return _apply_queue_closure(
+        namespace,
+        transition_input,
+        command=command,
+        code="queued_work_cancelled",
+        message="Queued work cancelled.",
+    )
+
+
+def _cancel_lineage(namespace: object) -> CliSuccess:
+    command = "queue.cancel-lineage"
+    transition_input = CancelQueuedLineage(
+        require_nonblank(
+            str(getattr(namespace, "input_id")),
+            option="--input-id",
+            command=command,
+        ),
+        lineage_id=require_nonblank(
+            str(getattr(namespace, "lineage_id")),
+            option="LINEAGE_ID",
+            command=command,
+        ),
+        plan_fingerprint=require_nonblank(
+            str(getattr(namespace, "plan_fingerprint")),
+            option="--plan-fingerprint",
+            command=command,
+        ),
+        actor_id=require_nonblank(
+            str(getattr(namespace, "actor_id", "local_operator")),
+            option="--actor-id",
+            command=command,
+        ),
+        reason=require_nonblank(
+            str(getattr(namespace, "reason")),
+            option="--reason",
+            command=command,
+        ),
+    )
+    return _apply_queue_closure(
+        namespace,
+        transition_input,
+        command=command,
+        code="queued_lineage_cancelled",
+        message="Queued lineage cancelled.",
+    )
+
+
+def _apply_queue_closure(
+    namespace: object,
+    transition_input: CancelQueuedWork | CancelQueuedLineage,
+    *,
+    command: str,
+    code: str,
+    message: str,
+) -> CliSuccess:
+    runtime = open_runtime_context(namespace, command=command)
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        decision, next_state = decide_apply_persist(
+            runtime,
+            state,
+            transition_input,
+            command=command,
+        )
+    finally:
+        runtime.close()
+    record = next(
+        (
+            candidate
+            for candidate in next_state.queue_closures.values()
+            if candidate.created_by_input_id == transition_input.input_id
+        ),
+        None,
+    )
+    if record is None:
+        raise CliCommandError(
+            command=command,
+            code="queue_closure_record_missing",
+            message="Queue closure was accepted without durable audit evidence.",
+            exit_code=ExitCode.INTERNAL_ERROR,
+            details={"input_id": transition_input.input_id},
+        )
+    return success_result(
+        command=command,
+        code=code,
+        message=message,
+        data={
+            "input_id": transition_input.input_id,
+            "accepted": decision.accepted,
+            "transition_disposition": decision.disposition,
+            "queue_closure": json_ready(record),
+            "closed_work_item_ids": list(record.closed_work_item_ids),
+            "closed_activation_ids": list(record.closed_activation_ids),
+            "closed_run_ids": list(record.closed_run_ids),
         },
     )
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
+from hashlib import sha256
 from typing import cast
 
 from millrace.contracts.compiled_plan import (
@@ -60,6 +61,7 @@ from millrace.contracts.state import (
     ClosureTargetRecord,
     ClosureTerminalRecord,
     CooldownWaitRecord,
+    DispatchSuspensionRecord,
     EffectProposalRecord,
     EffectReconciliationRecord,
     ExternalEnqueueRoute,
@@ -69,6 +71,7 @@ from millrace.contracts.state import (
     LineageQuarantineRecord,
     OperatorInterventionRecord,
     PlanRef,
+    QueueClosureRecord,
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunRecord,
@@ -84,6 +87,8 @@ from millrace.contracts.transition import (
     AdmitPlanRef,
     AdvanceRunnerSession,
     AdvanceRunnerSessionRecord,
+    CancelQueuedLineage,
+    CancelQueuedWork,
     ClaimWork,
     CloseClosureTarget,
     CloseWorkItem,
@@ -117,6 +122,7 @@ from millrace.contracts.transition import (
     RecordFanout,
     RecordInputReceipt,
     RecordOperatorIntervention,
+    RecordQueueClosure,
     RecordRecoveryAttempt,
     RecordRefusal,
     RecordRemediationWork,
@@ -129,11 +135,14 @@ from millrace.contracts.transition import (
     RecordWorkDependency,
     RefuseRunnerSessionSignal,
     RequestRunnerSessionCancellation,
+    ResumeDispatch,
     RouteActivation,
     RunnerResultObserved,
     SelectDefaultPlan,
     SelectDefaultPlanRef,
+    SetDispatchSuspension,
     SupersedeLineageQuarantine,
+    SuspendDispatch,
     TimerDue,
     TransitionContext,
     TransitionDecision,
@@ -289,6 +298,27 @@ def decide(
         return _decide_select_default_plan(state, transition_input, context, digest)
     if isinstance(transition_input, EnqueueWork):
         return _decide_enqueue(state, transition_input, context, digest)
+    if isinstance(transition_input, SuspendDispatch):
+        return _decide_suspend_dispatch(
+            state,
+            transition_input,
+            context,
+            digest,
+        )
+    if isinstance(transition_input, ResumeDispatch):
+        return _decide_resume_dispatch(
+            state,
+            transition_input,
+            context,
+            digest,
+        )
+    if isinstance(transition_input, (CancelQueuedWork, CancelQueuedLineage)):
+        return _decide_queue_closure(
+            state,
+            transition_input,
+            context,
+            digest,
+        )
     if isinstance(transition_input, ClaimWork):
         return _decide_claim(state, transition_input, context, digest)
     if isinstance(transition_input, CreateRunnerSession):
@@ -548,6 +578,8 @@ def _idempotency_decision(
                 expected_run_fencing_tokens={},
                 expected_run_unobserved=(),
                 expected_pause_absent=False,
+                expected_dispatch_suspension_absent=False,
+                expected_dispatch_suspension_generation=None,
                 expected_lineage_quarantine_absent=(),
                 expected_work_item_open=(),
                 mutations=(),
@@ -586,6 +618,8 @@ def _idempotency_decision(
             expected_run_fencing_tokens={},
             expected_run_unobserved=(),
             expected_pause_absent=False,
+            expected_dispatch_suspension_absent=False,
+            expected_dispatch_suspension_generation=None,
             expected_lineage_quarantine_absent=(),
             expected_work_item_open=(),
             mutations=(),
@@ -2758,6 +2792,17 @@ def _decide_claim(
             digest=digest,
             reason="workspace_paused",
         )
+    suspension = state.dispatch_suspension
+    if suspension is not None and suspension.status == "active":
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="dispatch_suspended",
+            event_plan_fingerprint=(
+                suspension.selected_plan_ref.authority_fingerprint
+            ),
+        )
 
     activation = state.activations.get(transition_input.activation_id)
     if activation is None:
@@ -2940,6 +2985,10 @@ def _decide_claim(
         # Claim decisions must not apply after an independently accepted
         # pause/quarantine action has stopped new claims.
         expected_pause_absent=True,
+        expected_dispatch_suspension_absent=True,
+        expected_dispatch_suspension_generation=(
+            None if suspension is None else suspension.generation
+        ),
         expected_lineage_quarantine_absent=(
             (
                 lineage_quarantine_scope_key(
@@ -2965,6 +3014,405 @@ def _decide_claim(
             work_item.ref.work_item_id: work_item.ref.plan_ref
         },
         expected_activation_plan_refs={activation.activation_id: activation.plan_ref},
+    )
+
+
+def _decide_suspend_dispatch(
+    state: RuntimeState,
+    transition_input: SuspendDispatch,
+    context: TransitionContext,
+    digest: str,
+) -> TransitionDecision:
+    selected_plan_ref = state.default_plan_ref
+    if (
+        selected_plan_ref is None
+        or selected_plan_ref.authority_fingerprint
+        != transition_input.plan_fingerprint
+    ):
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="selected_plan_mismatch",
+            event_plan_fingerprint=transition_input.plan_fingerprint,
+        )
+    current = state.dispatch_suspension
+    if current is not None and current.status == "active":
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="dispatch_already_suspended",
+            event_plan_fingerprint=transition_input.plan_fingerprint,
+        )
+    generation = 1 if current is None else current.generation + 1
+    suspension_id = (
+        "dispatch-suspension:"
+        + sha256(transition_input.input_id.encode("utf-8")).hexdigest()
+    )
+    record = DispatchSuspensionRecord(
+        suspension_id=suspension_id,
+        selected_plan_ref=selected_plan_ref,
+        generation=generation,
+        dispatch_generation=len(state.runs),
+        actor_id=transition_input.actor_id,
+        reason=transition_input.reason,
+        suspended_by_input_id=transition_input.input_id,
+        status="active",
+    )
+    return _accepted_decision(
+        transition_input=transition_input,
+        context=context,
+        digest=digest,
+        mutations=(
+            SetDispatchSuspension(
+                record=record,
+                expected_record=current,
+                expected_dispatch_generation=len(state.runs),
+                expected_default_plan_ref=selected_plan_ref,
+            ),
+        ),
+        expected_plan_fingerprint=transition_input.plan_fingerprint,
+        expected_dispatch_suspension_absent=True,
+        expected_dispatch_suspension_generation=(
+            None if current is None else current.generation
+        ),
+        event_plan_fingerprint=transition_input.plan_fingerprint,
+        event_authority_source="operator",
+    )
+
+
+def _decide_resume_dispatch(
+    state: RuntimeState,
+    transition_input: ResumeDispatch,
+    context: TransitionContext,
+    digest: str,
+) -> TransitionDecision:
+    current = state.dispatch_suspension
+    if current is None or current.status != "active":
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="dispatch_not_suspended",
+            event_plan_fingerprint=transition_input.plan_fingerprint,
+        )
+    if (
+        current.selected_plan_ref.authority_fingerprint
+        != transition_input.plan_fingerprint
+    ):
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="selected_plan_mismatch",
+            event_plan_fingerprint=transition_input.plan_fingerprint,
+        )
+    if current.suspension_id != transition_input.suspension_id:
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="dispatch_suspension_identity_mismatch",
+            event_plan_fingerprint=transition_input.plan_fingerprint,
+        )
+    if current.dispatch_generation != len(state.runs):
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="stale_dispatch_generation",
+            event_plan_fingerprint=transition_input.plan_fingerprint,
+        )
+    resumed = replace(
+        current,
+        status="resumed",
+        resumed_by_input_id=transition_input.input_id,
+        resume_actor_id=transition_input.actor_id,
+        resume_reason=transition_input.reason,
+    )
+    return _accepted_decision(
+        transition_input=transition_input,
+        context=context,
+        digest=digest,
+        mutations=(
+            SetDispatchSuspension(
+                record=resumed,
+                expected_record=current,
+                expected_dispatch_generation=current.dispatch_generation,
+                expected_default_plan_ref=None,
+            ),
+        ),
+        expected_plan_fingerprint=transition_input.plan_fingerprint,
+        expected_dispatch_suspension_generation=current.generation,
+        event_plan_fingerprint=transition_input.plan_fingerprint,
+        event_authority_source="operator",
+    )
+
+
+def _decide_queue_closure(
+    state: RuntimeState,
+    transition_input: CancelQueuedWork | CancelQueuedLineage,
+    context: TransitionContext,
+    digest: str,
+) -> TransitionDecision:
+    selected_plan_ref = state.default_plan_ref
+    if (
+        selected_plan_ref is None
+        or selected_plan_ref.authority_fingerprint
+        != transition_input.plan_fingerprint
+    ):
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="selected_plan_mismatch",
+            event_plan_fingerprint=transition_input.plan_fingerprint,
+        )
+
+    if isinstance(transition_input, CancelQueuedWork):
+        work_items: tuple[WorkItem, ...]
+        target_kind = "work_item"
+        target_id = transition_input.work_item_id
+        target = state.work_items.get(target_id)
+        if target is None:
+            return _queue_closure_refusal(
+                transition_input,
+                context,
+                digest,
+                reason="queued_work_not_found",
+            )
+        work_items = (target,)
+    else:
+        target_kind = "lineage"
+        target_id = transition_input.lineage_id
+        work_items = tuple(
+            sorted(
+                (
+                    work_item
+                    for work_item in state.work_items.values()
+                    if work_item.lineage_id == target_id
+                ),
+                key=lambda work_item: work_item.ref.work_item_id,
+            )
+        )
+        if not work_items:
+            return _queue_closure_refusal(
+                transition_input,
+                context,
+                digest,
+                reason="queued_lineage_not_found",
+            )
+
+    if any(
+        work_item.ref.plan_ref != selected_plan_ref for work_item in work_items
+    ):
+        return _queue_closure_refusal(
+            transition_input,
+            context,
+            digest,
+            reason=(
+                "queued_work_plan_mismatch"
+                if target_kind == "work_item"
+                else "queued_lineage_plan_mismatch"
+            ),
+        )
+
+    work_item_ids = tuple(
+        work_item.ref.work_item_id for work_item in work_items
+    )
+    if any(work_item_id in state.closed_work_items for work_item_id in work_item_ids):
+        return _queue_closure_refusal(
+            transition_input,
+            context,
+            digest,
+            reason="queued_work_not_cancelable",
+        )
+
+    activations = tuple(
+        sorted(
+            (
+                activation
+                for activation in state.activations.values()
+                if activation.work_item_id in work_item_ids
+            ),
+            key=lambda activation: activation.activation_id,
+        )
+    )
+    runs = tuple(
+        sorted(
+            (
+                run
+                for run in state.runs.values()
+                if run.work_item_id in work_item_ids
+            ),
+            key=lambda run: run.run_ref.run_id,
+        )
+    )
+    session_refusal = _queue_closure_session_refusal(state, runs)
+    if session_refusal is not None:
+        return _queue_closure_refusal(
+            transition_input,
+            context,
+            digest,
+            reason=session_refusal,
+        )
+
+    closure_id = (
+        "queue-closure:"
+        + sha256(transition_input.input_id.encode("utf-8")).hexdigest()
+    )
+    record = QueueClosureRecord(
+        closure_id=closure_id,
+        selected_plan_ref=selected_plan_ref,
+        target_kind=target_kind,
+        target_id=target_id,
+        actor_id=transition_input.actor_id,
+        reason=transition_input.reason,
+        created_by_input_id=transition_input.input_id,
+        closed_work_item_ids=work_item_ids,
+        closed_activation_ids=tuple(
+            activation.activation_id for activation in activations
+        ),
+        closed_run_ids=tuple(run.run_ref.run_id for run in runs),
+    )
+    close_mutations = tuple(
+        CloseWorkItem(
+            record_id=f"{context.transition_id}:close:{work_item_id}",
+            record=ClosedWorkItemRecord(
+                record_id=f"{context.transition_id}:close:{work_item_id}",
+                work_item_id=work_item_id,
+                source_run_id=None,
+                action_id=None,
+                created_by_input_id=transition_input.input_id,
+                close_kind="queue_cancellation",
+            ),
+        )
+        for work_item_id in work_item_ids
+    )
+    sessions = tuple(
+        sorted(
+            (
+                session
+                for session in state.runner_sessions.values()
+                if session.run_id in record.closed_run_ids
+            ),
+            key=lambda session: session.session_id,
+        )
+    )
+    return _accepted_decision(
+        transition_input=transition_input,
+        context=context,
+        digest=digest,
+        mutations=(
+            RecordQueueClosure(record_id=closure_id, record=record),
+            *close_mutations,
+        ),
+        expected_plan_fingerprint=transition_input.plan_fingerprint,
+        expected_work_item_generations={
+            work_item.ref.work_item_id: work_item.ref.generation
+            for work_item in work_items
+        },
+        expected_work_item_plan_refs={
+            work_item.ref.work_item_id: work_item.ref.plan_ref
+            for work_item in work_items
+        },
+        expected_work_item_open=work_item_ids,
+        expected_activation_generations={
+            activation.activation_id: activation.generation
+            for activation in activations
+        },
+        expected_activation_plan_refs={
+            activation.activation_id: activation.plan_ref
+            for activation in activations
+        },
+        expected_activation_claims={
+            activation.activation_id: activation.claimed_by_run_id
+            for activation in activations
+        },
+        expected_run_generations={
+            run.run_ref.run_id: run.run_ref.generation for run in runs
+        },
+        expected_run_fencing_tokens={
+            run.run_ref.run_id: run.run_ref.fencing_token for run in runs
+        },
+        expected_run_current_session_ids={
+            run.run_ref.run_id: run.current_session_id for run in runs
+        },
+        expected_runner_session_snapshots={
+            session.session_id: (session.state, session.cleanup_disposition)
+            for session in sessions
+        },
+        expected_lineage_work_item_ids=(
+            {target_id: work_item_ids} if target_kind == "lineage" else {}
+        ),
+        event_plan_fingerprint=transition_input.plan_fingerprint,
+        event_work_item_id=(
+            target_id if target_kind == "work_item" else work_item_ids[0]
+        ),
+        event_authority_source="operator",
+    )
+
+
+def _queue_closure_session_refusal(
+    state: RuntimeState,
+    runs: tuple[RunRecord, ...],
+) -> str | None:
+    run_ids = {run.run_ref.run_id for run in runs}
+    sessions = tuple(
+        session
+        for session in state.runner_sessions.values()
+        if session.run_id in run_ids
+    )
+    if any(session.state == "lost" for session in sessions):
+        return "queued_runner_session_lost"
+    if any(
+        session.state
+        in {
+            "created",
+            "starting",
+            "running",
+            "cancellation_requested",
+            "terminating",
+        }
+        for session in sessions
+    ):
+        return "queued_runner_session_live"
+    if any(
+        session.cleanup_disposition in {"pending", "orphan_risk"}
+        for session in sessions
+    ):
+        return "queued_runner_cleanup_unresolved"
+    sessions_by_id = {session.session_id: session for session in sessions}
+    for run in runs:
+        if run.current_session_id is None:
+            if not run_has_observation(state, run.run_ref.run_id):
+                return "queued_work_claimed"
+            continue
+        if run.current_session_id not in sessions_by_id:
+            return "queued_runner_session_missing"
+    return None
+
+
+def _queue_closure_refusal(
+    transition_input: CancelQueuedWork | CancelQueuedLineage,
+    context: TransitionContext,
+    digest: str,
+    *,
+    reason: str,
+) -> TransitionDecision:
+    return _refused_decision(
+        transition_input=transition_input,
+        context=context,
+        digest=digest,
+        reason=reason,
+        event_plan_fingerprint=transition_input.plan_fingerprint,
+        event_work_item_id=(
+            transition_input.work_item_id
+            if isinstance(transition_input, CancelQueuedWork)
+            else None
+        ),
+        event_authority_source="operator",
     )
 
 
@@ -5376,11 +5824,17 @@ def _accepted_decision(
     expected_run_fencing_tokens: Mapping[str, str] | None = None,
     expected_run_unobserved: tuple[str, ...] = (),
     expected_pause_absent: bool = False,
+    expected_dispatch_suspension_absent: bool = False,
+    expected_dispatch_suspension_generation: int | None = None,
     expected_lineage_quarantine_absent: tuple[str, ...] = (),
     expected_operator_wait_absent: tuple[str, ...] = (),
     expected_work_item_open: tuple[str, ...] = (),
     expected_work_item_plan_refs: Mapping[str, PlanRef] | None = None,
     expected_activation_plan_refs: Mapping[str, PlanRef] | None = None,
+    expected_activation_claims: Mapping[str, str | None] | None = None,
+    expected_run_current_session_ids: Mapping[str, str | None] | None = None,
+    expected_runner_session_snapshots: Mapping[str, tuple[str, str]] | None = None,
+    expected_lineage_work_item_ids: Mapping[str, tuple[str, ...]] | None = None,
     event_plan_fingerprint: AuthorityFingerprint | None = None,
     event_work_item_id: str | None = None,
     event_run_id: str | None = None,
@@ -5425,6 +5879,12 @@ def _accepted_decision(
         expected_run_fencing_tokens=expected_run_fencing_tokens or {},
         expected_run_unobserved=expected_run_unobserved,
         expected_pause_absent=expected_pause_absent,
+        expected_dispatch_suspension_absent=(
+            expected_dispatch_suspension_absent
+        ),
+        expected_dispatch_suspension_generation=(
+            expected_dispatch_suspension_generation
+        ),
         expected_lineage_quarantine_absent=expected_lineage_quarantine_absent,
         expected_operator_wait_absent=expected_operator_wait_absent,
         expected_work_item_open=expected_work_item_open,
@@ -5445,6 +5905,10 @@ def _accepted_decision(
         trace_records=(trace,),
         expected_work_item_plan_refs=expected_work_item_plan_refs or {},
         expected_activation_plan_refs=expected_activation_plan_refs or {},
+        expected_activation_claims=expected_activation_claims or {},
+        expected_run_current_session_ids=expected_run_current_session_ids or {},
+        expected_runner_session_snapshots=expected_runner_session_snapshots or {},
+        expected_lineage_work_item_ids=expected_lineage_work_item_ids or {},
     )
 
 
@@ -5501,6 +5965,8 @@ def _refused_decision(
         expected_run_fencing_tokens={},
         expected_run_unobserved=(),
         expected_pause_absent=False,
+        expected_dispatch_suspension_absent=False,
+        expected_dispatch_suspension_generation=None,
         expected_lineage_quarantine_absent=(),
         expected_work_item_open=(),
         mutations=(

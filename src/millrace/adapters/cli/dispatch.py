@@ -11,6 +11,7 @@ from millrace.adapters.cli.context import (
     decide_apply_persist,
     open_runtime_context,
     optional_claim_id,
+    require_nonblank,
 )
 from millrace.adapters.cli.output import (
     CliSuccess,
@@ -18,7 +19,12 @@ from millrace.adapters.cli.output import (
     json_ready,
     success_result,
 )
-from millrace.contracts.transition import ClaimWork, CreateRunnerSession
+from millrace.contracts.transition import (
+    ClaimWork,
+    CreateRunnerSession,
+    ResumeDispatch,
+    SuspendDispatch,
+)
 from millrace.operator.dispatch import (
     DispatchProjectionError,
     build_dispatch_envelope_for_run,
@@ -29,6 +35,10 @@ def handle_dispatch_command(namespace: object) -> CliSuccess:
     command = str(getattr(namespace, "command", "dispatch"))
     if command == "dispatch.claim":
         return _claim(namespace)
+    if command == "dispatch.suspend":
+        return _suspend(namespace)
+    if command == "dispatch.resume":
+        return _resume(namespace)
     if command == "dispatch.show":
         return _show(namespace)
     raise CliCommandError(
@@ -130,6 +140,109 @@ def _show(namespace: object) -> CliSuccess:
         data={
             "run_id": run_id,
             "dispatch_envelope": json_ready(envelope.payload()),
+        },
+    )
+
+
+def _suspend(namespace: object) -> CliSuccess:
+    command = "dispatch.suspend"
+    transition_input = SuspendDispatch(
+        require_nonblank(
+            str(getattr(namespace, "input_id")),
+            option="--input-id",
+            command=command,
+        ),
+        plan_fingerprint=require_nonblank(
+            str(getattr(namespace, "plan_fingerprint")),
+            option="--plan-fingerprint",
+            command=command,
+        ),
+        actor_id=require_nonblank(
+            str(getattr(namespace, "actor_id", "local_operator")),
+            option="--actor-id",
+            command=command,
+        ),
+        reason=require_nonblank(
+            str(getattr(namespace, "reason")),
+            option="--reason",
+            command=command,
+        ),
+    )
+    return _apply_dispatch_control(
+        namespace,
+        transition_input,
+        command=command,
+        code="dispatch_suspended",
+        message="Dispatch suspended.",
+    )
+
+
+def _resume(namespace: object) -> CliSuccess:
+    command = "dispatch.resume"
+    transition_input = ResumeDispatch(
+        require_nonblank(
+            str(getattr(namespace, "input_id")),
+            option="--input-id",
+            command=command,
+        ),
+        plan_fingerprint=require_nonblank(
+            str(getattr(namespace, "plan_fingerprint")),
+            option="--plan-fingerprint",
+            command=command,
+        ),
+        suspension_id=require_nonblank(
+            str(getattr(namespace, "suspension_id")),
+            option="--suspension-id",
+            command=command,
+        ),
+        actor_id=require_nonblank(
+            str(getattr(namespace, "actor_id", "local_operator")),
+            option="--actor-id",
+            command=command,
+        ),
+        reason=require_nonblank(
+            str(getattr(namespace, "reason")),
+            option="--reason",
+            command=command,
+        ),
+    )
+    return _apply_dispatch_control(
+        namespace,
+        transition_input,
+        command=command,
+        code="dispatch_resumed",
+        message="Dispatch resumed.",
+    )
+
+
+def _apply_dispatch_control(
+    namespace: object,
+    transition_input: SuspendDispatch | ResumeDispatch,
+    *,
+    command: str,
+    code: str,
+    message: str,
+) -> CliSuccess:
+    runtime = open_runtime_context(namespace, command=command)
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        decision, next_state = decide_apply_persist(
+            runtime,
+            state,
+            transition_input,
+            command=command,
+        )
+    finally:
+        runtime.close()
+    return success_result(
+        command=command,
+        code=code,
+        message=message,
+        data={
+            "input_id": transition_input.input_id,
+            "accepted": decision.accepted,
+            "transition_disposition": decision.disposition,
+            "dispatch_suspension": json_ready(next_state.dispatch_suspension),
         },
     )
 

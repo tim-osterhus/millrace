@@ -42,6 +42,13 @@ class UnsupportedStoreSchemaVersion(UnsupportedSchemaVersion):
 class StoreSchemaUpgradeRequired(UnsupportedStoreSchemaVersion):
     """Raised only when a recognized prior store requires an explicit upgrade."""
 
+    def __init__(self, current_schema_version: int) -> None:
+        self.current_schema_version = current_schema_version
+        super().__init__(
+            f"SQLite store schema version {current_schema_version} requires "
+            "an explicit workspace upgrade"
+        )
+
 
 class UnsupportedCodec(SubstrateError, ValueError):
     """Raised when a CAS object uses an unsupported codec."""

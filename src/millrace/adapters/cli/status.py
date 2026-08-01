@@ -8,6 +8,7 @@ from typing import cast
 
 from millrace.adapters.cli.context import (
     CliCommandError,
+    OpenRuntimeContext,
     open_runtime_context,
     require_nonblank,
 )
@@ -23,8 +24,11 @@ from millrace.adapters.cli.session_coordinator import (
     terminate_grace_seconds,
 )
 from millrace.contracts.state import RuntimeState
+from millrace.operator.dispatch import run_may_start_while_dispatch_suspended
 from millrace.operator.intake import OperatorInputError
-from millrace.operator.status import operator_status
+from millrace.operator.status import daemon_budget_projection, operator_status
+
+_DAEMON_BUDGET_SESSION_MAX_ITEMS = 100
 
 
 def handle_status_command(namespace: object) -> CliSuccess:
@@ -66,6 +70,7 @@ def _status(namespace: object) -> CliSuccess:
                 plan_fingerprint=getattr(namespace, "plan_fingerprint", None),
                 max_events=max_events,
             )
+            budgets = _daemon_budget_projections(runtime, state)
         except OperatorInputError as exc:
             raise _operator_error(command, exc) from exc
     finally:
@@ -74,7 +79,7 @@ def _status(namespace: object) -> CliSuccess:
         command=command,
         code="status_projected",
         message="Status projected.",
-        data=_status_projection(status, state=state),
+        data=_status_projection(status, state=state, budgets=budgets),
     )
 
 
@@ -84,15 +89,25 @@ def _runs_list(namespace: object) -> CliSuccess:
     try:
         state = runtime.store.load_runtime_state(runtime.cas_store)
         status = operator_status(state)
+        budget_by_session = _budget_projection_by_session(runtime, state)
     finally:
         runtime.close()
     runs: list[dict[str, object]] = []
     for run in status.active_runs:
         projected = cast(dict[str, object], json_ready(run))
+        run_id = str(projected["run_id"])
         projected["runner_session"] = runner_session_projection(
             state,
-            str(projected["run_id"]),
+            run_id,
         )
+        projected["may_start_while_dispatch_suspended"] = (
+            run_may_start_while_dispatch_suspended(state, state.runs[run_id])
+        )
+        session = projected["runner_session"]
+        if isinstance(session, dict):
+            budget = budget_by_session.get(str(session["session_id"]))
+            if budget is not None:
+                session["budget"] = budget
         runs.append(projected)
     return success_result(
         command=command,
@@ -108,6 +123,7 @@ def _runs_show(namespace: object) -> CliSuccess:
     runtime = open_runtime_context(namespace, command=command)
     try:
         state = runtime.store.load_runtime_state(runtime.cas_store)
+        budget_by_session = _budget_projection_by_session(runtime, state)
     finally:
         runtime.close()
     run = state.runs.get(run_id)
@@ -148,7 +164,11 @@ def _runs_show(namespace: object) -> CliSuccess:
                 ),
                 "observed": observed,
                 "closed": run.work_item_id in state.closed_work_items,
-                "runner_session": runner_session_projection(state, run_id),
+                "runner_session": _runner_session_with_budget(
+                    state,
+                    run_id,
+                    budget_by_session,
+                ),
             }
         },
     )
@@ -233,6 +253,7 @@ def _runs_follow(namespace: object) -> CliSuccess:
     event_store = None
     try:
         state = runtime.store.load_runtime_state(runtime.cas_store)
+        budget_by_session = _budget_projection_by_session(runtime, state)
         run = state.runs.get(run_id)
         if run is None:
             raise CliCommandError(
@@ -326,6 +347,11 @@ def _runs_follow(namespace: object) -> CliSuccess:
             "last_sequence": last_sequence,
             "next_after_sequence": next_after_sequence,
             "durable_final": durable_final,
+            "runner_session": _runner_session_with_budget(
+                state,
+                run_id,
+                budget_by_session,
+            ),
         },
     )
 
@@ -376,6 +402,7 @@ def _trace_show(namespace: object) -> CliSuccess:
         state = runtime.store.load_runtime_state(runtime.cas_store)
         try:
             status = operator_status(state, max_events=max_events)
+            budget_by_session = _budget_projection_by_session(runtime, state)
         except OperatorInputError as exc:
             raise _operator_error(command, exc) from exc
     finally:
@@ -415,10 +442,16 @@ def _trace_show(namespace: object) -> CliSuccess:
         data={
             "run_id": run_id,
             "events": events,
+            "dispatch_suspension": json_ready(status.dispatch_suspension),
+            "queue_closures": json_ready(status.queue_closures),
             "runner_session": (
                 None
                 if run_id is None
-                else runner_session_projection(state, str(run_id))
+                else _runner_session_with_budget(
+                    state,
+                    str(run_id),
+                    budget_by_session,
+                )
             ),
         },
     )
@@ -435,6 +468,7 @@ def _status_projection(
     status: object,
     *,
     state: RuntimeState | None = None,
+    budgets: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     runner_sessions = (
         []
@@ -467,6 +501,10 @@ def _status_projection(
         ],
         "joins": [json_ready(item) for item in getattr(status, "joins")],
         "pause": json_ready(getattr(status, "pause")),
+        "dispatch_suspension": json_ready(
+            getattr(status, "dispatch_suspension")
+        ),
+        "queue_closures": json_ready(getattr(status, "queue_closures")),
         "quarantines": [json_ready(item) for item in getattr(status, "quarantines")],
         "recovery_attempts": [
             json_ready(item) for item in getattr(status, "recovery_attempts")
@@ -497,7 +535,125 @@ def _status_projection(
             json_ready(item) for item in getattr(status, "recent_events")
         ],
         "runner_sessions": runner_sessions,
+        "daemon_budgets": [] if budgets is None else budgets,
     }
+
+
+def _budget_projection_by_session(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+) -> dict[str, dict[str, object]]:
+    projections: dict[str, dict[str, object]] = {}
+    for session_id in state.runner_sessions:
+        budget_id = runtime.store.daemon_budget_id_for_session(session_id)
+        if budget_id is None:
+            continue
+        epoch = runtime.store.load_daemon_budget_epoch(budget_id)
+        if epoch is not None:
+            projection = daemon_budget_projection(epoch)
+            projection["usage_evidence"] = _usage_evidence_projection(
+                runtime,
+                session_id,
+            )
+            projections[session_id] = projection
+    return projections
+
+
+def _daemon_budget_projections(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+) -> list[dict[str, object]]:
+    projections: list[dict[str, object]] = []
+    for epoch in runtime.store.list_daemon_budget_epochs():
+        projection = daemon_budget_projection(epoch)
+        count, session_ids = runtime.store.daemon_budget_session_ids(
+            epoch.budget_id,
+            limit=_DAEMON_BUDGET_SESSION_MAX_ITEMS,
+        )
+        sessions: list[dict[str, object]] = []
+        for session_id in session_ids:
+            session = state.runner_sessions.get(session_id)
+            if session is None:
+                sessions.append(
+                    {
+                        "session_id": session_id,
+                        "usage_evidence": {
+                            "status": "contradictory",
+                            "reason": "runner_usage_evidence_refused",
+                        },
+                    }
+                )
+                continue
+            usage_evidence: dict[str, object]
+            try:
+                bound_budget_id = runtime.store.daemon_budget_id_for_session(
+                    session_id
+                )
+            except ValueError:
+                usage_evidence = {
+                    "status": "contradictory",
+                    "reason": "runner_usage_evidence_refused",
+                }
+            else:
+                usage_evidence = (
+                    _usage_evidence_projection(runtime, session_id)
+                    if bound_budget_id == epoch.budget_id
+                    else {
+                        "status": "contradictory",
+                        "reason": "runner_usage_evidence_refused",
+                    }
+                )
+            sessions.append(
+                {
+                    "session_id": session.session_id,
+                    "run_id": session.run_id,
+                    "dispatch_generation": session.dispatch_generation,
+                    "session_fencing_token": session.session_fencing_token,
+                    "usage_evidence": usage_evidence,
+                }
+            )
+        projection["runner_session_count"] = count
+        projection["runner_sessions"] = sessions
+        projection["omitted_runner_session_count"] = count - len(sessions)
+        projections.append(projection)
+    return projections
+
+
+def _usage_evidence_projection(
+    runtime: OpenRuntimeContext,
+    session_id: str,
+) -> dict[str, object]:
+    try:
+        usage = runtime.store.load_runner_session_usage(session_id)
+    except ValueError:
+        return {
+            "status": "contradictory",
+            "reason": "runner_usage_evidence_refused",
+        }
+    if usage is None:
+        return {"status": "missing"}
+    return {
+        "status": "available",
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "total_tokens": usage.total_tokens,
+        "observed_at": usage.observed_at,
+        "final": usage.final,
+    }
+
+
+def _runner_session_with_budget(
+    state: RuntimeState,
+    run_id: str,
+    budget_by_session: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    projection = runner_session_projection(state, run_id)
+    if projection is None:
+        return None
+    budget = budget_by_session.get(str(projection["session_id"]))
+    if budget is not None:
+        projection["budget"] = budget
+    return projection
 
 
 def runner_session_projection(

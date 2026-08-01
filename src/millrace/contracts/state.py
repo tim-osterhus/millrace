@@ -739,6 +739,261 @@ class PauseRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class DispatchSuspensionRecord:
+    record_kind: ClassVar[str] = "dispatch_suspension"
+    schema_version: ClassVar[int] = 1
+
+    suspension_id: str
+    selected_plan_ref: PlanRef
+    generation: int
+    dispatch_generation: int
+    actor_id: str
+    reason: str
+    suspended_by_input_id: str
+    status: str
+    resumed_by_input_id: str | None = None
+    resume_actor_id: str | None = None
+    resume_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "suspension_id",
+            "actor_id",
+            "reason",
+            "suspended_by_input_id",
+        ):
+            value = getattr(self, field_name)
+            if not value.strip():
+                raise ValueError(f"{field_name} must be non-blank")
+            _validate_bounded_runner_session_text(field_name, value)
+        if type(self.generation) is not int or self.generation < 1:
+            raise ValueError("generation must be a positive integer")
+        if (
+            type(self.dispatch_generation) is not int
+            or self.dispatch_generation < 0
+        ):
+            raise ValueError("dispatch_generation must be a non-negative integer")
+        if self.status not in {"active", "resumed"}:
+            raise ValueError("unsupported dispatch suspension status")
+        resume_values = (
+            self.resumed_by_input_id,
+            self.resume_actor_id,
+            self.resume_reason,
+        )
+        if self.status == "active" and any(
+            value is not None for value in resume_values
+        ):
+            raise ValueError("active dispatch suspension cannot have resume metadata")
+        if self.status == "resumed" and any(value is None for value in resume_values):
+            raise ValueError("resumed dispatch suspension requires resume metadata")
+        for field_name, value in zip(
+            ("resumed_by_input_id", "resume_actor_id", "resume_reason"),
+            resume_values,
+            strict=True,
+        ):
+            if value is not None:
+                if not value.strip():
+                    raise ValueError(f"{field_name} must be non-blank")
+                _validate_bounded_runner_session_text(field_name, value)
+
+
+@dataclass(frozen=True, slots=True)
+class DaemonBudgetEpochRecord:
+    record_kind: ClassVar[str] = "daemon_budget_epoch"
+    schema_version: ClassVar[int] = 1
+
+    budget_id: str
+    workspace_path: str
+    selected_plan_ref: PlanRef
+    max_wall_seconds: int | None
+    max_invocations: int | None
+    max_total_tokens: int | None
+    started_at: int
+    wall_deadline: int | None
+    last_observed_at: int
+    accepted_start_count: int = 0
+    cumulative_input_tokens: int = 0
+    cumulative_output_tokens: int = 0
+    cumulative_total_tokens: int = 0
+    status: str = "active"
+    terminal_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("budget_id", "workspace_path"):
+            value = getattr(self, field_name)
+            if not value.strip():
+                raise ValueError(f"{field_name} must be non-blank")
+            _validate_bounded_runner_session_text(field_name, value)
+        limits = (
+            self.max_wall_seconds,
+            self.max_invocations,
+            self.max_total_tokens,
+        )
+        if all(value is None for value in limits):
+            raise ValueError("daemon budget epoch requires at least one limit")
+        for field_name, value in zip(
+            ("max_wall_seconds", "max_invocations", "max_total_tokens"),
+            limits,
+            strict=True,
+        ):
+            if value is not None and (
+                type(value) is not int or value < 1 or value > DURABLE_INT64_MAX
+            ):
+                raise ValueError(f"{field_name} must be a positive durable integer")
+        for field_name in (
+            "started_at",
+            "last_observed_at",
+            "accepted_start_count",
+            "cumulative_input_tokens",
+            "cumulative_output_tokens",
+            "cumulative_total_tokens",
+        ):
+            value = getattr(self, field_name)
+            if type(value) is not int or value < 0 or value > DURABLE_INT64_MAX:
+                raise ValueError(
+                    f"{field_name} must be a non-negative durable integer"
+                )
+        if self.last_observed_at < self.started_at:
+            raise ValueError("last_observed_at cannot precede started_at")
+        expected_deadline = (
+            None
+            if self.max_wall_seconds is None
+            else self.started_at + self.max_wall_seconds
+        )
+        if expected_deadline is not None and expected_deadline > DURABLE_INT64_MAX:
+            raise ValueError("wall_deadline exceeds durable integer range")
+        if self.wall_deadline != expected_deadline:
+            raise ValueError("wall_deadline must equal started_at + max_wall_seconds")
+        if (
+            self.cumulative_total_tokens
+            != self.cumulative_input_tokens + self.cumulative_output_tokens
+        ):
+            raise ValueError("cumulative token counters are contradictory")
+        if self.status not in {"active", "exhausted", "refused", "stopped"}:
+            raise ValueError("unsupported daemon budget status")
+        if self.status == "active" and self.terminal_reason is not None:
+            raise ValueError("active daemon budget cannot have terminal_reason")
+        if self.status != "active":
+            if self.terminal_reason is None or not self.terminal_reason.strip():
+                raise ValueError(
+                    "terminal daemon budget status requires terminal_reason"
+                )
+            _validate_bounded_runner_session_text(
+                "terminal_reason",
+                self.terminal_reason,
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionUsageRecord:
+    record_kind: ClassVar[str] = "runner_session_usage"
+    schema_version: ClassVar[int] = 1
+
+    budget_id: str
+    session_id: str
+    run_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    observed_at: int
+    final: bool
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "budget_id",
+            "session_id",
+            "run_id",
+            "session_fencing_token",
+        ):
+            value = getattr(self, field_name)
+            if not value.strip():
+                raise ValueError(f"{field_name} must be non-blank")
+            _validate_bounded_runner_session_text(field_name, value)
+        for field_name in (
+            "dispatch_generation",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "observed_at",
+        ):
+            value = getattr(self, field_name)
+            minimum = 1 if field_name == "dispatch_generation" else 0
+            if (
+                type(value) is not int
+                or value < minimum
+                or value > DURABLE_INT64_MAX
+            ):
+                raise ValueError(f"{field_name} is outside durable integer range")
+        if self.total_tokens != self.input_tokens + self.output_tokens:
+            raise ValueError("runner usage token counters are contradictory")
+        if type(self.final) is not bool:
+            raise ValueError("final must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class QueueClosureRecord:
+    record_kind: ClassVar[str] = "queue_closure"
+    schema_version: ClassVar[int] = 1
+
+    closure_id: str
+    selected_plan_ref: PlanRef
+    target_kind: str
+    target_id: str
+    actor_id: str
+    reason: str
+    created_by_input_id: str
+    closed_work_item_ids: tuple[str, ...]
+    closed_activation_ids: tuple[str, ...]
+    closed_run_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _validate_non_blank_fields(
+            self,
+            (
+                "closure_id",
+                "target_id",
+                "actor_id",
+                "reason",
+                "created_by_input_id",
+            ),
+        )
+        for field_name in (
+            "closure_id",
+            "target_id",
+            "actor_id",
+            "reason",
+            "created_by_input_id",
+        ):
+            _validate_bounded_runner_session_text(
+                field_name,
+                getattr(self, field_name),
+            )
+        if self.target_kind not in {"work_item", "lineage"}:
+            raise ValueError("unsupported queue closure target kind")
+        for field_name in (
+            "closed_work_item_ids",
+            "closed_activation_ids",
+            "closed_run_ids",
+        ):
+            values = getattr(self, field_name)
+            if values != tuple(sorted(set(values))):
+                raise ValueError(f"{field_name} must be sorted and unique")
+            for value in values:
+                if not value.strip():
+                    raise ValueError(f"{field_name} must contain non-blank ids")
+                _validate_bounded_runner_session_text(field_name, value)
+        if not self.closed_work_item_ids:
+            raise ValueError("queue closure must close at least one work item")
+        if (
+            self.target_kind == "work_item"
+            and self.closed_work_item_ids != (self.target_id,)
+        ):
+            raise ValueError("work-item queue closure target must match closed work")
+
+
+@dataclass(frozen=True, slots=True)
 class QuarantineRecord:
     record_id: str
     work_item_id: str
@@ -1018,6 +1273,8 @@ class RuntimeState:
     )
     closed_work_items: Mapping[str, ClosedWorkItemRecord] = field(default_factory=dict)
     pause: PauseRecord | None = None
+    dispatch_suspension: DispatchSuspensionRecord | None = None
+    queue_closures: Mapping[str, QueueClosureRecord] = field(default_factory=dict)
     quarantines: Mapping[str, QuarantineRecord] = field(default_factory=dict)
     lineage_quarantines: Mapping[str, LineageQuarantineRecord] = field(
         default_factory=dict
@@ -1119,6 +1376,11 @@ class RuntimeState:
             "closed_work_items",
             _freeze_mapping(self.closed_work_items),
         )
+        object.__setattr__(
+            self,
+            "queue_closures",
+            _freeze_mapping(self.queue_closures),
+        )
         object.__setattr__(self, "quarantines", _freeze_mapping(self.quarantines))
         object.__setattr__(
             self,
@@ -1168,6 +1430,8 @@ __all__ = (
     "ClosedWorkItemRecord",
     "CooldownWaitRecord",
     "DURABLE_INT64_MAX",
+    "DispatchSuspensionRecord",
+    "DaemonBudgetEpochRecord",
     "ExternalEnqueueRoute",
     "EffectProposalRecord",
     "EffectReconciliationRecord",
@@ -1180,6 +1444,7 @@ __all__ = (
     "OperatorWaitRecord",
     "PlanRef",
     "PauseRecord",
+    "QueueClosureRecord",
     "QuarantineRecord",
     "RecoveryAttemptRecord",
     "RemediationWorkRecord",
@@ -1190,6 +1455,7 @@ __all__ = (
     "RunnerSessionCancellationRecord",
     "RunnerSessionCompletionRecord",
     "RunnerSessionRecord",
+    "RunnerSessionUsageRecord",
     "RuntimeState",
     "TraceRecord",
     "TransitionRecord",

@@ -55,6 +55,8 @@ def execute_runner_session(
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
     explicit_retry_intent: bool,
+    on_start_reserved: Callable[[RunnerSessionRecord], None] | None = None,
+    on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
     effective_timeout_seconds: float | None = None,
 ) -> SessionExecutionResult:
@@ -74,6 +76,8 @@ def execute_runner_session(
         adapter,
         request_factory,
         explicit_retry_intent,
+        on_start_reserved,
+        on_accepted_start,
         daemon_stop_requested,
         effective_timeout_seconds,
     )
@@ -102,6 +106,8 @@ def execute_runner_session(
         session=persisted.runner_sessions[session_id],
         adapter=adapter,
         request_factory=request_factory,
+        on_start_reserved=on_start_reserved,
+        on_accepted_start=on_accepted_start,
         daemon_stop_requested=daemon_stop_requested,
         effective_timeout_seconds=effective_timeout_seconds,
     )
@@ -123,6 +129,8 @@ def _resume_current_session(
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
     explicit_retry_intent: bool,
+    on_start_reserved: Callable[[RunnerSessionRecord], None] | None,
+    on_accepted_start: Callable[[RunnerSessionRecord], None] | None,
     daemon_stop_requested: Callable[[], bool] | None,
     effective_timeout_seconds: float | None,
 ) -> SessionExecutionResult | None:
@@ -175,6 +183,8 @@ def _resume_current_session(
             session=current,
             adapter=adapter,
             request_factory=request_factory,
+            on_start_reserved=on_start_reserved,
+            on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
             effective_timeout_seconds=effective_timeout_seconds,
         )
@@ -188,20 +198,21 @@ def _start_created_session(
     session: RunnerSessionRecord,
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
+    on_start_reserved: Callable[[RunnerSessionRecord], None] | None,
+    on_accepted_start: Callable[[RunnerSessionRecord], None] | None,
     daemon_stop_requested: Callable[[], bool] | None,
     effective_timeout_seconds: float | None,
 ) -> SessionExecutionResult:
-    if daemon_stop_requested is not None and daemon_stop_requested():
-        _request_daemon_cancellation(runtime, run_ref, session)
-    durable_session = complete._load(runtime).runner_sessions[session.session_id]
-    primary = cancel._primary_cancellation(complete._load(runtime), durable_session)
-    if primary is not None:
-        return cancel._cancel_before_external_start(
-            runtime,
-            run_ref=run_ref,
-            session=durable_session,
-            primary=primary,
-        )
+    durable_session, cancellation = _pre_start_cancellation(
+        runtime,
+        run_ref,
+        session,
+        daemon_stop_requested=daemon_stop_requested,
+    )
+    if cancellation is not None:
+        return cancellation
+    if on_start_reserved is not None:
+        on_start_reserved(durable_session)
     persisted = complete._persist_transition(
         runtime,
         AdvanceRunnerSession(
@@ -218,17 +229,16 @@ def _start_created_session(
     if persisted is None:
         return SessionExecutionResult("session_start_intent_refused")
     session = persisted.runner_sessions[session.session_id]
+    if on_accepted_start is not None:
+        on_accepted_start(session)
     request = request_factory(session)
-    durable_state = complete._load(runtime)
-    durable_session = durable_state.runner_sessions[session.session_id]
-    primary = cancel._primary_cancellation(durable_state, durable_session)
-    if primary is not None:
-        return cancel._cancel_before_external_start(
-            runtime,
-            run_ref=run_ref,
-            session=durable_session,
-            primary=primary,
-        )
+    _durable_session, cancellation = _pre_start_cancellation(
+        runtime,
+        run_ref,
+        session,
+    )
+    if cancellation is not None:
+        return cancellation
     if not reconcile._request_matches_current_authority(
         runtime,
         session=session,
@@ -243,18 +253,14 @@ def _start_created_session(
             "runner_request",
             request,
         )
-    if daemon_stop_requested is not None and daemon_stop_requested():
-        _request_daemon_cancellation(runtime, run_ref, session)
-    durable_state = complete._load(runtime)
-    durable_session = durable_state.runner_sessions[session.session_id]
-    primary = cancel._primary_cancellation(durable_state, durable_session)
-    if primary is not None:
-        return cancel._cancel_before_external_start(
-            runtime,
-            run_ref=run_ref,
-            session=durable_session,
-            primary=primary,
-        )
+    _durable_session, cancellation = _pre_start_cancellation(
+        runtime,
+        run_ref,
+        session,
+        daemon_stop_requested=daemon_stop_requested,
+    )
+    if cancellation is not None:
+        return cancellation
     timeout = request.timeout_seconds
     if effective_timeout_seconds is not None:
         timeout = min(timeout, effective_timeout_seconds)
@@ -271,6 +277,28 @@ def _start_created_session(
         start_outcome,
         deadline,
         daemon_stop_requested,
+    )
+
+
+def _pre_start_cancellation(
+    runtime: OpenRuntimeContext,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    *,
+    daemon_stop_requested: Callable[[], bool] | None = None,
+) -> tuple[RunnerSessionRecord, SessionExecutionResult | None]:
+    if daemon_stop_requested is not None and daemon_stop_requested():
+        _request_daemon_cancellation(runtime, run_ref, session)
+    durable_state = complete._load(runtime)
+    durable_session = durable_state.runner_sessions[session.session_id]
+    primary = cancel._primary_cancellation(durable_state, durable_session)
+    if primary is None:
+        return durable_session, None
+    return durable_session, cancel._cancel_before_external_start(
+        runtime,
+        run_ref=run_ref,
+        session=durable_session,
+        primary=primary,
     )
 
 

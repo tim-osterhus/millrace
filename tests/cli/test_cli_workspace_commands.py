@@ -177,7 +177,7 @@ def test_workspace_check_reports_initialized_store_without_writing(
         "workspace_path": str(workspace),
         "db_path": str(workspace / ".millrace" / "runtime.sqlite3"),
         "cas_path": str(workspace / ".millrace" / "cas"),
-        "schema_version": 7,
+        "schema_version": 8,
         "initialized": True,
         "admitted_plan_count": 0,
         "default_plan_fingerprint": None,
@@ -187,8 +187,10 @@ def test_workspace_check_reports_initialized_store_without_writing(
     assert after == before
 
 
-def test_workspace_check_maps_exact_v6_to_upgrade_required_json_and_human(
+@pytest.mark.parametrize("old_schema_version", (6, 7))
+def test_workspace_check_maps_prior_schema_to_upgrade_required_json_and_human(
     tmp_path: Path,
+    old_schema_version: int,
 ) -> None:
     import sqlite3
 
@@ -206,7 +208,8 @@ def test_workspace_check_maps_exact_v6_to_upgrade_required_json_and_human(
     db_path = workspace / ".millrace" / "runtime.sqlite3"
     with sqlite3.connect(db_path) as connection:
         connection.execute(
-            "UPDATE store_metadata SET store_schema_version = 6 WHERE id = 1"
+            "UPDATE store_metadata SET store_schema_version = ? WHERE id = 1",
+            (old_schema_version,),
         )
     before = _directory_bytes(workspace)
 
@@ -236,8 +239,8 @@ def test_workspace_check_maps_exact_v6_to_upgrade_required_json_and_human(
         "code": "workspace_upgrade_required",
         "message": "Workspace schema upgrade is required.",
         "details": {
-            "current_schema_version": 6,
-            "required_schema_version": 7,
+            "current_schema_version": old_schema_version,
+            "required_schema_version": 8,
         },
     }
     assert (
@@ -247,8 +250,10 @@ def test_workspace_check_maps_exact_v6_to_upgrade_required_json_and_human(
     assert _directory_bytes(workspace) == before
 
 
-def test_daemon_maps_exact_v6_to_upgrade_required_without_mutation(
+@pytest.mark.parametrize("old_schema_version", (6, 7))
+def test_daemon_maps_prior_schema_to_upgrade_required_without_mutation(
     tmp_path: Path,
+    old_schema_version: int,
 ) -> None:
     import sqlite3
 
@@ -267,7 +272,8 @@ def test_daemon_maps_exact_v6_to_upgrade_required_without_mutation(
     db_path = workspace / ".millrace" / "runtime.sqlite3"
     with sqlite3.connect(db_path) as connection:
         connection.execute(
-            "UPDATE store_metadata SET store_schema_version = 6 WHERE id = 1"
+            "UPDATE store_metadata SET store_schema_version = ? WHERE id = 1",
+            (old_schema_version,),
         )
     before = _directory_bytes(workspace)
 
@@ -301,8 +307,8 @@ def test_daemon_maps_exact_v6_to_upgrade_required_without_mutation(
         "code": "workspace_upgrade_required",
         "message": "Workspace schema upgrade is required.",
         "details": {
-            "current_schema_version": 6,
-            "required_schema_version": 7,
+            "current_schema_version": old_schema_version,
+            "required_schema_version": 8,
         },
     }
     assert human_stderr == (
@@ -322,11 +328,60 @@ def test_daemon_maps_exact_v6_to_upgrade_required_without_mutation(
         ("trace", "show", "run-unknown"),
         ("doctor",),
         ("workspace", "init", "--input-id", "reinit-v6"),
+        (
+            "dispatch",
+            "suspend",
+            "--plan-fingerprint",
+            "sha256:unknown",
+            "--input-id",
+            "suspend-v6",
+            "--reason",
+            "maintenance",
+        ),
+        (
+            "dispatch",
+            "resume",
+            "--plan-fingerprint",
+            "sha256:unknown",
+            "--suspension-id",
+            "suspension-unknown",
+            "--input-id",
+            "resume-v6",
+            "--reason",
+            "maintenance complete",
+        ),
+        ("dispatch", "show", "run-unknown"),
+        ("queue", "enqueue", "prompt", "--payload-json", "{}"),
+        (
+            "queue",
+            "cancel",
+            "work-item-unknown",
+            "--plan-fingerprint",
+            "sha256:unknown",
+            "--input-id",
+            "cancel-work-v6",
+            "--reason",
+            "operator request",
+        ),
+        (
+            "queue",
+            "cancel-lineage",
+            "lineage-unknown",
+            "--plan-fingerprint",
+            "sha256:unknown",
+            "--input-id",
+            "cancel-lineage-v6",
+            "--reason",
+            "operator request",
+        ),
+        ("queue", "list"),
     ),
 )
-def test_session_projection_commands_refuse_exact_v6_without_mutation(
+@pytest.mark.parametrize("old_schema_version", (6, 7))
+def test_session_projection_commands_refuse_prior_schema_without_mutation(
     tmp_path: Path,
     command: tuple[str, ...],
+    old_schema_version: int,
 ) -> None:
     import sqlite3
 
@@ -345,7 +400,8 @@ def test_session_projection_commands_refuse_exact_v6_without_mutation(
     db_path = workspace / ".millrace" / "runtime.sqlite3"
     with sqlite3.connect(db_path) as connection:
         connection.execute(
-            "UPDATE store_metadata SET store_schema_version = 6 WHERE id = 1"
+            "UPDATE store_metadata SET store_schema_version = ? WHERE id = 1",
+            (old_schema_version,),
         )
     before = _directory_bytes(workspace)
 
@@ -358,8 +414,8 @@ def test_session_projection_commands_refuse_exact_v6_without_mutation(
     error = _json(stderr)
     assert error["code"] == "workspace_upgrade_required"
     assert error["details"] == {
-        "current_schema_version": 6,
-        "required_schema_version": 7,
+        "current_schema_version": old_schema_version,
+        "required_schema_version": 8,
     }
     human_exit, human_stdout, human_stderr = _invoke(
         ["--workspace", str(workspace), *command]

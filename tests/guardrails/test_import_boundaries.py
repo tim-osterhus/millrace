@@ -56,6 +56,13 @@ SUBSTRATE_KERNEL_POLICY_MODULES = (
 SUBSTRATE_KERNEL_POLICY_CONSUMER = Path(
     "millrace/substrate/_sqlite_relations.py"
 )
+REMOVED_DONOR_MODULE_NAMES = (
+    "lad_execution",
+    "lad_learning",
+    "lad_planning",
+    "simple_loop",
+    "vendor_selection",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +140,26 @@ def _imported_modules(source_root: Path, path: Path) -> set[str]:
         elif isinstance(node, ast.ImportFrom):
             imports.update(_resolve_import_from(source_root, path, node))
     return imports
+
+
+def test_tests_do_not_import_removed_workflow_donors_or_helpers() -> None:
+    offenders: list[tuple[str, str]] = []
+    for path in sorted((PROJECT_ROOT / "tests").rglob("*.py")):
+        for imported_module in sorted(_imported_modules(PROJECT_ROOT, path)):
+            if any(
+                imported_module.startswith(prefix)
+                for donor_name in REMOVED_DONOR_MODULE_NAMES
+                for prefix in (
+                    f"millrace.workflows.{donor_name}",
+                    f"support.{donor_name}",
+                    f"tests.support.{donor_name}",
+                )
+            ):
+                offenders.append(
+                    (path.relative_to(PROJECT_ROOT).as_posix(), imported_module)
+                )
+
+    assert offenders == []
 
 
 def _is_millrace_import(module_name: str) -> bool:

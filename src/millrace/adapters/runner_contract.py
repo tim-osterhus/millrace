@@ -55,6 +55,39 @@ class AdapterEvidenceConversionError(ValueError):
     """Raised when adapter output cannot become runner result evidence."""
 
 
+@dataclass(frozen=True, slots=True)
+class AdapterTokenUsage:
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
+    def __post_init__(self) -> None:
+        for field_name in ("input_tokens", "output_tokens", "total_tokens"):
+            value = getattr(self, field_name)
+            if type(value) is not int or value < 0 or value > 2**63 - 1:
+                raise ValueError(
+                    f"{field_name} must be a non-negative durable integer"
+                )
+        if self.total_tokens != self.input_tokens + self.output_tokens:
+            raise ValueError("total_tokens must equal input_tokens + output_tokens")
+
+
+class ReviewedTokenUsageMapping:
+    """Marker for adapter-owned token usage mappings approved for governance."""
+
+
+REVIEWED_TOKEN_USAGE_MAPPING = ReviewedTokenUsageMapping()
+
+
+def has_reviewed_token_usage_mapping(adapter: RunnerAdapter) -> bool:
+    """Return whether this resolved adapter owns the reviewed token mapping."""
+
+    return (
+        getattr(adapter, "token_usage_mapping_capability", None)
+        is REVIEWED_TOKEN_USAGE_MAPPING
+    )
+
+
 class RunnerAdapter(Protocol):
     """Protocol implemented by reviewed runner-specific adapters."""
 
@@ -437,6 +470,7 @@ class AdapterSuccessResult:
     evidence_construction_diagnostics: Mapping[str, AuthorityValue] = field(
         default_factory=dict,
     )
+    token_usage: AdapterTokenUsage | None = None
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.adapter_id, "adapter_id")
@@ -485,6 +519,11 @@ class AdapterSuccessResult:
                 "evidence_construction_diagnostics",
             ),
         )
+        if self.token_usage is not None and not isinstance(
+            self.token_usage,
+            AdapterTokenUsage,
+        ):
+            raise TypeError("token_usage must be AdapterTokenUsage or None")
 
     def __repr__(self) -> str:
         provider_count = len(self.structured_provider_response)
@@ -524,6 +563,7 @@ class AdapterSuccessResult:
         artifact_payload_candidate: Mapping[str, object] | None = None,
         observation_payload_candidate: Mapping[str, object] | None = None,
         evidence_construction_diagnostics: Mapping[str, object] | None = None,
+        token_usage: AdapterTokenUsage | None = None,
     ) -> AdapterSuccessResult:
         effective_policy = canonicalize_redaction_policy(redaction_policy)
         return cls(
@@ -563,6 +603,7 @@ class AdapterSuccessResult:
                 evidence_construction_diagnostics or {},
                 effective_policy,
             ),
+            token_usage=token_usage,
         )
 
 
@@ -575,6 +616,7 @@ class AdapterErrorResult:
     redaction_policy_id: str
     dispatch_echo: DispatchEcho | None = None
     diagnostics: Mapping[str, AuthorityValue] = field(default_factory=dict)
+    token_usage: AdapterTokenUsage | None = None
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.adapter_id, "adapter_id")
@@ -591,6 +633,11 @@ class AdapterErrorResult:
             "diagnostics",
             _coerce_payload_mapping(self.diagnostics, "diagnostics"),
         )
+        if self.token_usage is not None and not isinstance(
+            self.token_usage,
+            AdapterTokenUsage,
+        ):
+            raise TypeError("token_usage must be AdapterTokenUsage or None")
 
     def __repr__(self) -> str:
         return (
@@ -614,6 +661,7 @@ class AdapterErrorResult:
         redaction_policy: RedactionPolicy,
         dispatch_echo: DispatchEcho | None = None,
         diagnostics: Mapping[str, object] | None = None,
+        token_usage: AdapterTokenUsage | None = None,
     ) -> AdapterErrorResult:
         effective_policy = canonicalize_redaction_policy(redaction_policy)
         return cls(
@@ -625,6 +673,7 @@ class AdapterErrorResult:
                 _policy_id(effective_policy),
                 effective_policy,
             ),
+            token_usage=token_usage,
         )
 
 
@@ -1240,10 +1289,13 @@ __all__ = (
     "AdapterLocalConfig",
     "AdapterResolverError",
     "AdapterSuccessResult",
+    "AdapterTokenUsage",
     "CleanupPending",
     "Contradiction",
     "DispatchEcho",
     "RedactionPolicy",
+    "REVIEWED_TOKEN_USAGE_MAPPING",
+    "ReviewedTokenUsageMapping",
     "RunnerAdapter",
     "RunnerCancellationOperationResult",
     "RunnerCleanupResult",
@@ -1258,6 +1310,7 @@ __all__ = (
     "Unsupported",
     "VerifiedLive",
     "canonicalize_redaction_policy",
+    "has_reviewed_token_usage_mapping",
     "resolve_adapter",
     "runner_evidence_from_adapter_outcome",
     "runner_cancellation_diagnostic_digest",

@@ -414,6 +414,81 @@ EXPECTED_TABLE_COLUMNS = {
         "created_by_input_id",
         "paused_at_order",
     ),
+    "dispatch_suspension": (
+        "id",
+        "schema_version",
+        "suspension_id",
+        "plan_id",
+        "plan_authority_fingerprint",
+        "plan_format_version",
+        "generation",
+        "dispatch_generation",
+        "actor_id",
+        "reason",
+        "suspended_by_input_id",
+        "status",
+        "resumed_by_input_id",
+        "resume_actor_id",
+        "resume_reason",
+    ),
+    "daemon_budget_epochs": (
+        "budget_id",
+        "schema_version",
+        "workspace_path",
+        "plan_id",
+        "plan_authority_fingerprint",
+        "plan_format_version",
+        "max_wall_seconds",
+        "max_invocations",
+        "max_total_tokens",
+        "started_at",
+        "wall_deadline",
+        "last_observed_at",
+        "accepted_start_count",
+        "cumulative_input_tokens",
+        "cumulative_output_tokens",
+        "cumulative_total_tokens",
+        "status",
+        "terminal_reason",
+    ),
+    "runner_session_usage": (
+        "session_id",
+        "schema_version",
+        "budget_id",
+        "run_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "observed_at",
+        "final",
+    ),
+    "daemon_budget_sessions": (
+        "session_id",
+        "schema_version",
+        "budget_id",
+        "run_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "accepted_at",
+    ),
+    "queue_closures": (
+        "closure_id",
+        "schema_version",
+        "plan_id",
+        "plan_authority_fingerprint",
+        "plan_format_version",
+        "target_kind",
+        "target_id",
+        "actor_id",
+        "reason",
+        "created_by_input_id",
+        "closed_work_item_ids_json",
+        "closed_activation_ids_json",
+        "closed_run_ids_json",
+        "created_at_order",
+    ),
     "quarantine_records": (
         "record_id",
         "work_item_id",
@@ -913,10 +988,10 @@ def test_open_refuses_unknown_store_schema_version_without_mutation(
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     db_path = tmp_path / "runtime.sqlite3"
-    _create_marked_store_metadata(db_path, store_schema_version=8)
+    _create_marked_store_metadata(db_path, store_schema_version=9)
 
     before = _store_snapshot(db_path)
-    with pytest.raises(UnsupportedStoreSchemaVersion, match="8"):
+    with pytest.raises(UnsupportedStoreSchemaVersion, match="9"):
         SQLiteRuntimeStore.open(db_path)
     assert _store_snapshot(db_path) == before
 
@@ -955,7 +1030,13 @@ def test_workflow_package_command_audit_schema_bumps_sqlite_store_version() -> N
 def test_runner_session_schema_uses_store_version_7() -> None:
     from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
 
-    assert SQLITE_STORE_SCHEMA_VERSION == 7
+    assert SQLITE_STORE_SCHEMA_VERSION == 8
+
+
+def test_daemon_budget_store_schema_remains_version_8() -> None:
+    from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
+
+    assert SQLITE_STORE_SCHEMA_VERSION == 8
 
 
 def test_open_refuses_package_registry_table_shape_drift(tmp_path: Path) -> None:
@@ -1113,17 +1194,17 @@ def test_initialize_refuses_store_schema_version_5_without_mutation(
     assert _store_snapshot(db_path) == before
 
 
-def test_initialize_refuses_store_schema_version_8_without_mutation(
+def test_initialize_refuses_store_schema_version_9_without_mutation(
     tmp_path: Path,
 ) -> None:
     from millrace.substrate.errors import UnsupportedStoreSchemaVersion
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     db_path = tmp_path / "runtime.sqlite3"
-    _create_marked_store_metadata(db_path, store_schema_version=8)
+    _create_marked_store_metadata(db_path, store_schema_version=9)
 
     before = _store_snapshot(db_path)
-    with pytest.raises(UnsupportedStoreSchemaVersion, match="8"):
+    with pytest.raises(UnsupportedStoreSchemaVersion, match="9"):
         SQLiteRuntimeStore.initialize(db_path)
     assert _store_snapshot(db_path) == before
 
@@ -1430,7 +1511,7 @@ def test_sqlite_schema_includes_learning_effect_proposal_and_reconciliation_rows
     )
 
 
-def test_sqlite_runtime_rows_use_store_schema_except_versioned_session_records(
+def test_sqlite_runtime_rows_use_store_schema_except_versioned_records(
     tmp_path: Path,
 ) -> None:
     from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
@@ -1451,6 +1532,11 @@ def test_sqlite_runtime_rows_use_store_schema_except_versioned_session_records(
         "runner_session_cancellation_requests",
         "runner_session_cancellation_attempts",
         "runner_session_completions",
+        "dispatch_suspension",
+        "daemon_budget_epochs",
+        "runner_session_usage",
+        "daemon_budget_sessions",
+        "queue_closures",
     }
     for table_name in runtime_tables:
         columns = _table_columns(db_path, table_name)

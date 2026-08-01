@@ -1,3 +1,5 @@
+"""Neutral selected-effect admission invariants."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -9,18 +11,17 @@ from millrace.compiler.canonical import authority_fingerprint
 from millrace.contracts.ids import ActionId, EffectDeclarationId
 from millrace.contracts.transition import AdmitPlan
 from millrace.kernel import decide, empty_runtime_state
-from support import lad_learning
+from support import generic_effect
 
 
-def test_admission_refuses_learning_effect_declaration_drift() -> None:
-    plan, _fingerprint = lad_learning.compile_lad_learning()
+def test_admission_refuses_effect_declaration_drift() -> None:
+    plan, _fingerprint = generic_effect.compile_effect_plan()
     drifted_effects = tuple(
         replace(
             effect,
-            terminal_action_id=ActionId("learning.close_curator_noop"),
+            terminal_action_id=ActionId("kernel_ping.close_worker_success"),
         )
-        if str(effect.effect_declaration_id)
-        == lad_learning.CURATOR_EFFECT_DECLARATION_ID
+        if str(effect.effect_declaration_id) == generic_effect.EFFECT_DECLARATION_ID
         else effect
         for effect in plan.effect_declarations
     )
@@ -34,23 +35,22 @@ def test_admission_refuses_learning_effect_declaration_drift() -> None:
             selected_plan=drifted_plan,
             authority_fingerprint=drifted_fingerprint,
         ),
-        lad_learning.context("admit-drifted-learning-effect-plan"),
+        generic_effect.context("admit-drifted-effect-plan"),
     )
 
     assert decision.accepted is False
     assert decision.refusal is not None
     assert decision.refusal.reason == "unsupported_selected_authority"
     assert decision.refusal.detail == (
-        "effect_declaration_terminal_action:"
-        f"{lad_learning.CURATOR_EFFECT_DECLARATION_ID}"
+        f"effect_declaration_terminal_action:{generic_effect.EFFECT_DECLARATION_ID}"
     )
 
 
-def test_admission_refuses_duplicate_learning_effect_terminal_action() -> None:
-    plan, _fingerprint = lad_learning.compile_lad_learning()
+def test_admission_refuses_duplicate_effect_terminal_action() -> None:
+    plan, _fingerprint = generic_effect.compile_effect_plan()
     duplicate = replace(
         plan.effect_declarations[0],
-        effect_declaration_id=EffectDeclarationId("learning.effect.duplicate"),
+        effect_declaration_id=EffectDeclarationId("kernel_ping.effect.duplicate"),
     )
     drifted_plan = replace(
         plan,
@@ -65,7 +65,7 @@ def test_admission_refuses_duplicate_learning_effect_terminal_action() -> None:
             selected_plan=drifted_plan,
             authority_fingerprint=drifted_fingerprint,
         ),
-        lad_learning.context("admit-duplicate-learning-effect-plan"),
+        generic_effect.context("admit-duplicate-effect-plan"),
     )
 
     assert decision.accepted is False
@@ -73,16 +73,15 @@ def test_admission_refuses_duplicate_learning_effect_terminal_action() -> None:
     assert decision.refusal.reason == "unsupported_selected_authority"
     assert decision.refusal.detail == (
         "effect_declaration_terminal_action_duplicate:"
-        "learning.close_curator_complete"
+        f"{generic_effect.EFFECT_ACTION_ID}"
     )
 
 
-def test_admission_refuses_blank_learning_effect_target_refs() -> None:
-    plan, _fingerprint = lad_learning.compile_lad_learning()
+def test_admission_refuses_blank_effect_target_refs() -> None:
+    plan, _fingerprint = generic_effect.compile_effect_plan()
     drifted_effects = tuple(
         replace(effect, target_ref_schema="")
-        if str(effect.effect_declaration_id)
-        == lad_learning.CURATOR_EFFECT_DECLARATION_ID
+        if str(effect.effect_declaration_id) == generic_effect.EFFECT_DECLARATION_ID
         else effect
         for effect in plan.effect_declarations
     )
@@ -96,15 +95,14 @@ def test_admission_refuses_blank_learning_effect_target_refs() -> None:
             selected_plan=drifted_plan,
             authority_fingerprint=drifted_fingerprint,
         ),
-        lad_learning.context("admit-blank-learning-effect-target-plan"),
+        generic_effect.context("admit-blank-effect-target-plan"),
     )
 
     assert decision.accepted is False
     assert decision.refusal is not None
     assert decision.refusal.reason == "unsupported_selected_authority"
     assert decision.refusal.detail == (
-        "effect_declaration_target_ref_schema:"
-        f"{lad_learning.CURATOR_EFFECT_DECLARATION_ID}"
+        f"effect_declaration_target_ref_schema:{generic_effect.EFFECT_DECLARATION_ID}"
     )
 
 
@@ -130,15 +128,14 @@ def test_admission_refuses_blank_learning_effect_target_refs() -> None:
         ),
     ),
 )
-def test_admission_refuses_learning_effect_policy_drift(
+def test_admission_refuses_effect_policy_drift(
     field_updates: Mapping[str, object],
     detail_prefix: str,
 ) -> None:
-    plan, _fingerprint = lad_learning.compile_lad_learning()
+    plan, _fingerprint = generic_effect.compile_effect_plan()
     drifted_effects = tuple(
         replace(effect, **field_updates)
-        if str(effect.effect_declaration_id)
-        == lad_learning.CURATOR_EFFECT_DECLARATION_ID
+        if str(effect.effect_declaration_id) == generic_effect.EFFECT_DECLARATION_ID
         else effect
         for effect in plan.effect_declarations
     )
@@ -152,12 +149,12 @@ def test_admission_refuses_learning_effect_policy_drift(
             selected_plan=drifted_plan,
             authority_fingerprint=drifted_fingerprint,
         ),
-        lad_learning.context("admit-learning-effect-policy-drift-plan"),
+        generic_effect.context("admit-effect-policy-drift-plan"),
     )
 
     assert decision.accepted is False
     assert decision.refusal is not None
     assert decision.refusal.reason == "unsupported_selected_authority"
     assert decision.refusal.detail == (
-        f"{detail_prefix}:{lad_learning.CURATOR_EFFECT_DECLARATION_ID}"
+        f"{detail_prefix}:{generic_effect.EFFECT_DECLARATION_ID}"
     )

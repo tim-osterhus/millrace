@@ -77,6 +77,12 @@ follow contract are described in
 restart, daemon-lock, and signal behavior are described in
 [Daemon lifecycle](daemon-lifecycle.md).
 
+The local operator can suspend acceptance of new claims without changing
+workflow-authored pause state. Suspend and exact-identity resume are audited
+kernel inputs backed by a versioned durable record. A claim already accepted
+before suspension keeps its authority and may still create or advance its
+runner session; suspension neither abandons nor cancels it.
+
 ## One Stage At A Time
 
 For a normal agent stage, the daemon:

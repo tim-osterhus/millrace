@@ -10,6 +10,12 @@ import zipfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ALLOWED_SOURCE_WORKFLOW_FILES = {
+    "README.md",
+    "__init__.py",
+    "inventory.py",
+    "kernel_ping.py",
+}
 ALLOWED_BASE_WORKFLOW_MODULES = {
     "millrace/workflows/__init__.py",
     "millrace/workflows/inventory.py",
@@ -98,6 +104,13 @@ def _sdist_workflow_modules(names: set[str]) -> set[str]:
     }
 
 
+def test_source_workflow_surface_has_exact_public_allowlist() -> None:
+    workflow_root = PROJECT_ROOT / "src" / "millrace" / "workflows"
+    assert {path.name for path in workflow_root.iterdir() if path.is_file()} == (
+        ALLOWED_SOURCE_WORKFLOW_FILES
+    )
+
+
 def test_built_base_artifacts_ship_only_kernel_ping_workflow_modules(
     tmp_path: Path,
 ) -> None:
@@ -180,6 +193,10 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
         f"""
         import importlib
         import importlib.resources
+        import json
+        import os
+        import subprocess
+        import sys
         from pathlib import Path
 
         import millrace
@@ -187,6 +204,7 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
         import millrace.compiler.export as compiler_export
         from millrace.compiler import (
             CompiledPlanExportError,
+            authority_fingerprint,
             compiled_plan_export_bytes,
             compiled_plan_export_record,
             compile_workflow,
@@ -334,6 +352,162 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
         export_bytes = compiled_plan_export_bytes(result.plan)
         verified = verify_compiled_plan_export_bytes(export_bytes)
         assert verified.workflow_id == "kernel_ping"
+
+        lifecycle_root = Path.cwd() / "installed-lifecycle"
+        lifecycle_root.mkdir()
+        workspace = lifecycle_root / "workspace"
+        export_path = lifecycle_root / "kernel-ping.plan.json"
+        export_path.write_bytes(export_bytes)
+        fingerprint = authority_fingerprint(result.plan)
+        cli_executable = Path(sys.executable).parent / (
+            "millrace.exe" if sys.platform == "win32" else "millrace"
+        )
+
+        def cli(*args, expected_code=0):
+            completed = subprocess.run(
+                [
+                    str(cli_executable),
+                    "--json",
+                    "--workspace",
+                    str(workspace),
+                    *args,
+                ],
+                cwd=lifecycle_root,
+                check=False,
+                capture_output=True,
+                text=True,
+                env={{key: value for key, value in os.environ.items()
+                     if key != "PYTHONPATH"}},
+            )
+            assert completed.returncode == expected_code, (
+                args,
+                completed.stdout,
+                completed.stderr,
+            )
+            raw = completed.stdout if expected_code == 0 else completed.stderr
+            assert raw.endswith("\\n")
+            return json.loads(raw)
+
+        assert cli(
+            "workspace",
+            "init",
+            "--input-id",
+            "wheel-init",
+        )["code"] == "workspace_initialized"
+        assert cli(
+            "plan",
+            "admit",
+            "--compiled-plan-json",
+            str(export_path),
+            "--input-id",
+            "wheel-admit",
+        )["code"] == "plan_admitted"
+        assert cli(
+            "plan",
+            "select-default",
+            fingerprint,
+            "--input-id",
+            "wheel-select",
+        )["code"] == "default_plan_selected"
+
+        initial_status = cli("status")["data"]
+        assert initial_status["selected_plan"]["authority_fingerprint"] == fingerprint
+        assert initial_status["runner_sessions"] == []
+        assert initial_status["daemon_budgets"] == []
+
+        enqueued = cli(
+            "queue",
+            "enqueue",
+            "prompt",
+            "--payload-json",
+            '{{"body":"installed wheel ping"}}',
+            "--input-id",
+            "wheel-enqueue",
+        )
+        assert enqueued["code"] == "work_enqueued"
+        activation_id = enqueued["data"]["activation_id"]
+        listed = cli("queue", "list")["data"]
+        assert any(
+            item["queue_family_id"] == "prompt"
+            for item in listed["queue_families"]
+        )
+
+        suspended = cli(
+            "dispatch",
+            "suspend",
+            "--plan-fingerprint",
+            fingerprint,
+            "--input-id",
+            "wheel-suspend",
+            "--reason",
+            "installed wheel proof",
+        )
+        suspension_id = suspended["data"]["dispatch_suspension"]["suspension_id"]
+        suspended_status = cli("status")["data"]
+        assert suspended_status["dispatch_suspension"]["is_suspended"] is True
+        resumed = cli(
+            "dispatch",
+            "resume",
+            "--plan-fingerprint",
+            fingerprint,
+            "--suspension-id",
+            suspension_id,
+            "--input-id",
+            "wheel-resume",
+            "--reason",
+            "installed wheel proof complete",
+        )
+        assert resumed["code"] == "dispatch_resumed"
+
+        daemon_failure = cli(
+            "run",
+            "daemon",
+            "--max-ticks",
+            "1",
+            "--budget-id",
+            "wheel-budget",
+            "--max-invocations",
+            "1",
+            expected_code=5,
+        )
+        assert daemon_failure["code"] == "adapter_failure"
+        failure_details = daemon_failure["details"]
+        assert failure_details["stopped_reason"] == "adapter_failure"
+        assert failure_details["adapter_failures"] == 1
+        assert failure_details["units_started"] == 0
+        assert failure_details["last_result"]["code"] == "adapter_failure"
+        assert failure_details["last_result"]["accepted"] is False
+        assert failure_details["runner_session"] is None
+        failure_budget = failure_details["budget"]
+        assert failure_budget["budget_id"] == "wheel-budget"
+        assert failure_budget["max_invocations"] == 1
+        assert failure_budget["accepted_start_count"] == 0
+        projected_after_daemon = cli("status")["data"]
+        assert projected_after_daemon["runner_sessions"] == []
+        assert len(projected_after_daemon["daemon_budgets"]) == 1
+        budget = projected_after_daemon["daemon_budgets"][0]
+        assert budget["budget_id"] == "wheel-budget"
+        assert budget["max_invocations"] == 1
+        assert budget["accepted_start_count"] == 0
+
+        claimed = cli(
+            "dispatch",
+            "claim",
+            activation_id,
+            "--claim-id",
+            "wheel-claim",
+            "--input-id",
+            "wheel-claim-input",
+        )
+        run_id = claimed["data"]["run_id"]
+        shown_dispatch = cli("dispatch", "show", run_id)["data"]
+        assert shown_dispatch["dispatch_envelope"]["run_id"] == run_id
+        shown_run = cli("runs", "show", run_id)["data"]["run"]
+        assert shown_run["run_id"] == run_id
+        assert shown_run["runner_session"]["run_id"] == run_id
+        final_status = cli("status")["data"]
+        assert final_status["dispatch_suspension"]["is_suspended"] is False
+        assert final_status["active_runs"][0]["run_id"] == run_id
         """
     )
     _run([python, "-c", smoke_script], cwd=tmp_path)

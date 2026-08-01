@@ -5,14 +5,28 @@ from __future__ import annotations
 from collections import Counter
 
 from millrace.adapters.cli.context import CliCommandError, open_runtime_context
-from millrace.adapters.cli.output import CliSuccess, ExitCode, success_result
+from millrace.adapters.cli.output import (
+    CliSuccess,
+    ExitCode,
+    json_ready,
+    success_result,
+)
 from millrace.adapters.cli.session_coordinator import (
     cooperative_cancel_grace_seconds,
     terminate_grace_seconds,
 )
-from millrace.adapters.cli.status import runner_session_projection
+from millrace.adapters.cli.status import (
+    _daemon_budget_projections,
+    runner_session_projection,
+)
 from millrace.contracts.state import RuntimeState
-from millrace.operator.dispatch import list_ready_dispatch_candidates
+from millrace.operator.dispatch import (
+    dispatch_suspension_projection,
+    list_ready_dispatch_candidates,
+)
+from millrace.operator.status import (
+    queue_closure_projection,
+)
 
 _RUNNER_SESSION_DIAGNOSTIC_MAX_ITEMS = 100
 
@@ -33,6 +47,7 @@ def handle_doctor_command(namespace: object) -> CliSuccess:
         state = runtime.store.load_runtime_state(runtime.cas_store)
         registry = runtime.store.load_workflow_package_registry(runtime.cas_store)
         ready = list_ready_dispatch_candidates(state)
+        budgets = _daemon_budget_projections(runtime, state)
     finally:
         runtime.close()
 
@@ -74,6 +89,11 @@ def handle_doctor_command(namespace: object) -> CliSuccess:
                 "diagnostic_count": len(ready.diagnostics),
                 "severity_counts": dict(sorted(severity_counts.items())),
             },
+            "dispatch_suspension": json_ready(
+                dispatch_suspension_projection(state)
+            ),
+            "queue_closures": json_ready(queue_closure_projection(state)),
+            "daemon_budgets": budgets,
             "runner_session_mechanics": {
                 "cooperative_cancel_grace_seconds": (
                     cooperative_cancel_grace_seconds

@@ -52,7 +52,7 @@ def test_pyproject_exposes_millrace_console_script() -> None:
     scripts = PROJECT_METADATA.get("scripts", {})
 
     assert PROJECT_METADATA["name"] == "millrace-ai"
-    assert PROJECT_VERSION == "0.22.0"
+    assert PROJECT_VERSION == "0.22.1"
     assert scripts["millrace"] == "millrace.adapters.cli.main:cli"
 
 
@@ -307,6 +307,34 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
             ("queue", "enqueue", "work", "--payload-json", "{}"),
             "_dispatch_queue",
         ),
+        (
+            (
+                "queue",
+                "cancel",
+                "work.id",
+                "--plan-fingerprint",
+                "sha256:abc",
+                "--input-id",
+                "cancel.id",
+                "--reason",
+                "obsolete",
+            ),
+            "_dispatch_queue",
+        ),
+        (
+            (
+                "queue",
+                "cancel-lineage",
+                "lineage.id",
+                "--plan-fingerprint",
+                "sha256:abc",
+                "--input-id",
+                "cancel-lineage.id",
+                "--reason",
+                "obsolete",
+            ),
+            "_dispatch_queue",
+        ),
         (("queue", "list"), "_dispatch_queue"),
         (("status",), "_dispatch_status"),
             (("runs", "list"), "_dispatch_status"),
@@ -356,6 +384,34 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
             "_dispatch_intervention",
         ),
         (("dispatch", "claim", "activation.id"), "_dispatch_dispatch"),
+        (
+            (
+                "dispatch",
+                "suspend",
+                "--plan-fingerprint",
+                "sha256:abc",
+                "--input-id",
+                "suspend.id",
+                "--reason",
+                "maintenance",
+            ),
+            "_dispatch_dispatch",
+        ),
+        (
+            (
+                "dispatch",
+                "resume",
+                "--plan-fingerprint",
+                "sha256:abc",
+                "--suspension-id",
+                "suspension.id",
+                "--input-id",
+                "resume.id",
+                "--reason",
+                "done",
+            ),
+            "_dispatch_dispatch",
+        ),
         (("dispatch", "show", "run.id"), "_dispatch_dispatch"),
         (("doctor",), "_dispatch_doctor"),
         (("run", "daemon"), "_dispatch_run"),
@@ -384,7 +440,7 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
         for command in help_parsers
         if command in {"status", "doctor"} or "." in command
     }
-    assert len(command_cases) == 39
+    assert len(command_cases) == 43
     assert registered_leaves == {
         ".".join(argv[:2]) if argv[0] not in {"status", "doctor"} else argv[0]
         for argv, _expected in command_cases

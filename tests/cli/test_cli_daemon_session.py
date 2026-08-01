@@ -5,6 +5,7 @@ import os
 import signal
 import threading
 import time
+from dataclasses import replace
 
 import pytest
 from tests.cli.test_cli_daemon_loop import _close, _daemon_options, _invoke
@@ -269,6 +270,119 @@ def test_signal_during_active_session_requests_cancellation(tmp_path) -> None:
     assert stopped_session["application_status"] == "not_applicable"
     assert stopped_session["cancellation_last_operation"] == "transport_cleanup"
     assert stopped_session["cancellation_last_result"] == "succeeded"
+
+
+def test_wall_expiry_cleans_live_session_and_records_cleanup_grace_overshoot(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import daemon, session_coordinator
+
+    clock_state = {"expired": False, "cleaned": False}
+    captured_deadlines: list[float] = []
+
+    class WallExpiryHandle(_SignalWaitHandle):
+        def poll_completion(self):
+            if not self._cancelled:
+                clock_state["expired"] = True
+                return None
+            return super().poll_completion()
+
+        def cleanup(self) -> RunnerCleanupResult:
+            clock_state["cleaned"] = True
+            return super().cleanup()
+
+    class WallExpiryAdapter(_SignalWaitAdapter):
+        def start_session(
+            self,
+            request: AdapterInvocationRequest,
+        ) -> StartedSession:
+            return StartedSession(
+                DispatchEcho.from_dispatch_envelope(
+                    request.dispatch_envelope,
+                    correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
+                ),
+                WallExpiryHandle(request),
+                f"wall-expiry:{request.session_id}",
+                {},
+            )
+
+    def wall_clock() -> float:
+        if clock_state["cleaned"]:
+            return 103.0
+        if clock_state["expired"]:
+            return 101.0
+        return 100.0
+
+    real_drive = session_coordinator._drive_owned_live_handle
+
+    def capture_deadline(*args, **kwargs):
+        captured_deadlines.append(float(kwargs["deadline"]))
+        return real_drive(*args, **kwargs)
+
+    monkeypatch.setattr(session_coordinator, "_monotonic", lambda: 50.0)
+    monkeypatch.setattr(
+        session_coordinator,
+        "_drive_owned_live_handle",
+        capture_deadline,
+    )
+    state, _fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    paths = runtime.paths
+    runtime.close()
+    options = replace(
+        _daemon_options(
+            paths,
+            max_ticks=2,
+            local_config=AdapterLocalConfig(
+                adapters={"codex": WallExpiryAdapter()}
+            ),
+        ),
+        budget_id="budget-live-wall-expiry",
+        max_wall_seconds=1,
+        max_invocations=2,
+    )
+
+    summary = daemon.run_daemon_loop(options, wall_clock=wall_clock)
+    reopened = daemon.open_runtime_context(paths, command="test")
+    try:
+        after = _load(reopened)
+        epoch = reopened.store.load_daemon_budget_epoch(options.budget_id)
+    finally:
+        reopened.close()
+
+    assert captured_deadlines == [51.0]
+    requests = tuple(after.runner_session_cancellation_requests.values())
+    assert len(requests) == 1
+    assert (requests[0].reason, requests[0].source_kind) == (
+        "daemon_shutdown",
+        "daemon",
+    )
+    session = after.runner_sessions[requests[0].session_id]
+    assert (session.state, session.cleanup_disposition) == (
+        "interrupted",
+        "complete",
+    )
+    attempts = sorted(
+        after.runner_session_cancellation_attempts.values(),
+        key=lambda item: item.sequence,
+    )
+    assert [attempt.operation for attempt in attempts] == [
+        "cooperative_cancel",
+        "transport_cleanup",
+    ]
+    assert summary.stopped_reason == "budget_exhausted"
+    assert summary.budget is not None
+    assert summary.budget["wall_cleanup_grace_overshoot"] == 2
+    assert summary.budget["terminal_reason"] == "wall_time_exhausted"
+    assert epoch is not None
+    assert (epoch.status, epoch.last_observed_at, epoch.terminal_reason) == (
+        "exhausted",
+        103,
+        "wall_time_exhausted",
+    )
+    assert after.dispatch_suspension is not None
 
 
 def test_signal_with_orphan_risk_is_not_reported_as_clean_stop(tmp_path) -> None:

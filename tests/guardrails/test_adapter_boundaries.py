@@ -53,6 +53,9 @@ CLI_REVIEWED_RUNNER_IMPORT_PREFIXES_BY_FILE = {
     "millrace/adapters/cli/session_completion.py": (
         "millrace.adapters.runner_contract",
     ),
+    "millrace/adapters/cli/session_persistence.py": (
+        "millrace.adapters.runner_contract",
+    ),
     "millrace/adapters/cli/run.py": (
         "millrace.adapters.codex",
         "millrace.adapters.millforge",

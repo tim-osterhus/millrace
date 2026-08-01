@@ -8,7 +8,6 @@ from typing import cast
 import pytest
 
 from millrace.compiler.canonical import authority_fingerprint
-from millrace.compiler.compile import CompileResult
 from millrace.compiler.package_selection import (
     PackageRegistryView,
     PackageWorkflowSelector,
@@ -18,14 +17,12 @@ from millrace.compiler.runner_bindings import (
     RUNNER_ADAPTER_KIND_DEFAULTED,
     SelectedRunnerAdapterPolicy,
 )
-from millrace.contracts import Diagnostic
 from millrace.contracts.compiled_plan import SelectedCompiledPlan
 from millrace.contracts.workflow_package import (
     WorkflowPackageManifestCanonicalizationError,
     asset_digest_for_bytes,
     manifest_digest_for_manifest,
 )
-from millrace.workflows import simple_loop
 
 Record = dict[str, object]
 Source = dict[str, object]
@@ -38,11 +35,6 @@ PACKAGE_FORMAT_VERSION = "1"
 PACKAGE_DIGEST = "sha256:" + ("1" * 64)
 MANIFEST_CAS_DIGEST = "cas:manifest"
 ASSET_CAS_DIGEST = "cas:asset.prompt"
-SIMPLE_LOOP_PACKAGE_ID = "pkg.example.simple_loop"
-SIMPLE_LOOP_PACKAGE_VERSION = "0.1.0"
-SIMPLE_LOOP_PACKAGE_DIGEST = "sha256:" + ("2" * 64)
-SIMPLE_LOOP_MANIFEST_CAS_DIGEST = "cas:simple-loop-manifest"
-SIMPLE_LOOP_TROUBLESHOOTER_PROMPT_ID = "simple_loop.troubleshooter_prompt"
 _CODEX_POLICY = SelectedRunnerAdapterPolicy(
     default_adapter_kind="codex",
     supported_adapter_kinds=frozenset({"codex"}),
@@ -464,124 +456,6 @@ def test_package_selection_accepts_custom_selected_runner_policy() -> None:
     }
 
 
-def _simple_loop_selector() -> PackageWorkflowSelector:
-    return _selector(
-        package_id=SIMPLE_LOOP_PACKAGE_ID,
-        package_version=SIMPLE_LOOP_PACKAGE_VERSION,
-        workflow_id="simple_loop",
-        workflow_version="0.1",
-    )
-
-
-def _simple_loop_package_fixture(
-    *,
-    troubleshooter_asset_kind: str = "entrypoint_prompt",
-) -> tuple[Record, PackageRegistryView, dict[str, bytes]]:
-    selected_authority = simple_loop.workflow_source()
-    source_assets = cast(list[Record], selected_authority.pop("assets"))
-    required_assets: list[Record] = []
-    manifest_assets: list[Record] = []
-    registry_assets: list[Record] = []
-    cas: dict[str, bytes] = {}
-    for index, asset in enumerate(source_assets):
-        asset_id = str(asset["id"])
-        body = str(asset["body"])
-        asset_bytes = body.encode("utf-8")
-        content_digest = asset_digest_for_bytes(asset_bytes)
-        asset_kind = (
-            troubleshooter_asset_kind
-            if asset_id == SIMPLE_LOOP_TROUBLESHOOTER_PROMPT_ID
-            else "entrypoint_prompt"
-        )
-        asset_cas_digest = f"cas:simple-loop-asset-{index}"
-        cas[asset_cas_digest] = asset_bytes
-        required_assets.append({"asset_id": asset_id, "content_digest": content_digest})
-        manifest_assets.append(
-            {
-                "asset_id": asset_id,
-                "asset_kind": asset_kind,
-                "media_type": "text/markdown; charset=utf-8",
-                "encoding": "utf-8",
-                "content_digest": content_digest,
-                "byte_length": len(asset_bytes),
-                "package_path": f"prompts/{asset_id.replace('.', '_')}.md",
-                "selection": "required",
-                "selected_authority_participation": "yes",
-            }
-        )
-        registry_assets.append(
-            {
-                "asset_id": asset_id,
-                "content_digest": content_digest,
-                "byte_length": len(asset_bytes),
-                "cas_digest": asset_cas_digest,
-                "selected_authority_participation": "yes",
-            }
-        )
-
-    workflow = cast(Record, selected_authority["workflow"])
-    manifest: Record = {
-        "record_kind": "millrace.workflow_package_manifest",
-        "manifest_format_version": "1",
-        "package": {
-            "package_id": SIMPLE_LOOP_PACKAGE_ID,
-            "package_version": SIMPLE_LOOP_PACKAGE_VERSION,
-            "package_format_version": PACKAGE_FORMAT_VERSION,
-            "package_role": "workflow_package",
-            "publisher": "Example",
-            "base_millrace_compatibility": ">=0.22,<0.23",
-            "source_kind": "archive",
-            "publication_scope": "test",
-        },
-        "workflows": [
-            {
-                "workflow_id": workflow["id"],
-                "workflow_version": workflow["version"],
-                "visibility": "test_only",
-                "entrypoints": ["default"],
-                "selected_authority": selected_authority,
-                "required_assets": required_assets,
-                "required_dependencies": [],
-            }
-        ],
-        "assets": manifest_assets,
-        "dependencies": [],
-        "compatibility": {"base_millrace": ">=0.22,<0.23"},
-        "canonicalization": {"algorithm": "millrace-json-v1", "hash": "sha256"},
-        "manifest_digest": None,
-        "non_authoritative_metadata": {
-            "source_kind": "archive",
-            "status": "non-authoritative",
-        },
-    }
-    manifest["manifest_digest"] = manifest_digest_for_manifest(manifest)
-    cas[SIMPLE_LOOP_MANIFEST_CAS_DIGEST] = _manifest_bytes(manifest)
-    registry_record: Record = {
-        "package_id": SIMPLE_LOOP_PACKAGE_ID,
-        "package_version": SIMPLE_LOOP_PACKAGE_VERSION,
-        "package_format_version": PACKAGE_FORMAT_VERSION,
-        "manifest_digest": manifest["manifest_digest"],
-        "package_digest": SIMPLE_LOOP_PACKAGE_DIGEST,
-        "manifest_cas_digest": SIMPLE_LOOP_MANIFEST_CAS_DIGEST,
-        "status": "enabled",
-        "is_current": True,
-        "assets": registry_assets,
-        "dependencies": [],
-    }
-    return manifest, PackageRegistryView(records=(registry_record,)), cas
-
-
-def _recovery_route_asset_kind_diagnostics(
-    result: CompileResult,
-) -> list[Diagnostic]:
-    return [
-        diagnostic
-        for diagnostic in result.diagnostics
-        if diagnostic.severity == "error"
-        and diagnostic.code == "terminal_recovery_route_asset_kind_mismatch"
-    ]
-
-
 def test_compile_selects_workflow_by_explicit_package_and_workflow_ref() -> None:
     plan = _compile_from_package()
 
@@ -928,68 +802,3 @@ def test_compile_selection_api_does_not_mutate_registry_or_cas() -> None:
 
     assert registry.records == registry_before
     assert cas == cas_before
-
-
-def test_simple_loop_package_selection_allows_recovery_entrypoint_prompt() -> None:
-    manifest, registry, cas = _simple_loop_package_fixture()
-    workflow = cast(Record, cast(list[object], manifest["workflows"])[0])
-    selected_authority = cast(Record, workflow["selected_authority"])
-
-    result = _compile_result(_simple_loop_selector(), registry, cas)
-
-    assert "assets" not in selected_authority
-    assert _recovery_route_asset_kind_diagnostics(result) == []
-    assert [
-        diagnostic
-        for diagnostic in result.diagnostics
-        if diagnostic.severity == "error"
-    ] == []
-    assert result.plan is not None
-    assert result.plan.workflow_package_pin is not None
-    assert {
-        pin.asset_id for pin in result.plan.workflow_package_pin.selected_asset_pins
-    } == {
-        "simple_loop.manager_prompt",
-        "simple_loop.worker_prompt",
-        "simple_loop.reviewer_prompt",
-        SIMPLE_LOOP_TROUBLESHOOTER_PROMPT_ID,
-    }
-    assets_by_id = {str(asset.id): asset for asset in result.plan.assets}
-    assert (
-        assets_by_id[SIMPLE_LOOP_TROUBLESHOOTER_PROMPT_ID].asset_kind
-        == "entrypoint_prompt"
-    )
-
-
-@pytest.mark.parametrize(
-    "asset_kind",
-    (
-        "stage_skill",
-        "shared_skill",
-        "template",
-        "schema",
-        "example",
-        "fixture",
-        "blob",
-    ),
-)
-def test_compile_simple_loop_package_selection_refuses_non_prompt_like_recovery_asset(
-    asset_kind: str,
-) -> None:
-    _, registry, cas = _simple_loop_package_fixture(
-        troubleshooter_asset_kind=asset_kind,
-    )
-
-    result = _compile_result(_simple_loop_selector(), registry, cas)
-
-    assert result.plan is None
-    mismatches = _recovery_route_asset_kind_diagnostics(result)
-    assert {diagnostic.declaration_path for diagnostic in mismatches} == {
-        "terminal_actions[3].asset_ids[0]",
-        "terminal_actions[7].asset_ids[0]",
-        "terminal_actions[8].asset_ids[0]",
-        "terminal_actions[12].asset_ids[0]",
-    }
-    for diagnostic in mismatches:
-        assert diagnostic.context["asset_id"] == SIMPLE_LOOP_TROUBLESHOOTER_PROMPT_ID
-        assert diagnostic.context["asset_kind"] == asset_kind

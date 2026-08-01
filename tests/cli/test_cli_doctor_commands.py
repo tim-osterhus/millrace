@@ -117,10 +117,14 @@ def test_doctor_is_minimal_generic_read_only_projection(tmp_path: Path) -> None:
         "default_plan",
         "packages",
         "ready_dispatch",
+        "dispatch_suspension",
+        "queue_closures",
+        "daemon_budgets",
         "runner_session_mechanics",
         "runner_session_diagnostics",
         "required_paths",
     ]
+    assert data["daemon_budgets"] == []
     assert data["workspace"]["path"] == str(workspace)
     assert data["store"]["initialized"] is True
     assert data["cas"]["initialized"] is True

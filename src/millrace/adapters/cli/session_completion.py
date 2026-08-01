@@ -9,6 +9,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from hashlib import sha256
 from uuid import uuid4
 
+from millrace.adapters.cli import session_persistence as persistence
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
     refusal_is_pre_persist,
@@ -31,7 +32,6 @@ from millrace.contracts.runner import (
     RunnerResultEvidence,
     runner_result_evidence_bytes,
     runner_result_evidence_digest,
-    runner_result_evidence_from_payload,
 )
 from millrace.contracts.state import (
     RunnerSessionCancellationRecord,
@@ -115,6 +115,8 @@ def _persist_orphan_risk(
         is None
     ):
         return SessionExecutionResult(persistence_failure_code)
+    if not persistence._persist_governed_runner_usage(runtime, session, outcome):
+        return SessionExecutionResult("runner_usage_evidence_refused")
     return SessionExecutionResult(
         "runner_session_orphan_risk",
         adapter_error_kind=reported_adapter_error_kind,
@@ -142,7 +144,7 @@ def _persist_completion(
     if refusal is not None:
         return refusal
     if isinstance(outcome, AdapterErrorResult):
-        return _persist_error_completion(
+        result = _persist_error_completion(
             runtime,
             run_ref=run_ref,
             session=session,
@@ -152,15 +154,21 @@ def _persist_completion(
             primary=primary,
             terminal_state=adapter_error_terminal_state,
         )
-    return _persist_success_completion(
-        runtime,
-        run_ref=run_ref,
-        session=session,
-        request=request,
-        outcome=outcome,
-        cleanup=cleanup,
-        primary=primary,
-    )
+    else:
+        result = _persist_success_completion(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            outcome=outcome,
+            cleanup=cleanup,
+            primary=primary,
+        )
+    if result.code in {"completion_refused", "session_reconciliation_required"}:
+        return result
+    if not persistence._persist_governed_runner_usage(runtime, session, outcome):
+        return SessionExecutionResult("runner_usage_evidence_refused")
+    return result
 
 
 def _completion_refusal(
@@ -507,7 +515,7 @@ def _apply_persisted_completion(
     if digest is None:
         return SessionExecutionResult("ready_state_corrupt")
     try:
-        evidence = _load_evidence(runtime, digest)
+        evidence = persistence._load_evidence(runtime, digest)
     except (TypeError, ValueError, json.JSONDecodeError):
         return SessionExecutionResult("completion_refused")
     if runner_result_evidence_digest(
@@ -553,16 +561,6 @@ def _apply_persisted_completion(
         accepted=True,
         transition_disposition=decision.disposition,
     )
-
-
-def _load_evidence(
-    runtime: OpenRuntimeContext,
-    digest: str,
-) -> RunnerResultEvidence:
-    parsed = json.loads(runtime.cas_store.get_bytes(digest))
-    if not isinstance(parsed, dict):
-        raise ValueError("runner result evidence CAS object must be a mapping")
-    return runner_result_evidence_from_payload(parsed)
 
 
 def _persist_transition(

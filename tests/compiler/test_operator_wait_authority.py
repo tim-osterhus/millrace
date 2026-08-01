@@ -8,7 +8,7 @@ import pytest
 
 from millrace.compiler import SelectedRunnerAdapterPolicy, compile_workflow
 from millrace.contracts import Diagnostic
-from millrace.workflows import simple_loop
+from support import generic_operator_wait
 
 Source = dict[str, object]
 Record = dict[str, object]
@@ -23,7 +23,7 @@ _CODEX_POLICY = SelectedRunnerAdapterPolicy(
 
 
 def _source() -> Source:
-    return simple_loop.workflow_source()
+    return generic_operator_wait.source()
 
 
 def _records(source: Source, key: str) -> list[Record]:
@@ -68,16 +68,16 @@ def _find_operator_wait_field_error(
 
 def test_duplicate_operator_wait_owner_is_rejected() -> None:
     source = _source()
-    original = _operator_wait(source, "simple_loop.manager_detail_wait")
+    original = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
     duplicate = deepcopy(original)
     duplicate["id"] = "test.duplicate_manager_detail_wait"
     _records(source, "operator_waits").append(duplicate)
 
     error = _find_error(_errors(source), "duplicate_operator_wait_owner")
 
-    assert error.context["action_id"] == "simple_loop.manager.needs_operator_detail"
+    assert error.context["action_id"] == generic_operator_wait.REVISE_ACTION_ID
     assert error.context["first_operator_wait_id"] == (
-        "simple_loop.manager_detail_wait"
+        generic_operator_wait.REVISE_WAIT_ID
     )
     assert error.context["duplicate_operator_wait_id"] == (
         "test.duplicate_manager_detail_wait"
@@ -86,44 +86,44 @@ def test_duplicate_operator_wait_owner_is_rejected() -> None:
 
 def test_duplicate_operator_wait_source_action_is_rejected() -> None:
     source = _source()
-    wait = _operator_wait(source, "simple_loop.manager_detail_wait")
+    wait = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
     wait["source_action_ids"] = (
-        "simple_loop.manager.needs_operator_detail",
-        "simple_loop.manager.needs_operator_detail",
+        generic_operator_wait.REVISE_ACTION_ID,
+        generic_operator_wait.REVISE_ACTION_ID,
     )
 
     error = _find_error(_errors(source), "duplicate_operator_wait_source_action")
 
-    assert error.context["operator_wait_id"] == "simple_loop.manager_detail_wait"
-    assert error.context["action_id"] == "simple_loop.manager.needs_operator_detail"
+    assert error.context["operator_wait_id"] == generic_operator_wait.REVISE_WAIT_ID
+    assert error.context["action_id"] == generic_operator_wait.REVISE_ACTION_ID
 
 
 def test_empty_operator_wait_source_actions_are_rejected() -> None:
     source = _source()
-    wait = _operator_wait(source, "simple_loop.manager_detail_wait")
+    wait = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
     wait["source_action_ids"] = ()
 
     error = _find_operator_wait_field_error(_errors(source), "source_action_ids")
 
     assert error.declaration_path == "operator_waits[0].source_action_ids"
-    assert error.context["operator_wait_id"] == "simple_loop.manager_detail_wait"
+    assert error.context["operator_wait_id"] == generic_operator_wait.REVISE_WAIT_ID
     assert error.context["value"] == ""
 
 
 def test_empty_operator_wait_resolution_kinds_are_rejected() -> None:
     source = _source()
-    wait = _operator_wait(source, "simple_loop.manager_detail_wait")
+    wait = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
     wait["allowed_resolution_kinds"] = ()
     wait["audit_metadata_requirements"] = ()
 
     error = _find_operator_wait_field_error(_errors(source), "allowed_resolution_kinds")
 
-    assert error.context["operator_wait_id"] == "simple_loop.manager_detail_wait"
+    assert error.context["operator_wait_id"] == generic_operator_wait.REVISE_WAIT_ID
 
 
 def test_duplicate_operator_wait_resolution_kind_is_rejected() -> None:
     source = _source()
-    wait = _operator_wait(source, "simple_loop.manager_detail_wait")
+    wait = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
     wait["allowed_resolution_kinds"] = (
         "resume_recorded_source",
         "resume_recorded_source",
@@ -131,7 +131,7 @@ def test_duplicate_operator_wait_resolution_kind_is_rejected() -> None:
 
     error = _find_error(_errors(source), "duplicate_operator_wait_resolution_kind")
 
-    assert error.context["operator_wait_id"] == "simple_loop.manager_detail_wait"
+    assert error.context["operator_wait_id"] == generic_operator_wait.REVISE_WAIT_ID
     assert error.context["resolution_kind"] == "resume_recorded_source"
 
 
@@ -156,12 +156,12 @@ def test_operator_wait_fixed_policy_fields_are_rejected(
     value: object,
 ) -> None:
     source = _source()
-    wait = _operator_wait(source, "simple_loop.manager_detail_wait")
+    wait = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
     wait[field_name] = value
 
     error = _find_operator_wait_field_error(_errors(source), field_name)
 
-    assert error.context["operator_wait_id"] == "simple_loop.manager_detail_wait"
+    assert error.context["operator_wait_id"] == generic_operator_wait.REVISE_WAIT_ID
 
 
 @pytest.mark.parametrize(
@@ -172,16 +172,16 @@ def test_close_on_create_wait_rejects_non_close_resolution_kind(
     resolution_kind: str,
 ) -> None:
     source = _source()
-    wait = _operator_wait(source, "simple_loop.manager_incident_wait")
+    wait = _operator_wait(source, generic_operator_wait.CLOSE_WAIT_ID)
     wait["allowed_resolution_kinds"] = ("close_recorded_source", resolution_kind)
     if resolution_kind == "revise_recorded_source":
         wait.update(
             {
-                "payload_schema_id": "simple_loop.work_prompt",
-                "target_queue_family_id": "work_prompt",
-                "target_stage_kind_id": "simple_loop.manager",
-                "target_graph_node_id": "simple_loop.manager.start",
-                "target_runner_binding_id": "simple_loop.default_agent_runner",
+                "payload_schema_id": "kernel_ping.task_artifact",
+                "target_queue_family_id": "prompt",
+                "target_stage_kind_id": "kernel_ping.taskmaster",
+                "target_graph_node_id": "kernel_ping.taskmaster.start",
+                "target_runner_binding_id": "kernel_ping.taskmaster_runner",
             }
         )
 
@@ -190,23 +190,23 @@ def test_close_on_create_wait_rejects_non_close_resolution_kind(
         "source_work_item_behavior",
     )
 
-    assert error.context["operator_wait_id"] == "simple_loop.manager_incident_wait"
+    assert error.context["operator_wait_id"] == generic_operator_wait.CLOSE_WAIT_ID
     assert error.context["value"] == "close_on_create"
 
 
 def test_revise_target_fields_without_revise_authority_are_rejected() -> None:
     source = _source()
-    wait = _operator_wait(source, "simple_loop.manager_incident_wait")
-    wait["payload_schema_id"] = "simple_loop.work_prompt"
+    wait = _operator_wait(source, generic_operator_wait.CLOSE_WAIT_ID)
+    wait["payload_schema_id"] = "kernel_ping.task_artifact"
 
     error = _find_operator_wait_field_error(_errors(source), "payload_schema_id")
 
-    assert error.context["operator_wait_id"] == "simple_loop.manager_incident_wait"
+    assert error.context["operator_wait_id"] == generic_operator_wait.CLOSE_WAIT_ID
 
 
 def test_revise_resolution_requires_all_target_fields() -> None:
     source = _source()
-    wait = _operator_wait(source, "simple_loop.manager_detail_wait")
+    wait = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
     del wait["target_runner_binding_id"]
 
     error = _find_error(_errors(source), "missing_operator_wait_field")
@@ -218,13 +218,13 @@ def test_revise_resolution_requires_all_target_fields() -> None:
 def test_operator_wait_revise_payload_schema_must_match_target_route_schema() -> None:
     source = _source()
     external_route = _records(source, "external_enqueue_routes")[0]
-    external_route["payload_schema_id"] = "simple_loop.work_prompt"
-    wait = _operator_wait(source, "simple_loop.manager_detail_wait")
-    wait["payload_schema_id"] = "simple_loop.detail_request"
+    external_route["payload_schema_id"] = "kernel_ping.task_artifact"
+    wait = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
+    wait["payload_schema_id"] = "kernel_ping.task_incident"
 
     error = _find_error(_errors(source), "intervention_target_payload_schema_mismatch")
 
     assert error.declaration_path == "operator_waits[0].payload_schema_id"
     assert error.context["referrer_path"] == "operator_waits[0]"
-    assert error.context["payload_schema_id"] == "simple_loop.detail_request"
-    assert error.context["target_payload_schema_id"] == "simple_loop.work_prompt"
+    assert error.context["payload_schema_id"] == "kernel_ping.task_incident"
+    assert error.context["target_payload_schema_id"] == "kernel_ping.task_artifact"

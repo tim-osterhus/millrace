@@ -182,6 +182,215 @@ def test_dispatch_show_is_read_only_and_refuses_unknown_run(tmp_path: Path) -> N
     assert _state(workspace) == before
 
 
+def test_dispatch_suspend_and_exact_resume_are_replay_safe(tmp_path: Path) -> None:
+    workspace, activation_id = _workspace_with_ready_activation(tmp_path)
+
+    suspend_args = [
+        "--json",
+        "--actor-id",
+        "operator-a",
+        "--workspace",
+        str(workspace),
+        "dispatch",
+        "suspend",
+        "--plan-fingerprint",
+        next(iter(_state(workspace).admitted_plans)),
+        "--input-id",
+        "suspend-cli",
+        "--reason",
+        "bounded maintenance",
+    ]
+    suspend_code, suspend_stdout, suspend_stderr = _invoke(suspend_args)
+
+    assert suspend_code == 0, (suspend_stdout, suspend_stderr)
+    suspend_payload = _json(suspend_stdout)
+    assert suspend_payload["code"] == "dispatch_suspended"
+    suspension = suspend_payload["data"]["dispatch_suspension"]
+    assert suspension["status"] == "active"
+    assert suspension["actor_id"] == "operator-a"
+    suspension_id = str(suspension["suspension_id"])
+
+    claim_code, claim_stdout, claim_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "claim",
+            activation_id,
+            "--input-id",
+            "claim-suspended",
+        ]
+    )
+    assert claim_code == 3
+    assert claim_stdout == ""
+    assert _json(claim_stderr)["code"] == "dispatch_suspended"
+
+    replay_code, replay_stdout, replay_stderr = _invoke(suspend_args)
+    assert replay_code == 0, (replay_stdout, replay_stderr)
+    assert _json(replay_stdout)["data"]["transition_disposition"] == "replayed"
+
+    resume_args = [
+        "--json",
+        "--actor-id",
+        "operator-b",
+        "--workspace",
+        str(workspace),
+        "dispatch",
+        "resume",
+        "--plan-fingerprint",
+        next(iter(_state(workspace).admitted_plans)),
+        "--suspension-id",
+        suspension_id,
+        "--input-id",
+        "resume-cli",
+        "--reason",
+        "maintenance complete",
+    ]
+    resume_code, resume_stdout, resume_stderr = _invoke(resume_args)
+
+    assert resume_code == 0, (resume_stdout, resume_stderr)
+    resume_payload = _json(resume_stdout)
+    assert resume_payload["code"] == "dispatch_resumed"
+    assert resume_payload["data"]["dispatch_suspension"]["status"] == "resumed"
+    assert resume_payload["data"]["dispatch_suspension"]["resume_actor_id"] == (
+        "operator-b"
+    )
+
+
+def test_dispatch_suspend_refuses_when_already_suspended(tmp_path: Path) -> None:
+    workspace, _activation_id = _workspace_with_ready_activation(tmp_path)
+    fingerprint = next(iter(_state(workspace).admitted_plans))
+    suspend_args = [
+        "--json",
+        "--workspace",
+        str(workspace),
+        "dispatch",
+        "suspend",
+        "--plan-fingerprint",
+        fingerprint,
+        "--input-id",
+        "suspend-first",
+        "--reason",
+        "first maintenance window",
+    ]
+    suspend_code, suspend_stdout, suspend_stderr = _invoke(suspend_args)
+    assert suspend_code == 0, (suspend_stdout, suspend_stderr)
+    before = _state(workspace).dispatch_suspension
+    assert before is not None
+
+    duplicate_code, duplicate_stdout, duplicate_stderr = _invoke(
+        [
+            *suspend_args[:8],
+            "suspend-second",
+            "--reason",
+            "materially new maintenance window",
+        ]
+    )
+
+    assert duplicate_code == 3
+    assert duplicate_stdout == ""
+    assert _json(duplicate_stderr)["code"] == "dispatch_already_suspended"
+    assert _state(workspace).dispatch_suspension == before
+
+
+def test_dispatch_resume_refuses_when_not_suspended(tmp_path: Path) -> None:
+    workspace, _activation_id = _workspace_with_ready_activation(tmp_path)
+    fingerprint = next(iter(_state(workspace).admitted_plans))
+    before = _state(workspace).dispatch_suspension
+
+    resume_code, resume_stdout, resume_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "resume",
+            "--plan-fingerprint",
+            fingerprint,
+            "--suspension-id",
+            "no-active-suspension",
+            "--input-id",
+            "resume-without-suspension",
+            "--reason",
+            "nothing to resume",
+        ]
+    )
+
+    assert resume_code == 3
+    assert resume_stdout == ""
+    assert _json(resume_stderr)["code"] == "dispatch_not_suspended"
+    assert _state(workspace).dispatch_suspension == before
+
+
+def test_dispatch_resume_refuses_wrong_suspension_identity(tmp_path: Path) -> None:
+    workspace, _activation_id = _workspace_with_ready_activation(tmp_path)
+    fingerprint = next(iter(_state(workspace).admitted_plans))
+    suspend_code, suspend_stdout, suspend_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "suspend",
+            "--plan-fingerprint",
+            fingerprint,
+            "--input-id",
+            "suspend-wrong-resume",
+            "--reason",
+            "maintenance",
+        ]
+    )
+    assert suspend_code == 0, (suspend_stdout, suspend_stderr)
+
+    wrong_plan_code, wrong_plan_stdout, wrong_plan_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "resume",
+            "--plan-fingerprint",
+            f"sha256:{'0' * 64}",
+            "--suspension-id",
+            str(_json(suspend_stdout)["data"]["dispatch_suspension"]["suspension_id"]),
+            "--input-id",
+            "resume-wrong-plan",
+            "--reason",
+            "wrong plan",
+        ]
+    )
+    assert wrong_plan_code == 3
+    assert wrong_plan_stdout == ""
+    assert _json(wrong_plan_stderr)["code"] == "selected_plan_mismatch"
+
+    resume_code, resume_stdout, resume_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "resume",
+            "--plan-fingerprint",
+            fingerprint,
+            "--suspension-id",
+            "wrong-id",
+            "--input-id",
+            "resume-wrong-id",
+            "--reason",
+            "done",
+        ]
+    )
+
+    assert resume_code == 3
+    assert resume_stdout == ""
+    assert _json(resume_stderr)["code"] == (
+        "dispatch_suspension_identity_mismatch"
+    )
+    assert _state(workspace).dispatch_suspension is not None
+    assert _state(workspace).dispatch_suspension.status == "active"
+
+
 def test_ready_candidate_claim_reload_aftermath_is_stable(tmp_path: Path) -> None:
     from millrace.operator.dispatch import list_ready_dispatch_candidates
 
