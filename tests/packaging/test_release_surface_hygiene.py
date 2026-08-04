@@ -279,6 +279,25 @@ def test_publish_workflow_matches_package_version_and_artifact_hashes() -> None:
         assert len(set(digests)) == 1
 
 
+def test_release_builds_pin_uv_before_the_012_sdist_contract_change() -> None:
+    build_requirements = tomllib.loads(
+        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["build-system"]["requires"]
+    assert build_requirements == ["uv_build>=0.11.30,<0.12"]
+
+    for workflow_name in ("ci.yml", "publish-to-pypi.yml"):
+        workflow = (
+            PROJECT_ROOT / ".github" / "workflows" / workflow_name
+        ).read_text(encoding="utf-8")
+        versions = re.findall(
+            r"(?m)^\s+version:\s*[\"']?(\d+\.\d+\.\d+)[\"']?\s*$",
+            workflow,
+        )
+        assert len(versions) == 1, workflow_name
+        major, minor, _patch = (int(part) for part in versions[0].split("."))
+        assert (major, minor) < (0, 12), workflow_name
+
+
 def test_public_document_set_uses_final_release_paths() -> None:
     required = {
         "README.md",
