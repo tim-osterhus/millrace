@@ -305,7 +305,7 @@ def test_public_docs_are_self_contained_and_links_are_release_safe() -> None:
     millforge_guide = (PROJECT_ROOT / "docs/millforge-runner.md").read_text(
         encoding="utf-8"
     )
-    canonical_root = "https://github.com/tim-osterhus/millrace/blob/v0.22.1/"
+    canonical_root = "https://github.com/tim-osterhus/millrace/blob/main/"
     current_relative_docs = {
         "docs/runner-session-architecture.md",
         "docs/daemon-lifecycle.md",
@@ -317,6 +317,13 @@ def test_public_docs_are_self_contained_and_links_are_release_safe() -> None:
     for relative_path in current_relative_docs:
         assert f"]({relative_path})" in readme
         assert (PROJECT_ROOT / relative_path).is_file()
+    assert "https://img.shields.io/pypi/v/millrace-ai.svg" in readme
+    assert (
+        "https://raw.githubusercontent.com/tim-osterhus/millrace/main/"
+        "docs/assets/images/millrace-icon-signal-transparent-glow.png"
+    ) in readme
+    assert "/millrace/blob/v0.22.1/" not in readme
+    assert "/millrace/v0.22.1/" not in readme
     assert "](LICENSE)" not in readme
     assert "source runtime checkout" not in millforge_guide
     assert "After the v0.22 distributions are published" not in millforge_guide
