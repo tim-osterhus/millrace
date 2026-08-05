@@ -49,6 +49,7 @@ def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
             },
         ),
         "selected_join_evidence": None,
+        "selected_wait_evidence": None,
     }
     values.update(overrides)
     return RunnerDispatchEnvelope(
@@ -89,6 +90,10 @@ def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
         selected_join_evidence=cast(
             dict[str, AuthorityValue] | None,
             values["selected_join_evidence"],
+        ),
+        selected_wait_evidence=cast(
+            dict[str, AuthorityValue] | None,
+            values["selected_wait_evidence"],
         ),
     )
 
@@ -144,6 +149,60 @@ def _valid_selected_join_evidence(**overrides: object) -> dict[str, object]:
     return evidence
 
 
+def _valid_selected_wait_evidence(**overrides: object) -> dict[str, object]:
+    evidence: dict[str, object] = {
+        "record_kind": "selected_wait_evidence",
+        "schema_version": 1,
+        "wait_id": "wait-1",
+        "operator_wait_id": "operator-wait-1",
+        "lineage_id": "lineage-1",
+        "source_artifact_id": "artifact-1",
+        "source_artifact_schema_id": "SourceRecord",
+        "source_artifact_digest": "sha256:" + "d" * 64,
+        "source_artifact_payload": {"detail": "selected"},
+        "source_action_id": "action-1",
+        "source_run_id": "run-source-1",
+        "source_work_item_id": "work-source-1",
+    }
+    evidence.update(overrides)
+    return evidence
+
+
+def _default_selected_projection(
+    dispatch: RunnerDispatchEnvelope,
+) -> tuple[tuple[object, ...], tuple[object, ...]]:
+    from millrace.contracts.compiled_plan import (
+        ArtifactSchemaDeclaration,
+        RunnerTerminalResultMapping,
+    )
+    from millrace.contracts.ids import ArtifactSchemaId, OutcomeId, StageKindId
+
+    mappings = tuple(
+        RunnerTerminalResultMapping(
+            stage_kind_id=StageKindId(dispatch.stage_kind_id),
+            runner_result_id=f"RESULT_{option['outcome_id']}",
+            outcome_id=OutcomeId(str(option["outcome_id"])),
+        )
+        for option in dispatch.terminal_options
+    )
+    schema_ids = sorted(
+        {
+            str(option["artifact_schema_id"])
+            for option in dispatch.terminal_options
+            if option["artifact_schema_id"] is not None
+        }
+    )
+    schemas = tuple(
+        ArtifactSchemaDeclaration(
+            id=ArtifactSchemaId(schema_id),
+            schema={"type": "object"},
+            presentation={},
+        )
+        for schema_id in schema_ids
+    )
+    return mappings, schemas
+
+
 def _request(
     *,
     adapter_id: str = "codex-default",
@@ -152,18 +211,32 @@ def _request(
     cancellation_token: str | None = None,
     dispatch_envelope: RunnerDispatchEnvelope | None = None,
     redaction_policy: object | None = None,
+    selected_terminal_result_mappings: object | None = None,
+    selected_artifact_schemas: object | None = None,
 ) -> object:
     from millrace.adapters.runner_contract import (
         AdapterInvocationRequest,
         RedactionPolicy,
     )
+    from millrace.contracts.compiled_plan import RunnerComponentPin
 
     dispatch = dispatch_envelope or _valid_dispatch_envelope()
+    default_mappings, default_schemas = _default_selected_projection(dispatch)
     policy = redaction_policy or RedactionPolicy(
         policy_id="redact-default",
         secret_tokens=("token-secret",),
     )
-    return AdapterInvocationRequest(
+    mappings = tuple(
+        selected_terminal_result_mappings
+        if selected_terminal_result_mappings is not None
+        else default_mappings
+    )
+    schemas = tuple(
+        selected_artifact_schemas
+        if selected_artifact_schemas is not None
+        else default_schemas
+    )
+    request = AdapterInvocationRequest(
         adapter_id=adapter_id,
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind=selected_adapter_kind,
@@ -179,29 +252,31 @@ def _request(
         redaction_policy=cast(RedactionPolicy, policy),
         selected_asset_material=selected_asset_material or _asset_material(),
         cancellation_token=cancellation_token,
+        selected_terminal_result_mappings=cast(Any, mappings),
+        selected_artifact_schemas=cast(Any, schemas),
     )
+    object.__setattr__(
+        request,
+        "selected_component_pin",
+        RunnerComponentPin(
+            component_kind="runner",
+            component_id="codex-default",
+            component_version="1",
+            provider_distribution="fixture",
+            provider_version="1",
+            descriptor_media_type="application/json",
+            descriptor_sha256="c" * 64,
+            required_capability_ids=(),
+            legal_terminal_result_ids=tuple(
+                sorted(mapping.runner_result_id for mapping in mappings)
+            ),
+        ),
+    )
+    return request
 
 
 def _request_with_policy(redaction_policy: object) -> object:
-    from millrace.adapters.runner_contract import AdapterInvocationRequest
-
-    dispatch = _valid_dispatch_envelope()
-    return AdapterInvocationRequest(
-        adapter_id="codex-default",
-        selected_runner_binding_id=dispatch.runner_binding_id,
-        selected_adapter_kind="codex",
-        dispatch_envelope=dispatch,
-
-        session_id=dispatch.session_id,
-
-        dispatch_generation=dispatch.dispatch_generation,
-
-        session_fencing_token=dispatch.session_fencing_token,
-        timeout_seconds=5,
-        correlation_id="corr-1",
-        redaction_policy=redaction_policy,  # type: ignore[arg-type]
-        selected_asset_material=_asset_material(),
-    )
+    return _request(redaction_policy=redaction_policy)
 
 
 def _asset_material() -> dict[str, AuthorityValue]:
@@ -260,7 +335,12 @@ def _config(
     )
 
 
-def _success_wrapper_code(*, marker: str = "TASK_COMPLETE") -> str:
+def _success_wrapper_code(
+    *,
+    marker: str = "TASK_COMPLETE",
+    include_secret: bool = False,
+) -> str:
+    surface_value = "token-secret" if include_secret else "safe-value"
     return (
         "import json, os, pathlib, sys\n"
         "bundle = json.loads(sys.stdin.read())\n"
@@ -275,12 +355,12 @@ def _success_wrapper_code(*, marker: str = "TASK_COMPLETE") -> str:
         "    'dispatch_echo': echo,\n"
         "    'redaction_policy_id': bundle['redaction_policy']['policy_id'],\n"
         f"    'marker': {marker!r},\n"
-        "    'captured_stdout': 'runner stdout token-secret',\n"
-        "    'captured_stderr': 'runner stderr token-secret',\n"
+        f"    'captured_stdout': 'runner stdout {surface_value}',\n"
+        f"    'captured_stderr': 'runner stderr {surface_value}',\n"
         "    'structured_provider_response': {'provider': 'fake'},\n"
-        "    'artifact_payload_candidate': {'artifact': 'token-secret'},\n"
-        "    'observation_payload_candidate': {'summary': 'token-secret'},\n"
-        "    'evidence_construction_diagnostics': {'diag': 'token-secret'},\n"
+        f"    'artifact_payload_candidate': {{'artifact': '{surface_value}'}},\n"
+        f"    'observation_payload_candidate': {{'summary': '{surface_value}'}},\n"
+        f"    'evidence_construction_diagnostics': {{'diag': '{surface_value}'}},\n"
         "}\n"
         "print(json.dumps(result, sort_keys=True))\n"
     )
@@ -310,6 +390,513 @@ def _secret_surface_wrapper_code(secret: str = "token-secret") -> str:
     )
 
 
+def _error_wrapper_code(
+    *,
+    error_kind: object = "timeout",
+    diagnostics: object = None,
+    outcome_kind: object = "error",
+    adapter_id: str | None = None,
+    redaction_policy_id: str | None = None,
+    echo_mutation: tuple[str, object] | None = None,
+    missing_key: str | None = None,
+    extra_key: str | None = None,
+    trailing_data: bool = False,
+    trailing_suffix: str | None = None,
+) -> str:
+    adapter_expression = (
+        "bundle['adapter_id']" if adapter_id is None else repr(adapter_id)
+    )
+    policy_expression = (
+        "bundle['redaction_policy']['policy_id']"
+        if redaction_policy_id is None
+        else repr(redaction_policy_id)
+    )
+    code = (
+        "import json, sys\n"
+        "bundle=json.loads(sys.stdin.read())\n"
+        "result={\n"
+        f"    'outcome_kind':{outcome_kind!r},\n"
+        f"    'adapter_id':{adapter_expression},\n"
+        f"    'error_kind':{error_kind!r},\n"
+        f"    'redaction_policy_id':{policy_expression},\n"
+        "    'dispatch_echo':dict(bundle['dispatch_echo']),\n"
+        f"    'diagnostics':{diagnostics!r},\n"
+        "}\n"
+    )
+    if echo_mutation is not None:
+        field_name, field_value = echo_mutation
+        code += f"result['dispatch_echo'][{field_name!r}]={field_value!r}\n"
+    if missing_key is not None:
+        code += f"del result[{missing_key!r}]\n"
+    if extra_key is not None:
+        code += f"result[{extra_key!r}]=None\n"
+    code += "sys.stdout.write(json.dumps(result))\n"
+    if trailing_data:
+        suffix = " {}" if trailing_suffix is None else trailing_suffix
+        code += f"sys.stdout.write({suffix!r})\n"
+    else:
+        code += "sys.stdout.write('\\n')\n"
+    return code
+
+
+def _generic_projection_request(
+    *,
+    selected_terminal_result_mappings: object | None = None,
+    selected_artifact_schemas: object | None = None,
+) -> tuple[object, tuple[object, ...], tuple[object, ...]]:
+    from millrace.contracts.compiled_plan import (
+        ArtifactSchemaDeclaration,
+        RunnerComponentPin,
+        RunnerTerminalResultMapping,
+    )
+    from millrace.contracts.ids import ArtifactSchemaId, OutcomeId, StageKindId
+
+    alpha_schema = ArtifactSchemaDeclaration(
+        id=ArtifactSchemaId("schema.alpha"),
+        schema={
+            "type": "object",
+            "properties": {"alpha": {"type": "string"}},
+            "required": ("alpha",),
+        },
+        presentation={"label": "Alpha"},
+    )
+    beta_schema = ArtifactSchemaDeclaration(
+        id=ArtifactSchemaId("schema.beta"),
+        schema={
+            "type": "object",
+            "properties": {"beta": {"type": "integer"}},
+            "required": ("beta",),
+        },
+        presentation={"label": "Beta"},
+    )
+    schemas = (alpha_schema, beta_schema)
+    dispatch = _valid_dispatch_envelope(
+        run_id="run.generic",
+        session_id="session.generic",
+        plan_id="plan.generic",
+        workflow_id="fixture.generic",
+        workflow_version="1",
+        graph_id="graph.generic",
+        work_item_id="item.generic",
+        activation_id="activation.generic",
+        stage_kind_id="stage.generic",
+        graph_node_id="node.generic",
+        runner_binding_id="runner.generic",
+        external_enqueue_route_id="route.generic",
+        entrypoint_asset_id="asset.entrypoint",
+        skill_asset_ids=("asset.skill",),
+        artifact_schema_ids=("schema.beta", "schema.alpha", "schema.unselected"),
+        terminal_options=(
+            {
+                "outcome_id": "outcome.beta",
+                "marker": "BETA_READY",
+                "action_id": "action.beta",
+                "action_kind": "route",
+                "artifact_schema_id": "schema.beta",
+            },
+            {
+                "outcome_id": "outcome.none",
+                "marker": "NO_ARTIFACT",
+                "action_id": "action.none",
+                "action_kind": "close",
+                "artifact_schema_id": None,
+            },
+            {
+                "outcome_id": "outcome.alpha",
+                "marker": "ALPHA_READY",
+                "action_id": "action.alpha",
+                "action_kind": "route",
+                "artifact_schema_id": "schema.alpha",
+            },
+        ),
+    )
+    mappings = (
+        RunnerTerminalResultMapping(
+            stage_kind_id=StageKindId("stage.generic"),
+            runner_result_id="RESULT_BETA",
+            outcome_id=OutcomeId("outcome.beta"),
+        ),
+        RunnerTerminalResultMapping(
+            stage_kind_id=StageKindId("stage.generic"),
+            runner_result_id="RESULT_NONE",
+            outcome_id=OutcomeId("outcome.none"),
+        ),
+        RunnerTerminalResultMapping(
+            stage_kind_id=StageKindId("stage.generic"),
+            runner_result_id="RESULT_ALPHA",
+            outcome_id=OutcomeId("outcome.alpha"),
+        ),
+    )
+    request = _request(
+        dispatch_envelope=dispatch,
+        selected_terminal_result_mappings=(
+            tuple(selected_terminal_result_mappings)
+            if selected_terminal_result_mappings is not None
+            else mappings
+        ),
+        selected_artifact_schemas=(
+            tuple(selected_artifact_schemas)
+            if selected_artifact_schemas is not None
+            else schemas
+        ),
+    )
+    object.__setattr__(
+        request,
+        "selected_component_pin",
+        RunnerComponentPin(
+            component_kind="runner",
+            component_id="generic-runner",
+            component_version="1",
+            provider_distribution="fixture",
+            provider_version="1",
+            descriptor_media_type="application/json",
+            descriptor_sha256="c" * 64,
+            required_capability_ids=(),
+            legal_terminal_result_ids=tuple(
+                sorted(mapping.runner_result_id for mapping in mappings)
+            ),
+        ),
+    )
+    return request, mappings, schemas
+
+
+def test_codex_bundle_schema3_projects_selected_schemas_and_terminal_contracts(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    capture_path = tmp_path / "bundle.json"
+    request, _mappings, _schemas = _generic_projection_request()
+    adapter = CodexAdapter(
+        _config(tmp_path, env_allowlist={"CAPTURE_BUNDLE_PATH": str(capture_path)})
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterSuccessResult)
+    bundle = json.loads(capture_path.read_text())
+    assert bundle["selected_artifact_schemas"] == [
+        {
+            "id": "schema.alpha",
+            "record_kind": "artifact_schema_declaration",
+            "schema": {
+                "properties": {"alpha": {"type": "string"}},
+                "required": ["alpha"],
+                "type": "object",
+            },
+            "schema_version": 1,
+        },
+        {
+            "id": "schema.beta",
+            "record_kind": "artifact_schema_declaration",
+            "schema": {
+                "properties": {"beta": {"type": "integer"}},
+                "required": ["beta"],
+                "type": "object",
+            },
+            "schema_version": 1,
+        },
+    ]
+    assert bundle["prompt"]["terminal_artifact_contracts"] == [
+        {
+            "outcome_id": "outcome.alpha",
+            "marker": "ALPHA_READY",
+            "action_id": "action.alpha",
+            "action_kind": "route",
+            "artifact_schema_id": "schema.alpha",
+            "json_schema": {
+                "properties": {"alpha": {"type": "string"}},
+                "required": ["alpha"],
+                "type": "object",
+            },
+        },
+        {
+            "outcome_id": "outcome.beta",
+            "marker": "BETA_READY",
+            "action_id": "action.beta",
+            "action_kind": "route",
+            "artifact_schema_id": "schema.beta",
+            "json_schema": {
+                "properties": {"beta": {"type": "integer"}},
+                "required": ["beta"],
+                "type": "object",
+            },
+        },
+        {
+            "outcome_id": "outcome.none",
+            "marker": "NO_ARTIFACT",
+            "action_id": "action.none",
+            "action_kind": "close",
+            "artifact_schema_id": None,
+            "json_schema": None,
+        },
+    ]
+
+
+def test_codex_bundle_allows_partial_mapping_with_complete_schema_selection(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+    from millrace.contracts.compiled_plan import RunnerComponentPin
+
+    _unused_request, mappings, schemas = _generic_projection_request()
+    capture_path = tmp_path / "bundle.json"
+    request, _mappings, _schemas = _generic_projection_request(
+        selected_terminal_result_mappings=(mappings[0],),
+        selected_artifact_schemas=schemas,
+    )
+    object.__setattr__(
+        request,
+        "selected_component_pin",
+        RunnerComponentPin(
+            component_kind="runner",
+            component_id="generic-runner",
+            component_version="1",
+            provider_distribution="fixture",
+            provider_version="1",
+            descriptor_media_type="application/json",
+            descriptor_sha256="c" * 64,
+            required_capability_ids=(),
+            legal_terminal_result_ids=tuple(
+                sorted(mapping.runner_result_id for mapping in mappings)
+            ),
+        ),
+    )
+    adapter = CodexAdapter(
+        _config(tmp_path, env_allowlist={"CAPTURE_BUNDLE_PATH": str(capture_path)})
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterSuccessResult)
+    bundle = json.loads(capture_path.read_text())
+    assert [item["id"] for item in bundle["selected_artifact_schemas"]] == [
+        "schema.alpha",
+        "schema.beta",
+    ]
+    assert [
+        item["outcome_id"] for item in bundle["prompt"]["terminal_artifact_contracts"]
+    ] == ["outcome.beta"]
+
+
+def test_codex_refuses_selected_mapping_outside_component_pin_before_launch(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+    from millrace.contracts.compiled_plan import RunnerComponentPin
+
+    _unused_request, mappings, schemas = _generic_projection_request()
+    request, _mappings, _schemas = _generic_projection_request(
+        selected_terminal_result_mappings=(mappings[0],),
+        selected_artifact_schemas=schemas,
+    )
+    object.__setattr__(
+        request,
+        "selected_component_pin",
+        RunnerComponentPin(
+            component_kind="runner",
+            component_id="generic-runner",
+            component_version="1",
+            provider_distribution="fixture",
+            provider_version="1",
+            descriptor_media_type="application/json",
+            descriptor_sha256="c" * 64,
+            required_capability_ids=(),
+            legal_terminal_result_ids=(mappings[0].runner_result_id,),
+        ),
+    )
+    illegal_mapping = replace(
+        mappings[0],
+        runner_result_id="RESULT_NOT_SELECTED",
+    )
+    object.__setattr__(
+        request,
+        "selected_terminal_result_mappings",
+        (illegal_mapping,),
+    )
+    marker_path = tmp_path / "launched.txt"
+    adapter = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=(
+                "from pathlib import Path\n"
+                f"Path({str(marker_path)!r}).write_text('launched')\n"
+                + _success_wrapper_code()
+            ),
+        )
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "selected_authority_refused"
+    assert not marker_path.exists()
+
+
+def test_codex_refuses_selected_mapping_without_component_pin_before_launch(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    request, _mappings, _schemas = _generic_projection_request()
+    object.__setattr__(request, "selected_component_pin", None)
+    marker_path = tmp_path / "launched.txt"
+    adapter = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=(
+                "from pathlib import Path\n"
+                f"Path({str(marker_path)!r}).write_text('launched')\n"
+                + _success_wrapper_code()
+            ),
+        )
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "selected_authority_refused"
+    assert not marker_path.exists()
+
+
+def test_codex_refuses_artifact_options_without_mappings_or_schemas_before_launch(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    marker_path = tmp_path / "launched.txt"
+    request, _mappings, _schemas = _generic_projection_request(
+        selected_terminal_result_mappings=(),
+        selected_artifact_schemas=(),
+    )
+    adapter = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=(
+                "from pathlib import Path\n"
+                f"Path({str(marker_path)!r}).write_text('launched')\n"
+                + _success_wrapper_code()
+            ),
+        )
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "selected_authority_refused"
+    assert not marker_path.exists()
+
+
+def test_codex_schema3_bundle_bytes_ignore_selected_catalog_order(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import (
+        CodexAdapterConfig,
+        _bundle_stdin_bytes,
+    )
+    from millrace.adapters.runner_contract import (
+        AdapterInvocationRequest,
+        DispatchEcho,
+    )
+
+    request_a, _mappings_a, _schemas_a = _generic_projection_request()
+    request_b, mappings, schemas = _generic_projection_request()
+    object.__setattr__(
+        request_b,
+        "selected_terminal_result_mappings",
+        tuple(reversed(mappings)),
+    )
+    object.__setattr__(
+        request_b,
+        "selected_artifact_schemas",
+        tuple(reversed(schemas)),
+    )
+    config = cast(CodexAdapterConfig, _config(tmp_path))
+
+    def bundle_bytes(request: object) -> bytes:
+        typed_request = cast(AdapterInvocationRequest, request)
+        echo = DispatchEcho.from_dispatch_envelope(
+            typed_request.dispatch_envelope,
+            correlation_id=typed_request.correlation_id,
+            selected_adapter_kind=typed_request.selected_adapter_kind,
+        )
+        return _bundle_stdin_bytes(
+            typed_request,
+            config=config,
+            dispatch_echo=echo,
+        )
+
+    assert bundle_bytes(request_a) == bundle_bytes(request_b)
+
+
+@pytest.mark.parametrize("case", ("missing", "duplicate", "unselected", "mismatched"))
+def test_codex_refuses_incoherent_selected_schema_material_before_launch(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    from dataclasses import replace
+
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+    from millrace.contracts.compiled_plan import ArtifactSchemaDeclaration
+    from millrace.contracts.ids import ArtifactSchemaId
+
+    marker_path = tmp_path / "launched.txt"
+    request, mappings, schemas = _generic_projection_request()
+    if case == "missing":
+        object.__setattr__(request, "selected_artifact_schemas", ())
+    elif case == "duplicate":
+        object.__setattr__(
+            request,
+            "selected_artifact_schemas",
+            (schemas[0], schemas[0], schemas[1]),
+        )
+    elif case == "unselected":
+        object.__setattr__(
+            request,
+            "selected_artifact_schemas",
+            (
+                schemas[0],
+                schemas[1],
+                ArtifactSchemaDeclaration(
+                    id=ArtifactSchemaId("schema.unselected"),
+                    schema={"type": "object"},
+                    presentation={},
+                ),
+            ),
+        )
+    else:
+        object.__setattr__(
+            request,
+            "selected_terminal_result_mappings",
+            (replace(mappings[0], outcome_id=mappings[1].outcome_id), *mappings[1:]),
+        )
+
+    adapter = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=(
+                "from pathlib import Path\n"
+                f"Path({str(marker_path)!r}).write_text('launched')\n"
+                + _success_wrapper_code()
+            ),
+        )
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "selected_authority_refused"
+    assert not marker_path.exists()
+
+
 def test_codex_adapter_fake_wrapper_receives_selected_bundle_and_returns_success(
     tmp_path: Path,
 ) -> None:
@@ -333,19 +920,21 @@ def test_codex_adapter_fake_wrapper_receives_selected_bundle_and_returns_success
     assert isinstance(result, AdapterSuccessResult)
     assert result.adapter_id == "codex-default"
     assert result.marker == "TASK_COMPLETE"
-    assert result.artifact_payload_candidate == {"artifact": "[REDACTED]"}
-    assert result.observation_payload_candidate == {"summary": "[REDACTED]"}
+    assert result.artifact_payload_candidate == {"artifact": "safe-value"}
+    assert result.observation_payload_candidate == {"summary": "safe-value"}
     evidence = runner_evidence_from_adapter_outcome(result, request)
     assert evidence.marker == "TASK_COMPLETE"
     bundle = json.loads(capture_path.read_text())
     assert bundle["record_kind"] == "codex_adapter_invocation_bundle"
-    assert bundle["schema_version"] == 2
+    assert bundle["schema_version"] == 3
     assert bundle["adapter_id"] == "codex-default"
     assert bundle["selected_adapter_kind"] == "codex"
     assert bundle["dispatch_envelope"]["run_id"] == "run-1"
     assert bundle["dispatch_envelope"]["selected_join_evidence"] is None
+    assert bundle["dispatch_envelope"]["selected_wait_evidence"] is None
     assert bundle["prompt"]["dispatch_identity"]["plan_id"] == "kernel_ping:0.1"
     assert bundle["prompt"]["selected_join_evidence"] is None
+    assert bundle["prompt"]["selected_wait_evidence"] is None
     assert bundle["dispatch_envelope"]["terminal_options"][0]["marker"] == (
         "TASK_COMPLETE"
     )
@@ -359,7 +948,7 @@ def test_codex_adapter_fake_wrapper_receives_selected_bundle_and_returns_success
     assert bundle["skill_asset_refs"] == ["kernel_ping.tdd_core"]
 
 
-def test_codex_bundle_v2_exposes_selected_join_evidence_as_first_class_prompt_input(
+def test_codex_bundle_v3_exposes_selected_join_evidence_as_first_class_prompt_input(
     tmp_path: Path,
 ) -> None:
     from millrace.adapters.codex import CodexAdapter
@@ -384,7 +973,7 @@ def test_codex_bundle_v2_exposes_selected_join_evidence_as_first_class_prompt_in
     bundle = json.loads(capture_path.read_text())
     dispatch_evidence = bundle["dispatch_envelope"]["selected_join_evidence"]
     prompt_evidence = bundle["prompt"]["selected_join_evidence"]
-    assert bundle["schema_version"] == 2
+    assert bundle["schema_version"] == 3
     assert dispatch_evidence == json.loads(json.dumps(selected_join_evidence))
     assert prompt_evidence == dispatch_evidence
     assert dispatch_evidence["required_artifact_schema_ids"] == [
@@ -402,6 +991,69 @@ def test_codex_bundle_v2_exposes_selected_join_evidence_as_first_class_prompt_in
         ("RubricReport", _DUPLICATE_PAYLOAD_DIGEST, "candidate-a"),
         ("RubricReport", _DUPLICATE_PAYLOAD_DIGEST, "candidate-b"),
     ]
+
+
+def test_codex_bundle_v3_exposes_exact_selected_wait_evidence(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    capture_path = tmp_path / "bundle.json"
+    selected_wait_evidence = _valid_selected_wait_evidence()
+    request = _request(
+        dispatch_envelope=_valid_dispatch_envelope(
+            selected_wait_evidence=selected_wait_evidence,
+        )
+    )
+    adapter = CodexAdapter(
+        _config(tmp_path, env_allowlist={"CAPTURE_BUNDLE_PATH": str(capture_path)})
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterSuccessResult)
+    bundle = json.loads(capture_path.read_text())
+    dispatch_evidence = bundle["dispatch_envelope"]["selected_wait_evidence"]
+    assert bundle["schema_version"] == 3
+    assert dispatch_evidence == selected_wait_evidence
+    assert bundle["prompt"]["selected_wait_evidence"] == dispatch_evidence
+
+
+def test_codex_refuses_secret_token_in_selected_wait_evidence_before_invocation(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult, RedactionPolicy
+
+    secret = "WAIT_SECRET"
+    marker_path = tmp_path / "launched.txt"
+    policy = RedactionPolicy(policy_id="redact-default", secret_tokens=(secret,))
+    request = _request(
+        dispatch_envelope=_valid_dispatch_envelope(
+            selected_wait_evidence=_valid_selected_wait_evidence(
+                source_artifact_payload={"detail": secret}
+            ),
+        ),
+        redaction_policy=policy,
+    )
+    adapter = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=(
+                "import pathlib\n"
+                f"pathlib.Path({str(marker_path)!r}).write_text('launched')\n"
+                + _success_wrapper_code()
+            ),
+            redaction_policy=policy,
+        )
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "redaction_refused"
+    assert not marker_path.exists()
 
 
 def test_codex_refuses_secret_token_in_selected_join_evidence_before_invocation(
@@ -921,6 +1573,271 @@ def test_codex_adapter_malformed_success_fields_are_parse_errors(
         runner_evidence_from_adapter_outcome(result, request)
 
 
+@pytest.mark.parametrize(
+    ("field_name", "mutated_value"),
+    (
+        ("run_id", "mutated-run"),
+        ("session_id", "mutated-session"),
+        ("dispatch_generation", 99),
+        ("session_fencing_token", "mutated-session-fence"),
+        ("claim_id", "mutated-claim"),
+        ("generation", 99),
+        ("fencing_token", "mutated-fence"),
+        ("plan_fingerprint", "sha256:" + "0" * 64),
+        ("stage_kind_id", "mutated-stage"),
+        ("graph_node_id", "mutated-node"),
+        ("runner_binding_id", "mutated-binding"),
+        ("correlation_id", "mutated-correlation"),
+        ("selected_authority_digest", "sha256:" + "1" * 64),
+    ),
+)
+def test_codex_error_envelope_rejects_every_dispatch_echo_mutation(
+    tmp_path: Path,
+    field_name: str,
+    mutated_value: object,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                echo_mutation=(field_name, mutated_value),
+            ),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+@pytest.mark.parametrize(
+    ("missing_key", "extra_key"),
+    (("diagnostics", None), (None, "unexpected")),
+)
+def test_codex_error_envelope_requires_exact_top_level_keys(
+    tmp_path: Path,
+    missing_key: str | None,
+    extra_key: str | None,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                missing_key=missing_key,
+                extra_key=extra_key,
+            ),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+@pytest.mark.parametrize(
+    ("adapter_id", "redaction_policy_id"),
+    (("wrong-codex", None), (None, "wrong-redaction-policy")),
+)
+def test_codex_error_envelope_requires_runtime_identity(
+    tmp_path: Path,
+    adapter_id: str | None,
+    redaction_policy_id: str | None,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                adapter_id=adapter_id,
+                redaction_policy_id=redaction_policy_id,
+            ),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+def test_codex_error_envelope_rejects_unknown_outcome_kind(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(outcome_kind="unknown"),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+def test_codex_error_envelope_rejects_unsupported_error_kind(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(error_kind="not-supported"),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+@pytest.mark.parametrize("diagnostics", ([], {"bad": 1.25}))
+def test_codex_error_envelope_rejects_malformed_diagnostics(
+    tmp_path: Path,
+    diagnostics: object,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(diagnostics=diagnostics),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+def test_codex_error_envelope_rejects_trailing_json(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(trailing_data=True),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+def test_codex_accepts_authenticated_typed_error_envelope(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult, DispatchEcho
+
+    request = _request()
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                error_kind="timeout",
+                diagnostics={"message": "provider timed out", "attempt": 1},
+            ),
+        ),
+    ).invoke(request)
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "timeout"
+    assert result.adapter_id == "codex-default"
+    assert result.redaction_policy_id == "redact-default"
+    assert result.dispatch_echo == DispatchEcho.from_dispatch_envelope(
+        request.dispatch_envelope,
+        correlation_id=request.correlation_id,
+        selected_adapter_kind=request.selected_adapter_kind,
+    )
+    assert result.diagnostics == {
+        "message": "provider timed out",
+        "attempt": 1,
+    }
+
+
+def test_codex_error_stdout_secret_takes_redaction_precedence(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                diagnostics={"message": "token-secret"},
+            ),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "redaction_refused"
+    assert "token-secret" not in repr(result)
+    assert "token-secret" not in repr(result.diagnostics)
+
+
+def test_codex_decoded_wrapper_secret_takes_redaction_precedence(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    wrapper_code = _error_wrapper_code(
+        diagnostics={"message": "token-secret"},
+    ).replace(
+        "sys.stdout.write(json.dumps(result))\n",
+        "payload=json.dumps(result)\n"
+        "payload=payload.replace('token-secret', 'token\\\\u002dsecret')\n"
+        "sys.stdout.write(payload)\n",
+    )
+
+    result = CodexAdapter(
+        _config(tmp_path, wrapper_code=wrapper_code),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "redaction_refused"
+    assert "token-secret" not in repr(result)
+
+
+def test_codex_stdout_secret_precedes_trailing_result_parse_failure(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                trailing_data=True,
+                trailing_suffix=" {} token-secret",
+            ),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "redaction_refused"
+    assert "token-secret" not in repr(result)
+
+
+def test_codex_stdout_secret_precedes_success_result_parsing(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_success_wrapper_code(include_secret=True),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "redaction_refused"
+    assert "token-secret" not in repr(result)
+
+
 def test_codex_adapter_pre_cancelled_invocation_returns_cancelled(
     tmp_path: Path,
 ) -> None:
@@ -1024,21 +1941,25 @@ def test_codex_adapter_stderr_is_diagnostics_not_marker_authority(
     assert "token-secret" not in repr(result)
 
 
-def test_codex_adapter_redacts_wrapper_surfaces_and_logs(
+def test_codex_adapter_refuses_wrapper_secret_surface_before_parsing(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     from millrace.adapters.codex import CodexAdapter
-    from millrace.adapters.runner_contract import AdapterSuccessResult
+    from millrace.adapters.runner_contract import AdapterErrorResult
 
-    result = CodexAdapter(_config(tmp_path)).invoke(_request())
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_success_wrapper_code(include_secret=True),
+        ),
+    ).invoke(_request())
     logging.getLogger(__name__).warning("%s %r", result, result)
 
-    assert isinstance(result, AdapterSuccessResult)
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "redaction_refused"
     assert "token-secret" not in repr(result)
     assert "token-secret" not in caplog.text
-    assert result.captured_stdout == "runner stdout [REDACTED]"
-    assert result.captured_stderr == "runner stderr [REDACTED]"
 
 
 def test_codex_adapter_uses_config_policy_not_request_subclass(
@@ -1046,7 +1967,7 @@ def test_codex_adapter_uses_config_policy_not_request_subclass(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     from millrace.adapters.codex import CodexAdapter
-    from millrace.adapters.runner_contract import AdapterSuccessResult, RedactionPolicy
+    from millrace.adapters.runner_contract import AdapterErrorResult, RedactionPolicy
 
     class NoOpRequestPolicy(RedactionPolicy):
         def __getattribute__(self, name: str) -> object:
@@ -1069,13 +1990,8 @@ def test_codex_adapter_uses_config_policy_not_request_subclass(
     )
     logging.getLogger(__name__).warning("%s %r", result, result)
 
-    assert isinstance(result, AdapterSuccessResult)
-    assert result.captured_stdout == "stdout [REDACTED]"
-    assert result.captured_stderr == "stderr [REDACTED]"
-    assert result.structured_provider_response == {"provider": "[REDACTED]"}
-    assert result.artifact_payload_candidate == {"artifact": "[REDACTED]"}
-    assert result.observation_payload_candidate == {"summary": "[REDACTED]"}
-    assert result.evidence_construction_diagnostics == {"diag": "[REDACTED]"}
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "redaction_refused"
     assert "token-secret" not in repr(result)
     assert "token-secret" not in caplog.text
 
@@ -1085,7 +2001,7 @@ def test_codex_adapter_uses_config_policy_not_config_subclass(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     from millrace.adapters.codex import CodexAdapter
-    from millrace.adapters.runner_contract import AdapterSuccessResult, RedactionPolicy
+    from millrace.adapters.runner_contract import AdapterErrorResult, RedactionPolicy
 
     class NoOpConfigPolicy(RedactionPolicy):
         def __getattribute__(self, name: str) -> object:
@@ -1111,13 +2027,8 @@ def test_codex_adapter_uses_config_policy_not_config_subclass(
     ).invoke(_request())
     logging.getLogger(__name__).warning("%s %r", result, result)
 
-    assert isinstance(result, AdapterSuccessResult)
-    assert result.captured_stdout == "stdout [REDACTED]"
-    assert result.captured_stderr == "stderr [REDACTED]"
-    assert result.structured_provider_response == {"provider": "[REDACTED]"}
-    assert result.artifact_payload_candidate == {"artifact": "[REDACTED]"}
-    assert result.observation_payload_candidate == {"summary": "[REDACTED]"}
-    assert result.evidence_construction_diagnostics == {"diag": "[REDACTED]"}
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "redaction_refused"
     assert "token-secret" not in repr(result)
     assert "token-secret" not in caplog.text
 

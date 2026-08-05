@@ -1417,11 +1417,29 @@ def _instruction_input(request: AdapterInvocationRequest) -> dict[str, object]:
         if isinstance(value, Mapping) and isinstance(value.get("body"), str):
             material[asset_id] = {"body": value["body"]}
     return {
+        "dispatch_identity": {
+            "run_id": request.dispatch_envelope.run_id,
+            "session_id": request.dispatch_envelope.session_id,
+            "dispatch_generation": request.dispatch_envelope.dispatch_generation,
+            "session_fencing_token": (
+                request.dispatch_envelope.session_fencing_token
+            ),
+            "plan_id": request.dispatch_envelope.plan_id,
+            "claim_id": request.dispatch_envelope.claim_id,
+            "generation": request.dispatch_envelope.generation,
+            "fencing_token": request.dispatch_envelope.fencing_token,
+            "plan_fingerprint": request.dispatch_envelope.plan_fingerprint,
+            "stage_kind_id": request.dispatch_envelope.stage_kind_id,
+            "graph_node_id": request.dispatch_envelope.graph_node_id,
+            "runner_binding_id": request.dispatch_envelope.runner_binding_id,
+            "correlation_id": request.correlation_id,
+        },
         "entrypoint_asset_id": request.dispatch_envelope.entrypoint_asset_id,
         "skill_asset_ids": request.dispatch_envelope.skill_asset_ids,
         "selected_asset_material": material,
         "work_item_payload": request.dispatch_envelope.work_item_payload,
         "selected_join_evidence": request.dispatch_envelope.selected_join_evidence,
+        "selected_wait_evidence": request.dispatch_envelope.selected_wait_evidence,
         "terminal_options": request.dispatch_envelope.terminal_options,
     }
 

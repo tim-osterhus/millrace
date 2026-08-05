@@ -586,11 +586,11 @@ def test_undeclared_marker_and_wrong_dispatch_echo_classify_without_progress(
         _codex_success_config,
         _load,
         _observed_counts,
-        _ready_state,
+        _ready_state_with_selected_codex_authority,
         _runtime,
     )
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     marker_runtime = _runtime(tmp_path / "marker", state)
     wrong_marker = run_bounded_execution_unit(
         marker_runtime,

@@ -1020,6 +1020,23 @@ def test_restart_preserves_selected_join_dispatch_evidence(tmp_path: Path) -> No
     assert after == before
 
 
+def test_restart_preserves_selected_wait_dispatch_evidence(tmp_path: Path) -> None:
+    claimed = generic_operator_wait.claimed_projected_revise_wait_state()
+
+    before = _build_dispatch_envelope(
+        state=claimed,
+        run_id="run-operator-revised-restart",
+    ).payload()
+    loaded = persist_and_load_runtime_state(tmp_path, claimed)
+    after = _build_dispatch_envelope(
+        state=loaded,
+        run_id="run-operator-revised-restart",
+    ).payload()
+
+    assert before["selected_wait_evidence"] is not None
+    assert after == before
+
+
 def test_restart_refuses_full_slots_without_required_schema_coverage(
     tmp_path: Path,
 ) -> None:

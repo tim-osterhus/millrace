@@ -37,7 +37,7 @@ refused before a new claim.
 On Python 3.12 or newer, install the complete supported bundle:
 
 ```bash
-python -m pip install "millrace==0.22.1"
+python -m pip install "millrace==0.22.2"
 ```
 
 The base runtime also supports Python 3.11. Install the exact member
@@ -45,8 +45,8 @@ distributions directly when you do not want the meta package:
 
 ```bash
 python -m pip install \
-  "millrace-ai==0.22.0" \
-  "millrace-plus==0.22.0" \
+  "millrace-ai==0.22.2" \
+  "millrace-plus==0.22.2" \
   "millforge==0.1.0"
 ```
 
@@ -54,10 +54,10 @@ The v0.22 package set has these boundaries:
 
 | Distribution | Python | Role |
 | --- | --- | --- |
-| `millrace-ai==0.22.0` | 3.11+ | Runtime and CLI |
-| `millrace-plus==0.22.0` | 3.11+ | Official workflows and authoring skills |
+| `millrace-ai==0.22.2` | 3.11+ | Runtime and CLI |
+| `millrace-plus==0.22.2` | 3.11+ | Official workflows and authoring skills |
 | `millforge==0.1.0` | 3.11+ | Independently owned execution harness |
-| `millrace==0.22.1` | 3.12+ | Dependency-only exact-pin bundle over the three members |
+| `millrace==0.22.2` | 3.12+ | Dependency-only exact-pin bundle over the three members |
 
 The `millrace` meta distribution contains no runtime code. Installing one
 member distribution alone does not install the other members.

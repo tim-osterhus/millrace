@@ -285,7 +285,9 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
     ),
     "millrace.kernel.operator_waits": frozenset(
         {
+            "millrace.kernel.fanout_policy",
             "millrace.kernel.lookups",
+            "millrace.kernel.observation_policy",
             "millrace.kernel.schema",
         }
     ),
@@ -1111,6 +1113,7 @@ def test_operator_dispatch_is_only_privileged_policy_projection_consumer() -> No
     policy_owner_modules = {
         "millrace.kernel.fanout_policy",
         "millrace.kernel.join_policy",
+        "millrace.kernel.operator_waits",
     }
 
     assert {

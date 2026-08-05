@@ -93,6 +93,31 @@ def _compile_component_free_codex(
     return result.plan, authority_fingerprint(result.plan)
 
 
+def _compile_codex_with_selected_authority(
+    source: dict[str, object] | None = None,
+) -> tuple[SelectedCompiledPlan, str]:
+    selected_source = source or _codex_authority_source()
+    runners = cast(list[dict[str, object]], selected_source["runner_bindings"])
+    for runner in runners:
+        runner["adapter_kind"] = "codex"
+    result = compile_workflow(
+        selected_source,
+        selected_runner_policy=_CODEX_POLICY,
+    )
+    assert result.plan is not None
+    return result.plan, authority_fingerprint(result.plan)
+
+
+def _codex_authority_source() -> dict[str, object]:
+    from millrace.workflows import kernel_ping
+
+    source = kernel_ping.workflow_source()
+    runners = cast(list[dict[str, object]], source["runner_bindings"])
+    for runner in runners:
+        runner["adapter_kind"] = "codex"
+    return source
+
+
 def _runtime(tmp_path: Path, state: RuntimeState | None = None) -> object:
     from millrace.adapters.cli.context import CliWorkspacePaths, OpenRuntimeContext
     from millrace.substrate.cas import ContentAddressedByteStore
@@ -149,6 +174,11 @@ def _ready_state() -> tuple[RuntimeState, str]:
     return _ready_state_for_plan(plan, fingerprint)
 
 
+def _ready_state_with_selected_codex_authority() -> tuple[RuntimeState, str]:
+    plan, fingerprint = _compile_codex_with_selected_authority()
+    return _ready_state_for_plan(plan, fingerprint)
+
+
 def _ready_state_for_plan(
     plan: SelectedCompiledPlan,
     fingerprint: str,
@@ -174,31 +204,19 @@ def _ready_state_for_plan(
 
 def _ready_state_with_stage_timeouts() -> tuple[RuntimeState, str]:
 
-    source = _component_free_codex_source()
+    source = _codex_authority_source()
     runners = cast(list[dict[str, object]], source["runner_bindings"])
-    stages = cast(list[dict[str, object]], source["stage_kinds"])
-    actions = cast(list[dict[str, object]], source["terminal_actions"])
-    runners[0]["stage_kind_ids"] = ("kernel_ping.taskmaster",)
-    runners[0]["invocation_timeout_seconds"] = 3600
-    runners.append(
-        {
-            "id": "kernel_ping.worker_runner",
-            "adapter_kind": "codex",
-            "stage_kind_ids": ("kernel_ping.worker",),
-            "required_capability_ids": ("capability.runner.invoke",),
-            "invocation_timeout_seconds": 1800,
-            "presentation": {},
-        }
-    )
-    next(stage for stage in stages if stage["id"] == "kernel_ping.worker")[
-        "runner_binding_id"
-    ] = "kernel_ping.worker_runner"
     next(
-        action
-        for action in actions
-        if action["id"] == "kernel_ping.route_taskmaster_success"
-    )["runner_binding_id"] = "kernel_ping.worker_runner"
-    plan, fingerprint = _compile_component_free_codex(source)
+        runner
+        for runner in runners
+        if runner["id"] == "kernel_ping.taskmaster_runner"
+    )["invocation_timeout_seconds"] = 3600
+    next(
+        runner
+        for runner in runners
+        if runner["id"] == "kernel_ping.worker_runner"
+    )["invocation_timeout_seconds"] = 1800
+    plan, fingerprint = _compile_codex_with_selected_authority(source)
     return _ready_state_for_plan(plan, fingerprint)
 
 
@@ -478,7 +496,7 @@ _MILLFORGE_WORKER_DESCRIPTOR_SHA256 = (
     "d6b5c75f48565b939ee4d6e30b83e3ad203764b7bda02890ca515a9bfb3318f0"
 )
 _MILLFORGE_PLAN_FINGERPRINT = (
-    "sha256:29d40efa187bef7c2ad2a143f8a685a6f6dbb21dcfdf05258b50c1c1c2586d42"
+    "sha256:c72c13ea3d28b0cbfb542f1a3d2d6ac50e9864c86041f1d29a5dedd7772c205d"
 )
 
 
@@ -873,6 +891,30 @@ def test_kernel_ping_millforge_needs_review_projects_runtime_authority_and_resta
 
     runtime = _reopen_runtime(runtime)
     reloaded = _load(runtime)
+    worker_run = reloaded.runs["run-worker"]
+    assert worker_run.current_session_id is not None
+    worker_session = reloaded.runner_sessions[worker_run.current_session_id]
+    assert worker_session.run_id == worker_run.run_ref.run_id
+    assert worker_session.state == "completed"
+    completion = reloaded.runner_session_completions[worker_session.session_id]
+    assert completion.terminal_state == "completed"
+    assert completion.runner_result_evidence_digest is not None
+    evidence = json.loads(
+        runtime.cas_store.get_bytes(completion.runner_result_evidence_digest)
+    )
+    assert evidence["record_kind"] == "runner_result_evidence"
+    assert evidence["run_id"] == worker_run.run_ref.run_id
+    assert evidence["session_id"] == worker_session.session_id
+    assert evidence["session_fencing_token"] == worker_session.session_fencing_token
+    assert evidence["fencing_token"] == worker_run.run_ref.fencing_token
+    assert evidence["marker"] == "NEEDS_REVIEW"
+    assert evidence["adapter_provenance"]["adapter_kind"] == "millforge"
+    observation = next(
+        item
+        for item in reloaded.runner_observations.values()
+        if item.run_id == worker_run.run_ref.run_id
+    )
+    assert observation.created_by_input_id == completion.application_input_id
     incident_work = next(
         work_item
         for work_item in reloaded.work_items.values()
@@ -1676,7 +1718,7 @@ def test_bounded_unit_claims_one_ready_activation_invokes_and_observes_success(
 ) -> None:
     from millrace.adapters.cli.run import run_bounded_execution_unit
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
 
     result = run_bounded_execution_unit(runtime, local_config=_codex_success_config())
@@ -1743,7 +1785,7 @@ def test_codex_config_and_bounded_execution_are_unchanged(
         ),
         encoding="utf-8",
     )
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
 
     result = run_bounded_execution_unit(runtime, local_config_path=config_path)
@@ -1769,17 +1811,19 @@ def test_bounded_unit_preserves_selected_timeout_and_applies_local_maximum(
 ) -> None:
     from millrace.adapters.cli.run import run_bounded_execution_unit
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     plan = next(iter(state.admitted_plans.values())).selected_plan
     if selected_timeout != 3600:
-        binding = plan.runner_bindings[0]
         plan = replace(
             plan,
-            runner_bindings=(
+            runner_bindings=tuple(
                 replace(
                     binding,
                     invocation_timeout_seconds=selected_timeout,
-                ),
+                )
+                if str(binding.id) == "kernel_ping.taskmaster_runner"
+                else binding
+                for binding in plan.runner_bindings
             ),
         )
         state, _fingerprint = _state_with_selected_plan(state, plan)
@@ -1890,7 +1934,7 @@ def test_bounded_unit_timeout_failure_creates_no_observation_or_action(
 ) -> None:
     from millrace.adapters.cli.run import run_bounded_execution_unit
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
 
     result = run_bounded_execution_unit(
@@ -1933,7 +1977,7 @@ def test_bounded_unit_adapter_conversion_refusal_creates_no_evidence(
     from millrace.adapters.cli.run import run_bounded_execution_unit
     from millrace.adapters.runner_contract import AdapterEvidenceConversionError
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
 
     def refuse_conversion(*_args: object, **_kwargs: object) -> None:
@@ -1973,7 +2017,7 @@ def test_bounded_unit_adapter_failure_after_claim_allows_explicit_active_retry(
 ) -> None:
     from millrace.adapters.cli.run import run_bounded_execution_unit
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     failed = run_bounded_execution_unit(runtime, local_config=_codex_error_config())
     after_failure = _load(runtime)
@@ -2213,7 +2257,7 @@ def test_bounded_unit_dispatch_echo_mismatch_refuses_before_kernel_observation(
 ) -> None:
     from millrace.adapters.cli.run import run_bounded_execution_unit
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
 
     result = run_bounded_execution_unit(
@@ -2237,7 +2281,7 @@ def test_bounded_unit_uses_prompt_0001_materializer(
     from millrace.adapters.cli import run as run_module
     from millrace.adapters.cli.run import run_bounded_execution_unit
 
-    state, fingerprint = _ready_state()
+    state, fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     captured: dict[str, object] = {}
     bundle_path = tmp_path / "bundle.json"
@@ -2353,7 +2397,7 @@ def test_bounded_unit_kernel_observation_refusal_after_claim_preserves_only_clai
 ) -> None:
     from millrace.adapters.cli.run import run_bounded_execution_unit
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
 
     result = run_bounded_execution_unit(

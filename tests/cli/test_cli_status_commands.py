@@ -47,6 +47,10 @@ def _state(workspace: Path):
 
 def _complete_claimed_runner_sessions(workspace: Path) -> tuple[str, ...]:
     from millrace.adapters.cli.context import transition_context
+    from millrace.contracts.runner import (
+        RunnerSessionCompletionDiagnostic,
+        runner_session_completion_diagnostic_bytes,
+    )
     from millrace.contracts.state import RunnerSessionCompletionRecord
     from millrace.contracts.transition import RecordRunnerSessionCompletion
     from millrace.kernel import apply, decide
@@ -74,7 +78,7 @@ def _complete_claimed_runner_sessions(workspace: Path) -> tuple[str, ...]:
                 adapter_error_kind="invocation_failed",
                 runner_result_evidence_digest=None,
                 primary_cancellation_request_id=None,
-                cleanup_disposition="complete",
+            cleanup_disposition="complete",
                 started_at=None,
                 cancel_requested_at=None,
                 completed_at=session.created_at + 1,
@@ -82,7 +86,24 @@ def _complete_claimed_runner_sessions(workspace: Path) -> tuple[str, ...]:
                 truncation_metadata="none",
                 redaction_policy_id="test",
                 diagnostic_digest=cas_store.put_bytes(
-                    f"bounded run completion {index}".encode()
+                    runner_session_completion_diagnostic_bytes(
+                        RunnerSessionCompletionDiagnostic(
+                            run_id=run_id,
+                            session_id=session.session_id,
+                            dispatch_generation=session.dispatch_generation,
+                            session_fencing_token=session.session_fencing_token,
+                            plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
+                            claim_id=run.run_ref.claim_id,
+                            generation=run.run_ref.generation,
+                            fencing_token=run.run_ref.fencing_token,
+                            stage_kind_id=str(run.stage_kind_id),
+                            graph_node_id=state.activations[
+                                run.activation_id
+                            ].graph_node_id,
+                            runner_binding_id=str(run.runner_binding_id),
+                            diagnostic={"bounded": True, "ordinal": index},
+                        )
+                    )
                 ),
                 application_input_id=(
                     "cli:run.session-completion:"
@@ -217,6 +238,509 @@ def test_status_and_list_commands_are_read_only(tmp_path: Path) -> None:
     assert missing_stdout == ""
     assert _json(missing_stderr)["code"] == "run_not_found"
     assert _state(workspace) == before
+
+
+def test_rejected_evidence_flag_is_only_available_on_runs_show() -> None:
+    from millrace.adapters.cli.main import _build_parser
+
+    _parser, help_parsers = _build_parser()
+    show_help = help_parsers["runs.show"].format_help()
+    list_help = help_parsers["runs.list"].format_help()
+    follow_help = help_parsers["runs.follow"].format_help()
+    trace_help = help_parsers["trace.show"].format_help()
+
+    assert "--include-rejected-evidence" in show_help
+    assert "--include-rejected-evidence" not in list_help
+    assert "--include-rejected-evidence" not in follow_help
+    assert "--include-rejected-evidence" not in trace_help
+
+
+def test_rejected_result_projection_is_bounded_by_default(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from millrace.adapters.cli import status
+    from millrace.contracts.runner import (
+        RunnerResultEvidence,
+        RunnerSessionCompletionDiagnostic,
+        runner_result_evidence_bytes,
+        runner_session_completion_diagnostic_bytes,
+    )
+    from millrace.contracts.state import (
+        GovernanceEventRecord,
+        InputReceiptRef,
+        TraceRecord,
+        TransitionRecord,
+        TransitionRefusal,
+    )
+    from millrace.contracts.transition import RunnerResultObserved, input_payload_digest
+    from millrace.substrate.cas import ContentAddressedByteStore
+
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    evidence = RunnerResultEvidence(
+        run_id="run-1",
+        session_id="session-1",
+        dispatch_generation=2,
+        session_fencing_token="session-fence-1",
+        plan_fingerprint="sha256:" + "a" * 64,
+        claim_id="claim-1",
+        generation=1,
+        fencing_token="fence-1",
+        stage_kind_id="stage.worker",
+        graph_node_id="worker.start",
+        runner_binding_id="runner.worker",
+        marker="RESULT_REJECTED",
+        adapter_provenance=None,
+        observation_payload={"summary": "safe"},
+        artifact_payload={"body": "candidate body"},
+    )
+    evidence_digest = cas_store.put_bytes(runner_result_evidence_bytes(evidence))
+    diagnostic_digest = cas_store.put_bytes(
+        runner_session_completion_diagnostic_bytes(
+            RunnerSessionCompletionDiagnostic(
+                run_id="run-1",
+                session_id="session-1",
+                dispatch_generation=2,
+                session_fencing_token="session-fence-1",
+                plan_fingerprint="sha256:" + "a" * 64,
+                claim_id="claim-1",
+                generation=1,
+                fencing_token="fence-1",
+                stage_kind_id="stage.worker",
+                graph_node_id="worker.start",
+                runner_binding_id="runner.worker",
+                diagnostic={"bounded": True},
+            )
+        )
+    )
+    completion = SimpleNamespace(
+        session_id="session-1",
+        run_id="run-1",
+        dispatch_generation=2,
+        session_fencing_token="session-fence-1",
+        terminal_state="completed",
+        adapter_outcome_kind="success",
+        adapter_error_kind=None,
+        runner_result_evidence_digest=evidence_digest,
+        diagnostic_digest=diagnostic_digest,
+        application_input_id="application-1",
+        primary_cancellation_request_id=None,
+    )
+    run_ref = SimpleNamespace(
+        run_id="run-1",
+        plan_ref=SimpleNamespace(authority_fingerprint="sha256:" + "a" * 64),
+        claim_id="claim-1",
+        generation=1,
+        fencing_token="fence-1",
+    )
+    state = SimpleNamespace(
+        runs={
+            "run-1": SimpleNamespace(
+                current_session_id="session-1",
+                activation_id="activation-1",
+                work_item_id="work-1",
+                run_ref=run_ref,
+                stage_kind_id="stage.worker",
+                runner_binding_id="runner.worker",
+            )
+        },
+        activations={
+            "activation-1": SimpleNamespace(graph_node_id="worker.start"),
+        },
+        runner_sessions={
+            "session-1": SimpleNamespace(
+                session_id="session-1",
+                run_id="run-1",
+                dispatch_generation=2,
+                session_fencing_token="session-fence-1",
+                state="completed",
+            )
+        },
+        runner_session_completions={"session-1": completion},
+        transitions=(
+            TransitionRecord(
+                record_id="transition-refusal",
+                input_id="application-1",
+                input_kind=RunnerResultObserved.input_kind,
+                input_family="workflow_observation",
+                accepted=False,
+            ),
+        ),
+        receipts={
+            "application-1": SimpleNamespace(
+                accepted=False,
+                refusal_reason="invalid_candidate",
+                receipt_ref=InputReceiptRef(
+                    input_id="application-1",
+                    input_payload_digest=input_payload_digest(
+                        RunnerResultObserved(
+                            "application-1",
+                            run_id="run-1",
+                            payload=evidence.payload(),
+                            observed_at=None,
+                        )
+                    ),
+                ),
+                transition_id="transition-refusal",
+            )
+        },
+        refusals=(
+            TransitionRefusal(
+                record_id="transition-refusal:refusal",
+                input_id="application-1",
+                input_kind=RunnerResultObserved.input_kind,
+                input_family="workflow_observation",
+                reason="invalid_candidate",
+            ),
+        ),
+        traces=(
+            TraceRecord(
+                record_id="transition-refusal:trace",
+                input_id="application-1",
+                input_kind=RunnerResultObserved.input_kind,
+                input_family="workflow_observation",
+                disposition="refused",
+                plan_fingerprint="sha256:" + "a" * 64,
+                work_item_id="work-1",
+                run_id="run-1",
+                action_id=None,
+                authority_source=None,
+                refusal_reason="invalid_candidate",
+            ),
+        ),
+        governance_events=(
+            GovernanceEventRecord(
+                record_id="transition-refusal:governance",
+                input_id="application-1",
+                input_kind=RunnerResultObserved.input_kind,
+                input_family="workflow_observation",
+                disposition="refused",
+                plan_fingerprint="sha256:" + "a" * 64,
+                work_item_id="work-1",
+                run_id="run-1",
+                action_id=None,
+                authority_source=None,
+                refusal_reason="invalid_candidate",
+            ),
+        ),
+        admitted_plans={
+            "sha256:" + "a" * 64: SimpleNamespace(
+                selected_plan=SimpleNamespace(
+                    stage_kinds=(),
+                    terminal_outcomes=(),
+                    terminal_actions=(),
+                )
+            )
+        },
+    )
+    runtime = SimpleNamespace(
+        cas_store=cas_store,
+        paths=SimpleNamespace(cas_path=tmp_path / "cas"),
+    )
+
+    projected = status.rejected_result_projection(runtime, state, "run-1")
+
+    assert projected is not None
+    assert projected["rejection_kind"] == "observation_refusal"
+    assert projected["application_status"] == "refused"
+    assert projected["session_id"] == "session-1"
+    assert projected["dispatch_generation"] == 2
+    assert projected["application_input_id"] == "application-1"
+    assert projected["kernel_refusal_reason"] == "invalid_candidate"
+    assert projected["runner_result_evidence_digest"] == evidence_digest
+    assert projected["completion_diagnostic_digest"] == diagnostic_digest
+    assert projected["evidence_status"] == "available"
+    assert projected["diagnostic_status"] == "available"
+    assert projected["marker"] == "RESULT_REJECTED"
+    assert projected["artifact_candidate_present"] is True
+    assert projected["observation_candidate_present"] is True
+    assert "candidate body" not in json.dumps(projected)
+
+    empty_evidence = evidence.__class__(
+        run_id=evidence.run_id,
+        session_id=evidence.session_id,
+        dispatch_generation=evidence.dispatch_generation,
+        session_fencing_token=evidence.session_fencing_token,
+        plan_fingerprint=evidence.plan_fingerprint,
+        claim_id=evidence.claim_id,
+        generation=evidence.generation,
+        fencing_token=evidence.fencing_token,
+        stage_kind_id=evidence.stage_kind_id,
+        graph_node_id=evidence.graph_node_id,
+        runner_binding_id=evidence.runner_binding_id,
+        marker=evidence.marker,
+        adapter_provenance=evidence.adapter_provenance,
+        observation_payload={},
+        artifact_payload={},
+    )
+    completion.runner_result_evidence_digest = cas_store.put_bytes(
+        runner_result_evidence_bytes(empty_evidence)
+    )
+    state.receipts["application-1"].receipt_ref = InputReceiptRef(
+        input_id="application-1",
+        input_payload_digest=input_payload_digest(
+            RunnerResultObserved(
+                "application-1",
+                run_id="run-1",
+                payload=empty_evidence.payload(),
+                observed_at=None,
+            )
+        ),
+    )
+    empty_projection = status.rejected_result_projection(runtime, state, "run-1")
+    assert empty_projection is not None
+    assert empty_projection["evidence_status"] == "available"
+    assert empty_projection["artifact_candidate_present"] is True
+    assert empty_projection["observation_candidate_present"] is True
+
+    absent_evidence = evidence.__class__(
+        run_id=evidence.run_id,
+        session_id=evidence.session_id,
+        dispatch_generation=evidence.dispatch_generation,
+        session_fencing_token=evidence.session_fencing_token,
+        plan_fingerprint=evidence.plan_fingerprint,
+        claim_id=evidence.claim_id,
+        generation=evidence.generation,
+        fencing_token=evidence.fencing_token,
+        stage_kind_id=evidence.stage_kind_id,
+        graph_node_id=evidence.graph_node_id,
+        runner_binding_id=evidence.runner_binding_id,
+        marker=evidence.marker,
+        adapter_provenance=evidence.adapter_provenance,
+        observation_payload=None,
+        artifact_payload=None,
+    )
+    completion.runner_result_evidence_digest = cas_store.put_bytes(
+        runner_result_evidence_bytes(absent_evidence)
+    )
+    state.receipts["application-1"].receipt_ref = InputReceiptRef(
+        input_id="application-1",
+        input_payload_digest=input_payload_digest(
+            RunnerResultObserved(
+                "application-1",
+                run_id="run-1",
+                payload=absent_evidence.payload(),
+                observed_at=None,
+            )
+        ),
+    )
+    absent_projection = status.rejected_result_projection(runtime, state, "run-1")
+    assert absent_projection is not None
+    assert absent_projection["evidence_status"] == "available"
+    assert absent_projection["artifact_candidate_present"] is False
+    assert absent_projection["observation_candidate_present"] is False
+
+    malformed_digest = cas_store.put_bytes(b'{"not":"evidence"}')
+    completion.runner_result_evidence_digest = malformed_digest
+    malformed = status.rejected_result_projection(runtime, state, "run-1")
+    assert malformed is not None
+    assert malformed["evidence_status"] == "corrupt"
+    assert malformed["marker"] is None
+    assert "evidence" not in malformed
+
+
+def test_rejected_result_cas_json_recursion_is_reported_as_corrupt(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    from millrace.adapters.cli import status
+    from millrace.substrate.cas import ContentAddressedByteStore
+
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    runtime = SimpleNamespace(
+        cas_store=cas_store,
+        paths=SimpleNamespace(cas_path=tmp_path / "cas"),
+    )
+    deep_array = b"[" * 5000 + b"]" * 5000
+    deep_object = b'{"diagnostic":' + deep_array + b"}"
+
+    evidence, evidence_status = status._load_rejected_evidence(
+        runtime,
+        SimpleNamespace(),
+        "session-1",
+        cas_store.put_bytes(deep_array),
+    )
+    diagnostic, diagnostic_status = status._load_completion_diagnostic(
+        runtime,
+        SimpleNamespace(),
+        "session-1",
+        cas_store.put_bytes(deep_object),
+    )
+
+    assert evidence is None
+    assert evidence_status == "corrupt"
+    assert diagnostic is None
+    assert diagnostic_status == "corrupt"
+
+
+def test_adapter_error_diagnostic_projects_after_store_restart(tmp_path: Path) -> None:
+    workspace, _fingerprint, _work_item_id, activation_id = _workspace_with_work(
+        tmp_path
+    )
+    claim_code, claim_stdout, claim_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "claim",
+            activation_id,
+            "--input-id",
+            "claim-for-error-projection",
+        ]
+    )
+    assert claim_code == 0, (claim_stdout, claim_stderr)
+    run_id = str(_json(claim_stdout)["data"]["run_id"])
+    assert _complete_claimed_runner_sessions(workspace) == (run_id,)
+
+    code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+        ]
+    )
+
+    assert code == 0, stderr
+    rejected = _json(stdout)["data"]["run"]["rejected_result"]
+    assert rejected["rejection_kind"] == "adapter_error"
+    assert rejected["application_status"] == "not_applicable"
+    assert rejected["adapter_error_kind"] == "invocation_failed"
+    assert rejected["evidence_status"] == "not_present"
+    assert rejected["diagnostic_status"] == "available"
+    assert "diagnostic" not in rejected
+
+    include_code, include_stdout, include_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+            "--include-rejected-evidence",
+        ]
+    )
+    assert include_code == 0, include_stderr
+    included = _json(include_stdout)["data"]["run"]["rejected_result"]
+    assert included["diagnostic"] == {"bounded": True, "ordinal": 0}
+    assert "evidence" not in included
+
+    diagnostic_digest = str(rejected["completion_diagnostic_digest"])
+    diagnostic_path = (
+        workspace
+        / ".millrace"
+        / "cas"
+        / "sha256"
+        / diagnostic_digest.removeprefix("sha256:")
+    )
+    diagnostic_path.write_bytes(b"corrupt retained diagnostic")
+    corrupt_code, corrupt_stdout, corrupt_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+        ]
+    )
+    assert corrupt_code == 0, corrupt_stderr
+    corrupt_projection = _json(corrupt_stdout)["data"]["run"]["rejected_result"]
+    assert corrupt_projection["diagnostic_status"] == "digest_mismatch"
+    assert "diagnostic" not in corrupt_projection
+
+    diagnostic_path.unlink()
+    missing_code, missing_stdout, missing_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+        ]
+    )
+    assert missing_code == 0, missing_stderr
+    missing_projection = _json(missing_stdout)["data"]["run"]["rejected_result"]
+    assert missing_projection["diagnostic_status"] == "missing"
+
+
+def test_rejected_result_inspection_does_not_mask_unrelated_corruption(
+    tmp_path: Path,
+) -> None:
+    workspace, _fingerprint, _work_item_id, first_activation_id = _workspace_with_work(
+        tmp_path
+    )
+    enqueue_code, enqueue_stdout, enqueue_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "queue",
+            "enqueue",
+            "prompt",
+            "--payload-json",
+            '{"body":"second run"}',
+            "--input-id",
+            "enqueue-second-run",
+        ]
+    )
+    assert enqueue_code == 0, (enqueue_stdout, enqueue_stderr)
+    second_activation_id = str(_json(enqueue_stdout)["data"]["activation_id"])
+    run_ids: list[str] = []
+    for activation_id, input_id in (
+        (first_activation_id, "claim-first-run"),
+        (second_activation_id, "claim-second-run"),
+    ):
+        claim_code, claim_stdout, claim_stderr = _invoke(
+            [
+                "--json",
+                "--workspace",
+                str(workspace),
+                "dispatch",
+                "claim",
+                activation_id,
+                "--input-id",
+                input_id,
+            ]
+        )
+        assert claim_code == 0, (claim_stdout, claim_stderr)
+        run_ids.append(str(_json(claim_stdout)["data"]["run_id"]))
+    _complete_claimed_runner_sessions(workspace)
+
+    state = _state(workspace)
+    unrelated_run = state.runs[run_ids[1]]
+    assert unrelated_run.current_session_id is not None
+    unrelated_completion = state.runner_session_completions[
+        unrelated_run.current_session_id
+    ]
+    diagnostic_path = (
+        workspace
+        / ".millrace"
+        / "cas"
+        / "sha256"
+        / unrelated_completion.diagnostic_digest.removeprefix("sha256:")
+    )
+    diagnostic_path.write_bytes(b"unrelated corruption")
+
+    code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_ids[0],
+        ]
+    )
+
+    assert code == 4
+    assert stdout == ""
+    assert _json(stderr)["code"] == "substrate_error"
 
 
 def test_negative_max_events_refuses_before_store_load(tmp_path: Path) -> None:

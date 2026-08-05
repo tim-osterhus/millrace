@@ -7,15 +7,22 @@ construction, and mutation application to the surrounding kernel.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import replace
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 
-from millrace.contracts.compiled_plan import OperatorWaitDeclaration
+from millrace.contracts.compiled_plan import (
+    AuthorityValue,
+    OperatorWaitDeclaration,
+    SelectedCompiledPlan,
+)
 from millrace.contracts.state import (
     Activation,
     ClosedWorkItemRecord,
+    GovernanceEventRecord,
     OperatorWaitRecord,
+    RunRecord,
     RuntimeState,
+    TraceRecord,
     WorkItem,
     WorkItemRef,
 )
@@ -31,12 +38,282 @@ from millrace.contracts.transition import (
     TransitionDecision,
     operator_payload_digest,
 )
+from millrace.kernel.fanout_policy import PolicyAssessment
 from millrace.kernel.lookups import artifact_schema_for, operator_wait_for_action
+from millrace.kernel.observation_policy import (
+    AuthenticatedArtifactProvenance,
+    authenticate_artifact_provenance,
+)
 from millrace.kernel.schema import validate_schema
 
 DecisionFactory = Callable[..., TransitionDecision]
 
 EMPTY_OPERATOR_PAYLOAD_DIGEST = operator_payload_digest({})
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedWaitEvidenceProjection:
+    wait_id: str
+    operator_wait_id: str
+    lineage_id: str
+    source_artifact_id: str
+    source_artifact_schema_id: str
+    source_artifact_digest: str
+    source_artifact_payload: Mapping[str, AuthorityValue]
+    source_action_id: str
+    source_run_id: str
+    source_work_item_id: str
+
+
+def project_selected_wait_evidence_for_target(
+    state: RuntimeState,
+    *,
+    selected_plan: SelectedCompiledPlan,
+    run: RunRecord,
+    activation: Activation,
+    work_item: WorkItem,
+) -> SelectedWaitEvidenceProjection | PolicyAssessment | None:
+    target_waits = tuple(
+        wait
+        for wait in state.operator_waits.values()
+        if wait.target_work_item_id == work_item.ref.work_item_id
+        or wait.target_activation_id == activation.activation_id
+    )
+    if not target_waits:
+        if any(
+            wait.resolved_input_id
+            in {
+                work_item.created_by_input_id,
+                activation.created_by_input_id,
+            }
+            for wait in state.operator_waits.values()
+            if wait.resolved_input_id is not None
+        ):
+            return _wait_projection_refusal("missing_target_owner")
+        return None
+    if len(target_waits) != 1:
+        return _wait_projection_refusal("target_owner")
+    wait = target_waits[0]
+    selected_waits = tuple(
+        declaration
+        for declaration in selected_plan.operator_waits
+        if declaration.id == wait.operator_wait_id
+        and wait.source_action_id in declaration.source_action_ids
+    )
+    if len(selected_waits) != 1:
+        return _wait_projection_refusal("selected_declaration")
+    selected_wait = selected_waits[0]
+    if wait.resolution_kind == "resume_recorded_source":
+        if (
+            wait.status != "resolved"
+            or wait.target_work_item_id is not None
+            or wait.target_activation_id != activation.activation_id
+            or activation.work_item_id != wait.source_work_item_id
+            or work_item.ref.work_item_id != wait.source_work_item_id
+            or run.work_item_id != wait.source_work_item_id
+            or wait.selected_plan_ref != run.run_ref.plan_ref
+            or work_item.ref.plan_ref != run.run_ref.plan_ref
+            or activation.plan_ref != run.run_ref.plan_ref
+            or wait.lineage_id != work_item.lineage_id
+            or wait.lineage_id != activation.lineage_id
+            or activation.created_by_input_id != wait.resolved_input_id
+            or activation.queue_family_id != wait.source_queue_family_id
+            or activation.stage_kind_id != wait.source_stage_kind_id
+            or activation.graph_node_id != wait.source_graph_node_id
+            or activation.runner_binding_id != wait.source_runner_binding_id
+        ):
+            return _wait_projection_refusal("resume_target_authority")
+        return None
+    if (
+        wait.target_work_item_id != work_item.ref.work_item_id
+        or wait.target_activation_id != activation.activation_id
+    ):
+        return _wait_projection_refusal("target_owner")
+    if selected_wait.project_source_artifact is False:
+        return None
+    if selected_wait.project_source_artifact is not True:
+        return _wait_projection_refusal("projection_authority")
+    if (
+        wait.status != "resolved"
+        or wait.resolution_kind != "revise_recorded_source"
+        or "revise_recorded_source" not in selected_wait.allowed_resolution_kinds
+        or wait.selected_plan_ref != run.run_ref.plan_ref
+        or wait.selected_plan_fingerprint != run.run_ref.plan_ref.authority_fingerprint
+        or work_item.ref.plan_ref != run.run_ref.plan_ref
+        or activation.plan_ref != run.run_ref.plan_ref
+        or wait.lineage_id != work_item.lineage_id
+        or wait.lineage_id != activation.lineage_id
+        or wait.resolved_input_id is None
+        or not _resolved_revise_wait_authority_valid(state, wait, work_item)
+        or work_item.created_by_input_id != wait.resolved_input_id
+        or activation.created_by_input_id != wait.resolved_input_id
+        or work_item.ref.work_item_id != run.work_item_id
+        or activation.activation_id != run.activation_id
+        or activation.work_item_id != work_item.ref.work_item_id
+        or work_item.queue_family_id != selected_wait.target_queue_family_id
+        or activation.queue_family_id != selected_wait.target_queue_family_id
+        or activation.stage_kind_id != selected_wait.target_stage_kind_id
+        or activation.graph_node_id != selected_wait.target_graph_node_id
+        or activation.runner_binding_id != selected_wait.target_runner_binding_id
+    ):
+        return _wait_projection_refusal("target_authority")
+    artifact = state.artifacts.get(wait.source_artifact_id or "")
+    if (
+        artifact is None
+        or artifact.artifact_id != wait.source_artifact_id
+        or sum(
+            candidate.artifact_id == wait.source_artifact_id
+            for candidate in state.artifacts.values()
+        )
+        != 1
+    ):
+        return _wait_projection_refusal("source_artifact")
+    authenticated = authenticate_artifact_provenance(state, artifact)
+    if not isinstance(authenticated, AuthenticatedArtifactProvenance):
+        return _wait_projection_refusal("source_artifact_provenance")
+    source = authenticated.observation
+    source_action = next(
+        (
+            action
+            for action in selected_plan.terminal_actions
+            if action.id == wait.source_action_id
+        ),
+        None,
+    )
+    target_stage = next(
+        (
+            stage
+            for stage in selected_plan.stage_kinds
+            if stage.id == selected_wait.target_stage_kind_id
+        ),
+        None,
+    )
+    if (
+        source.run.run_ref.plan_ref != run.run_ref.plan_ref
+        or source_action is None
+        or source_action.action_kind != "operator_wait"
+        or source_action.artifact_schema_id is None
+        or artifact.schema_id != source_action.artifact_schema_id
+        or target_stage is None
+        or artifact.schema_id not in target_stage.artifact_schema_ids
+        or artifact.work_item_id != wait.source_work_item_id
+        or artifact.source_run_id != wait.source_run_id
+        or artifact.source_action_id != wait.source_action_id
+        or artifact.source_stage_kind_id != wait.source_stage_kind_id
+        or artifact.source_graph_node_id != wait.source_graph_node_id
+        or source.work_item.ref.work_item_id != wait.source_work_item_id
+        or source.run.run_ref.run_id != wait.source_run_id
+        or source.activation.activation_id != wait.source_activation_id
+        or source.work_item.lineage_id != wait.lineage_id
+        or source.work_item.queue_family_id != wait.source_queue_family_id
+        or source.activation.queue_family_id != wait.source_queue_family_id
+        or source.run.runner_binding_id != wait.source_runner_binding_id
+        or source.activation.runner_binding_id != wait.source_runner_binding_id
+    ):
+        return _wait_projection_refusal("source_authority")
+    return SelectedWaitEvidenceProjection(
+        wait_id=wait.wait_id,
+        operator_wait_id=str(wait.operator_wait_id),
+        lineage_id=wait.lineage_id,
+        source_artifact_id=artifact.artifact_id,
+        source_artifact_schema_id=str(artifact.schema_id),
+        source_artifact_digest=artifact.payload_digest,
+        source_artifact_payload=artifact.payload,
+        source_action_id=str(artifact.source_action_id),
+        source_run_id=artifact.source_run_id,
+        source_work_item_id=artifact.work_item_id,
+    )
+
+
+def _wait_projection_refusal(detail: str) -> PolicyAssessment:
+    return PolicyAssessment(
+        "partial_or_corrupt",
+        reason_code="operator_wait_evidence_refused",
+        detail=detail,
+    )
+
+
+def _resolved_revise_wait_authority_valid(
+    state: RuntimeState,
+    wait: OperatorWaitRecord,
+    work_item: WorkItem,
+) -> bool:
+    input_id = wait.resolved_input_id
+    if input_id is None:
+        return False
+    receipt = state.receipts.get(input_id)
+    transitions = tuple(
+        transition
+        for transition in state.transitions
+        if transition.input_id == input_id
+    )
+    events = tuple(
+        event for event in state.governance_events if event.input_id == input_id
+    )
+    traces = tuple(trace for trace in state.traces if trace.input_id == input_id)
+    if (
+        receipt is None
+        or receipt.receipt_ref.input_id != input_id
+        or receipt.receipt_ref.input_payload_digest
+        != wait.resolved_input_payload_digest
+        or not receipt.accepted
+        or receipt.refusal_reason is not None
+        or len(transitions) != 1
+        or len(events) != 1
+        or len(traces) != 1
+        or receipt.transition_id != transitions[0].record_id
+        or not transitions[0].accepted
+        or transitions[0].input_kind != OperatorReviseWait.input_kind
+        or transitions[0].input_family != "workflow_operator_command"
+        or wait.payload_digest != operator_payload_digest(work_item.payload)
+        or wait.payload_reference != f"work_item:{work_item.ref.work_item_id}:payload"
+    ):
+        return False
+    expected_audit = (
+        input_id,
+        OperatorReviseWait.input_kind,
+        "workflow_operator_command",
+        "accepted",
+        wait.selected_plan_fingerprint,
+        work_item.ref.work_item_id,
+        wait.source_run_id,
+        wait.source_action_id,
+        "operator_wait",
+        None,
+    )
+    return _operator_wait_resolution_audit_matches(
+        events[0],
+        expected_record_id=f"{transitions[0].record_id}:governance",
+        expected_audit=expected_audit,
+    ) and _operator_wait_resolution_audit_matches(
+        traces[0],
+        expected_record_id=f"{transitions[0].record_id}:trace",
+        expected_audit=expected_audit,
+    )
+
+
+def _operator_wait_resolution_audit_matches(
+    record: GovernanceEventRecord | TraceRecord,
+    *,
+    expected_record_id: str,
+    expected_audit: tuple[object, ...],
+) -> bool:
+    return (
+        record.record_id == expected_record_id
+        and (
+            record.input_id,
+            record.input_kind,
+            record.input_family,
+            record.disposition,
+            record.plan_fingerprint,
+            record.work_item_id,
+            record.run_id,
+            record.action_id,
+            record.authority_source,
+            record.refusal_reason,
+        )
+        == expected_audit
+    )
 
 
 def decide_operator_resume_wait(
@@ -428,7 +705,9 @@ def _operator_wait_close_source_mutations(
 
 
 __all__ = (
+    "SelectedWaitEvidenceProjection",
     "decide_operator_close_wait",
     "decide_operator_resume_wait",
     "decide_operator_revise_wait",
+    "project_selected_wait_evidence_for_target",
 )

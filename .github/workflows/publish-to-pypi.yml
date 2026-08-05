@@ -3,11 +3,11 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - v0.22.1
+      - v0.22.2
 
 jobs:
   validate:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.1' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.2' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,8 +37,8 @@ jobs:
         run: |
           expected=(
             ".gitignore"
-            "millrace_ai-0.22.1-py3-none-any.whl"
-            "millrace_ai-0.22.1.tar.gz"
+            "millrace_ai-0.22.2-py3-none-any.whl"
+            "millrace_ai-0.22.2.tar.gz"
           )
           mapfile -t actual < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
           mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
@@ -47,8 +47,8 @@ jobs:
             exit 1
           fi
           sha256sum --check --strict <<'SHA256'
-          8b2b1e5fe56cbfff18292f0a4966cc35db2734bcfa2d202d5cdbb4df4fc2ed7a  dist/millrace_ai-0.22.1-py3-none-any.whl
-          dbe563617a9a51e20f2eb0a4453dda7896295d6cdac6d18fdaa7c7248de8efbf  dist/millrace_ai-0.22.1.tar.gz
+          73e2e24043702d458e658a896c01cca07550a953ee7019219bb42e99ef033353  dist/millrace_ai-0.22.2-py3-none-any.whl
+          0d35b2f80fde98e663cfff976b470e53ba51f26a919a063c855ab5166cb43406  dist/millrace_ai-0.22.2.tar.gz
           SHA256
       - name: Check source unchanged
         run: |
@@ -59,12 +59,12 @@ jobs:
           name: pypi-distributions
           if-no-files-found: error
           path: |
-            dist/millrace_ai-0.22.1-py3-none-any.whl
-            dist/millrace_ai-0.22.1.tar.gz
+            dist/millrace_ai-0.22.2-py3-none-any.whl
+            dist/millrace_ai-0.22.2.tar.gz
 
   publish:
     needs: validate
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.1' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.2' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -80,8 +80,8 @@ jobs:
         shell: bash
         run: |
           expected=(
-            "millrace_ai-0.22.1-py3-none-any.whl"
-            "millrace_ai-0.22.1.tar.gz"
+            "millrace_ai-0.22.2-py3-none-any.whl"
+            "millrace_ai-0.22.2.tar.gz"
           )
           mapfile -t actual < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
           mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
@@ -90,8 +90,8 @@ jobs:
             exit 1
           fi
           sha256sum --check --strict <<'SHA256'
-          8b2b1e5fe56cbfff18292f0a4966cc35db2734bcfa2d202d5cdbb4df4fc2ed7a  dist/millrace_ai-0.22.1-py3-none-any.whl
-          dbe563617a9a51e20f2eb0a4453dda7896295d6cdac6d18fdaa7c7248de8efbf  dist/millrace_ai-0.22.1.tar.gz
+          73e2e24043702d458e658a896c01cca07550a953ee7019219bb42e99ef033353  dist/millrace_ai-0.22.2-py3-none-any.whl
+          0d35b2f80fde98e663cfff976b470e53ba51f26a919a063c855ab5166cb43406  dist/millrace_ai-0.22.2.tar.gz
           SHA256
       - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         with:

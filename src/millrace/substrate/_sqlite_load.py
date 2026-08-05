@@ -62,6 +62,7 @@ from millrace.contracts.state import (
     WorkItemRef,
 )
 from millrace.substrate._sqlite_relations import (
+    runner_result_refusal_chain,
     runner_session_cas_references,
     validate_audit_transition_rows,
     validate_completed_runner_evidence,
@@ -175,12 +176,14 @@ def load_runtime_state_rows(
     cas_store: ContentAddressedByteStore,
     *,
     _after_admitted_plans: Callable[[], None] | None = None,
+    rejected_result_inspection_run_id: str | None = None,
 ) -> RuntimeState:
     if connection.in_transaction:
         return _load_runtime_state_rows_in_transaction(
             connection,
             cas_store,
             _after_admitted_plans=_after_admitted_plans,
+            rejected_result_inspection_run_id=rejected_result_inspection_run_id,
         )
 
     connection.execute("BEGIN")
@@ -189,6 +192,7 @@ def load_runtime_state_rows(
             connection,
             cas_store,
             _after_admitted_plans=_after_admitted_plans,
+            rejected_result_inspection_run_id=rejected_result_inspection_run_id,
         )
     except Exception:
         connection.execute("ROLLBACK")
@@ -202,6 +206,7 @@ def _load_runtime_state_rows_in_transaction(
     cas_store: ContentAddressedByteStore,
     *,
     _after_admitted_plans: Callable[[], None] | None = None,
+    rejected_result_inspection_run_id: str | None = None,
 ) -> RuntimeState:
     admitted_plans, selected_plan_digests = _load_admitted_plans(
         connection,
@@ -256,17 +261,39 @@ def _load_runtime_state_rows_in_transaction(
         transitions=_load_transitions(connection),
         refusals=_load_refusals(connection),
     )
-    _validate_runner_session_cas_references(state, cas_store)
-    validate_loaded_runtime_state(state)
-    _validate_runner_session_evidence_authority(state, cas_store)
+    if rejected_result_inspection_run_id is None:
+        _validate_runner_session_cas_references(state, cas_store)
+        validate_loaded_runtime_state(state)
+        _validate_runner_session_evidence_authority(state, cas_store)
+    else:
+        target_session_id = _rejected_result_inspection_session_id(
+            state,
+            rejected_result_inspection_run_id,
+        )
+        validate_loaded_runtime_state(state)
+        _validate_runner_session_cas_references(
+            state,
+            cas_store,
+            excluded_completion_session_id=target_session_id,
+        )
+        _validate_runner_session_evidence_authority(
+            state,
+            cas_store,
+            excluded_completion_session_id=target_session_id,
+        )
     return state
 
 
 def _validate_runner_session_cas_references(
     state: RuntimeState,
     cas_store: ContentAddressedByteStore,
+    *,
+    excluded_completion_session_id: str | None = None,
 ) -> None:
-    for reference_name, digest in runner_session_cas_references(state):
+    for reference_name, digest in runner_session_cas_references(
+        state,
+        excluded_completion_session_id=excluded_completion_session_id,
+    ):
         try:
             payload = cas_store.get_bytes(digest)
         except SubstrateError as exc:
@@ -287,8 +314,12 @@ def _validate_runner_session_cas_references(
 def _validate_runner_session_evidence_authority(
     state: RuntimeState,
     cas_store: ContentAddressedByteStore,
+    *,
+    excluded_completion_session_id: str | None = None,
 ) -> None:
     for completion in state.runner_session_completions.values():
+        if completion.session_id == excluded_completion_session_id:
+            continue
         evidence_digest = completion.runner_result_evidence_digest
         if evidence_digest is not None:
             validate_completed_runner_evidence(
@@ -296,6 +327,47 @@ def _validate_runner_session_evidence_authority(
                 session_id=completion.session_id,
                 payload=cas_store.get_bytes(evidence_digest),
             )
+
+
+def _rejected_result_inspection_session_id(
+    state: RuntimeState,
+    run_id: str,
+) -> str | None:
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("run_id must be a nonblank string")
+    run = state.runs.get(run_id)
+    if run is None or run.current_session_id is None:
+        return None
+    session = state.runner_sessions.get(run.current_session_id)
+    if session is None:
+        return None
+    completion = state.runner_session_completions.get(session.session_id)
+    if completion is None:
+        return None
+    receipt = state.receipts.get(completion.application_input_id)
+    if (
+        completion.terminal_state == "completed"
+        and completion.primary_cancellation_request_id is None
+        and completion.runner_result_evidence_digest is not None
+        and receipt is not None
+        and not receipt.accepted
+    ):
+        chain_valid, _reason = runner_result_refusal_chain(
+            state,
+            run_id=run_id,
+            session_id=session.session_id,
+            application_input_id=completion.application_input_id,
+            evidence=None,
+        )
+        return session.session_id if chain_valid else None
+    if (
+        completion.terminal_state == "failed"
+        and completion.adapter_error_kind is not None
+        and completion.runner_result_evidence_digest is None
+        and completion.primary_cancellation_request_id is None
+    ):
+        return session.session_id
+    return None
 
 
 def _load_admitted_plans(

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from millrace.adapters.cli import session_completion as complete
+from millrace.adapters.cli import session_diagnostics
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
 )
@@ -163,7 +164,7 @@ def _request_cancellation_once(
             session=session,
             reason="runner_session_reconciliation_contradiction",
             signal_kind="runner_request",
-            signal_digest=complete._signal_digest(
+            signal_digest=session_diagnostics._signal_digest(
                 {
                     "request_id": request_id,
                     "reason": reason,
@@ -378,7 +379,7 @@ def _persist_cancellation_result(
             session=session,
             reason="runner_session_authority_mismatch",
             signal_kind="runner_completion_outcome",
-            signal_digest=complete._signal_digest(outcome),
+            signal_digest=session_diagnostics._signal_digest(outcome),
         )
         return complete.SessionExecutionResult("session_reconciliation_required")
     if cleanup.disposition == "orphan_risk":
@@ -474,7 +475,17 @@ def _persist_cancelled_without_outcome(
         adapter_error_kind="cancelled",
         evidence_digest=None,
         diagnostic_digest=runtime.cas_store.put_bytes(
-            complete._canonical_json_bytes(diagnostic)
+            session_diagnostics._completion_diagnostic_bytes_for_dispatch(
+                complete.build_dispatch_envelope_for_run(
+                    state=complete._load(runtime),
+                    run_id=run_ref.run_id,
+                ),
+                diagnostic,
+                redaction_policy=(
+                    event_redaction_policy
+                    or RedactionPolicy(policy_id=redaction_policy_id)
+                ),
+            )
         ),
         cleanup_disposition=cleanup_disposition,
         redaction_policy_id=redaction_policy_id,
@@ -534,7 +545,9 @@ def _poll_cancellation_handle(
             session=session,
             reason="runner_session_reconciliation_contradiction",
             signal_kind="runner_completion_poll",
-            signal_digest=complete._signal_digest("malformed_runner_completion"),
+            signal_digest=session_diagnostics._signal_digest(
+                "malformed_runner_completion"
+            ),
         )
         return None, True
 
@@ -612,7 +625,7 @@ def _persist_cancellation_operation(
         raise TypeError("cancellation operation returned an invalid result")
     started_at = max(primary.requested_at, operation.started_at)
     completed_at = max(started_at, operation.completed_at)
-    diagnostic = complete._bounded_session_diagnostic_bytes(
+    diagnostic = session_diagnostics._bounded_session_diagnostic_bytes(
         operation.diagnostic,
         redaction_policy=redaction_policy,
     )

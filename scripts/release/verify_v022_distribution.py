@@ -21,17 +21,17 @@ from typing import Any
 
 EXPECTED_WHEELS = {
     "millforge-0.1.0-py3-none-any.whl": ("millforge", "0.1.0"),
-    "millrace_ai-0.22.0-py3-none-any.whl": ("millrace-ai", "0.22.0"),
-    "millrace_plus-0.22.0-py3-none-any.whl": ("millrace-plus", "0.22.0"),
-    "millrace-0.22.0-py3-none-any.whl": ("millrace", "0.22.0"),
+    "millrace_ai-0.22.2-py3-none-any.whl": ("millrace-ai", "0.22.2"),
+    "millrace_plus-0.22.2-py3-none-any.whl": ("millrace-plus", "0.22.2"),
+    "millrace-0.22.2-py3-none-any.whl": ("millrace", "0.22.2"),
 }
 EXPECTED_SOURCE_PINS = frozenset(
     {"millforge", "millrace-ai", "millrace-plus", "millrace"}
 )
 EXPECTED_BUNDLE_REQUIREMENTS = (
     "millforge==0.1.0",
-    "millrace-ai==0.22.0",
-    "millrace-plus==0.22.0",
+    "millrace-ai==0.22.2",
+    "millrace-plus==0.22.2",
 )
 EXPECTED_WORKFLOW_IDS = frozenset(
     {
@@ -428,7 +428,7 @@ def build_install_command(
         str(resolver_closure.resolve()),
         "--only-binary=:all:",
         "--no-cache-dir",
-        "millrace==0.22.0",
+        "millrace==0.22.2",
     )
 
 
@@ -643,7 +643,7 @@ def run_installed_cli_smoke(
     cli = executable_dir / ("millrace.exe" if os.name == "nt" else "millrace")
     prefix = [str(cli), "--json", "--workspace", str(workspace)]
     package = [*prefix, "package"]
-    official = ["millrace.plus.official", "0.22.0"]
+    official = ["millrace.plus.official", "0.22.2"]
     workflow = [
         "--workflow-id",
         "simple_loop",
@@ -1340,7 +1340,7 @@ def verify(
                 "policy": {
                     "cache": "disabled",
                     "index": "disabled",
-                    "requirement": "millrace==0.22.0",
+                    "requirement": "millrace==0.22.2",
                     "wheel_sources": ["product_wheels", "resolver_closure"],
                 },
                 "result": installed,

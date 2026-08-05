@@ -17,11 +17,14 @@ from millrace.contracts.runner import (
     runner_session_locator_bytes,
 )
 from millrace.contracts.state import (
+    InputReceipt,
+    InputReceiptRef,
     RunnerSessionCancellationAttemptRecord,
     RunnerSessionCancellationRecord,
     RunnerSessionCompletionRecord,
     RunnerSessionRecord,
     RuntimeState,
+    TransitionRecord,
 )
 from millrace.contracts.transition import (
     AdvanceRunnerSession,
@@ -240,6 +243,119 @@ def test_load_refuses_raw_malformed_completed_evidence_cas(tmp_path) -> None:
         store.close()
 
 
+def test_rejected_result_inspection_exempts_only_target_diagnostic_cas(
+    tmp_path,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(
+        _session_state(),
+        cas_store,
+    )
+    session = replace(
+        state.runner_sessions["session-1"],
+        state="failed",
+    )
+    completion = replace(
+        state.runner_session_completions["session-1"],
+        terminal_state="failed",
+        exit_kind="error",
+        adapter_outcome_kind="error",
+        adapter_error_kind="invocation_failed",
+        primary_cancellation_request_id=None,
+        cancel_requested_at=None,
+    )
+    state = replace(
+        state,
+        runner_sessions={session.session_id: session},
+        runner_session_cancellation_requests={},
+        runner_session_cancellation_attempts={},
+        runner_session_completions={completion.session_id: completion},
+    )
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+        missing_digest = "sha256:" + "d" * 64
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                """
+                UPDATE runner_session_completions
+                SET diagnostic_digest = ?
+                WHERE session_id = 'session-1'
+                """,
+                (missing_digest,),
+            )
+        with pytest.raises(StorageIntegrityError, match="completion_diagnostic"):
+            store.load_runtime_state(cas_store)
+
+        inspected = store.load_runtime_state_for_rejected_result_inspection(
+            cas_store,
+            "run-taskmaster",
+        )
+        assert inspected.runner_sessions["session-1"].state == "failed"
+        assert (
+            inspected.runner_session_completions["session-1"].diagnostic_digest
+            == missing_digest
+        )
+    finally:
+        store.close()
+
+
+def test_accepted_result_inspection_remains_strict_for_target_cas(tmp_path) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(
+        _session_state(),
+        cas_store,
+        completed=True,
+    )
+    completion = state.runner_session_completions["session-1"]
+    accepted_receipt = InputReceipt(
+        receipt_ref=InputReceiptRef(
+            input_id=completion.application_input_id,
+            input_payload_digest="sha256:" + "e" * 64,
+        ),
+        transition_id="transition-completion-accepted",
+    )
+    state = replace(
+        state,
+        transitions=state.transitions
+        + (
+            TransitionRecord(
+                record_id="transition-completion-accepted",
+                input_id=completion.application_input_id,
+                input_kind="workflow.record_runner_session_completion",
+                input_family="workflow_runner_session",
+                accepted=True,
+            ),
+        ),
+        receipts={
+            **state.receipts,
+            completion.application_input_id: accepted_receipt,
+        },
+    )
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    try:
+        store.persist_runtime_state(state, cas_store)
+        missing_digest = "sha256:" + "e" * 64
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                """
+                UPDATE runner_session_completions
+                SET diagnostic_digest = ?
+                WHERE session_id = 'session-1'
+                """,
+                (missing_digest,),
+            )
+        with pytest.raises(StorageIntegrityError, match="completion_diagnostic"):
+            store.load_runtime_state_for_rejected_result_inspection(
+                cas_store,
+                "run-taskmaster",
+            )
+    finally:
+        store.close()
+
+
 def _replace_session_digest(
     state: RuntimeState,
     digest_kind: str,
@@ -311,6 +427,55 @@ def test_runner_session_records_round_trip(tmp_path) -> None:
         store.close()
 
     assert loaded == state
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    (None, {}),
+    ids=("absent", "present-empty"),
+)
+def test_runner_result_evidence_candidate_shape_round_trips_through_store(
+    tmp_path,
+    candidate: object,
+) -> None:
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    state, _digests = _cas_backed_session_state(
+        _session_state(),
+        cas_store,
+        completed=True,
+    )
+    completion = state.runner_session_completions["session-1"]
+    evidence = replace(
+        runner_result_evidence_from_payload(
+            json.loads(cas_store.get_bytes(completion.runner_result_evidence_digest))
+        ),
+        observation_payload=candidate,
+        artifact_payload=candidate,
+    )
+    evidence_digest = cas_store.put_bytes(runner_result_evidence_bytes(evidence))
+    state = replace(
+        state,
+        runner_session_completions={
+            "session-1": replace(
+                completion,
+                runner_result_evidence_digest=evidence_digest,
+            )
+        },
+    )
+
+    store = SQLiteRuntimeStore.initialize(tmp_path / "runtime.sqlite3")
+    try:
+        store.persist_runtime_state(state, cas_store)
+        loaded = store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+    assert loaded == state
+    persisted = runner_result_evidence_from_payload(
+        json.loads(cas_store.get_bytes(evidence_digest))
+    )
+    assert persisted.observation_payload == candidate
+    assert persisted.artifact_payload == candidate
 
 
 def test_cancellation_requested_aftermath_round_trips_from_decide_apply(

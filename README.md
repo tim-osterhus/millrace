@@ -62,7 +62,7 @@ Millrace is **agent-first**. Give this repository to a capable local agent:
 
 > Install Millrace for me in this workspace using
 > https://github.com/tim-osterhus/millrace. Read its README and
-> [instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.0/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
+> [instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.2/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
 > first. Check the CLI, workspace, workflows, and runners. Report what you
 > installed and what you need next. Do not store credentials in workflow
 > assets or start unattended work.

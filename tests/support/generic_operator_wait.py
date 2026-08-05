@@ -182,8 +182,33 @@ def active_revise_wait_state() -> tuple[
     return state, plan, fingerprint, wait.wait_id
 
 
-def wait_state(resolution_kind: str):
-    plan, fingerprint = kernel_ping_support.compile_kernel_ping(source())
+def wait_state(
+    resolution_kind: str,
+    *,
+    project_source_artifact: bool = False,
+):
+    workflow_source = source()
+    if project_source_artifact:
+        revise_wait = next(
+            wait
+            for wait in cast(
+                list[dict[str, object]], workflow_source["operator_waits"]
+            )
+            if wait["id"] == REVISE_WAIT_ID
+        )
+        revise_wait["project_source_artifact"] = True
+        target_stage = next(
+            stage
+            for stage in cast(
+                list[dict[str, object]], workflow_source["stage_kinds"]
+            )
+            if stage["id"] == "kernel_ping.taskmaster"
+        )
+        target_stage["artifact_schema_ids"] = (
+            *cast(tuple[str, ...], target_stage["artifact_schema_ids"]),
+            "kernel_ping.task_incident",
+        )
+    plan, fingerprint = kernel_ping_support.compile_kernel_ping(workflow_source)
     state = bootstrap_to_taskmaster_claim(plan, fingerprint)
     state = kernel_ping_support.apply_accepted_input(
         state,
@@ -243,3 +268,63 @@ def wait_state(resolution_kind: str):
             ),
         )
     return state, wait
+
+
+def claimed_projected_revise_wait_state() -> RuntimeState:
+    workflow_source = source()
+    revise_wait = next(
+        wait
+        for wait in cast(list[dict[str, object]], workflow_source["operator_waits"])
+        if wait["id"] == REVISE_WAIT_ID
+    )
+    revise_wait["project_source_artifact"] = True
+    target_stage = next(
+        stage
+        for stage in cast(list[dict[str, object]], workflow_source["stage_kinds"])
+        if stage["id"] == "kernel_ping.taskmaster"
+    )
+    target_stage["artifact_schema_ids"] = (
+        *cast(tuple[str, ...], target_stage["artifact_schema_ids"]),
+        "kernel_ping.task_incident",
+    )
+    plan, fingerprint = kernel_ping_support.compile_kernel_ping(workflow_source)
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    state = kernel_ping_support.apply_accepted_input(
+        state,
+        kernel_ping_support.runner_observation(
+            state=state,
+            plan=plan,
+            fingerprint=fingerprint,
+            run_id="run-taskmaster",
+            action_id=REVISE_ACTION_ID,
+            input_id="observe-taskmaster-needs-detail",
+            artifact_payload=kernel_ping_support.task_incident_payload(),
+        ),
+        kernel_ping_support.kernel_ping_context("observe-taskmaster-needs-detail"),
+    )
+    wait = next(iter(state.operator_waits.values()))
+    transition_input = OperatorReviseWait(
+        "operator-revise-generic-restart",
+        selected_plan_ref=wait.selected_plan_ref,
+        wait_id=wait.wait_id,
+        lineage_id=wait.lineage_id,
+        actor_id="local_operator",
+        actor_kind="local_operator",
+        payload=kernel_ping_support.task_artifact_payload(),
+    )
+    state = kernel_ping_support.apply_accepted_input(
+        state,
+        transition_input,
+        deterministic_context(
+            transition_id="transition-operator-revise-generic-restart",
+            work_item_id="work-operator-revised-restart",
+            activation_id="activation-operator-revised-restart",
+        ),
+    )
+    from support import generic_lifecycle
+
+    return generic_lifecycle.claim_activation(
+        state,
+        activation_id="activation-operator-revised-restart",
+        suffix="operator-revised-restart",
+    )

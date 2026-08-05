@@ -478,6 +478,7 @@ def build_selected_plan(
                 source_work_item_behavior=str(
                     record.get("source_work_item_behavior", "")
                 ),
+                project_source_artifact=bool(record["project_source_artifact"]),
                 unrelated_lineages_continue=bool(
                     record.get("unrelated_lineages_continue", False)
                 ),

@@ -52,7 +52,7 @@ def test_pyproject_exposes_millrace_console_script() -> None:
     scripts = PROJECT_METADATA.get("scripts", {})
 
     assert PROJECT_METADATA["name"] == "millrace-ai"
-    assert PROJECT_VERSION == "0.22.1"
+    assert PROJECT_VERSION == "0.22.2"
     assert scripts["millrace"] == "millrace.adapters.cli.main:cli"
 
 

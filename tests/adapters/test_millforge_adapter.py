@@ -171,6 +171,23 @@ def _join_evidence(value: str = "joined evidence") -> dict[str, object]:
     }
 
 
+def _wait_evidence(value: str = "selected evidence") -> dict[str, object]:
+    return {
+        "record_kind": "selected_wait_evidence",
+        "schema_version": 1,
+        "wait_id": "wait-1",
+        "operator_wait_id": "operator-wait-1",
+        "lineage_id": "lineage-1",
+        "source_artifact_id": "artifact-1",
+        "source_artifact_schema_id": "artifact",
+        "source_artifact_digest": "sha256:" + "d" * 64,
+        "source_artifact_payload": {"detail": value},
+        "source_action_id": "action-1",
+        "source_run_id": "run-source-1",
+        "source_work_item_id": "work-source-1",
+    }
+
+
 class _PublicRecord(SimpleNamespace):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, _PublicRecord) and vars(self) == vars(other)
@@ -932,6 +949,82 @@ def test_millforge_adapter_matches_configured_descriptor_and_invokes_once(  # no
     )
     assert "adapter_provenance" not in result.artifact_payload_candidate
     assert result.observation_payload_candidate is None
+
+
+def test_millforge_instruction_receives_wait_evidence_and_dispatch_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    facade = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
+    evidence = _wait_evidence()
+    request = _request(dispatch=_dispatch(selected_wait_evidence=evidence))
+
+    _drive_session(_adapter(monkeypatch, tmp_path, facade), request)
+
+    instruction = json.loads(facade.requests[0].task.instruction)
+    assert instruction["selected_wait_evidence"] == evidence
+    assert instruction["dispatch_identity"] == {
+        "run_id": "run-1",
+        "session_id": "session-1",
+        "dispatch_generation": 1,
+        "session_fencing_token": "session-fence-1",
+        "plan_id": "workflow:1",
+        "claim_id": "claim-1",
+        "generation": 2,
+        "fencing_token": "fence-1",
+        "plan_fingerprint": "sha256:plan",
+        "stage_kind_id": "stage-a",
+        "graph_node_id": "node-a",
+        "runner_binding_id": "runner-a",
+        "correlation_id": "corr-1",
+    }
+
+
+def test_millforge_actual_direct_dispatch_delivers_null_wait_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
+    from millrace.testing import fake_runner_dispatch_envelope_for_run
+    from support.kernel_ping import compile_kernel_ping
+
+    plan, fingerprint = compile_kernel_ping()
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    dispatch = fake_runner_dispatch_envelope_for_run(
+        state=state,
+        run_id="run-taskmaster",
+    )
+    option = dispatch.terminal_options[0]
+    material = {
+        asset_id: {"body": "Selected runtime material."}
+        for asset_id in (
+            dispatch.entrypoint_asset_id,
+            *dispatch.skill_asset_ids,
+        )
+        if asset_id is not None
+    }
+    request = _request(
+        dispatch=dispatch,
+        mappings=(
+            _mapping(
+                result_id="COMPLETE",
+                outcome_id=cast(str, option["outcome_id"]),
+                stage=dispatch.stage_kind_id,
+            ),
+        ),
+        schemas=(_schema(schema_id=dispatch.artifact_schema_ids[0]),),
+        selected_asset_material=material,
+    )
+    facade = _FakeFacade(selected_output=_SelectedOutputPresent({"status": "ok"}))
+
+    _drive_session(_adapter(monkeypatch, tmp_path, facade), request)
+
+    instruction = json.loads(facade.requests[0].task.instruction)
+    assert dispatch.selected_wait_evidence is None
+    assert instruction["selected_wait_evidence"] is None
+    assert instruction["dispatch_identity"]["run_id"] == dispatch.run_id
+    assert instruction["dispatch_identity"]["plan_id"] == dispatch.plan_id
+    assert instruction["dispatch_identity"]["correlation_id"] == "corr-1"
 
 
 def test_millforge_adapter_normalizes_reviewed_token_usage(

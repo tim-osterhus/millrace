@@ -789,28 +789,32 @@ def test_live_handle_accounts_for_child_after_leader_exits(tmp_path: Path) -> No
     os.name != "posix" or not hasattr(os, "killpg"),
     reason="process-group cleanup is POSIX-specific",
 )
-def test_terminal_leader_with_live_child_is_not_reported_complete(
+def test_terminal_leader_with_transient_child_polls_pending_then_succeeds_once(
     tmp_path: Path,
 ) -> None:
     from millrace.adapters.subprocess_transport import (
         SubprocessTransport,
         SubprocessTransportHandle,
         SubprocessTransportRequest,
+        SubprocessTransportSuccess,
     )
 
-    heartbeat = tmp_path / "terminal-leader-child.txt"
+    ready = tmp_path / "terminal-leader-child.ready"
     child = (
         "import pathlib,time\n"
-        f"path=pathlib.Path({str(heartbeat)!r})\n"
-        "while True:\n"
-        " path.write_text(str(time.time()))\n"
-        " time.sleep(0.03)\n"
+        f"pathlib.Path({str(ready)!r}).write_text('ready')\n"
+        "time.sleep(0.3)\n"
     )
     parent = (
-        "import subprocess,sys\n"
+        "import pathlib,subprocess,sys,time\n"
         f"subprocess.Popen([sys.executable,'-c',{child!r}],"
         "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
         "stderr=subprocess.DEVNULL)\n"
+        f"ready=pathlib.Path({str(ready)!r})\n"
+        "deadline=time.monotonic()+2\n"
+        "while not ready.exists() and time.monotonic()<deadline:\n"
+        " time.sleep(0.01)\n"
+        "print('leader complete')\n"
     )
     handle = SubprocessTransport().start(
         SubprocessTransportRequest(
@@ -828,11 +832,23 @@ def test_terminal_leader_with_live_child_is_not_reported_complete(
     assert isinstance(handle, SubprocessTransportHandle)
     try:
         handle.process.wait(timeout=2)
-        deadline = time.time() + 2
-        while not heartbeat.exists() and time.time() < deadline:
+        assert ready.exists()
+        assert handle.poll_completion() is None
+
+        deadline = time.monotonic() + 2
+        outcome = None
+        while outcome is None and time.monotonic() < deadline:
             time.sleep(0.01)
-        with pytest.raises(RuntimeError, match="owned process group remains"):
-            handle.poll_completion()
+            outcome = handle.poll_completion()
+
+        assert outcome == SubprocessTransportSuccess(
+            exit_code=0,
+            stdout="leader complete\n",
+            stderr="",
+        )
+        assert handle.poll_completion() is None
+        assert handle.readers_joined
+        assert handle.cleanup().disposition == "complete"
     finally:
         handle.kill()
         handle.cleanup()

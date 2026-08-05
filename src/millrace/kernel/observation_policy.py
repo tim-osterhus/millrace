@@ -584,13 +584,20 @@ def _expected_artifact_payload(
         return authenticated.evidence.artifact_payload
     if action.payload_projection is None:
         return None
+    observation_payload = authenticated.evidence.observation_payload
+    artifact_payload = authenticated.evidence.artifact_payload
+    if artifact_payload is None:
+        return None
+    projection_observation_payload = (
+        {} if observation_payload is None else observation_payload
+    )
     projected = evaluate_projection(
         action.payload_projection,
         projection_context_for_run(
             work_item=authenticated.work_item,
             run=authenticated.run,
-            observation_payload=authenticated.evidence.observation_payload,
-            artifact_payload=authenticated.evidence.artifact_payload,
+            observation_payload=projection_observation_payload,
+            artifact_payload=artifact_payload,
         ),
     )
     if projected.accepted and isinstance(projected.value, Mapping):

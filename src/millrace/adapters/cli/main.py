@@ -587,6 +587,11 @@ def _add_runs_commands(
 
     show = subparsers.add_parser("show", help="Show one run.")
     show.add_argument("run_id", metavar="RUN_ID")
+    show.add_argument(
+        "--include-rejected-evidence",
+        action="store_true",
+        help="Include bounded retained evidence for a rejected session.",
+    )
     show.set_defaults(command="runs.show")
     help_parsers["runs.show"] = show
 

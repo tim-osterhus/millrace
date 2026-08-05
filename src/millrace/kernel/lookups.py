@@ -17,13 +17,15 @@ from millrace.contracts.compiled_plan import (
     OperatorWaitDeclaration,
     RunnerBindingDeclaration,
     SelectedCompiledPlan,
-    StageKindDeclaration,
-    TerminalActionDeclaration,
-    TerminalOutcomeDeclaration,
     WaitStateDeclaration,
 )
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId
+from millrace.contracts.selected_plan_lookups import (
+    stage_kind_for,
+    terminal_action_for,
+    terminal_outcome_for,
+)
 from millrace.contracts.state import (
     ExternalEnqueueRoute,
     LineageQuarantineRecord,
@@ -62,40 +64,6 @@ def external_enqueue_routes(
         )
         for route in selected_plan.external_enqueue_routes
     }
-
-
-def terminal_outcome_for(
-    selected_plan: SelectedCompiledPlan,
-    stage_kind_id: str,
-    marker: str | None,
-) -> TerminalOutcomeDeclaration | None:
-    if marker is None:
-        return None
-    stage = stage_kind_for(selected_plan, stage_kind_id)
-    if stage is None:
-        return None
-    for outcome in selected_plan.terminal_outcomes:
-        if (
-            str(outcome.stage_kind_id) == stage_kind_id
-            and outcome.id in stage.declared_outcome_ids
-            and outcome.marker == marker
-        ):
-            return outcome
-    return None
-
-
-def terminal_action_for(
-    selected_plan: SelectedCompiledPlan,
-    stage_kind_id: str,
-    outcome_id: str,
-) -> TerminalActionDeclaration | None:
-    for action in selected_plan.terminal_actions:
-        if (
-            str(action.stage_kind_id) == stage_kind_id
-            and str(action.outcome_id) == outcome_id
-        ):
-            return action
-    return None
 
 
 def artifact_schema_for(
@@ -217,16 +185,6 @@ def route_contract_supported(
         and target_stage_kind_id
         in {str(stage_id) for stage_id in runner_binding.stage_kind_ids}
     )
-
-
-def stage_kind_for(
-    selected_plan: SelectedCompiledPlan,
-    stage_kind_id: str,
-) -> StageKindDeclaration | None:
-    for stage_kind in selected_plan.stage_kinds:
-        if str(stage_kind.id) == stage_kind_id:
-            return stage_kind
-    return None
 
 
 def runner_binding_for(

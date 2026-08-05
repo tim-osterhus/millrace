@@ -390,6 +390,7 @@ _OPERATOR_WAIT_KEYS = frozenset(
         "source_action_ids",
         "wait_scope",
         "source_work_item_behavior",
+        "project_source_artifact",
         "unrelated_lineages_continue",
         "allowed_resolution_kinds",
         "payload_schema_id",
@@ -1764,6 +1765,7 @@ def _encode_operator_wait(wait: OperatorWaitDeclaration) -> Mapping[str, JsonVal
         "source_action_ids": tuple(str(item) for item in wait.source_action_ids),
         "wait_scope": wait.wait_scope,
         "source_work_item_behavior": wait.source_work_item_behavior,
+        "project_source_artifact": wait.project_source_artifact,
         "unrelated_lineages_continue": wait.unrelated_lineages_continue,
         "allowed_resolution_kinds": tuple(wait.allowed_resolution_kinds),
         "payload_schema_id": _optional_id(wait.payload_schema_id),
@@ -1797,6 +1799,7 @@ def _decode_operator_wait(record: Record) -> OperatorWaitDeclaration:
         ),
         wait_scope=_expect_string(record, "wait_scope"),
         source_work_item_behavior=_expect_string(record, "source_work_item_behavior"),
+        project_source_artifact=_expect_bool(record, "project_source_artifact"),
         unrelated_lineages_continue=_expect_bool(
             record,
             "unrelated_lineages_continue",

@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, fields, is_dataclass, replace
-from hashlib import sha256
+from dataclasses import dataclass, replace
 from uuid import uuid4
 
 from millrace.adapters.cli import session_persistence as persistence
@@ -14,6 +13,11 @@ from millrace.adapters.cli.context import (
     OpenRuntimeContext,
     refusal_is_pre_persist,
     transition_context,
+)
+from millrace.adapters.cli.session_diagnostics import (
+    _completion_diagnostic_bytes,
+    _completion_diagnostic_bytes_for_dispatch,
+    _signal_digest,
 )
 from millrace.adapters.runner_contract import (
     AdapterErrorResult,
@@ -28,6 +32,7 @@ from millrace.adapters.runner_contract import (
     runner_evidence_from_adapter_outcome as runner_evidence_from_adapter_outcome,
 )
 from millrace.contracts.runner import (
+    RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES,
     RunnerDispatchEnvelope,
     RunnerResultEvidence,
     runner_result_evidence_bytes,
@@ -51,8 +56,16 @@ from millrace.operator.dispatch import (
     DispatchProjectionError,
     build_dispatch_envelope_for_run,
 )
+from millrace.substrate.errors import SubstrateError
 
-_COMMAND, SESSION_DIAGNOSTIC_MAX_BYTES = "run.session", 16 * 1024
+_COMMAND = "run.session"
+SESSION_DIAGNOSTIC_MAX_BYTES = RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES
+
+__all__ = (
+    "SESSION_DIAGNOSTIC_MAX_BYTES",
+    "_signal_digest",
+    "build_dispatch_envelope_for_run",
+)
 _RUNTIME_SESSION_EVENT_POLICY = RedactionPolicy(policy_id="runtime-session-events")
 
 
@@ -79,8 +92,9 @@ def _persist_orphan_risk(
     persistence_failure_code: str = "runner_session_reconciliation_contradiction",
 ) -> SessionExecutionResult:
     diagnostic_digest = runtime.cas_store.put_bytes(
-        _canonical_json_bytes(
-            {"reconciliation": "unsupported"} if diagnostic is None else diagnostic
+        _completion_diagnostic_bytes(
+            request,
+            {"reconciliation": "unsupported"} if diagnostic is None else diagnostic,
         )
     )
     completion = _completion_record(
@@ -252,11 +266,11 @@ def _persist_error_completion(
     primary: RunnerSessionCancellationRecord | None,
     terminal_state: str,
 ) -> SessionExecutionResult:
-    diagnostic_bytes = _adapter_error_diagnostic_bytes(
+    raw_diagnostic_bytes = _adapter_error_diagnostic_bytes(
         outcome,
         request=request,
     )
-    if diagnostic_bytes is None:
+    if raw_diagnostic_bytes is None:
         raise AssertionError("validated adapter error diagnostic disappeared")
     if cleanup.disposition == "orphan_risk":
         return _persist_orphan_risk(
@@ -270,7 +284,7 @@ def _persist_error_completion(
                 "adapter_outcome_present": True,
             },
         )
-    diagnostic_digest = runtime.cas_store.put_bytes(diagnostic_bytes)
+    diagnostic_digest = runtime.cas_store.put_bytes(raw_diagnostic_bytes)
     return _persist_adapter_error(
         runtime,
         run_ref=run_ref,
@@ -281,6 +295,7 @@ def _persist_error_completion(
         terminal_state=terminal_state,
         primary=primary,
         redaction_policy=request.redaction_policy,
+        request=request,
     )
 
 
@@ -311,9 +326,9 @@ def _persist_success_completion(
         runner_result_evidence_bytes(evidence)
     )
     diagnostic_digest = runtime.cas_store.put_bytes(
-        _bounded_session_diagnostic_bytes(
+        _completion_diagnostic_bytes(
+            request,
             outcome.evidence_construction_diagnostics,
-            redaction_policy=request.redaction_policy,
         )
     )
     completion = _completion_record(
@@ -374,7 +389,27 @@ def _persist_adapter_error(
     terminal_state: str = "failed",
     primary: RunnerSessionCancellationRecord | None = None,
     redaction_policy: RedactionPolicy,
+    request: AdapterInvocationRequest | None = None,
 ) -> SessionExecutionResult:
+    try:
+        raw_diagnostic_bytes = runtime.cas_store.get_bytes(diagnostic_digest)
+        dispatch = (
+            request.dispatch_envelope
+            if request is not None
+            else build_dispatch_envelope_for_run(
+                state=_load(runtime),
+                run_id=run_ref.run_id,
+            )
+        )
+        diagnostic_digest = runtime.cas_store.put_bytes(
+            _completion_diagnostic_bytes_for_dispatch(
+                dispatch,
+                raw_diagnostic_bytes,
+                redaction_policy=redaction_policy,
+            )
+        )
+    except (OSError, SubstrateError, TypeError, ValueError):
+        return SessionExecutionResult("completion_refused")
     completion = _completion_record(
         session=session,
         terminal_state=terminal_state,
@@ -714,37 +749,6 @@ def _load(runtime: OpenRuntimeContext) -> RuntimeState:
     return runtime.store.load_runtime_state(runtime.cas_store)
 
 
-def _canonical_json_bytes(value: object) -> bytes:
-    return json.dumps(
-        _plain_json_value(value),
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def _bounded_session_diagnostic_bytes(
-    value: object,
-    *,
-    redaction_policy: RedactionPolicy,
-) -> bytes:
-    try:
-        redacted = redaction_policy.redact_authority_value(value)
-        payload = _canonical_json_bytes(redacted)
-    except Exception:
-        return _canonical_json_bytes({"redaction_failed": True})
-    if len(payload) <= SESSION_DIAGNOSTIC_MAX_BYTES:
-        return payload
-    return _canonical_json_bytes(
-        {
-            "full_diagnostic_digest": f"sha256:{sha256(payload).hexdigest()}",
-            "observed_bytes": len(payload),
-            "truncated": True,
-        }
-    )
-
-
 def _adapter_error_diagnostic_bytes(
     outcome: AdapterErrorResult,
     *,
@@ -759,40 +763,3 @@ def _adapter_error_diagnostic_bytes(
     if not isinstance(redacted, Mapping):
         return None
     return start_refusal_diagnostic_bytes(replace(outcome, diagnostics=redacted))
-
-
-def _signal_digest(value: object) -> str:
-    payload = _canonical_json_bytes(_stable_signal_value(value))
-    return f"sha256:{sha256(payload).hexdigest()}"
-
-
-def _stable_signal_value(value: object) -> object:
-    if value is None or isinstance(value, (str, bool)):
-        return value
-    if type(value) is int:
-        return value
-    if isinstance(value, float):
-        return {"float_hex": value.hex()}
-    if isinstance(value, Mapping):
-        return {str(key): _stable_signal_value(nested) for key, nested in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_stable_signal_value(item) for item in value]
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            "record_type": f"{type(value).__module__}.{type(value).__qualname__}",
-            **{
-                item.name: _stable_signal_value(getattr(value, item.name))
-                for item in fields(value)
-            },
-        }
-    return {
-        "value_type": f"{type(value).__module__}.{type(value).__qualname__}",
-    }
-
-
-def _plain_json_value(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {str(key): _plain_json_value(nested) for key, nested in value.items()}
-    if isinstance(value, tuple):
-        return [_plain_json_value(item) for item in value]
-    return value

@@ -185,9 +185,9 @@ def _probe(environment_root: Path = Path("/isolated")) -> dict[str, Any]:
     distributions = {
         "fake-dep": "1.2.0",
         "millforge": "0.1.0",
-        "millrace-ai": "0.22.0",
-        "millrace-plus": "0.22.0",
-        "millrace": "0.22.0",
+        "millrace-ai": "0.22.2",
+        "millrace-plus": "0.22.2",
+        "millrace": "0.22.2",
         "pip": "25.0",
     }
     return {
@@ -286,7 +286,7 @@ def test_rejects_contaminated_or_incomplete_wheelhouse(tmp_path: Path) -> None:
         verifier.inspect_product_wheelhouse(products, manifest.product_wheels)
     extra.unlink()
 
-    missing = products / "millrace-0.22.0-py3-none-any.whl"
+    missing = products / "millrace-0.22.2-py3-none-any.whl"
     missing.unlink()
     with pytest.raises(verifier.VerificationError, match="exactly"):
         verifier.inspect_product_wheelhouse(products, manifest.product_wheels)
@@ -321,7 +321,7 @@ def test_offline_meta_install_uses_only_selected_wheelhouse(tmp_path: Path) -> N
         str(closure.resolve()),
         "--only-binary=:all:",
         "--no-cache-dir",
-        "millrace==0.22.0",
+        "millrace==0.22.2",
     )
     assert "--require-hashes" not in command
     assert all("millforge" not in part for part in command)
@@ -431,9 +431,9 @@ def test_downloaded_artifact_hash_and_metadata_verification(tmp_path: Path) -> N
     downloaded = tmp_path / "downloaded"
     downloaded.mkdir()
     cut_wheels = [
-        local / "millrace_ai-0.22.0-py3-none-any.whl",
-        local / "millrace_plus-0.22.0-py3-none-any.whl",
-        local / "millrace-0.22.0-py3-none-any.whl",
+        local / "millrace_ai-0.22.2-py3-none-any.whl",
+        local / "millrace_plus-0.22.2-py3-none-any.whl",
+        local / "millrace-0.22.2-py3-none-any.whl",
     ]
 
     for index, wheel in enumerate(cut_wheels, start=1):
@@ -470,7 +470,7 @@ def test_downloaded_artifacts_refuse_non_prefix_and_millforge(
     downloaded = tmp_path / "downloaded"
     downloaded.mkdir()
 
-    plus = local / "millrace_plus-0.22.0-py3-none-any.whl"
+    plus = local / "millrace_plus-0.22.2-py3-none-any.whl"
     (downloaded / plus.name).write_bytes(plus.read_bytes())
     with pytest.raises(verifier.VerificationError, match="ordered CUT prefix"):
         verifier.compare_downloaded_artifacts(

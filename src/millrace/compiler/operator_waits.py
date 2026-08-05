@@ -28,6 +28,7 @@ OPERATOR_WAIT_FIELDS = frozenset(
         "source_action_ids",
         "wait_scope",
         "source_work_item_behavior",
+        "project_source_artifact",
         "unrelated_lineages_continue",
         "allowed_resolution_kinds",
         "payload_schema_id",
@@ -173,6 +174,13 @@ def validate_operator_wait_references(
             diagnostics,
         )
         _validate_operator_wait_values(record, referrer_path, diagnostics)
+        _validate_operator_wait_projection(
+            record,
+            referrer_path,
+            action_records=action_records,
+            source=source,
+            diagnostics=diagnostics,
+        )
 
     for index, record in enumerate(records(source, "terminal_actions")):
         if record.get("kind") != "operator_wait":
@@ -274,6 +282,16 @@ def _validate_operator_wait_values(
     diagnostics: list[Diagnostic],
 ) -> None:
     wait_id = str(record.get("id", ""))
+    if "project_source_artifact" in record and not isinstance(
+        record["project_source_artifact"], bool
+    ):
+        _invalid_operator_wait_field(
+            diagnostics,
+            referrer_path=referrer_path,
+            field_name="project_source_artifact",
+            value=str(record["project_source_artifact"]),
+            wait_id=wait_id,
+        )
     expected_values = {
         "wait_scope": "lineage",
         "unrelated_lineages_continue": True,
@@ -380,6 +398,15 @@ def _validate_operator_wait_values(
     has_revise = "revise_recorded_source" in allowed_set
     revise_target_error = False
     if not has_revise:
+        if "project_source_artifact" in record:
+            revise_target_error = True
+            _invalid_operator_wait_field(
+                diagnostics,
+                referrer_path=referrer_path,
+                field_name="project_source_artifact",
+                value=str(record.get("project_source_artifact", "")),
+                wait_id=wait_id,
+            )
         for field_name in _operator_wait_revise_target_fields(record):
             revise_target_error = True
             _invalid_operator_wait_field(
@@ -403,6 +430,89 @@ def _validate_operator_wait_values(
             value=",".join(requirements),
             wait_id=wait_id,
         )
+
+
+def _validate_operator_wait_projection(
+    record: SourceRecord,
+    referrer_path: str,
+    *,
+    action_records: Mapping[str, SourceRecord],
+    source: Mapping[str, object],
+    diagnostics: list[Diagnostic],
+) -> None:
+    if record.get("project_source_artifact") is not True:
+        return
+    target_stage_id = record.get("target_stage_kind_id")
+    target_stage = next(
+        (
+            stage
+            for stage in records(source, "stage_kinds")
+            if stage.get("id") == target_stage_id
+        ),
+        None,
+    )
+    target_schema_ids = (
+        set(text_tuple(target_stage.get("artifact_schema_ids", ())))
+        if target_stage is not None
+        else set()
+    )
+    for action_id in text_tuple(record.get("source_action_ids", ())):
+        action = action_records.get(action_id)
+        if action is None or action.get("kind") != "operator_wait":
+            continue
+        schema_id = action.get("artifact_schema_id")
+        if not is_non_empty_text(schema_id):
+            diagnostics.append(
+                compiler_error(
+                    code="operator_wait_projection_source_artifact_required",
+                    declaration_path=f"{referrer_path}.source_action_ids",
+                    message=(
+                        "Projected operator-wait source action must emit an artifact."
+                    ),
+                    context={
+                        "referrer_path": referrer_path,
+                        "operator_wait_id": str(record.get("id", "")),
+                        "action_id": action_id,
+                    },
+                    hint="Declare a non-null artifact_schema_id on the source action.",
+                )
+            )
+        elif schema_id not in target_schema_ids:
+            diagnostics.append(
+                compiler_error(
+                    code="operator_wait_projection_target_schema_missing",
+                    declaration_path=f"{referrer_path}.target_stage_kind_id",
+                    message=(
+                        "Projected source artifact schema is not declared by the "
+                        "operator-wait target stage."
+                    ),
+                    context={
+                        "referrer_path": referrer_path,
+                        "operator_wait_id": str(record.get("id", "")),
+                        "action_id": action_id,
+                        "artifact_schema_id": str(schema_id),
+                        "target_stage_kind_id": str(target_stage_id or ""),
+                    },
+                    hint="Declare every possible source schema on the target stage.",
+                )
+            )
+
+
+def normalize_operator_waits(source: Mapping[str, object]) -> Mapping[str, object]:
+    """Freeze the authored projection omission as explicit selected authority."""
+
+    normalized_source = dict(source)
+    normalized_source["operator_waits"] = [
+        {
+            **record,
+            "project_source_artifact": record.get(
+                "project_source_artifact",
+                False,
+            ),
+        }
+        for record in records(source, "operator_waits")
+    ]
+    return normalized_source
 
 
 def _operator_wait_revise_target_fields(record: SourceRecord) -> tuple[str, ...]:
@@ -437,4 +547,4 @@ def _invalid_operator_wait_field(
     )
 
 
-__all__ = ("validate_operator_wait_references",)
+__all__ = ("normalize_operator_waits", "validate_operator_wait_references")

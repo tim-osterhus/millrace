@@ -1628,6 +1628,94 @@ def test_admit_and_select_default_refuse_operator_wait_route_schema_mismatch() -
     )
 
 
+def test_admit_and_select_default_refuse_projected_wait_without_revise() -> None:
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
+    plan = _plan_with_operator_wait_fields(
+        source_plan,
+        generic_admission.CLOSE_WAIT_ID,
+        project_source_artifact=True,
+    )
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        f"operator_wait_projection:{generic_admission.CLOSE_WAIT_ID}",
+    )
+
+
+def test_admission_refuses_projected_wait_source_without_artifact() -> None:
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
+    wait = next(
+        wait
+        for wait in source_plan.operator_waits
+        if str(wait.id) == generic_admission.REVISE_WAIT_ID
+    )
+    action_id = wait.source_action_ids[0]
+    plan = replace(
+        _plan_with_operator_wait_fields(
+            source_plan,
+            generic_admission.REVISE_WAIT_ID,
+            project_source_artifact=True,
+        ),
+        terminal_actions=tuple(
+            replace(action, artifact_schema_id=None)
+            if action.id == action_id
+            else action
+            for action in source_plan.terminal_actions
+        ),
+    )
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        f"operator_wait_projection:{generic_admission.REVISE_WAIT_ID}",
+    )
+
+
+def test_admission_refuses_projected_wait_target_schema_mismatch() -> None:
+    source_plan, _source_fingerprint = generic_admission.compile_plan()
+    wait = next(
+        wait
+        for wait in source_plan.operator_waits
+        if str(wait.id) == generic_admission.REVISE_WAIT_ID
+    )
+    source_schema_id = next(
+        action.artifact_schema_id
+        for action in source_plan.terminal_actions
+        if action.id == wait.source_action_ids[0]
+    )
+    target_stage = next(
+        stage
+        for stage in source_plan.stage_kinds
+        if stage.id == wait.target_stage_kind_id
+    )
+    missing_schema_stage_id = StageKindId("admission.projection_target")
+    plan = _plan_with_operator_wait_fields(
+        replace(
+            source_plan,
+            stage_kinds=(
+                *source_plan.stage_kinds,
+                replace(
+                    target_stage,
+                    id=missing_schema_stage_id,
+                    artifact_schema_ids=tuple(
+                        schema_id
+                        for schema_id in target_stage.artifact_schema_ids
+                        if schema_id != source_schema_id
+                    ),
+                    declared_outcome_ids=(),
+                ),
+            ),
+        ),
+        generic_admission.REVISE_WAIT_ID,
+        project_source_artifact=True,
+        target_stage_kind_id=missing_schema_stage_id,
+    )
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        f"operator_wait_projection:{generic_admission.REVISE_WAIT_ID}",
+    )
+
+
 def test_admit_and_select_default_refuse_mutated_resume_target_selector() -> None:
     source_plan, _source_fingerprint = generic_admission.compile_plan()
     plan = _plan_with_intervention_option_fields(

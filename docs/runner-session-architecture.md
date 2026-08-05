@@ -91,6 +91,27 @@ runtime scope. The projection can include:
 - completion persistence and deterministic application-receipt status;
 - the effective mechanical grace constants.
 
+When the current session ends with an adapter error, `runs show RUN_ID` adds a
+bounded `rejected_result` projection. When a completed runner result has a
+refused application receipt, it adds the same projection with
+`rejection_kind: observation_refusal` and the durable kernel refusal reason.
+The projection reports the session identity, application status, relevant
+digests, safe marker and candidate-presence booleans when the retained
+evidence passes CAS and canonical-codec checks. Missing, corrupt, and digest
+mismatch evidence is reported as a stable status rather than exposed.
+
+Candidate bodies are omitted by default. Operators may request only the
+current rejected session's already-redacted canonical evidence and bounded
+completion diagnostic with:
+
+```text
+millrace runs show RUN_ID --include-rejected-evidence
+```
+
+This is a read-only projection. It never creates artifacts, advances queues,
+retries sessions, or changes refusal state. Accepted, pending, cancelled,
+lost, and orphan-risk sessions retain their existing projections.
+
 Daemon stop summaries carry the final affected session, including the last
 persisted cancellation operation/result when one exists. Unsupported or
 unknown operations are not guessed. `doctor` reports the grace constants and

@@ -1240,7 +1240,10 @@ def _operator_wait_authority_refusal(
     action_by_id: Mapping[ActionId, TerminalActionDeclaration],
 ) -> str | None:
     owner_by_action_id: dict[ActionId, OperatorWaitDeclaration] = {}
+    stage_by_id = {stage.id: stage for stage in selected_plan.stage_kinds}
     for operator_wait in selected_plan.operator_waits:
+        if type(operator_wait.project_source_artifact) is not bool:
+            return f"operator_wait_projection:{operator_wait.id}"
         if operator_wait.wait_scope != "lineage":
             return f"operator_wait_scope:{operator_wait.id}"
         if operator_wait.source_work_item_behavior not in {
@@ -1275,6 +1278,19 @@ def _operator_wait_authority_refusal(
             if action_id in owner_by_action_id:
                 return f"operator_wait_duplicate_owner:{action_id}"
             owner_by_action_id[action_id] = operator_wait
+            if operator_wait.project_source_artifact is True:
+                target_stage = (
+                    stage_by_id.get(operator_wait.target_stage_kind_id)
+                    if operator_wait.target_stage_kind_id is not None
+                    else None
+                )
+                if (
+                    action.artifact_schema_id is None
+                    or target_stage is None
+                    or action.artifact_schema_id
+                    not in target_stage.artifact_schema_ids
+                ):
+                    return f"operator_wait_projection:{operator_wait.id}"
 
         allowed = operator_wait.allowed_resolution_kinds
         allowed_set = set(allowed)
@@ -1294,6 +1310,10 @@ def _operator_wait_authority_refusal(
                 return f"operator_wait_target:{operator_wait.id}"
         elif _operator_wait_has_revise_target_fields(operator_wait):
             return f"operator_wait_target:{operator_wait.id}"
+        if operator_wait.project_source_artifact is True and (
+            "revise_recorded_source" not in allowed_set
+        ):
+            return f"operator_wait_projection:{operator_wait.id}"
         if operator_wait.audit_metadata_requirements != (
             _operator_wait_audit_metadata_requirements(
                 operator_wait.allowed_resolution_kinds

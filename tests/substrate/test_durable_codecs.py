@@ -214,7 +214,7 @@ def test_selected_plan_codec_round_trips_kernel_ping_and_preserves_fingerprint()
     assert authority_fingerprint(decoded_plan) == fingerprint
 
 
-def test_selected_plan_codec_encodes_v14_plan_and_v3_component_free_runner() -> None:
+def test_selected_plan_codec_encodes_v15_plan_and_v3_component_free_runner() -> None:
     from millrace.substrate.codecs import encode_selected_compiled_plan
 
     plan = _component_free_capability_plan()
@@ -222,14 +222,14 @@ def test_selected_plan_codec_encodes_v14_plan_and_v3_component_free_runner() -> 
     payload = dict(encode_selected_compiled_plan(plan).payload)
     runner = cast(list[dict[str, object]], payload["runner_bindings"])[0]
 
-    assert payload["schema_version"] == 14
+    assert payload["schema_version"] == 15
     assert runner["schema_version"] == 3
     assert runner["invocation_timeout_seconds"] == 3600
     assert runner["component_pin"] is None
     assert runner["terminal_result_mappings"] == ()
 
 
-def test_selected_plan_codec_refuses_exact_v13_plan() -> None:
+def test_selected_plan_codec_refuses_exact_v14_plan() -> None:
     from millrace.substrate.codecs import (
         decode_selected_compiled_plan,
         encode_selected_compiled_plan,
@@ -239,9 +239,9 @@ def test_selected_plan_codec_refuses_exact_v13_plan() -> None:
     plan, _fingerprint = compile_kernel_ping()
     envelope = encode_selected_compiled_plan(plan)
     payload = dict(envelope.payload)
-    payload["schema_version"] = 13
+    payload["schema_version"] = 14
 
-    with pytest.raises(UnsupportedSchemaVersion, match="13"):
+    with pytest.raises(UnsupportedSchemaVersion, match="14"):
         decode_selected_compiled_plan(replace(envelope, payload=payload))
 
 
@@ -860,6 +860,71 @@ def test_selected_plan_codec_round_trips_intervention_option_authority() -> None
     )
     assert getattr(decoded_plan, "operator_waits") == getattr(plan, "operator_waits")
     assert authority_fingerprint(decoded_plan) == fingerprint
+
+
+def test_plan_codec_round_trips_operator_wait_projection_true_and_false() -> None:
+    from millrace.substrate.codecs import (
+        decode_selected_compiled_plan,
+        encode_selected_compiled_plan,
+    )
+
+    false_plan, _fingerprint = generic_admission.compile_plan()
+    true_plan = replace(
+        false_plan,
+        operator_waits=tuple(
+            replace(wait, project_source_artifact=True)
+            if str(wait.id) == generic_admission.REVISE_WAIT_ID
+            else wait
+            for wait in false_plan.operator_waits
+        ),
+    )
+
+    for plan, expected in ((false_plan, False), (true_plan, True)):
+        envelope = encode_selected_compiled_plan(plan)
+        waits = cast(list[dict[str, object]], envelope.payload["operator_waits"])
+        wait = next(
+            item
+            for item in waits
+            if item["id"] == generic_admission.REVISE_WAIT_ID
+        )
+
+        assert wait["schema_version"] == 2
+        assert wait["project_source_artifact"] is expected
+        assert decode_selected_compiled_plan(envelope) == plan
+
+
+@pytest.mark.parametrize("corruption", ("missing", "extra", "old_version"))
+def test_selected_plan_codec_refuses_corrupt_v15_operator_wait(
+    corruption: str,
+) -> None:
+    from millrace.substrate.codecs import (
+        decode_selected_compiled_plan,
+        encode_selected_compiled_plan,
+    )
+    from millrace.substrate.errors import InvalidCasObject, UnsupportedSchemaVersion
+
+    plan, _fingerprint = generic_admission.compile_plan()
+    envelope = encode_selected_compiled_plan(plan)
+    payload = dict(envelope.payload)
+    waits = [
+        dict(item)
+        for item in cast(list[dict[str, object]], payload["operator_waits"])
+    ]
+    if corruption == "missing":
+        waits[0].pop("project_source_artifact")
+    elif corruption == "extra":
+        waits[0]["unexpected"] = False
+    else:
+        waits[0]["schema_version"] = 1
+    payload["operator_waits"] = waits
+
+    error = (
+        UnsupportedSchemaVersion
+        if corruption == "old_version"
+        else InvalidCasObject
+    )
+    with pytest.raises(error):
+        decode_selected_compiled_plan(replace(envelope, payload=payload))
 
 
 def test_operator_intervention_row_codec_round_trips_record() -> None:

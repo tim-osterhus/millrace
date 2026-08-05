@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -539,6 +540,57 @@ def test_success_result_converts_only_after_dispatch_echo_matches() -> None:
         runner_evidence_from_adapter_outcome(wrong_correlation, request)
 
 
+@pytest.mark.parametrize(
+    ("observation_candidate", "artifact_candidate"),
+    ((None, None), (None, {}), ({}, None), ({}, {})),
+)
+def test_result_evidence_conversion_preserves_absent_and_empty_candidates(
+    observation_candidate: Mapping[str, object] | None,
+    artifact_candidate: Mapping[str, object] | None,
+) -> None:
+    from millrace.adapters.runner_contract import (
+        AdapterInvocationRequest,
+        AdapterSuccessResult,
+        DispatchEcho,
+        RedactionPolicy,
+        runner_evidence_from_adapter_outcome,
+    )
+
+    dispatch = _valid_dispatch_envelope()
+    policy = RedactionPolicy(policy_id="redact-default")
+    request = AdapterInvocationRequest(
+        adapter_id="adapter-1",
+        selected_runner_binding_id=dispatch.runner_binding_id,
+        selected_adapter_kind="fake_local",
+        dispatch_envelope=dispatch,
+        session_id=dispatch.session_id,
+        dispatch_generation=dispatch.dispatch_generation,
+        session_fencing_token=dispatch.session_fencing_token,
+        timeout_seconds=30,
+        correlation_id="corr-1",
+        redaction_policy=policy,
+    )
+    success = AdapterSuccessResult.from_unredacted(
+        adapter_id="adapter-1",
+        dispatch_echo=DispatchEcho.from_dispatch_envelope(
+            dispatch,
+            correlation_id="corr-1",
+            selected_adapter_kind="fake_local",
+        ),
+        marker="TASK_COMPLETE",
+        observation_payload_candidate=observation_candidate,
+        artifact_payload_candidate=artifact_candidate,
+        redaction_policy=policy,
+    )
+
+    evidence = runner_evidence_from_adapter_outcome(success, request)
+
+    assert evidence.observation_payload == observation_candidate
+    assert evidence.artifact_payload == artifact_candidate
+    assert evidence.payload()["observation_payload"] == observation_candidate
+    assert evidence.payload()["artifact_payload"] == artifact_candidate
+
+
 def _millforge_component_pin():
     from millrace.contracts.compiled_plan import RunnerComponentPin
     from millrace.contracts.ids import CapabilityId
@@ -608,8 +660,8 @@ def test_success_result_converts_request_bound_provenance_without_provider_data(
     assert evidence.adapter_provenance == provenance
     assert "structured_provider_response" not in payload
     assert "evidence_construction_diagnostics" not in payload
-    assert "adapter_provenance" not in evidence.observation_payload
-    assert "adapter_provenance" not in evidence.artifact_payload
+    assert evidence.observation_payload is None
+    assert evidence.artifact_payload is None
 
 
 @pytest.mark.parametrize(

@@ -42,12 +42,12 @@ from millrace.adapters.subprocess_transport import (
     SubprocessTransportRequest,
     SubprocessTransportSuccess,
 )
-from millrace.contracts.compiled_plan import AuthorityValue
+from millrace.contracts.compiled_plan import ArtifactSchemaDeclaration, AuthorityValue
 
 CODEX_ADAPTER_KIND = "codex"
 
 _BUNDLE_RECORD_KIND = "codex_adapter_invocation_bundle"
-_BUNDLE_SCHEMA_VERSION = 2
+_BUNDLE_SCHEMA_VERSION = 3
 _WRAPPER_MODES = frozenset({"offline_fake", "local_argv", "missing"})
 _SUCCESS_RESULT_KEYS = frozenset(
     {
@@ -62,6 +62,30 @@ _SUCCESS_RESULT_KEYS = frozenset(
         "artifact_payload_candidate",
         "observation_payload_candidate",
         "evidence_construction_diagnostics",
+    },
+)
+_ERROR_RESULT_KEYS = frozenset(
+    {
+        "outcome_kind",
+        "adapter_id",
+        "error_kind",
+        "redaction_policy_id",
+        "dispatch_echo",
+        "diagnostics",
+    },
+)
+_SUPPORTED_ERROR_KINDS = frozenset(
+    {
+        "timeout",
+        "cancelled",
+        "missing_opt_in_config",
+        "invocation_failed",
+        "result_parse_failed",
+        "unsupported_adapter_kind",
+        "input_too_large",
+        "output_too_large",
+        "redaction_refused",
+        "selected_authority_refused",
     },
 )
 _DISPATCH_ECHO_KEYS = frozenset(
@@ -353,6 +377,16 @@ class CodexAdapter:
                 dispatch_echo=dispatch_echo,
             )
 
+        try:
+            _selected_artifact_projection(request)
+        except (TypeError, ValueError):
+            return self._adapter_error(
+                request,
+                "selected_authority_refused",
+                dispatch_echo=dispatch_echo,
+                diagnostics={"reason": "selected_artifact_projection"},
+            )
+
         stdin_bytes = _bundle_stdin_bytes(
             request,
             config=self._config,
@@ -390,7 +424,93 @@ class CodexAdapter:
         expected_echo: DispatchEcho,
     ) -> AdapterInvocationOutcome:
         try:
-            wrapper_result = _parse_success_result_object(transport_outcome.stdout)
+            if _wrapper_stdout_redaction_detected(
+                transport_outcome.stdout,
+                self._config.redaction_policy,
+            ):
+                return _safe_redaction_refused_error(
+                    _repr_redact(
+                        self._config.adapter_id,
+                        self._config.redaction_policy,
+                    ),
+                    self._config.redaction_policy.policy_id,
+                    redaction_policy=self._config.redaction_policy,
+                    dispatch_echo=expected_echo,
+                )
+            wrapper_result = _parse_wrapper_result_object(transport_outcome.stdout)
+            if _contains_configured_secret(
+                wrapper_result,
+                self._config.redaction_policy,
+            ):
+                return _safe_redaction_refused_error(
+                    _repr_redact(
+                        self._config.adapter_id,
+                        self._config.redaction_policy,
+                    ),
+                    self._config.redaction_policy.policy_id,
+                    redaction_policy=self._config.redaction_policy,
+                    dispatch_echo=expected_echo,
+                )
+            if wrapper_result.get("outcome_kind") == "error":
+                _validate_result_envelope(
+                    wrapper_result,
+                    expected_keys=_ERROR_RESULT_KEYS,
+                    outcome_kind="error",
+                )
+                dispatch_echo = _dispatch_echo_from_json(
+                    wrapper_result["dispatch_echo"],
+                )
+                dispatch_echo.validate_against(
+                    request.dispatch_envelope,
+                    correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
+                )
+                adapter_id = _require_nonblank_string(
+                    wrapper_result["adapter_id"],
+                    "adapter_id",
+                )
+                if adapter_id != self._config.adapter_id:
+                    raise ValueError("adapter_id mismatch")
+                redaction_policy_id = _require_nonblank_string(
+                    wrapper_result["redaction_policy_id"],
+                    "redaction_policy_id",
+                )
+                if redaction_policy_id != self._config.redaction_policy.policy_id:
+                    raise ValueError("redaction_policy_id mismatch")
+                error_kind = _require_nonblank_string(
+                    wrapper_result["error_kind"],
+                    "error_kind",
+                )
+                if error_kind not in _SUPPORTED_ERROR_KINDS:
+                    raise ValueError("unsupported adapter error kind")
+                diagnostics = _coerce_mapping(
+                    wrapper_result["diagnostics"],
+                    "diagnostics",
+                )
+                _validate_authority_mapping(diagnostics, "diagnostics")
+                try:
+                    return AdapterErrorResult.from_unredacted(
+                        adapter_id=adapter_id,
+                        error_kind=error_kind,
+                        redaction_policy=self._config.redaction_policy,
+                        dispatch_echo=dispatch_echo,
+                        diagnostics=diagnostics,
+                    )
+                except Exception:
+                    return _safe_redaction_refused_error(
+                        _repr_redact(
+                            self._config.adapter_id,
+                            self._config.redaction_policy,
+                        ),
+                        self._config.redaction_policy.policy_id,
+                        redaction_policy=self._config.redaction_policy,
+                        dispatch_echo=expected_echo,
+                    )
+            _validate_result_envelope(
+                wrapper_result,
+                expected_keys=_SUCCESS_RESULT_KEYS,
+                outcome_kind="success",
+            )
             dispatch_echo = _dispatch_echo_from_json(wrapper_result["dispatch_echo"])
             dispatch_echo.validate_against(
                 request.dispatch_envelope,
@@ -631,6 +751,9 @@ def _invocation_bundle(
 ) -> dict[str, JsonValue]:
     dispatch_payload = _to_jsonable(request.dispatch_envelope.payload())
     selected_asset_material = _to_jsonable(request.selected_asset_material)
+    selected_artifact_schemas, terminal_artifact_contracts = (
+        _selected_artifact_projection(request)
+    )
     return {
         "record_kind": _BUNDLE_RECORD_KIND,
         "schema_version": _BUNDLE_SCHEMA_VERSION,
@@ -649,6 +772,10 @@ def _invocation_bundle(
         },
         "dispatch_envelope": dispatch_payload,
         "dispatch_echo": _dispatch_echo_json(dispatch_echo),
+        "selected_artifact_schemas": cast(
+            JsonValue,
+            selected_artifact_schemas,
+        ),
         "selected_asset_material": selected_asset_material,
         "entrypoint_asset_ref": request.dispatch_envelope.entrypoint_asset_id,
         "skill_asset_refs": cast(
@@ -671,6 +798,7 @@ def _invocation_bundle(
             request,
             dispatch_payload=dispatch_payload,
             selected_asset_material=selected_asset_material,
+            terminal_artifact_contracts=terminal_artifact_contracts,
         ),
     }
 
@@ -687,6 +815,7 @@ def _prompt_bundle(
     *,
     dispatch_payload: JsonValue,
     selected_asset_material: JsonValue,
+    terminal_artifact_contracts: list[dict[str, JsonValue]],
 ) -> dict[str, JsonValue]:
     if not isinstance(dispatch_payload, dict):
         raise TypeError("dispatch_payload must be a JSON object")
@@ -716,6 +845,7 @@ def _prompt_bundle(
         "work_item_payload": dispatch_payload["work_item_payload"],
         "governance_context": dispatch_payload["governance_context"],
         "selected_join_evidence": dispatch_payload["selected_join_evidence"],
+        "selected_wait_evidence": dispatch_payload["selected_wait_evidence"],
         "selected_entrypoint": _selected_entrypoint_json(
             request,
             selected_asset_material=selected_asset_material,
@@ -737,6 +867,144 @@ def _prompt_bundle(
         "artifact_schema_expectations": list(
             request.dispatch_envelope.artifact_schema_ids,
         ),
+        "terminal_artifact_contracts": cast(
+            JsonValue,
+            terminal_artifact_contracts,
+        ),
+    }
+
+
+def _selected_artifact_projection(
+    request: AdapterInvocationRequest,
+) -> tuple[list[dict[str, JsonValue]], list[dict[str, JsonValue]]]:
+    dispatch = request.dispatch_envelope
+    options_by_outcome: dict[str, Mapping[str, AuthorityValue]] = {}
+    declared_schema_ids = set(dispatch.artifact_schema_ids)
+    required_schema_ids: set[str] = set()
+    for option in dispatch.terminal_options:
+        outcome_id = _require_nonblank_string(
+            option.get("outcome_id"),
+            "terminal option outcome_id",
+        )
+        if outcome_id in options_by_outcome:
+            raise ValueError("duplicate terminal option outcome")
+        for key in ("marker", "action_id", "action_kind", "artifact_schema_id"):
+            if key not in option:
+                raise ValueError("terminal option is missing projection material")
+        artifact_schema_id = option["artifact_schema_id"]
+        if artifact_schema_id is not None:
+            schema_id = _require_nonblank_string(
+                artifact_schema_id,
+                "terminal option artifact_schema_id",
+            )
+            if schema_id not in declared_schema_ids:
+                raise ValueError("terminal option artifact schema is unknown")
+            required_schema_ids.add(schema_id)
+        options_by_outcome[outcome_id] = option
+
+    schema_records_by_id: dict[str, dict[str, JsonValue]] = {}
+    for schema in request.selected_artifact_schemas:
+        schema_id = _require_nonblank_string(str(schema.id), "artifact schema id")
+        if schema_id in schema_records_by_id:
+            raise ValueError("duplicate selected artifact schema")
+        if schema_id not in declared_schema_ids:
+            raise ValueError("selected artifact schema is unknown")
+        schema_records_by_id[schema_id] = _selected_artifact_schema_json(schema)
+
+    mapping_outcomes: set[str] = set()
+    mapping_results: set[str] = set()
+    selected_component_pin = request.selected_component_pin
+    if (
+        selected_component_pin is None
+        and (
+            request.selected_terminal_result_mappings
+            or request.selected_artifact_schemas
+        )
+    ):
+        raise ValueError(
+            "selected terminal mappings or schemas require a selected component pin"
+        )
+    for mapping in request.selected_terminal_result_mappings:
+        if selected_component_pin is None:
+            raise ValueError(
+                "selected terminal mappings require a selected component pin"
+            )
+        if str(mapping.stage_kind_id) != dispatch.stage_kind_id:
+            raise ValueError("selected terminal mapping stage mismatch")
+        outcome_id = _require_nonblank_string(
+            str(mapping.outcome_id),
+            "mapping outcome",
+        )
+        result_id = _require_nonblank_string(
+            mapping.runner_result_id,
+            "mapping runner result",
+        )
+        if result_id not in selected_component_pin.legal_terminal_result_ids:
+            raise ValueError("selected terminal mapping runner result is not legal")
+        if outcome_id in mapping_outcomes or result_id in mapping_results:
+            raise ValueError("duplicate selected terminal mapping")
+        selected_option = options_by_outcome.get(outcome_id)
+        if selected_option is None:
+            raise ValueError("selected terminal mapping outcome is unknown")
+        mapping_outcomes.add(outcome_id)
+        mapping_results.add(result_id)
+
+    if set(schema_records_by_id) != required_schema_ids:
+        raise ValueError("selected artifact schemas do not match terminal options")
+
+    selected_schemas = [
+        schema_records_by_id[schema_id]
+        for schema_id in sorted(schema_records_by_id)
+    ]
+    contracts: list[dict[str, JsonValue]] = []
+    for mapping in sorted(
+        request.selected_terminal_result_mappings,
+        key=lambda item: (
+            str(item.stage_kind_id),
+            item.runner_result_id,
+            str(item.outcome_id),
+        ),
+    ):
+        outcome_id = str(mapping.outcome_id)
+        contract_option = options_by_outcome[outcome_id]
+        artifact_schema_id = cast(
+            str | None,
+            contract_option["artifact_schema_id"],
+        )
+        schema_json: JsonValue = None
+        if artifact_schema_id is not None:
+            schema_record = schema_records_by_id[str(artifact_schema_id)]
+            schema_json = schema_record["schema"]
+        contracts.append(
+            {
+                "outcome_id": outcome_id,
+                "marker": _require_nonblank_string(
+                    contract_option["marker"],
+                    "terminal option marker",
+                ),
+                "action_id": _require_nonblank_string(
+                    contract_option["action_id"],
+                    "terminal option action_id",
+                ),
+                "action_kind": _require_nonblank_string(
+                    contract_option["action_kind"],
+                    "terminal option action_kind",
+                ),
+                "artifact_schema_id": artifact_schema_id,
+                "json_schema": schema_json,
+            }
+        )
+    return selected_schemas, contracts
+
+
+def _selected_artifact_schema_json(
+    schema: ArtifactSchemaDeclaration,
+) -> dict[str, JsonValue]:
+    return {
+        "record_kind": schema.record_kind,
+        "schema_version": schema.schema_version,
+        "id": str(schema.id),
+        "schema": _to_jsonable(schema.schema),
     }
 
 
@@ -784,19 +1052,26 @@ def _dispatch_echo_json(echo: DispatchEcho) -> dict[str, JsonValue]:
     }
 
 
-def _parse_success_result_object(value: str) -> Mapping[str, object]:
+def _parse_wrapper_result_object(value: str) -> Mapping[str, object]:
     decoder = json.JSONDecoder()
     parsed, offset = decoder.raw_decode(value)
     if value[offset:].strip():
         raise ValueError("wrapper stdout must contain exactly one JSON object")
     if not isinstance(parsed, Mapping):
         raise ValueError("wrapper stdout must be a JSON object")
-    parsed_mapping = cast(Mapping[str, object], parsed)
-    if frozenset(parsed_mapping) != _SUCCESS_RESULT_KEYS:
+    return cast(Mapping[str, object], parsed)
+
+
+def _validate_result_envelope(
+    value: Mapping[str, object],
+    *,
+    expected_keys: frozenset[str],
+    outcome_kind: str,
+) -> None:
+    if frozenset(value) != expected_keys:
         raise ValueError("wrapper stdout has unsupported top-level keys")
-    if parsed_mapping["outcome_kind"] != "success":
-        raise ValueError("wrapper outcome_kind must be success")
-    return parsed_mapping
+    if value.get("outcome_kind") != outcome_kind:
+        raise ValueError(f"wrapper outcome_kind must be {outcome_kind}")
 
 
 def _dispatch_echo_from_json(value: object) -> DispatchEcho:
@@ -887,6 +1162,9 @@ def _request_contains_configured_secret(
     ) or _contains_configured_secret(
         request.dispatch_envelope.selected_join_evidence,
         policy,
+    ) or _contains_configured_secret(
+        request.dispatch_envelope.selected_wait_evidence,
+        policy,
     )
 
 
@@ -902,6 +1180,17 @@ def _contains_configured_secret(value: object, policy: RedactionPolicy) -> bool:
     if isinstance(value, (list, tuple)):
         return any(_contains_configured_secret(item, policy) for item in value)
     return False
+
+
+def _wrapper_stdout_redaction_detected(
+    stdout: str,
+    policy: RedactionPolicy,
+) -> bool:
+    if not policy.secret_tokens:
+        return False
+    return "[REDACTED]" in stdout or any(
+        secret in stdout for secret in policy.secret_tokens
+    )
 
 
 def _safe_redaction_refused_error(

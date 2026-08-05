@@ -12,6 +12,7 @@ import pytest
 
 from cli.test_cli_bounded_execution_unit import (
     _load,
+    _ready_state_with_selected_codex_authority,
     _reopen_runtime,
     _runtime,
 )
@@ -60,6 +61,11 @@ from support.runner_sessions import (
     _success_outcome,
     _success_start,
 )
+
+
+def _ready_codex_runtime(tmp_path):
+    state, _ = _ready_state_with_selected_codex_authority()
+    return _runtime(tmp_path, state)
 
 
 @pytest.mark.parametrize(
@@ -193,7 +199,7 @@ def test_restart_unsupported_marks_potentially_started_session_orphan_risk(
     invocation = reconcile.invocation_request
     session = next(iter(after.runner_sessions.values()))
     run = after.runs[session.run_id]
-    assert invocation.dispatch_envelope.schema_version == 5
+    assert invocation.dispatch_envelope.schema_version == 6
     assert invocation.dispatch_envelope.run_id == run.run_ref.run_id
     assert invocation.dispatch_envelope.claim_id == run.run_ref.claim_id
     assert invocation.dispatch_envelope.plan_fingerprint == (
@@ -645,7 +651,7 @@ def test_restart_verified_live_fault_cleans_real_subprocess_before_return(
         )
 
     adapter = _RecordingAdapter(_indeterminate_start, reconcile)
-    runtime = _ready_runtime(tmp_path)
+    runtime = _ready_codex_runtime(tmp_path)
     run_bounded_execution_unit(runtime, local_config=_config(adapter))
     runtime = _reopen_runtime(runtime)
     try:

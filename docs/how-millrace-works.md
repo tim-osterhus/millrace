@@ -126,7 +126,7 @@ applied to durable state, not from an agent saying that it is finished.
 | `millrace-ai` | Compiler, kernel, storage, adapters, daemon, and CLI |
 | `millrace-plus` | Official workflow definitions, prompt assets, stage skills, and authoring guides |
 | `millforge` | Independently owned execution harness that supplies `millforge-base` |
-| `millrace` | Dependency-only bundle that pins `millrace-ai==0.22.0`, `millrace-plus==0.22.0`, and `millforge==0.1.0` |
+| `millrace` | Dependency-only bundle that pins `millrace-ai==0.22.2`, `millrace-plus==0.22.2`, and `millforge==0.1.0` |
 
 This split keeps the runtime generic. Adding a new workflow should add compiled
 data and assets, not a new branch in the kernel.

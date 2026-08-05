@@ -14,6 +14,8 @@ from cli.test_cli_bounded_execution_unit import (
     _codex_success_wrapper,
     _codex_timeout_config,
     _load,
+    _ready_state_with_selected_codex_authority,
+    _runtime,
 )
 from millrace.adapters.cli import (
     session_cancellation,
@@ -37,6 +39,9 @@ from millrace.adapters.runner_contract import (
     runner_cancellation_diagnostic_digest,
     start_refusal_diagnostic_digest,
 )
+from millrace.contracts.runner import (
+    runner_session_completion_diagnostic_from_payload,
+)
 from millrace.contracts.transition import (
     RunnerResultObserved,
 )
@@ -56,6 +61,11 @@ from support.runner_sessions import (
     _started_session,
     _success_start,
 )
+
+
+def _ready_codex_runtime(tmp_path):
+    state, _ = _ready_state_with_selected_codex_authority()
+    return _runtime(tmp_path, state)
 
 
 def test_request_factory_side_effect_occurs_after_start_intent(
@@ -296,7 +306,7 @@ def test_indeterminate_start_exception_stays_starting(tmp_path) -> None:
 def test_local_timeout_narrows_selected_deadline_and_requests_cancellation(
     tmp_path,
 ) -> None:
-    runtime = _ready_runtime(tmp_path)
+    runtime = _ready_codex_runtime(tmp_path)
 
     started = time.monotonic()
     result = run_bounded_execution_unit(
@@ -396,7 +406,7 @@ def test_running_write_failure_cleans_real_subprocess(
             return started
 
     adapter = _codex_process_adapter(tmp_path, wrapper, ReadyCodexAdapter)
-    runtime = _ready_runtime(tmp_path)
+    runtime = _ready_codex_runtime(tmp_path)
     persist = runtime.store.persist_runtime_state
 
     def fail_running(candidate, cas_store) -> None:
@@ -553,7 +563,7 @@ def test_live_subprocess_fence_cleans_after_attempt_persistence_failure(
         "_persist_cancellation_operation",
         fail_attempt,
     )
-    runtime = _ready_runtime(tmp_path)
+    runtime = _ready_codex_runtime(tmp_path)
     try:
         result = run_bounded_execution_unit(
             runtime,
@@ -622,7 +632,10 @@ def test_raw_adapter_error_diagnostic_is_coordinator_redacted(
     completion = next(iter(_load(runtime).runner_session_completions.values()))
     diagnostic = runtime.cas_store.get_bytes(completion.diagnostic_digest)
     assert len(diagnostic) <= START_REFUSAL_DIAGNOSTIC_MAX_BYTES
-    assert json.loads(diagnostic)["diagnostics"]["truncated"] is True
+    diagnostic_record = runner_session_completion_diagnostic_from_payload(
+        json.loads(diagnostic)
+    )
+    assert diagnostic_record.diagnostic["diagnostics"]["truncated"] is True
 
 
 def test_adapter_error_redaction_failure_persists_only_safe_diagnostic(
@@ -665,18 +678,81 @@ def test_adapter_error_redaction_failure_persists_only_safe_diagnostic(
 
     assert result.adapter_error_kind == "invocation_failed"
     assert secret.encode() not in diagnostic
-    assert json.loads(diagnostic)["diagnostics"]["redaction_failed"] is True
+    diagnostic_record = runner_session_completion_diagnostic_from_payload(
+        json.loads(diagnostic)
+    )
+    assert diagnostic_record.diagnostic["diagnostics"]["redaction_failed"] is True
 
 
 @pytest.mark.skipif(
     os.name != "posix" or not hasattr(os, "killpg"),
     reason="process-group cleanup is POSIX-specific",
 )
-def test_coordinator_cleans_child_group_before_normal_completion(tmp_path) -> None:
+def test_coordinator_waits_for_transient_child_without_runtime_failure(
+    tmp_path,
+) -> None:
 
     heartbeat = tmp_path / "coordinator-child.txt"
     ready = tmp_path / "coordinator-child.ready"
     child_pid = tmp_path / "coordinator-child.pid"
+    child = (
+        "import pathlib,time\n"
+        f"ready=pathlib.Path({str(ready)!r})\n"
+        f"path=pathlib.Path({str(heartbeat)!r})\n"
+        "ready.write_text('ready')\n"
+        "deadline=time.monotonic()+0.3\n"
+        "while time.monotonic()<deadline:\n"
+        " path.write_text(str(time.time()))\n"
+        " time.sleep(0.03)\n"
+    )
+    wrapper = (
+        "import pathlib,subprocess,sys,time\n"
+        f"child_process=subprocess.Popen([sys.executable,'-c',{child!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL)\n"
+        f"pathlib.Path({str(child_pid)!r}).write_text(str(child_process.pid))\n"
+        f"ready=pathlib.Path({str(ready)!r})\n"
+        "deadline=time.monotonic()+2\n"
+        "while not ready.exists() and time.monotonic()<deadline:\n"
+        " time.sleep(0.01)\n"
+        "assert ready.exists(), 'child did not reach normal-completion ready barrier'\n"
+        + _codex_success_wrapper("TASK_COMPLETE")
+    )
+    adapter = _codex_process_adapter(tmp_path, wrapper)
+    runtime = _ready_codex_runtime(tmp_path)
+    try:
+        result = run_bounded_execution_unit(
+            runtime,
+            local_config=AdapterLocalConfig(adapters={"codex": adapter}),
+        )
+        after = _load(runtime)
+
+        assert result.code == "observation_accepted"
+        assert after.runner_session_cancellation_requests == {}
+        assert all(
+            refusal.reason != "runner_session_reconciliation_contradiction"
+            for refusal in after.refusals
+        )
+        completion = next(iter(after.runner_session_completions.values()))
+        assert (completion.terminal_state, completion.cleanup_disposition) == (
+            "completed",
+            "complete",
+        )
+        _assert_heartbeat_stopped(heartbeat)
+    finally:
+        _kill_recorded_process(child_pid)
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "killpg"),
+    reason="process-group cleanup is POSIX-specific",
+)
+def test_coordinator_times_out_endless_child_after_leader_exit(tmp_path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+
+    heartbeat = tmp_path / "coordinator-timeout-child.txt"
+    ready = tmp_path / "coordinator-timeout-child.ready"
+    child_pid = tmp_path / "coordinator-timeout-child.pid"
     child = (
         "import pathlib,time\n"
         f"ready=pathlib.Path({str(ready)!r})\n"
@@ -696,11 +772,16 @@ def test_coordinator_cleans_child_group_before_normal_completion(tmp_path) -> No
         "deadline=time.monotonic()+2\n"
         "while not ready.exists() and time.monotonic()<deadline:\n"
         " time.sleep(0.01)\n"
-        "assert ready.exists(), 'child did not reach normal-completion ready barrier'\n"
+        "assert ready.exists(), 'child did not reach timeout ready barrier'\n"
         + _codex_success_wrapper("TASK_COMPLETE")
     )
-    adapter = _codex_process_adapter(tmp_path, wrapper)
-    runtime = _ready_runtime(tmp_path)
+
+    class ShortTimeoutCodexAdapter(CodexAdapter):
+        def __init__(self, config) -> None:
+            super().__init__(replace(config, timeout_seconds=0.2))
+
+    adapter = _codex_process_adapter(tmp_path, wrapper, ShortTimeoutCodexAdapter)
+    runtime = _ready_codex_runtime(tmp_path)
     try:
         result = run_bounded_execution_unit(
             runtime,
@@ -711,14 +792,15 @@ def test_coordinator_cleans_child_group_before_normal_completion(tmp_path) -> No
         assert result.code == "observation_accepted"
         cancellation = next(iter(after.runner_session_cancellation_requests.values()))
         assert (cancellation.reason, cancellation.source_kind) == (
-            "runtime_failure",
+            "runner_timeout",
             "runtime",
         )
-        completion = next(iter(after.runner_session_completions.values()))
-        assert (completion.terminal_state, completion.cleanup_disposition) == (
-            "completed",
-            "complete",
+        assert all(
+            refusal.reason != "runner_session_reconciliation_contradiction"
+            for refusal in after.refusals
         )
+        session = next(iter(after.runner_sessions.values()))
+        assert (session.state, session.cleanup_disposition) == ("completed", "complete")
         _assert_heartbeat_stopped(heartbeat)
     finally:
         _kill_recorded_process(child_pid)
@@ -820,7 +902,7 @@ def test_completion_persists_before_workflow_application(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = _ready_runtime(tmp_path)
+    runtime = _ready_codex_runtime(tmp_path)
     original_decide = session_completion.decide
     observed_completion = False
 

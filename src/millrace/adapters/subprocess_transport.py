@@ -149,10 +149,6 @@ SubprocessTransportOutcome: TypeAlias = (
 )
 
 
-class _SubprocessTransportOwnershipPending(RuntimeError):
-    """The leader exited while owned process-group work remains."""
-
-
 class SubprocessTransport:
     """Launch explicit argv commands with bounded local process mechanics."""
 
@@ -171,9 +167,8 @@ class SubprocessTransport:
             started.kill()
             started.cleanup()
             return SubprocessTransportError(error_kind="timeout")
-        try:
-            outcome = started.poll_completion()
-        except _SubprocessTransportOwnershipPending:
+        outcome = started.poll_completion()
+        if outcome is None:
             started.kill()
             cleanup = started.cleanup()
             if cleanup.disposition != "complete":
@@ -320,9 +315,7 @@ class SubprocessTransportHandle:
             if self.process.poll() is None:
                 return None
             if self._process_group_exists():
-                raise _SubprocessTransportOwnershipPending(
-                    "owned process group remains after leader exit"
-                )
+                return None
             self._join_workers()
             self._outcome = self._completed_outcome()
         self._delivered = True

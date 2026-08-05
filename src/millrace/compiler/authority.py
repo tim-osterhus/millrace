@@ -141,7 +141,7 @@ AUTHORITY_TEXT_FIELDS: Mapping[str, tuple[str, ...]] = {
 AUTHORITY_BOOL_FIELDS: Mapping[str, tuple[str, ...]] = {
     "queue_families": ("external_enqueue",),
     "completion_behaviors": ("skip_if_closed",),
-    "operator_waits": ("unrelated_lineages_continue",),
+    "operator_waits": ("unrelated_lineages_continue", "project_source_artifact"),
     "effect_declarations": ("real_side_effects_allowed",),
 }
 

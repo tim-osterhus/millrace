@@ -7,6 +7,8 @@ from typing import cast
 import pytest
 
 from millrace.compiler import SelectedRunnerAdapterPolicy, compile_workflow
+from millrace.compiler.canonical import authority_fingerprint
+from millrace.compiler.export import compiled_plan_export_record
 from millrace.contracts import Diagnostic
 from support import generic_operator_wait
 
@@ -64,6 +66,160 @@ def _find_operator_wait_field_error(
     ]
     assert matches, f"missing invalid field {field_name!r} in {tuple(errors)!r}"
     return matches[0]
+
+
+def _compile(source: Source):
+    result = compile_workflow(source)
+    assert result.plan is not None, result.diagnostics
+    return result.plan
+
+
+def test_operator_wait_source_projection_is_normalized_and_fingerprinted() -> None:
+    omitted_source = _source()
+    omitted_plan = _compile(omitted_source)
+    omitted_wait = next(
+        wait
+        for wait in omitted_plan.operator_waits
+        if str(wait.id) == generic_operator_wait.REVISE_WAIT_ID
+    )
+    omitted_close_wait = next(
+        wait
+        for wait in omitted_plan.operator_waits
+        if str(wait.id) == generic_operator_wait.CLOSE_WAIT_ID
+    )
+
+    false_source = _source()
+    _operator_wait(false_source, generic_operator_wait.REVISE_WAIT_ID)[
+        "project_source_artifact"
+    ] = False
+    false_plan = _compile(false_source)
+
+    true_source = _source()
+    _operator_wait(true_source, generic_operator_wait.REVISE_WAIT_ID)[
+        "project_source_artifact"
+    ] = True
+    true_plan = _compile(true_source)
+    true_wait = next(
+        wait
+        for wait in true_plan.operator_waits
+        if str(wait.id) == generic_operator_wait.REVISE_WAIT_ID
+    )
+
+    assert omitted_wait.project_source_artifact is False
+    assert omitted_close_wait.project_source_artifact is False
+    assert false_plan == omitted_plan
+    assert true_wait.project_source_artifact is True
+    selected = cast(
+        dict[str, object],
+        compiled_plan_export_record(true_plan)["selected_authority"],
+    )
+    exported_waits = cast(list[dict[str, object]], selected["operator_waits"])
+    assert next(
+        wait
+        for wait in exported_waits
+        if wait["id"] == generic_operator_wait.REVISE_WAIT_ID
+    )["project_source_artifact"] is True
+    assert authority_fingerprint(true_plan) != authority_fingerprint(false_plan)
+
+
+@pytest.mark.parametrize("value", (None, 0, 1, "true", (), {}))
+def test_operator_wait_source_projection_rejects_non_bool(value: object) -> None:
+    source = _source()
+    _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)[
+        "project_source_artifact"
+    ] = value
+
+    error = _find_operator_wait_field_error(
+        _errors(source), "project_source_artifact"
+    )
+
+    assert error.declaration_path == "operator_waits[0].project_source_artifact"
+
+
+@pytest.mark.parametrize("value", (False, True))
+def test_authored_operator_wait_projection_requires_revise_authority(
+    value: bool,
+) -> None:
+    source = _source()
+    _operator_wait(source, generic_operator_wait.CLOSE_WAIT_ID)[
+        "project_source_artifact"
+    ] = value
+
+    error = _find_operator_wait_field_error(
+        _errors(source), "project_source_artifact"
+    )
+
+    assert error.context["operator_wait_id"] == generic_operator_wait.CLOSE_WAIT_ID
+
+
+def test_operator_wait_source_projection_requires_source_artifact_schema() -> None:
+    source = _source()
+    _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)[
+        "project_source_artifact"
+    ] = True
+    action = next(
+        action
+        for action in _records(source, "terminal_actions")
+        if action["id"] == generic_operator_wait.REVISE_ACTION_ID
+    )
+    action["artifact_schema_id"] = None
+
+    error = _find_error(
+        _errors(source), "operator_wait_projection_source_artifact_required"
+    )
+
+    assert error.context["action_id"] == generic_operator_wait.REVISE_ACTION_ID
+
+
+def test_operator_wait_source_projection_requires_target_stage_schema() -> None:
+    source = _source()
+    _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)[
+        "project_source_artifact"
+    ] = True
+    target = next(
+        stage
+        for stage in _records(source, "stage_kinds")
+        if stage["id"] == "kernel_ping.taskmaster"
+    )
+    target["artifact_schema_ids"] = ("kernel_ping.task_artifact",)
+
+    error = _find_error(
+        _errors(source), "operator_wait_projection_target_schema_missing"
+    )
+
+    assert error.context["artifact_schema_id"] == "kernel_ping.task_incident"
+
+
+def test_operator_wait_source_projection_checks_every_source_action_schema() -> None:
+    source = _source()
+    wait = _operator_wait(source, generic_operator_wait.REVISE_WAIT_ID)
+    wait["project_source_artifact"] = True
+    wait["source_action_ids"] = (
+        generic_operator_wait.REVISE_ACTION_ID,
+        generic_operator_wait.CLOSE_ACTION_ID,
+    )
+    close_action = next(
+        action
+        for action in _records(source, "terminal_actions")
+        if action["id"] == generic_operator_wait.CLOSE_ACTION_ID
+    )
+    close_action["artifact_schema_id"] = "kernel_ping.task_artifact"
+    target = next(
+        stage
+        for stage in _records(source, "stage_kinds")
+        if stage["id"] == "kernel_ping.taskmaster"
+    )
+    target["artifact_schema_ids"] = ("kernel_ping.task_incident",)
+    _records(source, "operator_waits").remove(
+        _operator_wait(source, generic_operator_wait.CLOSE_WAIT_ID)
+    )
+
+    error = _find_error(
+        _errors(source), "operator_wait_projection_target_schema_missing"
+    )
+
+    assert error.context["action_id"] == generic_operator_wait.CLOSE_ACTION_ID
+    assert error.context["artifact_schema_id"] == "kernel_ping.task_artifact"
 
 
 def test_duplicate_operator_wait_owner_is_rejected() -> None:

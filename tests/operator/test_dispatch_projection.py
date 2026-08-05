@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import fields, replace
+from typing import cast
 
 import pytest
 
@@ -17,7 +18,7 @@ from millrace.contracts.state import (
     PauseRecord,
     RunnerObservationRecord,
 )
-from millrace.contracts.transition import JoinFromArtifact
+from millrace.contracts.transition import JoinFromArtifact, OperatorReviseWait
 from millrace.contracts.workflow_package import asset_digest_for_bytes
 from millrace.kernel import apply, decide
 from millrace.operator.dispatch import (
@@ -33,7 +34,8 @@ from millrace.testing import (
     fake_runner_dispatch_envelope_for_run,
     fake_runner_session_state,
 )
-from support import generic_lifecycle
+from support import generic_lifecycle, generic_operator_wait
+from support import kernel_ping as kernel_ping_support
 
 
 def build_dispatch_envelope_for_run(*, state, run_id):
@@ -41,6 +43,346 @@ def build_dispatch_envelope_for_run(*, state, run_id):
         state=fake_runner_session_state(state=state, run_id=run_id),
         run_id=run_id,
     )
+
+
+def _claimed_revised_wait_state(*, project_source_artifact: bool = True):
+    source = generic_operator_wait.source()
+    waits = cast(list[dict[str, object]], source["operator_waits"])
+    wait_source = next(
+        wait for wait in waits if wait["id"] == generic_operator_wait.REVISE_WAIT_ID
+    )
+    wait_source["project_source_artifact"] = project_source_artifact
+    stages = cast(list[dict[str, object]], source["stage_kinds"])
+    target_stage = next(
+        stage for stage in stages if stage["id"] == "kernel_ping.taskmaster"
+    )
+    target_stage["artifact_schema_ids"] = (
+        *cast(tuple[str, ...], target_stage["artifact_schema_ids"]),
+        "kernel_ping.task_incident",
+    )
+    plan, fingerprint = kernel_ping_support.compile_kernel_ping(source)
+    from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
+
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    state = kernel_ping_support.apply_accepted_input(
+        state,
+        kernel_ping_support.runner_observation(
+            state=state,
+            plan=plan,
+            fingerprint=fingerprint,
+            run_id="run-taskmaster",
+            action_id=generic_operator_wait.REVISE_ACTION_ID,
+            input_id="observe-taskmaster-needs-detail",
+            artifact_payload=kernel_ping_support.task_incident_payload(),
+        ),
+        kernel_ping_support.kernel_ping_context("observe-taskmaster-needs-detail"),
+    )
+    wait = next(iter(state.operator_waits.values()))
+    state = kernel_ping_support.apply_accepted_input(
+        state,
+        OperatorReviseWait(
+            "operator-revise-dispatch",
+            selected_plan_ref=wait.selected_plan_ref,
+            wait_id=wait.wait_id,
+            lineage_id=wait.lineage_id,
+            actor_id="local-operator",
+            actor_kind="local_operator",
+            payload=kernel_ping_support.task_artifact_payload(),
+        ),
+        deterministic_context(
+            transition_id="transition-operator-revise-dispatch",
+            work_item_id="work-operator-revised-dispatch",
+            activation_id="activation-operator-revised-dispatch",
+        ),
+    )
+    state = generic_lifecycle.claim_activation(
+        state,
+        activation_id="activation-operator-revised-dispatch",
+        suffix="operator-revised-dispatch",
+    )
+    return state, wait
+
+
+def test_revised_wait_dispatch_projects_exact_selected_source_artifact() -> None:
+    state, wait = _claimed_revised_wait_state()
+
+    envelope = build_dispatch_envelope_for_run(
+        state=state,
+        run_id="run-operator-revised-dispatch",
+    )
+
+    artifact = state.artifacts[cast(str, wait.source_artifact_id)]
+    assert envelope.work_item_payload == kernel_ping_support.task_artifact_payload()
+    assert envelope.selected_join_evidence is None
+    assert envelope.selected_wait_evidence == {
+        "record_kind": "selected_wait_evidence",
+        "schema_version": 1,
+        "wait_id": wait.wait_id,
+        "operator_wait_id": str(wait.operator_wait_id),
+        "lineage_id": wait.lineage_id,
+        "source_artifact_id": artifact.artifact_id,
+        "source_artifact_schema_id": str(artifact.schema_id),
+        "source_artifact_digest": artifact.payload_digest,
+        "source_artifact_payload": artifact.payload,
+        "source_action_id": str(artifact.source_action_id),
+        "source_run_id": artifact.source_run_id,
+        "source_work_item_id": artifact.work_item_id,
+    }
+
+
+def test_non_wait_dispatch_has_no_selected_wait_evidence() -> None:
+    state, _plan, _fingerprint = generic_lifecycle.origin_claimed_state()
+
+    envelope = build_dispatch_envelope_for_run(state=state, run_id="run-origin")
+
+    assert envelope.selected_wait_evidence is None
+
+
+def test_opt_out_revised_wait_dispatch_has_no_selected_wait_evidence() -> None:
+    state, _wait = _claimed_revised_wait_state(project_source_artifact=False)
+
+    envelope = build_dispatch_envelope_for_run(
+        state=state,
+        run_id="run-operator-revised-dispatch",
+    )
+
+    assert envelope.selected_wait_evidence is None
+
+
+@pytest.mark.parametrize("project_source_artifact", (False, True))
+def test_resumed_wait_dispatch_has_no_selected_wait_evidence(
+    project_source_artifact: bool,
+) -> None:
+    state, active_wait = generic_operator_wait.wait_state(
+        "resume",
+        project_source_artifact=project_source_artifact,
+    )
+    resolved_wait = state.operator_waits[active_wait.wait_id]
+    state = generic_lifecycle.claim_activation(
+        state,
+        activation_id=cast(str, resolved_wait.target_activation_id),
+        suffix="operator-resumed-dispatch",
+    )
+
+    envelope = build_dispatch_envelope_for_run(
+        state=state,
+        run_id="run-operator-resumed-dispatch",
+    )
+
+    assert envelope.work_item_id == active_wait.source_work_item_id
+    assert envelope.selected_wait_evidence is None
+
+
+def test_revised_wait_dispatch_retry_reproduces_identical_selected_evidence() -> None:
+    state, _wait = _claimed_revised_wait_state()
+
+    first = build_dispatch_envelope_for_run(
+        state=state,
+        run_id="run-operator-revised-dispatch",
+    )
+    retried = build_dispatch_envelope_for_run(
+        state=state,
+        run_id="run-operator-revised-dispatch",
+    )
+
+    assert first.work_item_payload == retried.work_item_payload
+    assert first.selected_wait_evidence == retried.selected_wait_evidence
+    assert (
+        first.payload()["selected_wait_evidence"]
+        == retried.payload()["selected_wait_evidence"]
+    )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "missing_artifact",
+        "artifact_digest",
+        "artifact_action",
+        "source_artifact_id",
+        "target_activation",
+        "lineage",
+        "resolution_digest",
+        "target_payload",
+        "source_queue",
+        "artifact_key",
+        "resolution_audit_id",
+        "plan_fingerprint",
+        "plan_ref",
+        "source_work_item",
+        "source_run",
+        "source_stage",
+        "source_node",
+        "artifact_schema",
+        "target_creator",
+        "duplicate_owner",
+    ),
+)
+def test_revised_wait_dispatch_refuses_unfenced_selected_evidence(
+    drift: str,
+) -> None:
+    state, active_wait = _claimed_revised_wait_state()
+    resolved_wait = state.operator_waits[active_wait.wait_id]
+    artifact_id = cast(str, resolved_wait.source_artifact_id)
+    if drift == "missing_artifact":
+        state = replace(
+            state,
+            artifacts={
+                key: artifact
+                for key, artifact in state.artifacts.items()
+                if key != artifact_id
+            },
+        )
+    elif drift == "artifact_key":
+        artifact = state.artifacts[artifact_id]
+        state = replace(
+            state,
+            artifacts={
+                **{
+                    key: value
+                    for key, value in state.artifacts.items()
+                    if key != artifact_id
+                },
+                "wrong-artifact-key": artifact,
+            },
+        )
+    elif drift in {"artifact_digest", "artifact_action", "artifact_schema"}:
+        artifact = state.artifacts[artifact_id]
+        state = replace(
+            state,
+            artifacts={
+                **state.artifacts,
+                artifact_id: replace(
+                    artifact,
+                        **{
+                            "artifact_digest": {
+                                "payload_digest": "sha256:" + "0" * 64
+                            },
+                            "artifact_action": {"source_action_id": "wrong.action"},
+                            "artifact_schema": {"schema_id": "wrong.schema"},
+                        }[drift],
+                ),
+            },
+        )
+    elif drift == "duplicate_owner":
+        duplicate = replace(resolved_wait, wait_id="duplicate-wait-owner")
+        state = replace(
+            state,
+            operator_waits={**state.operator_waits, duplicate.wait_id: duplicate},
+        )
+    elif drift in {"target_payload", "target_creator"}:
+        target = state.work_items[cast(str, resolved_wait.target_work_item_id)]
+        state = replace(
+            state,
+            work_items={
+                **state.work_items,
+                target.ref.work_item_id: replace(
+                    target,
+                    **(
+                        {"payload": {"forged": True}}
+                        if drift == "target_payload"
+                        else {"created_by_input_id": "replayed-resolution"}
+                    ),
+                ),
+            },
+        )
+    elif drift == "resolution_audit_id":
+        state = replace(
+            state,
+            governance_events=tuple(
+                replace(event, record_id="wrong-event-id")
+                if event.input_id == resolved_wait.resolved_input_id
+                else event
+                for event in state.governance_events
+            ),
+        )
+    else:
+        changes = {
+            "source_artifact_id": "missing-artifact",
+            "target_activation": "wrong-activation",
+            "lineage": "wrong-lineage",
+            "resolution_digest": "sha256:" + "0" * 64,
+            "source_queue": "wrong-queue",
+            "plan_fingerprint": "sha256:" + "0" * 64,
+            "plan_ref": replace(
+                resolved_wait.selected_plan_ref,
+                authority_fingerprint="sha256:" + "0" * 64,
+            ),
+            "source_work_item": "wrong-work",
+            "source_run": "wrong-run",
+            "source_stage": "wrong-stage",
+            "source_node": "wrong-node",
+        }
+        field = {
+            "source_artifact_id": "source_artifact_id",
+            "target_activation": "target_activation_id",
+            "lineage": "lineage_id",
+            "resolution_digest": "resolved_input_payload_digest",
+            "source_queue": "source_queue_family_id",
+            "plan_fingerprint": "selected_plan_fingerprint",
+            "plan_ref": "selected_plan_ref",
+            "source_work_item": "source_work_item_id",
+            "source_run": "source_run_id",
+            "source_stage": "source_stage_kind_id",
+            "source_node": "source_graph_node_id",
+        }[drift]
+        state = replace(
+            state,
+            operator_waits={
+                **state.operator_waits,
+                resolved_wait.wait_id: replace(
+                    resolved_wait,
+                    **{field: changes[drift]},
+                ),
+            },
+        )
+
+    with pytest.raises(DispatchProjectionError) as exc_info:
+        build_dispatch_envelope_for_run(
+            state=state,
+            run_id="run-operator-revised-dispatch",
+        )
+
+    assert exc_info.value.reason == "operator_wait_evidence_refused"
+
+
+def test_revised_wait_dispatch_refuses_target_schema_incompatibility() -> None:
+    state, active_wait = _claimed_revised_wait_state()
+    admitted = next(iter(state.admitted_plans.values()))
+    plan = admitted.selected_plan
+    stages = tuple(
+        replace(
+            stage,
+            artifact_schema_ids=tuple(
+                schema_id
+                for schema_id in stage.artifact_schema_ids
+                if str(schema_id) != "kernel_ping.task_incident"
+            ),
+        )
+        if str(stage.id) == "kernel_ping.taskmaster"
+        else stage
+        for stage in plan.stage_kinds
+    )
+    drifted_admitted = replace(
+        admitted,
+        selected_plan=replace(plan, stage_kinds=stages),
+    )
+    state = replace(
+        state,
+        admitted_plans={
+            **state.admitted_plans,
+            admitted.plan_ref.authority_fingerprint: drifted_admitted,
+        },
+    )
+
+    with pytest.raises(DispatchProjectionError) as exc_info:
+        build_dispatch_envelope_for_run(
+            state=state,
+            run_id="run-operator-revised-dispatch",
+        )
+
+    assert active_wait.source_artifact_id is not None
+    assert exc_info.value.reason == "operator_wait_evidence_refused"
 
 
 def _claim_origin(state):

@@ -13,6 +13,8 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-08-05
+
 ### Added
 
 - Added durable, plan-pinned daemon budget epochs for wall time, accepted
@@ -39,6 +41,13 @@ This file starts at `0.13.0`, the current documented public baseline.
   record, byte, stream, page, and rate ceilings, report explicit history gaps,
   and reconcile final status from durable runner-session completion rather
   than creating workflow authority.
+- Added schema-3 Codex projections for canonical selected artifact schema
+  declarations and marker-specific terminal artifact contracts. The
+  deterministic projection refuses incoherent selected material before
+  external invocation.
+- Added read-only rejected runner-result inspection to `runs show`, including
+  restart-safe adapter-error and refused-application metadata plus an explicit
+  opt-in for already-redacted canonical evidence and bounded diagnostics.
 
 ### Fixed
 

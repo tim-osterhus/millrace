@@ -22,10 +22,16 @@ from millrace.contracts.compiled_plan import (
 )
 from millrace.contracts.operator_waits import _operator_wait_record_id
 from millrace.contracts.runner import (
+    RunnerResultEvidence,
+    RunnerSessionCompletionDiagnostic,
     runner_result_evidence_digest,
     runner_result_evidence_from_payload,
 )
 from millrace.contracts.schema import validate_schema
+from millrace.contracts.selected_plan_lookups import (
+    terminal_action_for,
+    terminal_outcome_for,
+)
 from millrace.contracts.state import (
     Activation,
     AdmittedPlan,
@@ -62,6 +68,7 @@ from millrace.contracts.transition import (
     ResumeDispatch,
     RunnerResultObserved,
     SuspendDispatch,
+    artifact_payload_digest,
     input_payload_digest,
     operator_payload_digest,
 )
@@ -392,6 +399,8 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
 
 def runner_session_cas_references(
     state: RuntimeState,
+    *,
+    excluded_completion_session_id: str | None = None,
 ) -> tuple[tuple[str, str], ...]:
     references: list[tuple[str, str]] = []
     for session in state.runner_sessions.values():
@@ -405,6 +414,8 @@ def runner_session_cas_references(
         for attempt in state.runner_session_cancellation_attempts.values()
     )
     for completion in state.runner_session_completions.values():
+        if completion.session_id == excluded_completion_session_id:
+            continue
         references.append(
             ("completion_diagnostic", completion.diagnostic_digest)
         )
@@ -427,7 +438,13 @@ def validate_completed_runner_evidence(
     try:
         raw = json.loads(payload)
         evidence = runner_result_evidence_from_payload(raw)
-    except (json.JSONDecodeError, TypeError, UnicodeDecodeError, ValueError) as exc:
+    except (
+        RecursionError,
+        json.JSONDecodeError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as exc:
         raise StorageIntegrityError(
             "runner session completed evidence CAS object is malformed"
         ) from exc
@@ -463,6 +480,208 @@ def validate_completed_runner_evidence(
         raise StorageIntegrityError(
             "runner session completed evidence authority mismatch"
         )
+
+
+def completion_diagnostic_matches_current_authority(
+    state: RuntimeState,
+    *,
+    session_id: str,
+    diagnostic: RunnerSessionCompletionDiagnostic,
+) -> bool:
+    session = state.runner_sessions.get(session_id)
+    completion = state.runner_session_completions.get(session_id)
+    run = None if session is None else state.runs.get(session.run_id)
+    activation = None if run is None else state.activations.get(run.activation_id)
+    if (
+        session is None
+        or completion is None
+        or run is None
+        or activation is None
+        or run.current_session_id != session_id
+        or completion.session_id != session_id
+        or completion.run_id != run.run_ref.run_id
+        or completion.dispatch_generation != session.dispatch_generation
+        or completion.session_fencing_token != session.session_fencing_token
+    ):
+        return False
+    return (
+        diagnostic.run_id == run.run_ref.run_id
+        and diagnostic.session_id == session.session_id
+        and diagnostic.dispatch_generation == session.dispatch_generation
+        and diagnostic.session_fencing_token == session.session_fencing_token
+        and diagnostic.plan_fingerprint
+        == run.run_ref.plan_ref.authority_fingerprint
+        and diagnostic.claim_id == run.run_ref.claim_id
+        and diagnostic.generation == run.run_ref.generation
+        and diagnostic.fencing_token == run.run_ref.fencing_token
+        and diagnostic.stage_kind_id == str(run.stage_kind_id)
+        and diagnostic.graph_node_id == activation.graph_node_id
+        and diagnostic.runner_binding_id == str(run.runner_binding_id)
+    )
+
+
+def runner_result_refusal_chain(
+    state: RuntimeState,
+    *,
+    run_id: str,
+    session_id: str,
+    application_input_id: str,
+    evidence: RunnerResultEvidence | None,
+) -> tuple[bool, str | None]:
+    session = state.runner_sessions.get(session_id)
+    completion = state.runner_session_completions.get(session_id)
+    run = None if session is None else state.runs.get(run_id)
+    if (
+        session is None
+        or completion is None
+        or run is None
+        or run.current_session_id != session_id
+        or completion.application_input_id != application_input_id
+        or completion.run_id != run_id
+    ):
+        return False, None
+    receipt = state.receipts.get(application_input_id)
+    if (
+        receipt is None
+        or receipt.receipt_ref.input_id != application_input_id
+        or receipt.accepted
+        or receipt.refusal_reason is None
+    ):
+        return False, None
+    transitions = tuple(
+        transition
+        for transition in state.transitions
+        if transition.input_id == application_input_id
+    )
+    if len(transitions) != 1:
+        return False, None
+    transition = transitions[0]
+    if (
+        receipt.transition_id != transition.record_id
+        or transition.input_kind != RunnerResultObserved.input_kind
+        or transition.input_family != "workflow_observation"
+        or transition.accepted
+    ):
+        return False, None
+
+    if evidence is not None:
+        if (
+            evidence.run_id != run_id
+            or evidence.session_id != session_id
+            or evidence.dispatch_generation != session.dispatch_generation
+            or evidence.session_fencing_token != session.session_fencing_token
+        ):
+            return False, None
+        try:
+            expected_digest = input_payload_digest(
+                RunnerResultObserved(
+                    application_input_id,
+                    run_id=run_id,
+                    payload=evidence.payload(),
+                    observed_at=None,
+                )
+            )
+        except (RecursionError, TypeError, ValueError):
+            return False, None
+        if receipt.receipt_ref.input_payload_digest != expected_digest:
+            return False, None
+
+    refusals = tuple(
+        refusal
+        for refusal in state.refusals
+        if refusal.input_id == application_input_id
+    )
+    traces = tuple(
+        trace for trace in state.traces if trace.input_id == application_input_id
+    )
+    events = tuple(
+        event
+        for event in state.governance_events
+        if event.input_id == application_input_id
+    )
+    if len(refusals) != 1 or len(traces) != 1 or len(events) != 1:
+        return False, None
+    refusal = refusals[0]
+    trace = traces[0]
+    event = events[0]
+    if (
+        refusal.record_id != f"{transition.record_id}:refusal"
+        or refusal.input_kind != transition.input_kind
+        or refusal.input_family != transition.input_family
+        or refusal.reason != receipt.refusal_reason
+        or trace.record_id != f"{transition.record_id}:trace"
+        or event.record_id != f"{transition.record_id}:governance"
+    ):
+        return False, None
+
+    expected_plan_fingerprint = run.run_ref.plan_ref.authority_fingerprint
+    expected_action_id = None
+    expected_authority_source = None
+    if evidence is not None:
+        admitted = state.admitted_plans.get(expected_plan_fingerprint)
+        if admitted is None:
+            return False, None
+        outcome = terminal_outcome_for(
+            admitted.selected_plan,
+            str(run.stage_kind_id),
+            evidence.marker,
+        )
+        action = (
+            None
+            if outcome is None
+            else terminal_action_for(
+                admitted.selected_plan,
+                str(run.stage_kind_id),
+                str(outcome.id),
+            )
+        )
+        if action is not None:
+            expected_action_id = action.id
+            expected_authority_source = "terminal_action"
+
+    common_audit_fields = (
+        application_input_id,
+        transition.input_kind,
+        transition.input_family,
+        "refused",
+        expected_plan_fingerprint,
+        run.work_item_id,
+        run_id,
+        receipt.refusal_reason,
+    )
+    trace_common = (
+        trace.input_id,
+        trace.input_kind,
+        trace.input_family,
+        trace.disposition,
+        trace.plan_fingerprint,
+        trace.work_item_id,
+        trace.run_id,
+        trace.refusal_reason,
+    )
+    event_common = (
+        event.input_id,
+        event.input_kind,
+        event.input_family,
+        event.disposition,
+        event.plan_fingerprint,
+        event.work_item_id,
+        event.run_id,
+        event.refusal_reason,
+    )
+    if trace_common != common_audit_fields or event_common != common_audit_fields:
+        return False, None
+    if (
+        trace.action_id != event.action_id
+        or trace.authority_source != event.authority_source
+    ):
+        return False, None
+    if evidence is not None and (
+        trace.action_id != expected_action_id
+        or trace.authority_source != expected_authority_source
+    ):
+        return False, None
+    return True, receipt.refusal_reason
 
 
 def _recovery_action_matches_policy_source(
@@ -1562,6 +1781,10 @@ def _validate_selected_operator_wait_authority(state: RuntimeState) -> None:
     for admitted in state.admitted_plans.values():
         selected_plan = admitted.selected_plan
         for selected_wait in selected_plan.operator_waits:
+            _validate_selected_operator_wait_projection(
+                selected_plan,
+                selected_wait,
+            )
             if "revise_recorded_source" not in set(
                 selected_wait.allowed_resolution_kinds
             ):
@@ -1570,6 +1793,41 @@ def _validate_selected_operator_wait_authority(state: RuntimeState) -> None:
                 selected_plan,
                 selected_wait,
             )
+
+
+def _validate_selected_operator_wait_projection(
+    selected_plan: SelectedCompiledPlan,
+    selected_wait: OperatorWaitDeclaration,
+) -> None:
+    if type(selected_wait.project_source_artifact) is not bool:
+        raise StorageIntegrityError(
+            "selected operator_wait projection authority is invalid"
+        )
+    if selected_wait.project_source_artifact is False:
+        return
+    if "revise_recorded_source" not in set(selected_wait.allowed_resolution_kinds):
+        raise StorageIntegrityError(
+            "selected operator_wait projection authority is invalid"
+        )
+    target_stage = next(
+        (
+            stage
+            for stage in selected_plan.stage_kinds
+            if stage.id == selected_wait.target_stage_kind_id
+        ),
+        None,
+    )
+    actions_by_id = {action.id: action for action in selected_plan.terminal_actions}
+    if target_stage is None or any(
+        (action := actions_by_id.get(action_id)) is None
+        or action.action_kind != "operator_wait"
+        or action.artifact_schema_id is None
+        or action.artifact_schema_id not in target_stage.artifact_schema_ids
+        for action_id in selected_wait.source_action_ids
+    ):
+        raise StorageIntegrityError(
+            "selected operator_wait projection authority is invalid"
+        )
 
 
 def _validate_terminal_action_closed_work_item(
@@ -3424,6 +3682,7 @@ def _validate_operator_waits(
     run_ids: frozenset[str],
 ) -> None:
     active_keys: set[tuple[str, str]] = set()
+    resolved_target_owners: set[tuple[object, str, str]] = set()
     artifact_ids = frozenset(state.artifacts)
     closed_work_item_ids = frozenset(state.closed_work_items)
     for wait in state.operator_waits.values():
@@ -3497,6 +3756,21 @@ def _validate_operator_waits(
             raise StorageIntegrityError(
                 "operator_waits.actor_kind must match selected operator_wait"
             )
+        if (
+            wait.status in {"resolved", "superseded"}
+            and wait.target_work_item_id is not None
+            and wait.target_activation_id is not None
+        ):
+            owner_key = (
+                wait.selected_plan_ref,
+                wait.target_work_item_id,
+                wait.target_activation_id,
+            )
+            if owner_key in resolved_target_owners:
+                raise StorageIntegrityError(
+                    "operator_waits resolved target ownership must be unique"
+                )
+            resolved_target_owners.add(owner_key)
         if "revise_recorded_source" in set(selected_wait.allowed_resolution_kinds):
             _validate_selected_operator_wait_revise_route_schema(
                 selected_plan,
@@ -3539,9 +3813,22 @@ def _validate_operator_waits(
                 "artifacts",
             )
             artifact = state.artifacts[wait.source_artifact_id]
-            if artifact.work_item_id != wait.source_work_item_id:
+            artifact_work_item = state.work_items[artifact.work_item_id]
+            artifact_run = state.runs[artifact.source_run_id]
+            if (
+                artifact.work_item_id != wait.source_work_item_id
+                or artifact.source_run_id != wait.source_run_id
+                or artifact.source_action_id != wait.source_action_id
+                or artifact.source_stage_kind_id != wait.source_stage_kind_id
+                or artifact.source_graph_node_id != wait.source_graph_node_id
+                or artifact.created_by_input_id != wait.created_input_id
+                or artifact.payload_digest != artifact_payload_digest(artifact.payload)
+                or artifact_work_item.ref.plan_ref != wait.selected_plan_ref
+                or artifact_work_item.lineage_id != wait.lineage_id
+                or artifact_run.run_ref.plan_ref != wait.selected_plan_ref
+            ):
                 raise StorageIntegrityError(
-                    "operator_waits source artifact must reference source work item"
+                    "operator_waits source artifact provenance must match wait source"
                 )
             if artifact.schema_id != source_action.artifact_schema_id:
                 raise StorageIntegrityError(
@@ -4873,7 +5160,9 @@ def _validate_reference(
 
 
 __all__ = (
+    "completion_diagnostic_matches_current_authority",
     "runner_session_cas_references",
+    "runner_result_refusal_chain",
     "validate_completed_runner_evidence",
     "validate_audit_transition_rows",
     "validate_loaded_runtime_state",

@@ -20,6 +20,7 @@ from tests.cli.test_cli_bounded_execution_unit import (
     _load,
     _observed_counts,
     _ready_state,
+    _ready_state_with_selected_codex_authority,
     _runtime,
     _state_with_runner_kind,
 )
@@ -2007,7 +2008,7 @@ def test_budget_replay_retry_and_non_start_paths_charge_only_new_intents(
         run_bounded_execution_unit,
     )
 
-    state, _fingerprint = _state_with_runner_kind("codex")
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     options = replace(
         _daemon_options(
@@ -2116,7 +2117,7 @@ def test_failure_before_start_intent_leaves_pending_identity_uncharged(
     from millrace.adapters.cli.run import run_bounded_execution_unit
     from millrace.contracts.transition import AdvanceRunnerSession
 
-    state, _fingerprint = _state_with_runner_kind("codex")
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     options = replace(
         _daemon_options(runtime.paths, max_ticks=1),
@@ -2292,7 +2293,7 @@ def test_one_invocation_budget_admits_only_one_of_two_ready_claims(
     from millrace.contracts.transition import EnqueueWork
     from support.kernel_ping import apply_accepted_input, kernel_ping_context
 
-    state, _fingerprint = _state_with_runner_kind("codex")
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     state = apply_accepted_input(
         state,
         EnqueueWork(
@@ -2368,7 +2369,7 @@ def test_one_invocation_budget_controlled_claim_race_admits_only_one_start(
     from millrace.substrate.sqlite import SQLiteRuntimeStore
     from support.kernel_ping import apply_accepted_input, kernel_ping_context
 
-    state, _fingerprint = _state_with_runner_kind("codex")
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     state = apply_accepted_input(
         state,
         EnqueueWork(
@@ -3223,7 +3224,7 @@ def test_daemon_reloads_persisted_state_between_bounded_units(
 ) -> None:
     from millrace.adapters.cli import daemon
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     paths = runtime.paths
     _close(runtime)
@@ -3498,7 +3499,7 @@ def test_daemon_adapter_failure_after_claim_stops_and_next_no_arg_skips_active_r
 ) -> None:
     from millrace.adapters.cli import daemon
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     paths = runtime.paths
     _close(runtime)
@@ -3542,7 +3543,7 @@ def test_daemon_summary_keeps_handled_session_after_final_idle_tick(
     from millrace.adapters.cli import daemon
     from millrace.adapters.cli.run import BoundedExecutionUnitResult
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     handled = daemon.run_bounded_execution_unit(
         runtime,
@@ -3625,7 +3626,7 @@ def test_daemon_asset_material_refusal_counters_and_ids(
 def test_daemon_observation_refusal_counters_and_ids(tmp_path: Path) -> None:
     from millrace.adapters.cli import daemon
 
-    state, _fingerprint = _ready_state()
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     paths = runtime.paths
     _close(runtime)

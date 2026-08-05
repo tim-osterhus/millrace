@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sqlite3
 import threading
 import time
 from dataclasses import replace
@@ -14,6 +15,7 @@ from cli.test_cli_bounded_execution_unit import (
     _codex_success_config,
     _load,
     _ready_state,
+    _ready_state_with_selected_codex_authority,
     _runtime,
 )
 from millrace.adapters.runner_contract import (
@@ -736,6 +738,379 @@ def test_runner_session_projection_reports_application_receipt_truth(
     assert projected["application_status"] == expected
 
 
+def test_refused_result_is_projected_without_authorizing_candidate(tmp_path) -> None:
+    from cli.test_cli_bounded_execution_unit import (
+        _ready_state_with_selected_codex_authority,
+    )
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+    from millrace.adapters.runner_contract import (
+        AdapterLocalConfig,
+        AdapterSuccessResult,
+    )
+
+    class RejectedResultHandle(_SignalWaitHandle):
+        def __init__(self, request: AdapterInvocationRequest) -> None:
+            super().__init__(request)
+            self._outcome = AdapterSuccessResult.from_unredacted(
+                adapter_id=request.adapter_id,
+                dispatch_echo=DispatchEcho.from_dispatch_envelope(
+                    request.dispatch_envelope,
+                    correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
+                ),
+                redaction_policy=request.redaction_policy,
+                marker=next(
+                    str(option["marker"])
+                    for option in request.dispatch_envelope.terminal_options
+                    if option["artifact_schema_id"] is not None
+                ),
+                observation_payload_candidate={"summary": "safe observation"},
+                artifact_payload_candidate={"unexpected": "candidate body"},
+            )
+
+        def poll_completion(self):
+            outcome = self._outcome
+            self._outcome = None
+            return outcome
+
+    class RejectedResultAdapter(_SignalWaitAdapter):
+        def start_session(self, request: AdapterInvocationRequest) -> StartedSession:
+            return StartedSession(
+                DispatchEcho.from_dispatch_envelope(
+                    request.dispatch_envelope,
+                    correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
+                ),
+                RejectedResultHandle(request),
+                f"rejected-result:{request.session_id}",
+                {},
+            )
+
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=AdapterLocalConfig(
+            adapters={"codex": RejectedResultAdapter()}
+        ),
+    )
+    after = _load(runtime)
+    assert result.code == "observation_refused"
+    assert after.runner_observations == {}
+    assert after.artifacts == {}
+    paths = runtime.paths
+    runtime.close()
+
+    code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "show",
+            result.run_id,
+        ]
+    )
+    assert code == 0, stderr
+    projection = json.loads(stdout)["data"]["run"]["rejected_result"]
+    assert projection["rejection_kind"] == "observation_refusal"
+    assert projection["application_status"] == "refused"
+    assert projection["kernel_refusal_reason"] is not None
+    assert projection["evidence_status"] == "available"
+    assert projection["artifact_candidate_present"] is True
+    assert projection["observation_candidate_present"] is True
+    assert "candidate body" not in stdout
+
+    include_code, include_stdout, include_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "show",
+            result.run_id,
+            "--include-rejected-evidence",
+        ]
+    )
+    assert include_code == 0, include_stderr
+    included = json.loads(include_stdout)["data"]["run"]["rejected_result"]
+    assert included["evidence"]["artifact_payload"] == {
+        "unexpected": "candidate body"
+    }
+
+    completion_input_id = after.runner_session_completions[
+        after.runner_sessions[after.runs[result.run_id].current_session_id].session_id
+    ].application_input_id
+    refusal_row = None
+    with sqlite3.connect(paths.db_path) as connection:
+        refusal_row = connection.execute(
+            "SELECT * FROM refusals WHERE input_id = ?",
+            (completion_input_id,),
+        ).fetchone()
+        assert refusal_row is not None
+    for chain_damage in ("missing_refusal", "inconsistent_refusal", "foreign_trace"):
+        with sqlite3.connect(paths.db_path) as connection:
+            if chain_damage == "missing_refusal":
+                connection.execute(
+                    "DELETE FROM refusals WHERE input_id = ?",
+                    (completion_input_id,),
+                )
+            elif chain_damage == "inconsistent_refusal":
+                connection.execute(
+                    "UPDATE refusals SET reason = ? WHERE input_id = ?",
+                    ("foreign-refusal", completion_input_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE traces SET run_id = ? WHERE input_id = ?",
+                    ("foreign-run", completion_input_id),
+                )
+        damaged_code, damaged_stdout, damaged_stderr = _invoke(
+            [
+                "--json",
+                "--workspace",
+                str(paths.workspace_path),
+                "--db",
+                str(paths.db_path),
+                "--cas",
+                str(paths.cas_path),
+                "runs",
+                "show",
+                result.run_id,
+                "--include-rejected-evidence",
+            ]
+        )
+        if damaged_code == 0:
+            damaged_projection = json.loads(damaged_stdout)["data"]["run"][
+                "rejected_result"
+            ]
+            assert damaged_projection["evidence_status"] == "corrupt"
+            assert "evidence" not in damaged_projection
+        else:
+            assert damaged_code == 4
+            assert damaged_stdout == ""
+            assert json.loads(damaged_stderr)["code"] == "substrate_error"
+        with sqlite3.connect(paths.db_path) as connection:
+            if chain_damage == "missing_refusal":
+                connection.execute(
+                    """
+                    INSERT INTO refusals (
+                        record_id, transition_order, input_id, input_kind,
+                        input_family, reason, detail, created_at_order
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    refusal_row,
+                )
+            elif chain_damage == "inconsistent_refusal":
+                connection.execute(
+                    "UPDATE refusals SET reason = ? WHERE input_id = ?",
+                    (refusal_row[5], completion_input_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE traces SET run_id = ? WHERE input_id = ?",
+                    (result.run_id, completion_input_id),
+                )
+
+    evidence_digest = str(included["runner_result_evidence_digest"])
+    diagnostic_digest = str(included["completion_diagnostic_digest"])
+    from millrace.contracts.runner import (
+        runner_result_evidence_bytes,
+        runner_result_evidence_from_payload,
+        runner_session_completion_diagnostic_bytes,
+        runner_session_completion_diagnostic_from_payload,
+    )
+    from millrace.substrate.cas import ContentAddressedByteStore
+
+    foreign_evidence = replace(
+        runner_result_evidence_from_payload(included["evidence"]),
+        session_id="foreign-session",
+    )
+    foreign_digest = ContentAddressedByteStore(paths.cas_path).put_bytes(
+        runner_result_evidence_bytes(foreign_evidence)
+    )
+    with sqlite3.connect(paths.db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_session_completions
+            SET runner_result_evidence_digest = ?
+            WHERE session_id = (
+                SELECT current_session_id FROM runs WHERE run_id = ?
+            )
+            """,
+            (foreign_digest, result.run_id),
+        )
+    foreign_code, foreign_stdout, foreign_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "show",
+            result.run_id,
+            "--include-rejected-evidence",
+        ]
+    )
+    assert foreign_code == 0, foreign_stderr
+    foreign_projection = json.loads(foreign_stdout)["data"]["run"][
+        "rejected_result"
+    ]
+    assert foreign_projection["evidence_status"] == "corrupt"
+    assert "evidence" not in foreign_projection
+
+    foreign_diagnostic_digest = ContentAddressedByteStore(paths.cas_path).put_bytes(
+        runner_result_evidence_bytes(foreign_evidence)
+    )
+    original_diagnostic = runner_session_completion_diagnostic_from_payload(
+        json.loads(
+            ContentAddressedByteStore(paths.cas_path).get_bytes(diagnostic_digest)
+        )
+    )
+    foreign_typed_diagnostic = replace(
+        original_diagnostic,
+        session_id="foreign-session",
+    )
+    foreign_typed_diagnostic_digest = ContentAddressedByteStore(
+        paths.cas_path
+    ).put_bytes(runner_session_completion_diagnostic_bytes(foreign_typed_diagnostic))
+    with sqlite3.connect(paths.db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_session_completions
+            SET diagnostic_digest = ?
+            WHERE session_id = (
+                SELECT current_session_id FROM runs WHERE run_id = ?
+            )
+            """,
+            (foreign_typed_diagnostic_digest, result.run_id),
+        )
+    foreign_typed_code, foreign_typed_stdout, foreign_typed_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "show",
+            result.run_id,
+            "--include-rejected-evidence",
+        ]
+    )
+    assert foreign_typed_code == 0, foreign_typed_stderr
+    foreign_typed_projection = json.loads(foreign_typed_stdout)["data"]["run"][
+        "rejected_result"
+    ]
+    assert foreign_typed_projection["diagnostic_status"] == "corrupt"
+    assert "diagnostic" not in foreign_typed_projection
+    with sqlite3.connect(paths.db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_session_completions
+            SET diagnostic_digest = ?
+            WHERE session_id = (
+                SELECT current_session_id FROM runs WHERE run_id = ?
+            )
+            """,
+            (foreign_diagnostic_digest, result.run_id),
+        )
+    foreign_diagnostic_code, foreign_diagnostic_stdout, foreign_diagnostic_stderr = (
+        _invoke(
+            [
+                "--json",
+                "--workspace",
+                str(paths.workspace_path),
+                "--db",
+                str(paths.db_path),
+                "--cas",
+                str(paths.cas_path),
+                "runs",
+                "show",
+                result.run_id,
+                "--include-rejected-evidence",
+            ]
+        )
+    )
+    assert foreign_diagnostic_code == 0, foreign_diagnostic_stderr
+    foreign_diagnostic_projection = json.loads(foreign_diagnostic_stdout)["data"][
+        "run"
+    ]["rejected_result"]
+    assert foreign_diagnostic_projection["diagnostic_status"] == "corrupt"
+    assert "diagnostic" not in foreign_diagnostic_projection
+    assert "candidate body" not in foreign_diagnostic_stdout
+    with sqlite3.connect(paths.db_path) as connection:
+        connection.execute(
+            """
+            UPDATE runner_session_completions
+            SET runner_result_evidence_digest = ?, diagnostic_digest = ?
+            WHERE session_id = (
+                SELECT current_session_id FROM runs WHERE run_id = ?
+            )
+            """,
+            (evidence_digest, diagnostic_digest, result.run_id),
+        )
+    evidence_path = (
+        paths.cas_path
+        / "sha256"
+        / evidence_digest.removeprefix("sha256:")
+    )
+    evidence_path.write_bytes(b'{"not":"runner evidence"}')
+    corrupt_code, corrupt_stdout, corrupt_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "show",
+            result.run_id,
+        ]
+    )
+    assert corrupt_code == 0, corrupt_stderr
+    corrupt_projection = json.loads(corrupt_stdout)["data"]["run"][
+        "rejected_result"
+    ]
+    assert corrupt_projection["evidence_status"] == "digest_mismatch"
+    assert "evidence" not in corrupt_projection
+    evidence_path.unlink()
+    missing_code, missing_stdout, missing_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "--db",
+            str(paths.db_path),
+            "--cas",
+            str(paths.cas_path),
+            "runs",
+            "show",
+            result.run_id,
+        ]
+    )
+    assert missing_code == 0, missing_stderr
+    missing_projection = json.loads(missing_stdout)["data"]["run"][
+        "rejected_result"
+    ]
+    assert missing_projection["evidence_status"] == "missing"
+
+
 def test_runs_cancel_refuses_terminal_session(tmp_path) -> None:
     from millrace.adapters.cli import daemon
     from millrace.adapters.cli.run import run_bounded_execution_unit
@@ -835,7 +1210,7 @@ def test_runs_follow_projects_events_but_reconciles_final_from_durable_state(
         runner_session_event_store_path,
     )
 
-    state, _ = _ready_state()
+    state, _ = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     result = run_bounded_execution_unit(
         runtime,

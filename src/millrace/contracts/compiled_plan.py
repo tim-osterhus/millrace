@@ -753,12 +753,13 @@ class InterventionOptionDeclaration:
 @dataclass(frozen=True, slots=True)
 class OperatorWaitDeclaration:
     record_kind: ClassVar[str] = "operator_wait_declaration"
-    schema_version: ClassVar[int] = 1
+    schema_version: ClassVar[int] = 2
 
     id: OperatorWaitId
     source_action_ids: tuple[ActionId, ...]
     wait_scope: str
     source_work_item_behavior: str
+    project_source_artifact: bool
     unrelated_lineages_continue: bool
     allowed_resolution_kinds: tuple[str, ...]
     payload_schema_id: ArtifactSchemaId | None
@@ -865,7 +866,7 @@ class SelectedWorkflowPackagePin:
 @dataclass(frozen=True, slots=True)
 class SelectedCompiledPlan:
     record_kind: ClassVar[str] = "selected_compiled_plan"
-    schema_version: ClassVar[int] = 14
+    schema_version: ClassVar[int] = 15
 
     workflow: WorkflowIdentity
     compatibility_profile: None

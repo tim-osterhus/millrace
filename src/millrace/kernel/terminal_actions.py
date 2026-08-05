@@ -171,7 +171,7 @@ def resolve_terminal_action(
     activation: Activation,
     work_item: WorkItem,
     action: TerminalActionDeclaration,
-    observation_payload: Mapping[str, object],
+    observation_payload: Mapping[str, object] | None,
 ) -> TerminalActionResult:
     # Branching on compiled action_kind interprets compiler-validated
     # terminal-action authority; runner marker text never selects behavior here.
@@ -441,7 +441,7 @@ def _resolve_route_action(
     activation: Activation,
     work_item: WorkItem,
     action: TerminalActionDeclaration,
-    observation_payload: Mapping[str, object],
+    observation_payload: Mapping[str, object] | None,
 ) -> TerminalActionResult:
     target_stage_kind_id = action.target_stage_kind_id
     target_graph_node_id = action.target_graph_node_id
@@ -505,7 +505,9 @@ def _resolve_route_action(
         projection_context_for_run(
             work_item=work_item,
             run=run,
-            observation_payload=observation_payload,
+            observation_payload=(
+                {} if observation_payload is None else observation_payload
+            ),
             artifact_payload=artifact_payload,
         ),
     )
@@ -549,7 +551,7 @@ def _resolve_projected_route_action(
     activation: Activation,
     work_item: WorkItem,
     action: TerminalActionDeclaration,
-    observation_payload: Mapping[str, object],
+    observation_payload: Mapping[str, object] | None,
 ) -> TerminalActionResult:
     target_stage_kind_id = action.target_stage_kind_id
     target_graph_node_id = action.target_graph_node_id
@@ -608,7 +610,9 @@ def _resolve_projected_route_action(
         projection_context_for_run(
             work_item=work_item,
             run=run,
-            observation_payload=observation_payload,
+            observation_payload=(
+                {} if observation_payload is None else observation_payload
+            ),
             artifact_payload=artifact_candidate,
         ),
     )
@@ -656,7 +660,7 @@ RouteTargetFields = tuple[StageKindId, str, QueueFamilyId, RunnerBindingId]
 def _route_target_fields_or_refusal(
     *,
     action: TerminalActionDeclaration,
-    observation_payload: Mapping[str, object],
+    observation_payload: Mapping[str, object] | None,
 ) -> RouteTargetFields | TerminalActionRefusal:
     target_stage_kind_id = action.target_stage_kind_id
     target_graph_node_id = action.target_graph_node_id
@@ -707,6 +711,11 @@ def _route_target_fields_or_refusal(
         field_names.append(cast(str, raw_field_name))
 
     requested_targets: list[str] = []
+    if observation_payload is None:
+        return TerminalActionRefusal(
+            reason="invalid_dynamic_route_target",
+            action=action,
+        )
     for field_name in field_names:
         raw_value = observation_payload.get(field_name)
         if raw_value is None or raw_value == "":
@@ -976,7 +985,7 @@ def _resolve_close_action(
     activation: Activation,
     work_item: WorkItem,
     action: TerminalActionDeclaration,
-    observation_payload: Mapping[str, object],
+    observation_payload: Mapping[str, object] | None,
 ) -> TerminalActionResult:
     artifact_mutations = _declared_artifact_mutations_or_refusal(
         transition_input=transition_input,
@@ -1127,7 +1136,7 @@ def _resolve_pause_quarantine_action(
     activation: Activation,
     work_item: WorkItem,
     action: TerminalActionDeclaration,
-    observation_payload: Mapping[str, object],
+    observation_payload: Mapping[str, object] | None,
 ) -> TerminalActionResult:
     artifact_mutations = _declared_artifact_mutations_or_refusal(
         transition_input=transition_input,

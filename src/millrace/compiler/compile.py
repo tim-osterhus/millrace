@@ -16,7 +16,10 @@ from millrace.compiler.authority import (
 )
 from millrace.compiler.build import build_selected_plan
 from millrace.compiler.identity import validate_workflow_identity
-from millrace.compiler.operator_waits import validate_operator_wait_references
+from millrace.compiler.operator_waits import (
+    normalize_operator_waits,
+    validate_operator_wait_references,
+)
 from millrace.compiler.references import (
     collect_id_indexes,
     validate_action_outcomes_belong_to_action_stage,
@@ -133,6 +136,8 @@ def compile_workflow(
     )
     if _has_errors(diagnostics):
         return CompileResult(plan=None, diagnostics=tuple(diagnostics))
+
+    source = normalize_operator_waits(source)
 
     return CompileResult(
         plan=build_selected_plan(source, workflow),

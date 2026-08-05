@@ -81,6 +81,7 @@ def _dispatch_values() -> dict[str, object]:
         "governance_context": {},
         "terminal_options": (),
         "selected_join_evidence": None,
+        "selected_wait_evidence": None,
     }
 
 
@@ -108,7 +109,7 @@ def test_session_fields_are_required_in_dispatch_echo_and_result_evidence() -> N
     dispatch_constructor = cast(Any, RunnerDispatchEnvelope)
     result_constructor = cast(Any, RunnerResultEvidence)
     echo_constructor = cast(Any, DispatchEcho)
-    assert RunnerDispatchEnvelope.schema_version == 5
+    assert RunnerDispatchEnvelope.schema_version == 6
     assert RunnerResultEvidence.schema_version == 3
     dispatch_constructor(**_dispatch_values())
     result_constructor(**_result_values())
@@ -171,7 +172,7 @@ def test_adapter_request_refuses_session_authority_mismatch() -> None:
         )
 
 
-def test_reconcile_request_carries_v5_selected_authority() -> None:
+def test_reconcile_request_carries_v6_selected_authority() -> None:
     dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
     invocation = AdapterInvocationRequest(
         adapter_id="adapter-1",
@@ -192,10 +193,10 @@ def test_reconcile_request_carries_v5_selected_authority() -> None:
         {"provider_request_id": "owned-request"},
     )
 
-    assert reconcile.invocation_request.dispatch_envelope.schema_version == 5
+    assert reconcile.invocation_request.dispatch_envelope.schema_version == 6
     payload = reconcile.invocation_request.dispatch_envelope.payload()
     assert payload["record_kind"] == "runner_dispatch_envelope"
-    assert payload["schema_version"] == 5
+    assert payload["schema_version"] == 6
     for field_name in (
         "run_id",
         "claim_id",
@@ -262,9 +263,10 @@ def test_dispatch_echo_refuses_session_authority_mismatch() -> None:
         "governance_context",
         "terminal_options",
         "selected_join_evidence",
+        "selected_wait_evidence",
     ),
 )
-def test_dispatch_echo_full_authority_proof_refuses_every_v5_mismatch(
+def test_dispatch_echo_full_authority_proof_refuses_every_v6_mismatch(
     field_name: str,
 ) -> None:
     dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, fields
 from typing import Any, cast
@@ -12,10 +13,15 @@ from millrace.contracts.runner import (
     RUNNER_DISPATCH_SCHEMA_VERSION,
     RUNNER_RESULT_RECORD_KIND,
     RUNNER_RESULT_SCHEMA_VERSION,
+    RUNNER_SESSION_COMPLETION_DIAGNOSTIC_RECORD_KIND,
+    RUNNER_SESSION_COMPLETION_DIAGNOSTIC_SCHEMA_VERSION,
     RunnerAdapterProvenance,
     RunnerDispatchEnvelope,
     RunnerResultEvidence,
+    RunnerSessionCompletionDiagnostic,
     runner_result_evidence_from_payload,
+    runner_session_completion_diagnostic_bytes,
+    runner_session_completion_diagnostic_from_payload,
 )
 
 
@@ -99,6 +105,10 @@ def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
             tuple[Mapping[str, AuthorityValue], ...],
             kwargs["terminal_options"],
         ),
+        selected_wait_evidence=cast(
+            Mapping[str, AuthorityValue] | None,
+            kwargs.get("selected_wait_evidence"),
+        ),
     )
 
 
@@ -152,6 +162,25 @@ def _valid_selected_join_evidence(**overrides: object) -> dict[str, object]:
                 "item_key": "candidate-b",
             },
         ),
+    }
+    evidence.update(overrides)
+    return evidence
+
+
+def _valid_selected_wait_evidence(**overrides: object) -> dict[str, object]:
+    evidence: dict[str, object] = {
+        "record_kind": "selected_wait_evidence",
+        "schema_version": 1,
+        "wait_id": "wait-1",
+        "operator_wait_id": "operator-wait-1",
+        "lineage_id": "lineage-1",
+        "source_artifact_id": "artifact-source-1",
+        "source_artifact_schema_id": "SourceRecord",
+        "source_artifact_digest": "sha256:" + "d" * 64,
+        "source_artifact_payload": {"decision": "review"},
+        "source_action_id": "action-source-1",
+        "source_run_id": "run-source-1",
+        "source_work_item_id": "work-source-1",
     }
     evidence.update(overrides)
     return evidence
@@ -218,11 +247,11 @@ def _valid_result_evidence(**overrides: object) -> RunnerResultEvidence:
         marker=cast(str, kwargs["marker"]),
         adapter_provenance=kwargs["adapter_provenance"],
         observation_payload=cast(
-            Mapping[str, AuthorityValue],
+            Mapping[str, AuthorityValue] | None,
             kwargs["observation_payload"],
         ),
         artifact_payload=cast(
-            Mapping[str, AuthorityValue],
+            Mapping[str, AuthorityValue] | None,
             kwargs["artifact_payload"],
         ),
     )
@@ -250,10 +279,64 @@ def test_runner_dispatch_and_result_records_expose_stable_protocol_metadata() ->
 
     assert dispatch.payload()["record_kind"] == RUNNER_DISPATCH_RECORD_KIND
     assert dispatch.payload()["schema_version"] == RUNNER_DISPATCH_SCHEMA_VERSION
-    assert dispatch.payload()["schema_version"] == 5
+    assert dispatch.payload()["schema_version"] == 6
     assert dispatch.payload()["selected_join_evidence"] is None
+    assert dispatch.payload()["selected_wait_evidence"] is None
     assert evidence.payload()["record_kind"] == RUNNER_RESULT_RECORD_KIND
     assert evidence.payload()["schema_version"] == RUNNER_RESULT_SCHEMA_VERSION
+
+
+def test_runner_session_completion_diagnostic_is_canonical_and_typed() -> None:
+    diagnostic = RunnerSessionCompletionDiagnostic(
+        run_id="run-1",
+        session_id="session-1",
+        dispatch_generation=1,
+        session_fencing_token="session-fence-1",
+        plan_fingerprint="sha256:" + "a" * 64,
+        claim_id="claim-1",
+        generation=0,
+        fencing_token="fence-1",
+        stage_kind_id="kernel_ping.taskmaster",
+        graph_node_id="kernel_ping.start",
+        runner_binding_id="kernel_ping.fake_local_runner",
+        diagnostic={"diagnostics": {}},
+    )
+
+    payload = diagnostic.payload()
+    assert set(payload) == {
+        "record_kind",
+        "schema_version",
+        "run_id",
+        "session_id",
+        "dispatch_generation",
+        "session_fencing_token",
+        "plan_fingerprint",
+        "claim_id",
+        "generation",
+        "fencing_token",
+        "stage_kind_id",
+        "graph_node_id",
+        "runner_binding_id",
+        "diagnostic",
+    }
+    assert payload["record_kind"] == RUNNER_SESSION_COMPLETION_DIAGNOSTIC_RECORD_KIND
+    assert (
+        payload["schema_version"]
+        == RUNNER_SESSION_COMPLETION_DIAGNOSTIC_SCHEMA_VERSION
+    )
+    encoded = runner_session_completion_diagnostic_bytes(diagnostic)
+    assert runner_session_completion_diagnostic_from_payload(
+        json.loads(encoded)
+    ) == diagnostic
+
+    foreign = runner_session_completion_diagnostic_from_payload(
+        dict(payload, session_id="foreign-session")
+    )
+    assert foreign.session_id == "foreign-session"
+    with pytest.raises(ValueError):
+        runner_session_completion_diagnostic_from_payload(
+            dict(payload, unsupported="forbidden")
+        )
 
 
 def _valid_adapter_provenance_payload(**overrides: object) -> dict[str, object]:
@@ -313,8 +396,9 @@ def test_runner_result_parser_refuses_malformed_adapter_provenance(
         runner_result_evidence_from_payload(payload)
 
 
-def test_runner_dispatch_selected_join_evidence_is_versioned_exact_and_immutable(
-) -> None:
+def test_runner_dispatch_selected_join_evidence_is_versioned_exact_and_immutable() -> (
+    None
+):
     selected_join_evidence = _valid_selected_join_evidence()
     dispatch = _dispatch_with_selected_join_evidence(selected_join_evidence)
 
@@ -328,7 +412,7 @@ def test_runner_dispatch_selected_join_evidence_is_versioned_exact_and_immutable
     first_payload = cast(Mapping[str, AuthorityValue], first_artifact["payload"])
     nested_payload = cast(Mapping[str, AuthorityValue], first_payload["nested"])
 
-    assert payload["schema_version"] == 5
+    assert payload["schema_version"] == 6
     assert selected == selected_join_evidence
     assert set(selected) == {
         "record_kind",
@@ -378,6 +462,44 @@ def test_runner_dispatch_selected_join_evidence_is_versioned_exact_and_immutable
         first_payload["score"] = 0  # type: ignore[index]
     with pytest.raises(TypeError):
         nested_payload["verdict"] = "reject"  # type: ignore[index]
+
+
+def test_runner_dispatch_selected_wait_evidence_is_versioned_exact_and_immutable() -> (
+    None
+):
+    evidence = _valid_selected_wait_evidence()
+    dispatch = _valid_dispatch_envelope(selected_wait_evidence=evidence)
+
+    selected = cast(
+        Mapping[str, AuthorityValue],
+        dispatch.payload()["selected_wait_evidence"],
+    )
+    assert selected == evidence
+    assert set(selected) == set(evidence)
+    evidence["wait_id"] = "mutated"
+    assert selected["wait_id"] == "wait-1"
+    with pytest.raises(TypeError):
+        selected["wait_id"] = "forged"  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    (
+        "not-a-record",
+        _valid_selected_wait_evidence(record_kind="wrong"),
+        _valid_selected_wait_evidence(schema_version=2),
+        _valid_selected_wait_evidence(wait_id=" "),
+        _valid_selected_wait_evidence(lineage_id=None),
+        _valid_selected_wait_evidence(source_artifact_digest="d" * 64),
+        _valid_selected_wait_evidence(source_artifact_payload=[]),
+        _valid_selected_wait_evidence(extra="forbidden"),
+    ),
+)
+def test_runner_dispatch_rejects_malformed_selected_wait_evidence(
+    evidence: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        _valid_dispatch_envelope(selected_wait_evidence=evidence)
 
 
 @pytest.mark.parametrize(
@@ -724,3 +846,37 @@ def test_runner_result_evidence_payload_round_trips_exact_schema_keys() -> None:
         Mapping[str, AuthorityValue],
         round_trip["artifact_payload"],
     )
+
+
+@pytest.mark.parametrize(
+    ("observation_payload", "artifact_payload"),
+    ((None, {}), ({}, None), (None, None), ({}, {})),
+    ids=("null-empty", "empty-null", "null-null", "empty-empty"),
+)
+def test_runner_result_evidence_preserves_null_and_present_empty_candidates(
+    observation_payload: Mapping[str, AuthorityValue] | None,
+    artifact_payload: Mapping[str, AuthorityValue] | None,
+) -> None:
+    evidence = _valid_result_evidence(
+        observation_payload=observation_payload,
+        artifact_payload=artifact_payload,
+    )
+
+    payload = evidence.payload()
+    if observation_payload is None:
+        assert payload["observation_payload"] is None
+    else:
+        assert payload["observation_payload"] == observation_payload
+    if artifact_payload is None:
+        assert payload["artifact_payload"] is None
+    else:
+        assert payload["artifact_payload"] == artifact_payload
+    parsed = runner_result_evidence_from_payload(payload)
+    if observation_payload is None:
+        assert parsed.observation_payload is None
+    else:
+        assert parsed.observation_payload == observation_payload
+    if artifact_payload is None:
+        assert parsed.artifact_payload is None
+    else:
+        assert parsed.artifact_payload == artifact_payload

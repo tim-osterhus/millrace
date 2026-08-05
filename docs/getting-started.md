@@ -11,7 +11,7 @@ The base `millrace-ai` runtime requires Python 3.11 or newer. The complete
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install "millrace==0.22.1"
+python -m pip install "millrace==0.22.2"
 millrace --version
 ```
 
@@ -36,7 +36,7 @@ millrace --workspace "$WORKSPACE" package import-installed \
   --command-id import-plus-001
 
 millrace --workspace "$WORKSPACE" package enable \
-  millrace.plus.official 0.22.0 --command-id enable-plus-001
+  millrace.plus.official 0.22.2 --command-id enable-plus-001
 
 millrace --workspace "$WORKSPACE" package list \
   --command-id list-plus-001
@@ -51,12 +51,12 @@ Verify and admit the workflow:
 
 ```bash
 millrace --workspace "$WORKSPACE" package verify \
-  millrace.plus.official 0.22.0 \
+  millrace.plus.official 0.22.2 \
   --workflow-id simple_loop --workflow-version 0.1 --entrypoint default \
   --command-id verify-simple-loop-001
 
 millrace --json --workspace "$WORKSPACE" plan admit-package \
-  millrace.plus.official 0.22.0 \
+  millrace.plus.official 0.22.2 \
   --workflow-id simple_loop --workflow-version 0.1 --entrypoint default \
   --command-id admit-simple-loop-001 --input-id admit-simple-loop-001
 ```
@@ -119,6 +119,7 @@ explicit alternative when selected by the plan; see
 millrace --workspace "$WORKSPACE" status
 millrace --workspace "$WORKSPACE" runs list
 millrace --workspace "$WORKSPACE" runs show RUN_ID
+millrace --workspace "$WORKSPACE" runs show RUN_ID --include-rejected-evidence
 millrace --workspace "$WORKSPACE" trace show
 millrace --workspace "$WORKSPACE" trace show RUN_ID
 millrace --workspace "$WORKSPACE" waits list
@@ -132,6 +133,11 @@ records a durable request; it does not signal a process directly. Read a
 finite bounded event page with
 `millrace --workspace "$WORKSPACE" runs follow RUN_ID --after-sequence N`.
 Status, run, trace, follow, and doctor projections are read-only.
+For a current adapter error or refused runner-result application, the default
+`runs show` output contains bounded rejection metadata only. Add
+`--include-rejected-evidence` to inspect that session's already-redacted
+canonical evidence and bounded completion diagnostic; missing or corrupt CAS
+is reported without exposing provider streams or unrelated artifacts.
 
 To stop only new claim acceptance, use the selected plan fingerprint and a
 durable input identity:

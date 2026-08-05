@@ -29,6 +29,10 @@ from millrace.kernel.join_policy import (
     project_join_evidence_progress,
     project_selected_join_evidence_for_target,
 )
+from millrace.kernel.operator_waits import (
+    SelectedWaitEvidenceProjection,
+    project_selected_wait_evidence_for_target,
+)
 
 READY_DIAGNOSTIC_SEVERITIES = (
     "non_candidate",
@@ -327,6 +331,13 @@ def build_dispatch_envelope_for_run(
         activation=activation,
         work_item=work_item,
     )
+    selected_wait_evidence = _selected_wait_evidence_for_dispatch(
+        state=state,
+        selected_plan=selected_plan,
+        run=run,
+        activation=activation,
+        work_item=work_item,
+    )
     return RunnerDispatchEnvelope(
         run_id=run.run_ref.run_id,
         session_id=session.session_id,
@@ -374,6 +385,7 @@ def build_dispatch_envelope_for_run(
             stage=stage,
         ),
         selected_join_evidence=selected_join_evidence,
+        selected_wait_evidence=selected_wait_evidence,
     )
 
 
@@ -1015,6 +1027,51 @@ def _selected_join_evidence_payload(
             }
             for artifact in projection.evidence_artifacts
         ),
+    }
+
+
+def _selected_wait_evidence_for_dispatch(
+    *,
+    state: RuntimeState,
+    selected_plan: SelectedCompiledPlan,
+    run: RunRecord,
+    activation: Activation,
+    work_item: WorkItem,
+) -> Mapping[str, AuthorityValue] | None:
+    projection = project_selected_wait_evidence_for_target(
+        state,
+        selected_plan=selected_plan,
+        run=run,
+        activation=activation,
+        work_item=work_item,
+    )
+    if isinstance(projection, PolicyAssessment):
+        raise _dispatch_error(
+            projection.reason_code or "operator_wait_evidence_refused",
+            detail=projection.detail,
+            run_id=run.run_ref.run_id,
+        )
+    if projection is None:
+        return None
+    return _selected_wait_evidence_payload(projection)
+
+
+def _selected_wait_evidence_payload(
+    projection: SelectedWaitEvidenceProjection,
+) -> Mapping[str, AuthorityValue]:
+    return {
+        "record_kind": "selected_wait_evidence",
+        "schema_version": 1,
+        "wait_id": projection.wait_id,
+        "operator_wait_id": projection.operator_wait_id,
+        "lineage_id": projection.lineage_id,
+        "source_artifact_id": projection.source_artifact_id,
+        "source_artifact_schema_id": projection.source_artifact_schema_id,
+        "source_artifact_digest": projection.source_artifact_digest,
+        "source_artifact_payload": projection.source_artifact_payload,
+        "source_action_id": projection.source_action_id,
+        "source_run_id": projection.source_run_id,
+        "source_work_item_id": projection.source_work_item_id,
     }
 
 

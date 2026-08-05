@@ -112,6 +112,17 @@ class SQLiteRuntimeStore:
     ) -> RuntimeState:
         return load_runtime_state_rows(self._connection, cas_store)
 
+    def load_runtime_state_for_rejected_result_inspection(
+        self,
+        cas_store: ContentAddressedByteStore,
+        run_id: str,
+    ) -> RuntimeState:
+        return load_runtime_state_rows(
+            self._connection,
+            cas_store,
+            rejected_result_inspection_run_id=run_id,
+        )
+
     def load_daemon_budget_epoch(
         self,
         budget_id: str,

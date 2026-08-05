@@ -19,13 +19,20 @@ from millrace.contracts.compiled_plan import (
 )
 
 RUNNER_DISPATCH_RECORD_KIND = "runner_dispatch_envelope"
-RUNNER_DISPATCH_SCHEMA_VERSION = 5
+RUNNER_DISPATCH_SCHEMA_VERSION = 6
 RUNNER_RESULT_RECORD_KIND = "runner_result_evidence"
 RUNNER_RESULT_SCHEMA_VERSION = 3
+RUNNER_SESSION_COMPLETION_DIAGNOSTIC_RECORD_KIND = (
+    "runner_session_completion_diagnostic"
+)
+RUNNER_SESSION_COMPLETION_DIAGNOSTIC_SCHEMA_VERSION = 1
+RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES = 16 * 1024
 _RUNNER_ADAPTER_PROVENANCE_RECORD_KIND = "runner_adapter_provenance"
 _RUNNER_ADAPTER_PROVENANCE_SCHEMA_VERSION = 1
 _SELECTED_JOIN_EVIDENCE_RECORD_KIND = "selected_join_evidence"
 _SELECTED_JOIN_EVIDENCE_SCHEMA_VERSION = 1
+_SELECTED_WAIT_EVIDENCE_RECORD_KIND = "selected_wait_evidence"
+_SELECTED_WAIT_EVIDENCE_SCHEMA_VERSION = 1
 
 _TERMINAL_OPTION_REQUIRED_KEYS = frozenset(
     {
@@ -66,6 +73,22 @@ _SELECTED_JOIN_EVIDENCE_ARTIFACT_REQUIRED_KEYS = frozenset(
         "fanout_record_id",
         "item_key",
     },
+)
+_SELECTED_WAIT_EVIDENCE_REQUIRED_KEYS = frozenset(
+    {
+        "record_kind",
+        "schema_version",
+        "wait_id",
+        "operator_wait_id",
+        "lineage_id",
+        "source_artifact_id",
+        "source_artifact_schema_id",
+        "source_artifact_digest",
+        "source_artifact_payload",
+        "source_action_id",
+        "source_run_id",
+        "source_work_item_id",
+    }
 )
 _RUNNER_ADAPTER_PROVENANCE_REQUIRED_KEYS = frozenset(
     {
@@ -112,6 +135,7 @@ class RunnerDispatchEnvelope:
     governance_context: Mapping[str, AuthorityValue] = field(default_factory=dict)
     terminal_options: tuple[Mapping[str, AuthorityValue], ...] = ()
     selected_join_evidence: Mapping[str, AuthorityValue] | None = None
+    selected_wait_evidence: Mapping[str, AuthorityValue] | None = None
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.run_id, "run_id")
@@ -186,6 +210,11 @@ class RunnerDispatchEnvelope:
                 self.selected_join_evidence,
             ),
         )
+        object.__setattr__(
+            self,
+            "selected_wait_evidence",
+            _coerce_selected_wait_evidence(self.selected_wait_evidence),
+        )
 
     def payload(self) -> Mapping[str, AuthorityValue]:
         return MappingProxyType(
@@ -218,6 +247,7 @@ class RunnerDispatchEnvelope:
                 "governance_context": self.governance_context,
                 "terminal_options": self.terminal_options,
                 "selected_join_evidence": self.selected_join_evidence,
+                "selected_wait_evidence": self.selected_wait_evidence,
             },
         )
 
@@ -275,8 +305,8 @@ class RunnerResultEvidence:
     runner_binding_id: str
     marker: str
     adapter_provenance: RunnerAdapterProvenance | None
-    observation_payload: Mapping[str, AuthorityValue]
-    artifact_payload: Mapping[str, AuthorityValue]
+    observation_payload: Mapping[str, AuthorityValue] | None
+    artifact_payload: Mapping[str, AuthorityValue] | None
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.run_id, "run_id")
@@ -304,7 +334,7 @@ class RunnerResultEvidence:
         object.__setattr__(
             self,
             "observation_payload",
-            _coerce_payload_mapping(
+            _coerce_optional_payload_mapping(
                 self.observation_payload,
                 "observation_payload",
             ),
@@ -312,7 +342,7 @@ class RunnerResultEvidence:
         object.__setattr__(
             self,
             "artifact_payload",
-            _coerce_payload_mapping(
+            _coerce_optional_payload_mapping(
                 self.artifact_payload,
                 "artifact_payload",
             ),
@@ -346,6 +376,67 @@ class RunnerResultEvidence:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RunnerSessionCompletionDiagnostic:
+    record_kind: ClassVar[str] = RUNNER_SESSION_COMPLETION_DIAGNOSTIC_RECORD_KIND
+    schema_version: ClassVar[int] = RUNNER_SESSION_COMPLETION_DIAGNOSTIC_SCHEMA_VERSION
+
+    run_id: str
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    plan_fingerprint: str
+    claim_id: str
+    generation: int
+    fencing_token: str
+    stage_kind_id: str
+    graph_node_id: str
+    runner_binding_id: str
+    diagnostic: Mapping[str, AuthorityValue]
+
+    def __post_init__(self) -> None:
+        _require_nonblank_string(self.run_id, "run_id")
+        _require_nonblank_string(self.session_id, "session_id")
+        _require_int(self.dispatch_generation, "dispatch_generation")
+        if self.dispatch_generation < 1:
+            raise ValueError("dispatch_generation must be positive")
+        _require_nonblank_string(
+            self.session_fencing_token,
+            "session_fencing_token",
+        )
+        _require_nonblank_string(self.plan_fingerprint, "plan_fingerprint")
+        _require_nonblank_string(self.claim_id, "claim_id")
+        _require_int(self.generation, "generation")
+        _require_nonblank_string(self.fencing_token, "fencing_token")
+        _require_nonblank_string(self.stage_kind_id, "stage_kind_id")
+        _require_nonblank_string(self.graph_node_id, "graph_node_id")
+        _require_nonblank_string(self.runner_binding_id, "runner_binding_id")
+        object.__setattr__(
+            self,
+            "diagnostic",
+            _coerce_payload_mapping(self.diagnostic, "diagnostic"),
+        )
+
+    def payload(self) -> Mapping[str, AuthorityValue]:
+        payload: dict[str, AuthorityValue] = {
+            "record_kind": self.record_kind,
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "session_id": self.session_id,
+            "dispatch_generation": self.dispatch_generation,
+            "session_fencing_token": self.session_fencing_token,
+            "plan_fingerprint": self.plan_fingerprint,
+            "claim_id": self.claim_id,
+            "generation": self.generation,
+            "fencing_token": self.fencing_token,
+            "stage_kind_id": self.stage_kind_id,
+            "graph_node_id": self.graph_node_id,
+            "runner_binding_id": self.runner_binding_id,
+            "diagnostic": self.diagnostic,
+        }
+        return MappingProxyType(payload)
+
+
 _RESULT_REQUIRED_PAYLOAD_KEYS = {
     "record_kind",
     "schema_version",
@@ -364,6 +455,23 @@ _RESULT_REQUIRED_PAYLOAD_KEYS = {
     "adapter_provenance",
     "observation_payload",
     "artifact_payload",
+}
+
+_RUNNER_SESSION_COMPLETION_DIAGNOSTIC_REQUIRED_KEYS = {
+    "record_kind",
+    "schema_version",
+    "run_id",
+    "session_id",
+    "dispatch_generation",
+    "session_fencing_token",
+    "plan_fingerprint",
+    "claim_id",
+    "generation",
+    "fencing_token",
+    "stage_kind_id",
+    "graph_node_id",
+    "runner_binding_id",
+    "diagnostic",
 }
 
 
@@ -387,6 +495,78 @@ def runner_result_evidence_bytes(evidence: RunnerResultEvidence) -> bytes:
 
 def runner_result_evidence_digest(evidence: RunnerResultEvidence) -> str:
     return f"sha256:{sha256(runner_result_evidence_bytes(evidence)).hexdigest()}"
+
+
+def runner_session_completion_diagnostic_bytes(
+    diagnostic: RunnerSessionCompletionDiagnostic,
+) -> bytes:
+    if not isinstance(diagnostic, RunnerSessionCompletionDiagnostic):
+        raise TypeError("diagnostic must be RunnerSessionCompletionDiagnostic")
+    payload = json.dumps(
+        _plain_authority_value(diagnostic.payload()),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(payload) > RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES:
+        raise ValueError(
+            "runner session completion diagnostic must be at most "
+            f"{RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES} bytes"
+        )
+    return payload
+
+
+def runner_session_completion_diagnostic_from_payload(
+    payload: Mapping[str, object] | MappingProxyType[str, object],
+) -> RunnerSessionCompletionDiagnostic:
+    if not isinstance(payload, Mapping):
+        raise TypeError("runner session completion diagnostic must be a mapping")
+    payload_keys = set(payload)
+    if payload_keys != _RUNNER_SESSION_COMPLETION_DIAGNOSTIC_REQUIRED_KEYS:
+        raise ValueError(
+            "runner session completion diagnostic has unexpected top-level keys"
+        )
+    record_kind = _require_string(payload.get("record_kind"), "record_kind")
+    if record_kind != RUNNER_SESSION_COMPLETION_DIAGNOSTIC_RECORD_KIND:
+        raise ValueError(f"unsupported record kind: {record_kind}")
+    schema_version = payload.get("schema_version")
+    if type(schema_version) is not int:
+        raise TypeError(
+            "runner session completion diagnostic schema_version must be integer"
+        )
+    if schema_version != RUNNER_SESSION_COMPLETION_DIAGNOSTIC_SCHEMA_VERSION:
+        raise ValueError(f"unsupported schema version: {schema_version}")
+    diagnostic_payload = _coerce_payload_mapping(
+        payload.get("diagnostic"),
+        "diagnostic",
+    )
+    return RunnerSessionCompletionDiagnostic(
+        run_id=_require_string(payload.get("run_id"), "run_id"),
+        session_id=_require_string(payload.get("session_id"), "session_id"),
+        dispatch_generation=_require_int(
+            payload.get("dispatch_generation"),
+            "dispatch_generation",
+        ),
+        session_fencing_token=_require_string(
+            payload.get("session_fencing_token"),
+            "session_fencing_token",
+        ),
+        plan_fingerprint=_require_string(
+            payload.get("plan_fingerprint"),
+            "plan_fingerprint",
+        ),
+        claim_id=_require_string(payload.get("claim_id"), "claim_id"),
+        generation=_require_int(payload.get("generation"), "generation"),
+        fencing_token=_require_string(payload.get("fencing_token"), "fencing_token"),
+        stage_kind_id=_require_string(payload.get("stage_kind_id"), "stage_kind_id"),
+        graph_node_id=_require_string(payload.get("graph_node_id"), "graph_node_id"),
+        runner_binding_id=_require_string(
+            payload.get("runner_binding_id"),
+            "runner_binding_id",
+        ),
+        diagnostic=diagnostic_payload,
+    )
 
 
 def runner_session_locator_bytes(
@@ -522,11 +702,14 @@ def runner_result_evidence_from_payload(
         adapter_provenance=_runner_adapter_provenance_from_payload(
             adapter_provenance,
         ),
-        observation_payload=_coerce_payload_mapping(
+        observation_payload=_coerce_optional_payload_mapping(
             observation_payload,
             "observation_payload",
         ),
-        artifact_payload=_coerce_payload_mapping(artifact_payload, "artifact_payload"),
+        artifact_payload=_coerce_optional_payload_mapping(
+            artifact_payload,
+            "artifact_payload",
+        ),
     )
 
 
@@ -603,6 +786,15 @@ def _coerce_payload_mapping(
     return MappingProxyType(coerce_items)
 
 
+def _coerce_optional_payload_mapping(
+    value: object,
+    field_name: str,
+) -> Mapping[str, AuthorityValue] | None:
+    if value is None:
+        return None
+    return _coerce_payload_mapping(value, field_name)
+
+
 def _coerce_payload_mapping_tuple(
     value: object,
     field_name: str,
@@ -610,8 +802,7 @@ def _coerce_payload_mapping_tuple(
     if not isinstance(value, tuple):
         raise ValueError(f"{field_name} must be a tuple")
     return tuple(
-        _coerce_terminal_option_mapping(item, index)
-        for index, item in enumerate(value)
+        _coerce_terminal_option_mapping(item, index) for index, item in enumerate(value)
     )
 
 
@@ -741,6 +932,54 @@ def _validate_selected_join_evidence_artifacts(value: object) -> None:
             raise ValueError(f"{artifact_field_name}.payload must be a mapping")
 
 
+def _coerce_selected_wait_evidence(
+    value: object,
+) -> Mapping[str, AuthorityValue] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("selected_wait_evidence must be a mapping or None")
+    raw = cast(Mapping[object, object], value)
+    _require_exact_keys(
+        raw,
+        _SELECTED_WAIT_EVIDENCE_REQUIRED_KEYS,
+        "selected_wait_evidence",
+    )
+    _require_exact_text(
+        raw["record_kind"],
+        _SELECTED_WAIT_EVIDENCE_RECORD_KIND,
+        "selected_wait_evidence.record_kind",
+    )
+    _require_exact_int(
+        raw["schema_version"],
+        _SELECTED_WAIT_EVIDENCE_SCHEMA_VERSION,
+        "selected_wait_evidence.schema_version",
+    )
+    for text_field in (
+        "wait_id",
+        "operator_wait_id",
+        "lineage_id",
+        "source_artifact_id",
+        "source_artifact_schema_id",
+        "source_action_id",
+        "source_run_id",
+        "source_work_item_id",
+    ):
+        _require_nonblank_string(
+            raw[text_field],
+            f"selected_wait_evidence.{text_field}",
+        )
+    _require_sha256_prefixed_digest(
+        raw["source_artifact_digest"],
+        "selected_wait_evidence.source_artifact_digest",
+    )
+    if not isinstance(raw["source_artifact_payload"], Mapping):
+        raise ValueError(
+            "selected_wait_evidence.source_artifact_payload must be a mapping"
+        )
+    return _coerce_payload_mapping(value, "selected_wait_evidence")
+
+
 def _require_exact_keys(
     value: Mapping[object, object],
     expected_keys: frozenset[str],
@@ -829,8 +1068,7 @@ def _require_int(value: object, field_name: str) -> int:
 def _plain_authority_value(value: object) -> object:
     if isinstance(value, Mapping):
         return {
-            str(key): _plain_authority_value(nested)
-            for key, nested in value.items()
+            str(key): _plain_authority_value(nested) for key, nested in value.items()
         }
     if isinstance(value, tuple):
         return [_plain_authority_value(item) for item in value]
@@ -842,14 +1080,20 @@ __all__ = (
     "RUNNER_DISPATCH_SCHEMA_VERSION",
     "RUNNER_RESULT_RECORD_KIND",
     "RUNNER_RESULT_SCHEMA_VERSION",
+    "RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES",
+    "RUNNER_SESSION_COMPLETION_DIAGNOSTIC_RECORD_KIND",
+    "RUNNER_SESSION_COMPLETION_DIAGNOSTIC_SCHEMA_VERSION",
     "RUNNER_SESSION_LOCATOR_MAX_BYTES",
     "RunnerAdapterProvenance",
     "RunnerDispatchEnvelope",
     "RunnerResultEvidence",
+    "RunnerSessionCompletionDiagnostic",
     "runner_result_evidence_bytes",
     "runner_result_evidence_digest",
     "runner_result_evidence_from_payload",
     "runner_result_payload",
+    "runner_session_completion_diagnostic_bytes",
+    "runner_session_completion_diagnostic_from_payload",
     "runner_session_locator_bytes",
     "runner_session_locator_from_bytes",
 )

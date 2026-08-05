@@ -13,11 +13,16 @@ import pytest
 
 from cli.test_cli_bounded_execution_unit import (
     _load,
+    _ready_state_with_selected_codex_authority,
+    _runtime,
 )
 from millrace.adapters.cli import (
     session_cancellation,
     session_completion,
     session_coordinator,
+)
+from millrace.adapters.cli import (
+    status as session_status,
 )
 from millrace.adapters.cli.run import (
     run_bounded_execution_unit,
@@ -53,6 +58,11 @@ from support.runner_sessions import (
 )
 
 
+def _ready_codex_runtime(tmp_path):
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
+    return _runtime(tmp_path, state)
+
+
 def test_pending_handle_is_polled_until_terminal_outcome(tmp_path) -> None:
     handle: _SequenceHandle | None = None
 
@@ -70,6 +80,50 @@ def test_pending_handle_is_polled_until_terminal_outcome(tmp_path) -> None:
     assert result.code == "observation_accepted"
     assert handle is not None
     assert handle.polls == 2
+
+
+def test_prestart_cancellation_persists_typed_diagnostic_after_restart(
+    tmp_path,
+) -> None:
+    from millrace.adapters.cli.context import OpenRuntimeContext
+    from millrace.contracts.runner import RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    runtime = _ready_codex_runtime(tmp_path)
+    adapter = _RecordingAdapter(_success_start)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(adapter),
+        daemon_stop_requested=lambda: True,
+    )
+    paths = runtime.paths
+    runtime.close()
+
+    reopened = OpenRuntimeContext(
+        paths=paths,
+        store=SQLiteRuntimeStore.open(paths.db_path),
+        cas_store=ContentAddressedByteStore(paths.cas_path),
+    )
+    try:
+        after = _load(reopened)
+        session = next(iter(after.runner_sessions.values()))
+        completion = after.runner_session_completions[session.session_id]
+        diagnostic, diagnostic_status = session_status._load_completion_diagnostic(
+            reopened,
+            after,
+            session.session_id,
+            completion.diagnostic_digest,
+        )
+        raw = reopened.cas_store.get_bytes(completion.diagnostic_digest)
+    finally:
+        reopened.close()
+
+    assert result.code == "adapter_failure"
+    assert diagnostic_status == "available"
+    assert diagnostic == {"external_start": False}
+    assert len(raw) <= RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES
+    assert adapter.requests == []
 
 
 def test_durable_operator_cancellation_is_observed_and_cleaned_up(
@@ -546,7 +600,9 @@ def test_attempt_diagnostic_redaction_failure_is_bounded_safe_content() -> None:
         def redact_authority_value(self, _value: object) -> object:
             raise RuntimeError("secret must not escape")
 
-    payload = session_completion._bounded_session_diagnostic_bytes(
+    from millrace.adapters.cli import session_diagnostics
+
+    payload = session_diagnostics._bounded_session_diagnostic_bytes(
         {"secret": "must-not-persist"},
         redaction_policy=BrokenPolicy(),
     )
@@ -983,7 +1039,7 @@ def test_nonterminal_return_fault_cleans_live_subprocess_before_return(
             redaction_policy=RedactionPolicy(policy_id="redact-default"),
         )
     )
-    runtime = _ready_runtime(tmp_path)
+    runtime = _ready_codex_runtime(tmp_path)
     if fault_kind.startswith("poll_exception"):
         request_result = lambda *_args, **_kwargs: SimpleNamespace(  # noqa: E731
             accepted=fault_kind.endswith("accepted")

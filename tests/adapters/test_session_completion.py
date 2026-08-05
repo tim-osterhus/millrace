@@ -10,6 +10,7 @@ from cli.test_cli_bounded_execution_unit import (
     _codex_success_config,
     _load,
     _ready_state,
+    _ready_state_with_selected_codex_authority,
     _reopen_runtime,
     _runtime,
 )
@@ -17,6 +18,7 @@ from kernel.kernel_ping_scenarios import task_artifact_payload
 from millrace.adapters.cli import (
     session_cancellation,
     session_completion,
+    session_diagnostics,
 )
 from millrace.adapters.cli.run import (
     reconcile_pending_runner_sessions,
@@ -35,11 +37,11 @@ from millrace.adapters.runner_contract import (
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
     VerifiedLive,
-    start_refusal_diagnostic_bytes,
     start_refusal_diagnostic_digest,
 )
 from millrace.contracts.runner import (
     runner_result_evidence_from_payload,
+    runner_session_completion_diagnostic_from_payload,
 )
 from millrace.contracts.transition import (
     RunnerResultObserved,
@@ -447,7 +449,8 @@ def test_v3_observation_requires_exact_completion_session_and_application_id(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = _ready_runtime(tmp_path)
+    state, _ = _ready_state_with_selected_codex_authority()
+    runtime = _runtime(tmp_path, state)
     original_decide = session_completion.decide
 
     def crash_before_application(current, transition_input, context):
@@ -743,10 +746,15 @@ def test_prestart_refusal_cas_contains_real_redacted_diagnostic(
 
     assert result.code == "adapter_failure"
     assert captured_error is not None
-    assert runtime.cas_store.get_bytes(completion.diagnostic_digest) == (
-        start_refusal_diagnostic_bytes(captured_error)
+    stored = runtime.cas_store.get_bytes(completion.diagnostic_digest)
+    diagnostic = runner_session_completion_diagnostic_from_payload(
+        json.loads(stored)
     )
-    assert b"secret" not in runtime.cas_store.get_bytes(completion.diagnostic_digest)
+    assert diagnostic.diagnostic == {
+        "diagnostics": {"reason": "[REDACTED] is unavailable"},
+        "error_kind": "selected_authority_refused",
+    }
+    assert b"secret" not in stored
 
 
 def test_tampered_prestart_refusal_digest_is_durably_refused(tmp_path) -> None:
@@ -812,23 +820,36 @@ def test_oversized_prestart_diagnostic_keeps_proven_refusal_terminal(
     assert session.state == "failed"
     assert completion.cleanup_disposition == "not_required"
     assert len(stored) <= START_REFUSAL_DIAGNOSTIC_MAX_BYTES
-    assert json.loads(stored)["diagnostics"]["truncated"] is True
+    diagnostic = runner_session_completion_diagnostic_from_payload(
+        json.loads(stored)
+    )
+    assert diagnostic.diagnostic["diagnostics"]["truncated"] is True
 
 
 def test_signal_digest_distinguishes_oversized_signals_with_same_prefix() -> None:
     common_prefix = "x" * (16 * 1024)
 
-    first = session_completion._signal_digest({"diagnostic": common_prefix + "first"})
-    second = session_completion._signal_digest({"diagnostic": common_prefix + "second"})
+    first = session_diagnostics._signal_digest(
+        {"diagnostic": common_prefix + "first"}
+    )
+    second = session_diagnostics._signal_digest(
+        {"diagnostic": common_prefix + "second"}
+    )
 
     assert first != second
 
 
 def test_codex_and_generic_fake_adapters_share_session_lifecycle(tmp_path) -> None:
-    for index, local_config in enumerate(
-        (_codex_success_config(), _config(_RecordingAdapter(_success_start)))
+    for index, (local_config, state_factory) in enumerate(
+        (
+            (
+                _codex_success_config(),
+                _ready_state_with_selected_codex_authority,
+            ),
+            (_config(_RecordingAdapter(_success_start)), _ready_state),
+        )
     ):
-        state, _ = _ready_state()
+        state, _ = state_factory()
         runtime = _runtime(tmp_path / str(index), state)
         result = run_bounded_execution_unit(runtime, local_config=local_config)
         after = _load(runtime)

@@ -165,7 +165,7 @@ _MILLFORGE_DESCRIPTOR_SHA256 = (
     "0bace7b27871b03cd7ffe59951953348b3da3214536178d6f447a21de4403464"
 )
 _MILLFORGE_PLAN_FINGERPRINT = (
-    "sha256:29d40efa187bef7c2ad2a143f8a685a6f6dbb21dcfdf05258b50c1c1c2586d42"
+    "sha256:c72c13ea3d28b0cbfb542f1a3d2d6ac50e9864c86041f1d29a5dedd7772c205d"
 )
 
 
@@ -362,7 +362,7 @@ def test_restart_refuses_missing_selected_plan_cas_object(tmp_path: Path) -> Non
         load_runtime_state(db_path, cas_root)
 
 
-@pytest.mark.parametrize("old_record", ("selected_plan_v13", "runner_binding_v2"))
+@pytest.mark.parametrize("old_record", ("selected_plan_v14", "runner_binding_v2"))
 def test_restart_refuses_pre_component_selected_authority_versions(
     tmp_path: Path,
     old_record: str,
@@ -373,8 +373,8 @@ def test_restart_refuses_pre_component_selected_authority_versions(
         dumps_cas_object(encode_selected_compiled_plan(plan)).decode("utf-8")
     )
     payload = cast(dict[str, object], selected_plan_record["payload"])
-    if old_record == "selected_plan_v13":
-        payload["schema_version"] = 13
+    if old_record == "selected_plan_v14":
+        payload["schema_version"] = 14
     else:
         runner = cast(list[dict[str, object]], payload["runner_bindings"])[0]
         runner["schema_version"] = 2
@@ -6033,6 +6033,64 @@ def test_generic_restart_refuses_corrupt_operator_wait_source_links(
     with sqlite3.connect(db_path) as connection:
         connection.execute(f"UPDATE operator_waits SET {column} = ?", (value,))
     with pytest.raises(StorageIntegrityError):
+        load_runtime_state(db_path, cas_root)
+
+
+def test_durable_relations_refuse_projected_wait_without_revise_authority() -> None:
+    plan, fingerprint = generic_admission.compile_plan()
+    corrupt_plan = replace(
+        plan,
+        operator_waits=tuple(
+            replace(wait, project_source_artifact=True)
+            if str(wait.id) == generic_admission.CLOSE_WAIT_ID
+            else wait
+            for wait in plan.operator_waits
+        ),
+    )
+    corrupt_fingerprint = authority_fingerprint(corrupt_plan)
+    state = _generic_admitted_only_state(corrupt_plan, corrupt_fingerprint)
+
+    with pytest.raises(
+        StorageIntegrityError,
+        match="selected operator_wait projection authority is invalid",
+    ):
+        validate_loaded_runtime_state(state)
+
+
+def test_restart_refuses_duplicate_resolved_operator_wait_target(
+    tmp_path: Path,
+) -> None:
+    state = _generic_revised_operator_wait_state()
+    wait = next(iter(state.operator_waits.values()))
+    duplicate_input_id = "duplicate-resolved-wait"
+    duplicate_wait_id = (
+        "operator-wait:"
+        f"{wait.selected_plan_ref.authority_fingerprint}:"
+        f"{wait.operator_wait_id}:{wait.lineage_id}:{duplicate_input_id}"
+    )
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state)
+    with sqlite3.connect(db_path) as connection:
+        columns = tuple(
+            cast(str, row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(operator_waits)"
+            ).fetchall()
+        )
+        expressions = tuple(
+            "?" if column in {"wait_id", "created_input_id"} else column
+            for column in columns
+        )
+        connection.execute(
+            f"INSERT INTO operator_waits ({','.join(columns)}) "
+            f"SELECT {','.join(expressions)} FROM operator_waits",
+            (duplicate_wait_id, duplicate_input_id),
+        )
+
+    with pytest.raises(
+        StorageIntegrityError,
+        match="resolved target ownership must be unique",
+    ):
         load_runtime_state(db_path, cas_root)
 
 

@@ -326,7 +326,7 @@ def test_export_verifier_refuses_whitespace_runner_component_identity(
         verify_compiled_plan_export_record(record)
 
 
-def test_export_verifier_refuses_format_13_without_migration() -> None:
+def test_export_verifier_refuses_format_14_without_migration() -> None:
     from millrace.compiler import (
         CompiledPlanExportError,
         compiled_plan_export_record,
@@ -335,8 +335,8 @@ def test_export_verifier_refuses_format_13_without_migration() -> None:
 
     record = deepcopy(dict(compiled_plan_export_record(_component_plan())))
     selected = cast(dict[str, object], record["selected_authority"])
-    record["plan_format_version"] = 13
-    selected["schema_version"] = 13
+    record["plan_format_version"] = 14
+    selected["schema_version"] = 14
     record["authority_fingerprint"] = authority_fingerprint(selected)
 
     with pytest.raises(
@@ -601,10 +601,10 @@ def test_compiler_provenance_does_not_change_selected_authority() -> None:
 
     assert COMPILER_ID == "millrace-ai"
     assert authority_fingerprint(plan) == (
-        "sha256:29d40efa187bef7c2ad2a143f8a685a6f6dbb21dcfdf05258b50c1c1c2586d42"
+        "sha256:c72c13ea3d28b0cbfb542f1a3d2d6ac50e9864c86041f1d29a5dedd7772c205d"
     )
     assert hashlib.sha256(authority_bytes).hexdigest() == (
-        "c08684dbd48ee0ebb1041d5006003c20c8f2928f15efa89d1244e50da74cb1b2"
+        "bb4c8bbe59c061df0426c7d4411ec673980e79df2dbe785836ea7f7dd2af43ba"
     )
     assert len(authority_bytes) == 13083
 

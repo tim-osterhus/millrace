@@ -979,8 +979,8 @@ def runner_evidence_from_adapter_outcome(
         runner_binding_id=dispatch_envelope.runner_binding_id,
         marker=marker,
         adapter_provenance=adapter_provenance,
-        observation_payload=outcome.observation_payload_candidate or {},
-        artifact_payload=outcome.artifact_payload_candidate or {},
+        observation_payload=outcome.observation_payload_candidate,
+        artifact_payload=outcome.artifact_payload_candidate,
     )
 
 
