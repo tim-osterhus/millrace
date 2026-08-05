@@ -21,17 +21,18 @@ issue and fix it before moving on. You rinse and repeat until there's no more
 bugs and everything matches the initial plan.
 
 All you did was manage which agent performs which role at which time. If you
-sketched out the entire process on paper, you'd find it's just a manually-driven
-decision tree. An agent can generally be relied upon to execute any single
-step on its own, but owning the entire workflow end to end? No agent is owning
-that reliably (yet). And this is where Millrace comes in.
+sketched the entire process on paper, you would find a manually driven workflow
+graph: stages connected by completion, failure, recovery, and escalation
+outcomes. An agent can generally be relied upon to execute any single step on
+its own, but owning the entire workflow end to end? No agent is owning that
+reliably (yet). And this is where Millrace comes in.
 
 ```mermaid
 flowchart TD
     W["Workflow package<br/>stages, routes, rules"] --> C["Compiler<br/>validate and freeze"]
     C --> P["Selected plan<br/>immutable authority"]
     P --> R["Durable runtime<br/>queues, runs, waits"]
-    R -->|"bounded dispatch"| A["Agent runner<br/>Codex, Claude Code, Millforge"]
+    R -->|"bounded dispatch"| A["Agent runner<br/>Codex, Millforge"]
     A -->|"candidate evidence"| V{"Valid under<br/>selected plan?"}
     P -.->|"governs"| V
     V -->|"yes"| T["Commit state transition"]
@@ -40,11 +41,17 @@ flowchart TD
     X --> R
 ```
 
-If your workflow can be described as a decision tree, it can be turned into
-a plan by Millrace. Completion moves to the next step, failure moves to
-bugfixing, and a hard blocker escalates to automated recovery. You can have
-as many recovery mechanisms or branching paths as you like, and the compiler
-makes sure you're only running valid plans.
+If your workflow can be described as stages, outcomes, and transitions,
+Millrace can compile it into an executable plan. Completion moves to the next
+step, failure moves to bugfixing, and a hard blocker escalates to automated
+recovery. You can have as many recovery mechanisms or branching paths as you
+like, and the compiler makes sure you're only running valid plans.
+
+**Millrace made its compiled workflow graph authoritative over agent execution
+on April 23, 2026, months before "graph engineering" became a category.** The
+prior-art audit found only one earlier comparable open-source implementation:
+Dagu `v2.5.0`.
+[Review the definition, dated evidence, and prior-art audit.](https://github.com/tim-osterhus/millrace/blob/main/docs/graph-engineering-provenance.md)
 
 For more information, check out the
 [FAQ](https://github.com/tim-osterhus/millrace/blob/main/FAQ.md).
@@ -96,6 +103,7 @@ These are package data, not hard-coded kernel behavior.
 
 [Getting started](https://github.com/tim-osterhus/millrace/blob/main/docs/getting-started.md) ·
 [How Millrace works](https://github.com/tim-osterhus/millrace/blob/main/docs/how-millrace-works.md) ·
+[Graph authority and prior art](https://github.com/tim-osterhus/millrace/blob/main/docs/graph-engineering-provenance.md) ·
 [Runner-session architecture](docs/runner-session-architecture.md) ·
 [Daemon lifecycle](docs/daemon-lifecycle.md) ·
 [Workflow packages](https://github.com/tim-osterhus/millrace/blob/main/docs/workflow-packages.md) ·
