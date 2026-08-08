@@ -48,7 +48,7 @@ recovery. You can have as many recovery mechanisms or branching paths as you
 like, and the compiler makes sure you're only running valid plans.
 
 **Millrace made its compiled workflow graph authoritative over agent execution
-on April 23, 2026, months before "graph engineering" became a category.** The
+on April 23, 2026, months before "graph engineering" became a category.** A
 prior-art audit found only one earlier comparable open-source implementation:
 Dagu `v2.5.0`.
 [Review the definition, dated evidence, and prior-art audit.](https://github.com/tim-osterhus/millrace/blob/main/docs/graph-engineering-provenance.md)
