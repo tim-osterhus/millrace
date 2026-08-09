@@ -146,6 +146,12 @@ The outer adapter timeout and profile timeout are local ceilings. The selected
 plan retains invocation-timeout authority, and execution uses the lower
 applicable limit.
 
+Each selected workflow request budget must cover the fully serialized selected
+entrypoint/skills, payload, bounded evidence, artifact schemas, and terminal
+options. Millrace refuses a request above the selected request or runner budget
+before external dispatch. The Millforge instruction envelope remains bounded
+to 65536 bytes.
+
 ## Environment Secret
 
 Set the credential only in the environment variable named by `SecretRef`:

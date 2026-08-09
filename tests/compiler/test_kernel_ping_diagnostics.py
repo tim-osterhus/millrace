@@ -374,6 +374,21 @@ def test_runner_component_pin_blank_text_field_is_diagnosed(field_name: str) -> 
     assert error.declaration_path == f"runner_bindings[0].component_pin.{field_name}"
 
 
+@pytest.mark.parametrize("value", (0, -1, True, "16384"))
+def test_runner_component_pin_invalid_payload_capacity_is_diagnosed(
+    value: object,
+) -> None:
+    source = _source_with_runner_component()
+    pin = cast(Record, _records(source, "runner_bindings")[0]["component_pin"])
+    pin["max_work_item_payload_bytes"] = value
+
+    error = _find_error(_errors(source), "invalid_runner_component_payload_capacity")
+
+    assert error.declaration_path == (
+        "runner_bindings[0].component_pin.max_work_item_payload_bytes"
+    )
+
+
 @pytest.mark.parametrize(
     ("case", "expected_code"),
     (
@@ -1310,6 +1325,62 @@ def test_route_action_projection_grammar_must_be_exact(
     assert error.context["referrer_path"] == "terminal_actions[0]"
     assert error.context["action_id"] == "kernel_ping.route_taskmaster_success"
     assert error.hint is not None
+
+
+@pytest.mark.parametrize(
+    ("case", "projection", "expected_reason"),
+    (
+        (
+            "empty_candidates",
+            {
+                "kind": "coalesce",
+                "candidates": (),
+                "default": {"kind": "literal", "value": None},
+            },
+            "coalesce_candidates_empty",
+        ),
+        (
+            "missing_candidates",
+            {
+                "kind": "coalesce",
+                "default": {"kind": "literal", "value": None},
+            },
+            "missing_projection_key",
+        ),
+        (
+            "invalid_candidate",
+            {
+                "kind": "coalesce",
+                "candidates": ({"kind": "unsupported"},),
+                "default": {"kind": "literal", "value": None},
+            },
+            "unsupported_projection",
+        ),
+        (
+            "invalid_default",
+            {
+                "kind": "coalesce",
+                "candidates": ({"kind": "literal", "value": None},),
+                "default": {"kind": "unsupported"},
+            },
+            "unsupported_projection",
+        ),
+    ),
+)
+def test_coalesce_declaration_refusals_are_compiler_diagnostics(
+    case: str,
+    projection: Record,
+    expected_reason: str,
+) -> None:
+    del case
+    source = _source()
+    action = _records(source, "terminal_actions")[0]
+    action["payload_projection"] = projection
+
+    error = _find_error(_errors(source), "invalid_terminal_projection")
+
+    assert error.declaration_path == "terminal_actions[0].payload_projection"
+    assert error.context["reason"] == expected_reason
 
 
 @pytest.mark.parametrize(

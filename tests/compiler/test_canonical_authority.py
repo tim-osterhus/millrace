@@ -298,12 +298,12 @@ def test_kernel_ping_authority_bytes_and_fingerprint_match_golden() -> None:
     plan = _compile_plan(_source())
     authority_bytes = canonical_authority_bytes(plan)
 
-    assert len(authority_bytes) == 13083
+    assert len(authority_bytes) == 13153
     assert sha256(authority_bytes).hexdigest() == (
-        "bb4c8bbe59c061df0426c7d4411ec673980e79df2dbe785836ea7f7dd2af43ba"
+        "ca1e565818bf14e55e5d7aff70581603dae2a5dc53c0cf4011569a1a64502f34"
     )
     assert authority_fingerprint(plan) == (
-        "sha256:c72c13ea3d28b0cbfb542f1a3d2d6ac50e9864c86041f1d29a5dedd7772c205d"
+        "sha256:cac2bb63793f3cad20361ac51152109fd7e60c63120a70df05b5c40e3149010b"
     )
 
 

@@ -10,6 +10,7 @@ from unicodedata import normalize
 
 from millrace.contracts.compiled_plan import (
     CanonicalAuthorityError,
+    CompletionBehaviorDeclaration,
     RunnerBindingDeclaration,
     RunnerComponentPin,
     RunnerTerminalResultMapping,
@@ -20,6 +21,7 @@ from millrace.contracts.compiled_plan import (
     authority_fingerprint,
     canonical_authority_bytes,
 )
+from millrace.contracts.schema import validate_closure_verdict_schema_declaration
 
 COMPILED_PLAN_EXPORT_RECORD_KIND = "compiled_plan_export"
 COMPILED_PLAN_EXPORT_SCHEMA_VERSION = 1
@@ -223,6 +225,16 @@ def verify_compiled_plan_export_record(
     )
     _validate_runner_bindings(
         _require_sequence(selected_authority, "runner_bindings")
+    )
+    _validate_completion_behaviors(
+        _require_sequence(selected_authority, "completion_behaviors"),
+        artifact_schemas=_require_sequence(selected_authority, "artifact_schemas"),
+        stage_kinds=_require_sequence(selected_authority, "stage_kinds"),
+        terminal_actions=_require_sequence(
+            selected_authority,
+            "terminal_actions",
+        ),
+        runner_bindings=_require_sequence(selected_authority, "runner_bindings"),
     )
 
     expected_fingerprint = _require_string(record, "authority_fingerprint")
@@ -594,6 +606,7 @@ def _validate_runner_component_pin(
                 "descriptor_sha256",
                 "required_capability_ids",
                 "legal_terminal_result_ids",
+                "max_work_item_payload_bytes",
             }
         ),
         label="runner component pin",
@@ -636,6 +649,14 @@ def _validate_runner_component_pin(
         raise CompiledPlanExportError(
             "runner component descriptor_sha256 must be lowercase sha256 hex"
         )
+    capacity = pin["max_work_item_payload_bytes"]
+    if capacity is not None and (
+        type(capacity) is not int or capacity <= 0
+    ):
+        raise CompiledPlanExportError(
+            "runner component max_work_item_payload_bytes must be a positive "
+            "integer or null"
+        )
     _validate_canonical_string_sequence(
         _require_sequence(pin, "required_capability_ids"),
         label="runner component required_capability_ids",
@@ -646,6 +667,183 @@ def _validate_runner_component_pin(
             label="runner component legal_terminal_result_ids",
         )
     )
+
+
+def _validate_completion_behaviors(
+    values: Sequence[object],
+    *,
+    artifact_schemas: Sequence[object],
+    stage_kinds: Sequence[object],
+    terminal_actions: Sequence[object],
+    runner_bindings: Sequence[object],
+) -> None:
+    expected_keys = frozenset(
+        {
+            "record_kind",
+            "schema_version",
+            "id",
+            "trigger",
+            "readiness_rule",
+            "request_kind",
+            "target_selector",
+            "target_stage_kind_id",
+            "target_graph_node_id",
+            "runner_binding_id",
+            "request_queue_family_id",
+            "pass_action_id",
+            "gap_action_id",
+            "blocked_action_id",
+            "verdict_artifact_schema_id",
+            "evidence_artifact_schema_ids",
+            "evidence_item_limit",
+            "request_payload_byte_limit",
+            "remediation_policy_id",
+            "accepted_root_source_kinds",
+            "root_source_resolution",
+            "evidence_window_policy",
+            "rubric_policy",
+            "blocked_work_policy",
+            "skip_if_closed",
+        }
+    )
+    schemas_by_id = {
+        str(schema["id"]): schema
+        for schema in artifact_schemas
+        if isinstance(schema, Mapping) and isinstance(schema.get("id"), str)
+    }
+    stages_by_id = {
+        str(stage["id"]): stage
+        for stage in stage_kinds
+        if isinstance(stage, Mapping) and isinstance(stage.get("id"), str)
+    }
+    actions_by_id = {
+        str(action["id"]): action
+        for action in terminal_actions
+        if isinstance(action, Mapping) and isinstance(action.get("id"), str)
+    }
+    runners_by_id = {
+        str(runner["id"]): runner
+        for runner in runner_bindings
+        if isinstance(runner, Mapping) and isinstance(runner.get("id"), str)
+    }
+    for item in values:
+        if not isinstance(item, Mapping):
+            raise CompiledPlanExportError(
+                "completion_behaviors must contain objects"
+            )
+        _require_exact_keys(item, expected_keys, label="completion behavior")
+        _require_exact_value(
+            item,
+            "record_kind",
+            CompletionBehaviorDeclaration.record_kind,
+            label="completion behavior",
+        )
+        _require_exact_value(
+            item,
+            "schema_version",
+            CompletionBehaviorDeclaration.schema_version,
+            label="completion behavior",
+        )
+        schemas = _require_sequence(item, "evidence_artifact_schema_ids")
+        if not schemas:
+            raise CompiledPlanExportError(
+                "completion behavior evidence_artifact_schema_ids must be non-empty"
+            )
+        _validate_canonical_string_sequence(
+            schemas,
+            label="completion behavior evidence_artifact_schema_ids",
+            require_sorted=False,
+        )
+        evidence_schema_ids = {str(schema) for schema in schemas}
+        if not evidence_schema_ids.issubset(schemas_by_id):
+            raise CompiledPlanExportError(
+                "completion behavior references an unknown evidence artifact schema"
+            )
+        verdict_schema_id = _require_string(item, "verdict_artifact_schema_id")
+        verdict_schema = schemas_by_id.get(verdict_schema_id)
+        if verdict_schema is None:
+            raise CompiledPlanExportError(
+                "completion behavior references an unknown verdict artifact schema"
+            )
+        target_stage_id = _require_string(item, "target_stage_kind_id")
+        target_stage = stages_by_id.get(target_stage_id)
+        if target_stage is None or verdict_schema_id not in _string_values(
+            target_stage.get("artifact_schema_ids")
+        ):
+            raise CompiledPlanExportError(
+                "completion behavior verdict schema is unavailable to target stage"
+            )
+        if item["rubric_policy"] == "reuse_or_create" and not (
+            _closure_verdict_schema_supported(verdict_schema)
+        ):
+            raise CompiledPlanExportError(
+                "completion behavior verdict artifact schema lacks closure fields"
+            )
+        action_contracts = (
+            ("pass_action_id", {"close", "complete_work_item"}),
+            ("gap_action_id", {"closure_gap"}),
+            ("blocked_action_id", {"close", "block_work_item"}),
+        )
+        for action_field, expected_kinds in action_contracts:
+            action = actions_by_id.get(_require_string(item, action_field))
+            if (
+                action is None
+                or action.get("stage_kind_id") != target_stage_id
+                or action.get("action_kind") not in expected_kinds
+            ):
+                raise CompiledPlanExportError(
+                    "completion behavior terminal action contract must match "
+                    "target stage and action kind"
+                )
+            if action.get("artifact_schema_id") != verdict_schema_id:
+                raise CompiledPlanExportError(
+                    "completion behavior terminal action schema must equal "
+                    "verdict schema"
+                )
+        evidence_limit = item["evidence_item_limit"]
+        if (
+            type(evidence_limit) is not int
+            or evidence_limit < 1
+            or evidence_limit > 256
+        ):
+            raise CompiledPlanExportError(
+                "completion behavior evidence_item_limit is outside 1..256"
+            )
+        request_limit = item["request_payload_byte_limit"]
+        if type(request_limit) is not int or request_limit <= 0:
+            raise CompiledPlanExportError(
+                "completion behavior request_payload_byte_limit must be positive"
+            )
+        runner = runners_by_id.get(_require_string(item, "runner_binding_id"))
+        if runner is None:
+            raise CompiledPlanExportError(
+                "completion behavior runner binding is missing"
+            )
+        component_pin = runner.get("component_pin")
+        if not isinstance(component_pin, Mapping):
+            raise CompiledPlanExportError(
+                "completion behavior runner component pin is missing"
+            )
+        capacity = component_pin.get("max_work_item_payload_bytes")
+        if type(capacity) is not int or capacity <= 0:
+            raise CompiledPlanExportError(
+                "completion behavior runner payload capacity must be positive"
+            )
+        if request_limit > capacity:
+            raise CompiledPlanExportError(
+                "completion behavior request payload limit exceeds runner capacity"
+            )
+
+
+def _closure_verdict_schema_supported(schema: Mapping[str, object]) -> bool:
+    raw_schema = schema.get("schema")
+    return validate_closure_verdict_schema_declaration(raw_schema).accepted
+
+
+def _string_values(value: object) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
 
 
 def _validate_runner_terminal_result_mappings(
@@ -734,13 +932,16 @@ def _validate_canonical_string_sequence(
     values: Sequence[object],
     *,
     label: str,
+    require_sorted: bool = True,
 ) -> tuple[str, ...]:
     if any(not isinstance(value, str) or not value.strip() for value in values):
         raise CompiledPlanExportError(f"{label} must contain nonblank strings")
     rendered = tuple(str(value) for value in values)
     if len(set(rendered)) != len(rendered):
         raise CompiledPlanExportError(f"{label} must contain unique values")
-    if rendered != tuple(sorted(rendered, key=lambda value: value.encode("utf-8"))):
+    if require_sorted and rendered != tuple(
+        sorted(rendered, key=lambda value: value.encode("utf-8"))
+    ):
         raise CompiledPlanExportError(f"{label} is not canonical")
     return rendered
 

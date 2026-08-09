@@ -8,7 +8,16 @@ import pytest
 from millrace.compiler import compile_workflow
 from millrace.compiler.canonical import authority_fingerprint
 from millrace.contracts.compiled_plan import AuthorityValue
-from millrace.kernel.projection import ProjectionContext, evaluate_projection
+from millrace.contracts.state import PlanRef, RunRecord, RunRef, WorkItem, WorkItemRef
+from millrace.contracts.transition import (
+    artifact_payload_digest,
+    canonical_authority_mapping_bytes,
+)
+from millrace.kernel.projection import (
+    ProjectionContext,
+    evaluate_projection,
+    projection_context_for_run,
+)
 from millrace.kernel.schema import validate_schema
 from millrace.workflows import kernel_ping
 
@@ -220,6 +229,136 @@ def test_projection_refuses_missing_sources_and_executable_shapes() -> None:
     assert expression_like.accepted is False
     assert expression_like.error is not None
     assert expression_like.error.reason == "missing_source"
+
+
+def test_projection_coalesce_skips_missing_and_null_candidates_in_order() -> None:
+    context = ProjectionContext(
+        work_item_payload={"fallback": "task"},
+        artifact_payload={"present": "artifact"},
+        observation_payload={},
+        run_metadata={},
+        plan_metadata={},
+    )
+
+    projection = {
+        "kind": "coalesce",
+        "candidates": (
+            {"kind": "source", "path": ("artifact_payload", "missing")},
+            {"kind": "literal", "value": None},
+            {"kind": "source", "path": ("artifact_payload", "present")},
+        ),
+        "default": {"kind": "source", "path": ("work_item_payload", "fallback")},
+    }
+
+    result = evaluate_projection(projection, context)
+
+    assert result.accepted is True
+    assert result.value == "artifact"
+
+
+def test_projection_coalesce_returns_explicit_default_null_and_propagates_refusals(
+) -> None:
+    context = ProjectionContext(
+        work_item_payload={},
+        artifact_payload={},
+        observation_payload={},
+        run_metadata={},
+        plan_metadata={},
+    )
+
+    default_null = evaluate_projection(
+        {
+            "kind": "coalesce",
+            "candidates": (
+                {"kind": "source", "path": ("artifact_payload", "missing")},
+            ),
+            "default": {"kind": "literal", "value": None},
+        },
+        context,
+    )
+    assert default_null.accepted is True
+    assert default_null.value is None
+
+    refused = evaluate_projection(
+        {
+            "kind": "coalesce",
+            "candidates": (
+                {"kind": "literal", "value": object()},
+            ),
+            "default": {"kind": "literal", "value": "unused"},
+        },
+        context,
+    )
+    assert refused.accepted is False
+    assert refused.error is not None
+    assert refused.error.reason == "unsupported_projection_value"
+
+
+def test_projection_coalesce_requires_non_empty_candidates() -> None:
+    result = evaluate_projection(
+        {
+            "kind": "coalesce",
+            "candidates": (),
+            "default": {"kind": "literal", "value": None},
+        },
+        ProjectionContext({}, {}, {}, {}, {}),
+    )
+
+    assert result.accepted is False
+    assert result.error is not None
+    assert result.error.reason == "coalesce_candidates_empty"
+
+
+def test_run_projection_context_contains_canonical_payload_digests() -> None:
+    plan_ref = PlanRef(
+        plan_id="kernel_ping:0.1",
+        authority_fingerprint="sha256:" + "a" * 64,
+        plan_format_version=16,
+    )
+    work_item = WorkItem(
+        ref=WorkItemRef("work-1", plan_ref, 0),
+        queue_family_id="prompt",
+        payload={"body": "task"},
+        lineage_id="lineage-1",
+        created_by_input_id="enqueue-1",
+    )
+    run = RunRecord(
+        run_ref=RunRef(
+            "run-1",
+            work_item.ref.work_item_id,
+            "claim-1",
+            plan_ref,
+            0,
+            "fence-1",
+        ),
+        work_item_id=work_item.ref.work_item_id,
+        activation_id="activation-1",
+        stage_kind_id="stage-1",
+        runner_binding_id="runner-1",
+        created_by_input_id="claim-1",
+    )
+    artifact_payload = {"summary": "accepted"}
+
+    context = projection_context_for_run(
+        work_item=work_item,
+        run=run,
+        observation_payload={},
+        artifact_payload=artifact_payload,
+    )
+
+    assert context.run_metadata["work_item_payload_digest"] == artifact_payload_digest(
+        work_item.payload
+    )
+    assert context.run_metadata["artifact_payload_digest"] == artifact_payload_digest(
+        artifact_payload
+    )
+
+
+def test_artifact_digest_reuses_exported_canonical_mapping_bytes() -> None:
+    payload = {"z": 1, "a": "é"}
+
+    assert canonical_authority_mapping_bytes(payload) == b'{"a":"\xc3\xa9","z":1}'
+    assert artifact_payload_digest(payload).startswith("sha256:")
 
 
 def test_compiled_success_route_projection_is_declarative_authority() -> None:

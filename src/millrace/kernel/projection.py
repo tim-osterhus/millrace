@@ -17,6 +17,7 @@ from millrace.contracts.schema import (
     validate_projection_declaration,
 )
 from millrace.contracts.state import RunRecord, WorkItem
+from millrace.contracts.transition import artifact_payload_digest
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,8 @@ def projection_context_for_run(
             "claim_id": run.run_ref.claim_id,
             "generation": run.run_ref.generation,
             "fencing_token": run.run_ref.fencing_token,
+            "work_item_payload_digest": artifact_payload_digest(work_item.payload),
+            "artifact_payload_digest": artifact_payload_digest(artifact_payload),
         },
         plan_metadata={
             "plan_id": run.run_ref.plan_ref.plan_id,
@@ -94,7 +97,38 @@ def _evaluate(
         return _evaluate_object(projection.get("fields"), context, path)
     if kind == "array":
         return _evaluate_array(projection.get("items"), context, path)
+    if kind == "coalesce":
+        return _evaluate_coalesce(
+            projection.get("candidates"),
+            projection.get("default"),
+            context,
+            path,
+        )
     raise _ProjectionRejected(path, "unsupported_projection")
+
+
+def _evaluate_coalesce(
+    candidates: object,
+    default: object,
+    context: ProjectionContext,
+    path: tuple[str, ...],
+) -> AuthorityValue:
+    if not _is_sequence(candidates) or not candidates:
+        raise _ProjectionRejected((*path, "candidates"), "coalesce_candidates_empty")
+    for index, candidate in enumerate(candidates):
+        try:
+            value = _evaluate(
+                candidate,
+                context,
+                (*path, "candidates", str(index)),
+            )
+        except _ProjectionRejected as exc:
+            if exc.reason == "missing_source":
+                continue
+            raise
+        if value is not None:
+            return value
+    return _evaluate(default, context, (*path, "default"))
 
 
 def _evaluate_object(

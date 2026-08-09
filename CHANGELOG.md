@@ -13,6 +13,21 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ## [Unreleased]
 
+### Added
+
+- Added trusted projection metadata for selected runtime authority and operator
+  projections.
+- Added selected closure-evidence snapshots with deterministic ordering and
+  durable restart preservation.
+
+### Fixed
+
+- Made verdict admission and restart reconciliation strict. Invalid evidence
+  now causes a durable refusal instead of a restart fallback.
+- Added fail-closed capacity checks that reject oversized requests before
+  external dispatch and enforce the 65536-byte Millforge instruction-envelope
+  limit.
+
 ## [0.22.2] - 2026-08-05
 
 ### Added

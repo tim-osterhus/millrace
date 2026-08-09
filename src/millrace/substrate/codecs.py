@@ -338,6 +338,9 @@ _COMPLETION_BEHAVIOR_KEYS = frozenset(
         "rubric_policy",
         "blocked_work_policy",
         "skip_if_closed",
+        "evidence_artifact_schema_ids",
+        "evidence_item_limit",
+        "request_payload_byte_limit",
         "presentation",
     }
 )
@@ -435,6 +438,7 @@ _RUNNER_COMPONENT_PIN_KEYS = frozenset(
         "descriptor_sha256",
         "required_capability_ids",
         "legal_terminal_result_ids",
+        "max_work_item_payload_bytes",
     }
 )
 _RUNNER_TERMINAL_RESULT_MAPPING_KEYS = frozenset(
@@ -1582,6 +1586,11 @@ def _encode_completion_behavior(
         "gap_action_id": str(behavior.gap_action_id),
         "blocked_action_id": str(behavior.blocked_action_id),
         "verdict_artifact_schema_id": str(behavior.verdict_artifact_schema_id),
+        "evidence_artifact_schema_ids": tuple(
+            str(item) for item in behavior.evidence_artifact_schema_ids
+        ),
+        "evidence_item_limit": behavior.evidence_item_limit,
+        "request_payload_byte_limit": behavior.request_payload_byte_limit,
         "remediation_policy_id": str(behavior.remediation_policy_id),
         "accepted_root_source_kinds": tuple(behavior.accepted_root_source_kinds),
         "root_source_resolution": behavior.root_source_resolution,
@@ -1619,6 +1628,15 @@ def _decode_completion_behavior(record: Record) -> CompletionBehaviorDeclaration
         blocked_action_id=ActionId(_expect_string(record, "blocked_action_id")),
         verdict_artifact_schema_id=ArtifactSchemaId(
             _expect_string(record, "verdict_artifact_schema_id")
+        ),
+        evidence_artifact_schema_ids=tuple(
+            ArtifactSchemaId(item)
+            for item in _expect_string_tuple(record, "evidence_artifact_schema_ids")
+        ),
+        evidence_item_limit=_expect_int(record, "evidence_item_limit"),
+        request_payload_byte_limit=_expect_positive_int(
+            record,
+            "request_payload_byte_limit",
         ),
         remediation_policy_id=RemediationPolicyId(
             _expect_string(record, "remediation_policy_id")
@@ -1877,6 +1895,7 @@ def _encode_runner_component_pin(
             str(item) for item in pin.required_capability_ids
         ),
         "legal_terminal_result_ids": tuple(pin.legal_terminal_result_ids),
+        "max_work_item_payload_bytes": pin.max_work_item_payload_bytes,
     }
 
 
@@ -1961,6 +1980,10 @@ def _decode_runner_component_pin(value: JsonValue) -> RunnerComponentPin | None:
             legal_terminal_result_ids=_expect_string_tuple(
                 record,
                 "legal_terminal_result_ids",
+            ),
+            max_work_item_payload_bytes=_expect_optional_positive_int(
+                record,
+                "max_work_item_payload_bytes",
             ),
         )
     except InvalidCasObject:
@@ -2208,6 +2231,17 @@ def _expect_positive_int(record: Record, field_name: str) -> int:
     if value <= 0:
         raise InvalidCasObject(
             f"CAS object field must be a positive integer: {field_name}"
+        )
+    return value
+
+
+def _expect_optional_positive_int(record: Record, field_name: str) -> int | None:
+    value = _required_value(record, field_name)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise InvalidCasObject(
+            f"CAS object field must be a positive integer or null: {field_name}"
         )
     return value
 

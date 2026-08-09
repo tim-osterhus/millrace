@@ -365,6 +365,16 @@ def build_selected_plan(
                 verdict_artifact_schema_id=ArtifactSchemaId(
                     str(record["verdict_artifact_schema_id"])
                 ),
+                evidence_artifact_schema_ids=tuple(
+                    ArtifactSchemaId(value)
+                    for value in text_tuple(
+                        record["evidence_artifact_schema_ids"]
+                    )
+                ),
+                evidence_item_limit=_required_int(record["evidence_item_limit"]),
+                request_payload_byte_limit=_required_int(
+                    record["request_payload_byte_limit"]
+                ),
                 remediation_policy_id=RemediationPolicyId(
                     str(record["remediation_policy_id"])
                 ),
@@ -551,6 +561,9 @@ def _optional_runner_component_pin(value: object) -> RunnerComponentPin | None:
         legal_terminal_result_ids=tuple(
             text_tuple(record.get("legal_terminal_result_ids", ()))
         ),
+        max_work_item_payload_bytes=_optional_int(
+            record.get("max_work_item_payload_bytes")
+        ),
     )
 
 
@@ -604,6 +617,7 @@ def _selected_artifact_schema_ids(source: Mapping[str, object]) -> frozenset[str
         raw_schema_id = record.get("verdict_artifact_schema_id")
         if is_non_empty_text(raw_schema_id):
             schema_ids.add(str(raw_schema_id))
+        schema_ids.update(text_tuple(record.get("evidence_artifact_schema_ids", ())))
     for record in records(source, "remediation_policies"):
         raw_schema_id = record.get("payload_schema_id")
         if is_non_empty_text(raw_schema_id):
@@ -655,6 +669,14 @@ def _required_int(value: object) -> int:
     if type(value) is int:
         return value
     raise TypeError("compiled source value must be an integer")
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if type(value) is int:
+        return value
+    raise TypeError("compiled source value must be an integer or null")
 
 
 def _optional_stage_kind_id(value: object) -> StageKindId | None:

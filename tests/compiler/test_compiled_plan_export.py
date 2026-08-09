@@ -217,7 +217,8 @@ def test_export_round_trip_preserves_exact_runner_component_authority() -> None:
         "provider_version": "4.5.6",
         "record_kind": "runner_component_pin",
         "required_capability_ids": ["capability.runner.invoke"],
-        "schema_version": 1,
+        "schema_version": 2,
+        "max_work_item_payload_bytes": None,
     }
     assert runner["terminal_result_mappings"] == [
         {
@@ -269,7 +270,7 @@ def test_export_verifier_refuses_corrupt_runner_component_authority(
     elif corruption == "wrong_pin_kind":
         pin["record_kind"] = "wrong"
     elif corruption == "wrong_pin_version":
-        pin["schema_version"] = 2
+        pin["schema_version"] = 3
     elif corruption == "malformed_digest":
         pin["descriptor_sha256"] = "A" * 64
     elif corruption == "duplicate_mapping":
@@ -601,12 +602,12 @@ def test_compiler_provenance_does_not_change_selected_authority() -> None:
 
     assert COMPILER_ID == "millrace-ai"
     assert authority_fingerprint(plan) == (
-        "sha256:c72c13ea3d28b0cbfb542f1a3d2d6ac50e9864c86041f1d29a5dedd7772c205d"
+        "sha256:cac2bb63793f3cad20361ac51152109fd7e60c63120a70df05b5c40e3149010b"
     )
     assert hashlib.sha256(authority_bytes).hexdigest() == (
-        "bb4c8bbe59c061df0426c7d4411ec673980e79df2dbe785836ea7f7dd2af43ba"
+        "ca1e565818bf14e55e5d7aff70581603dae2a5dc53c0cf4011569a1a64502f34"
     )
-    assert len(authority_bytes) == 13083
+    assert len(authority_bytes) == 13153
 
 
 def test_export_refuses_temporary_compiler_identity() -> None:

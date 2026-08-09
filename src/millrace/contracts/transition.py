@@ -1363,14 +1363,20 @@ def operator_payload_digest(payload: Mapping[str, object]) -> str:
 
 
 def artifact_payload_digest(payload: Mapping[str, object]) -> str:
-    serialized = json.dumps(
+    serialized = canonical_authority_mapping_bytes(payload)
+    digest = sha256(ARTIFACT_PAYLOAD_DIGEST_DOMAIN_PREFIX + serialized).hexdigest()
+    return f"sha256:{digest}"
+
+
+def canonical_authority_mapping_bytes(payload: Mapping[str, object]) -> bytes:
+    """Return canonical UTF-8 JSON bytes for an authority mapping."""
+
+    return json.dumps(
         _canonical_input_value(payload),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    digest = sha256(ARTIFACT_PAYLOAD_DIGEST_DOMAIN_PREFIX + serialized).hexdigest()
-    return f"sha256:{digest}"
 
 
 def input_family(transition_input: TransitionInput) -> str:
@@ -1751,6 +1757,7 @@ __all__ = (
     "TransitionRefusal",
     "WorkflowInput",
     "artifact_payload_digest",
+    "canonical_authority_mapping_bytes",
     "input_family",
     "input_kind",
     "input_payload_digest",

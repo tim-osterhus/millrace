@@ -367,7 +367,7 @@ class CapabilityDeclaration:
 @dataclass(frozen=True, slots=True)
 class RunnerComponentPin:
     record_kind: ClassVar[str] = "runner_component_pin"
-    schema_version: ClassVar[int] = 1
+    schema_version: ClassVar[int] = 2
 
     component_kind: str
     component_id: str
@@ -378,6 +378,7 @@ class RunnerComponentPin:
     descriptor_sha256: str
     required_capability_ids: tuple[CapabilityId, ...]
     legal_terminal_result_ids: tuple[str, ...]
+    max_work_item_payload_bytes: int | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -407,6 +408,11 @@ class RunnerComponentPin:
             self.legal_terminal_result_ids,
             "legal_terminal_result_ids",
         )
+        if self.max_work_item_payload_bytes is not None and (
+            type(self.max_work_item_payload_bytes) is not int
+            or self.max_work_item_payload_bytes <= 0
+        ):
+            raise ValueError("max_work_item_payload_bytes must be positive or null")
 
 
 @dataclass(frozen=True, slots=True)
@@ -582,7 +588,7 @@ class CounterDeclaration:
 @dataclass(frozen=True, slots=True)
 class CompletionBehaviorDeclaration:
     record_kind: ClassVar[str] = "completion_behavior_declaration"
-    schema_version: ClassVar[int] = 1
+    schema_version: ClassVar[int] = 2
 
     id: CompletionBehaviorId
     trigger: str
@@ -597,6 +603,9 @@ class CompletionBehaviorDeclaration:
     gap_action_id: ActionId
     blocked_action_id: ActionId
     verdict_artifact_schema_id: ArtifactSchemaId
+    evidence_artifact_schema_ids: tuple[ArtifactSchemaId, ...]
+    evidence_item_limit: int
+    request_payload_byte_limit: int
     remediation_policy_id: RemediationPolicyId
     accepted_root_source_kinds: tuple[str, ...]
     root_source_resolution: str
@@ -612,6 +621,32 @@ class CompletionBehaviorDeclaration:
             "accepted_root_source_kinds",
             _freeze_sequence(self.accepted_root_source_kinds),
         )
+        object.__setattr__(
+            self,
+            "evidence_artifact_schema_ids",
+            _freeze_sequence(self.evidence_artifact_schema_ids),
+        )
+        if any(
+            not isinstance(value, ArtifactSchemaId)
+            for value in self.evidence_artifact_schema_ids
+        ):
+            raise TypeError(
+                "evidence_artifact_schema_ids must contain ArtifactSchemaId"
+            )
+        if not self.evidence_artifact_schema_ids:
+            raise ValueError("evidence_artifact_schema_ids must be non-empty")
+        if len(set(self.evidence_artifact_schema_ids)) != len(
+            self.evidence_artifact_schema_ids
+        ):
+            raise ValueError("evidence_artifact_schema_ids must be unique")
+        if type(self.evidence_item_limit) is not int or not (
+            1 <= self.evidence_item_limit <= 256
+        ):
+            raise ValueError("evidence_item_limit must be between 1 and 256")
+        if type(self.request_payload_byte_limit) is not int or (
+            self.request_payload_byte_limit <= 0
+        ):
+            raise ValueError("request_payload_byte_limit must be positive")
         object.__setattr__(
             self,
             "presentation",
@@ -866,7 +901,7 @@ class SelectedWorkflowPackagePin:
 @dataclass(frozen=True, slots=True)
 class SelectedCompiledPlan:
     record_kind: ClassVar[str] = "selected_compiled_plan"
-    schema_version: ClassVar[int] = 15
+    schema_version: ClassVar[int] = 16
 
     workflow: WorkflowIdentity
     compatibility_profile: None
@@ -1161,6 +1196,11 @@ def _runner_component_pin_refusal(pin: object) -> str | None:
             return "required_capability_ids"
         if not isinstance(pin.legal_terminal_result_ids, tuple):
             return "legal_terminal_result_ids"
+        if pin.max_work_item_payload_bytes is not None and (
+            type(pin.max_work_item_payload_bytes) is not int
+            or pin.max_work_item_payload_bytes <= 0
+        ):
+            return "max_work_item_payload_bytes"
         _require_canonical_capability_ids(pin.required_capability_ids)
         _require_canonical_text_values(
             pin.legal_terminal_result_ids,

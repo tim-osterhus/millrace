@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from millrace.compiler import SelectedRunnerAdapterPolicy, compile_workflow
+from millrace.compiler.canonical import authority_fingerprint
+from millrace.compiler.export import (
+    CompiledPlanExportError,
+    compiled_plan_export_record,
+    verify_compiled_plan_export_record,
+)
 from millrace.contracts import ActionId, QueueFamilyId
 from millrace.contracts.compiled_plan import (
     AuthorityValue,
@@ -16,6 +24,7 @@ from millrace.contracts.compiled_plan import (
     SelectedCompiledPlan,
     TerminalActionDeclaration,
 )
+from millrace.contracts.schema import validate_schema
 from millrace.contracts.state import (
     Activation,
     AdmittedPlan,
@@ -39,13 +48,24 @@ from millrace.contracts.state import (
     WorkItemRef,
 )
 from millrace.contracts.transition import (
+    AdmitPlan,
     RunnerResultObserved,
     artifact_payload_digest,
     input_payload_digest,
 )
+from millrace.kernel import apply, decide, empty_runtime_state
+from millrace.kernel.decision import (
+    _closure_snapshot_authority_refusal,
+    _closure_verdict_refusal,
+    _completion_request_payload,
+)
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.codecs import dumps_cas_object, encode_payload
 from millrace.substrate.errors import StorageIntegrityError
+from millrace.testing import (
+    deterministic_context,
+    fake_completed_runner_observation_state,
+)
 from millrace.testing.fakes import fake_runner_observation_payload
 from substrate._runtime_store_support import (
     load_runtime_state,
@@ -55,9 +75,17 @@ from substrate._runtime_store_support import (
 from support import generic_lifecycle
 
 COMPLETION_BEHAVIOR_ID = "lifecycle.completion"
+_CODEX_POLICY = SelectedRunnerAdapterPolicy(
+    default_adapter_kind="codex",
+    supported_adapter_kinds=frozenset({"codex"}),
+    component_bound_adapter_kinds=frozenset(),
+    default_component_selector=None,
+    default_component_required_capability_ids=frozenset(),
+    default_component_requires_complete_mappings=False,
+)
 
 
-def _compile_closure_plan() -> tuple[SelectedCompiledPlan, str]:
+def _closure_source() -> dict[str, object]:
     source = generic_lifecycle.source()
     review_stage = next(
         stage
@@ -81,6 +109,12 @@ def _compile_closure_plan() -> tuple[SelectedCompiledPlan, str]:
             ("lifecycle.review.blocked", "REVIEW_BLOCKED"),
         )
     )
+    beta_schema = next(
+        row
+        for row in cast(list[dict[str, object]], source["artifact_schemas"])
+        if row["id"] == generic_lifecycle.BETA_REPORT_SCHEMA_ID
+    )
+    beta_schema["schema"] = _closure_verdict_schema()
     cast(list[dict[str, object]], source["terminal_actions"]).extend(
         (
             {
@@ -95,14 +129,14 @@ def _compile_closure_plan() -> tuple[SelectedCompiledPlan, str]:
                 "stage_kind_id": "review_stage",
                 "outcome_id": "lifecycle.review.gap",
                 "kind": "closure_gap",
-                "artifact_schema_id": generic_lifecycle.ALPHA_REPORT_SCHEMA_ID,
+                "artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
             },
             {
                 "id": "lifecycle.review.block",
                 "stage_kind_id": "review_stage",
                 "outcome_id": "lifecycle.review.blocked",
                 "kind": "block_work_item",
-                "artifact_schema_id": generic_lifecycle.ALPHA_REPORT_SCHEMA_ID,
+                "artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
             },
         )
     )
@@ -121,6 +155,9 @@ def _compile_closure_plan() -> tuple[SelectedCompiledPlan, str]:
             "gap_action_id": "lifecycle.review.gap",
             "blocked_action_id": "lifecycle.review.block",
             "verdict_artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+            "evidence_artifact_schema_ids": (generic_lifecycle.BETA_REPORT_SCHEMA_ID,),
+            "evidence_item_limit": 64,
+            "request_payload_byte_limit": 16_384,
             "remediation_policy_id": "lifecycle.remediation",
             "accepted_root_source_kinds": ("origin", "manual"),
             "root_source_resolution": "runtime_inventory",
@@ -146,12 +183,607 @@ def _compile_closure_plan() -> tuple[SelectedCompiledPlan, str]:
             "root_source_kind": "origin",
         }
     ]
-    return generic_lifecycle.compile_lifecycle(source)
+    runner = cast(list[dict[str, object]], source["runner_bindings"])[0]
+    runner["component_pin"] = {
+        "component_kind": "closure.runner",
+        "component_id": "closure-evaluator",
+        "component_version": "1",
+        "provider_distribution": "millrace-test",
+        "provider_version": "1",
+        "descriptor_media_type": "application/json",
+        "descriptor_sha256": "a" * 64,
+        "required_capability_ids": (),
+        "legal_terminal_result_ids": ("BLOCKED", "COMPLETE"),
+        "max_work_item_payload_bytes": 16_384,
+    }
+    runner["terminal_result_mappings"] = ()
+    return source
+
+
+def _compile_closure_plan() -> tuple[SelectedCompiledPlan, str]:
+    return generic_lifecycle.compile_lifecycle(_closure_source())
+
+
+@pytest.mark.parametrize(
+    ("corruption", "capacity"),
+    (
+        ("missing_pin", None),
+        ("missing_capacity", "missing"),
+        ("null_capacity", None),
+        ("zero_capacity", 0),
+        ("invalid_capacity", "invalid"),
+        ("request_over_capacity", 16_383),
+    ),
+)
+def test_completion_capacity_fails_closed_across_compiler_export_and_admission(
+    corruption: str,
+    capacity: object,
+) -> None:
+    source = _closure_source()
+    runner = cast(list[dict[str, object]], source["runner_bindings"])[0]
+    if corruption == "missing_pin":
+        runner.pop("component_pin")
+        runner["terminal_result_mappings"] = ()
+    else:
+        pin = cast(dict[str, object], runner["component_pin"])
+        if capacity == "missing":
+            pin.pop("max_work_item_payload_bytes")
+        else:
+            pin["max_work_item_payload_bytes"] = capacity
+        if corruption == "request_over_capacity":
+            behavior = cast(list[dict[str, object]], source["completion_behaviors"])[0]
+            behavior["request_payload_byte_limit"] = 16_384
+
+    compile_result = compile_workflow(
+        source,
+        selected_runner_policy=_CODEX_POLICY,
+    )
+    assert compile_result.plan is None
+    assert any(
+        diagnostic.code == "invalid_completion_behavior_declaration"
+        for diagnostic in compile_result.diagnostics
+        if diagnostic.severity == "error"
+    )
+
+    plan, _fingerprint = _compile_closure_plan()
+    binding = plan.runner_bindings[0]
+    if corruption == "missing_pin":
+        object.__setattr__(binding, "component_pin", None)
+    else:
+        pin = binding.component_pin
+        assert pin is not None
+        if capacity == "missing":
+            object.__setattr__(pin, "max_work_item_payload_bytes", None)
+        else:
+            object.__setattr__(pin, "max_work_item_payload_bytes", capacity)
+        if corruption == "request_over_capacity":
+            behavior = plan.completion_behaviors[0]
+            object.__setattr__(behavior, "request_payload_byte_limit", 16_384)
+
+    fingerprint = authority_fingerprint(plan)
+    export = dict(compiled_plan_export_record(plan))
+    selected = cast(dict[str, object], export["selected_authority"])
+    export["authority_fingerprint"] = authority_fingerprint(selected)
+    with pytest.raises(CompiledPlanExportError):
+        verify_compiled_plan_export_record(export)
+
+    decision = decide(
+        empty_runtime_state(),
+        AdmitPlan(
+            f"admit-{corruption}",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(transition_id=f"transition-admit-{corruption}"),
+    )
+    assert decision.accepted is False
+
+
+@pytest.mark.parametrize(
+    (
+        "case",
+        "expected_diagnostic_code",
+        "expected_diagnostic_reason",
+        "expected_export_error",
+        "expected_admission_detail",
+    ),
+    (
+        (
+            "missing_evidence_schema_ids",
+            "invalid_completion_behavior_declaration",
+            "missing_evidence_artifact_schema_ids",
+            "missing completion behavior key: evidence_artifact_schema_ids",
+            "completion_behavior_evidence_schema:lifecycle.completion",
+        ),
+        (
+            "duplicate_evidence_schema_ids",
+            "invalid_completion_behavior_declaration",
+            "duplicate_evidence_artifact_schema_id",
+            (
+                "completion behavior evidence_artifact_schema_ids must contain "
+                "unique values"
+            ),
+            "completion_behavior_evidence_schema:lifecycle.completion",
+        ),
+        (
+            "unknown_evidence_schema_id",
+            "missing_reference",
+            None,
+            "completion behavior references an unknown evidence artifact schema",
+            "completion_behavior_evidence_schema:lifecycle.completion",
+        ),
+        (
+            "evidence_item_limit_zero",
+            "invalid_completion_behavior_declaration",
+            "invalid_evidence_item_limit",
+            "completion behavior evidence_item_limit is outside 1..256",
+            "completion_behavior_evidence_item_limit:lifecycle.completion",
+        ),
+        (
+            "evidence_item_limit_too_large",
+            "invalid_completion_behavior_declaration",
+            "invalid_evidence_item_limit",
+            "completion behavior evidence_item_limit is outside 1..256",
+            "completion_behavior_evidence_item_limit:lifecycle.completion",
+        ),
+        (
+            "request_payload_limit_zero",
+            "invalid_completion_behavior_declaration",
+            "invalid_request_payload_byte_limit",
+            "completion behavior request_payload_byte_limit must be positive",
+            "completion_behavior_request_payload_limit:lifecycle.completion",
+        ),
+        (
+            "request_payload_limit_negative",
+            "invalid_completion_behavior_declaration",
+            "invalid_request_payload_byte_limit",
+            "completion behavior request_payload_byte_limit must be positive",
+            "completion_behavior_request_payload_limit:lifecycle.completion",
+        ),
+        (
+            "request_payload_limit_over_capacity",
+            "invalid_completion_behavior_declaration",
+            "request_payload_byte_limit_exceeds_runner_capacity",
+            "completion behavior request payload limit exceeds runner capacity",
+            "completion_behavior_request_payload_capacity:lifecycle.completion",
+        ),
+    ),
+)
+def test_completion_authority_hostile_matrix_fails_closed_at_all_boundaries(
+    case: str,
+    expected_diagnostic_code: str,
+    expected_diagnostic_reason: str | None,
+    expected_export_error: str,
+    expected_admission_detail: str,
+) -> None:
+    source = _closure_source()
+    source_behavior = cast(list[dict[str, object]], source["completion_behaviors"])[0]
+    if case == "missing_evidence_schema_ids":
+        source_behavior.pop("evidence_artifact_schema_ids")
+    elif case == "duplicate_evidence_schema_ids":
+        source_behavior["evidence_artifact_schema_ids"] = (
+            generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+            generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+        )
+    elif case == "unknown_evidence_schema_id":
+        source_behavior["evidence_artifact_schema_ids"] = (
+            generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+            "LifecycleUnknownEvidence",
+        )
+    elif case == "evidence_item_limit_zero":
+        source_behavior["evidence_item_limit"] = 0
+    elif case == "evidence_item_limit_too_large":
+        source_behavior["evidence_item_limit"] = 257
+    elif case == "request_payload_limit_zero":
+        source_behavior["request_payload_byte_limit"] = 0
+    elif case == "request_payload_limit_negative":
+        source_behavior["request_payload_byte_limit"] = -1
+    else:
+        source_behavior["request_payload_byte_limit"] = 16_385
+
+    compile_result = compile_workflow(
+        source,
+        selected_runner_policy=_CODEX_POLICY,
+    )
+    assert compile_result.plan is None
+    compiler_diagnostic = next(
+        diagnostic
+        for diagnostic in compile_result.diagnostics
+        if diagnostic.severity == "error"
+        and diagnostic.code == expected_diagnostic_code
+    )
+    if expected_diagnostic_reason is not None:
+        assert compiler_diagnostic.context["reason"] == expected_diagnostic_reason
+    else:
+        assert compiler_diagnostic.context["reference_kind"] == "artifact_schema"
+        assert compiler_diagnostic.context["referenced_id"] == (
+            "LifecycleUnknownEvidence"
+        )
+
+    plan, _fingerprint = _compile_closure_plan()
+    plan_behavior, _policy, _actions = _selected_authority(plan)
+    if case == "missing_evidence_schema_ids":
+        object.__setattr__(plan_behavior, "evidence_artifact_schema_ids", ())
+    elif case == "duplicate_evidence_schema_ids":
+        object.__setattr__(
+            plan_behavior,
+            "evidence_artifact_schema_ids",
+            (
+                generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+                generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+            ),
+        )
+    elif case == "unknown_evidence_schema_id":
+        object.__setattr__(
+            plan_behavior,
+            "evidence_artifact_schema_ids",
+            (
+                generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+                "LifecycleUnknownEvidence",
+            ),
+        )
+    elif case == "evidence_item_limit_zero":
+        object.__setattr__(plan_behavior, "evidence_item_limit", 0)
+    elif case == "evidence_item_limit_too_large":
+        object.__setattr__(plan_behavior, "evidence_item_limit", 257)
+    elif case == "request_payload_limit_zero":
+        object.__setattr__(plan_behavior, "request_payload_byte_limit", 0)
+    elif case == "request_payload_limit_negative":
+        object.__setattr__(plan_behavior, "request_payload_byte_limit", -1)
+    else:
+        object.__setattr__(plan_behavior, "request_payload_byte_limit", 16_385)
+
+    record = deepcopy(dict(compiled_plan_export_record(plan)))
+    selected = cast(dict[str, object], record["selected_authority"])
+    exported_behavior = cast(
+        list[dict[str, object]],
+        selected["completion_behaviors"],
+    )[0]
+    if case == "missing_evidence_schema_ids":
+        exported_behavior.pop("evidence_artifact_schema_ids")
+    elif case == "duplicate_evidence_schema_ids":
+        exported_behavior["evidence_artifact_schema_ids"] = [
+            generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+            generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+        ]
+    elif case == "unknown_evidence_schema_id":
+        exported_behavior["evidence_artifact_schema_ids"] = [
+            generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+            "LifecycleUnknownEvidence",
+        ]
+    elif case == "evidence_item_limit_zero":
+        exported_behavior["evidence_item_limit"] = 0
+    elif case == "evidence_item_limit_too_large":
+        exported_behavior["evidence_item_limit"] = 257
+    elif case == "request_payload_limit_zero":
+        exported_behavior["request_payload_byte_limit"] = 0
+    elif case == "request_payload_limit_negative":
+        exported_behavior["request_payload_byte_limit"] = -1
+    else:
+        exported_behavior["request_payload_byte_limit"] = 16_385
+    record["authority_fingerprint"] = authority_fingerprint(selected)
+
+    with pytest.raises(CompiledPlanExportError) as export_error:
+        verify_compiled_plan_export_record(record)
+    assert str(export_error.value) == expected_export_error
+
+    fingerprint = authority_fingerprint(plan)
+    decision = decide(
+        empty_runtime_state(),
+        AdmitPlan(
+            f"admit-hostile-{case}",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(transition_id=f"transition-admit-hostile-{case}"),
+    )
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "unsupported_selected_authority"
+    assert decision.refusal.detail == expected_admission_detail
+
+
+def test_evidence_only_completion_schema_survives_compile_export_and_admission(
+) -> None:
+    source = _closure_source()
+    evidence_only_schema_id = "LifecycleEvidenceOnly"
+    cast(list[dict[str, object]], source["artifact_schemas"]).append(
+        {
+            "id": evidence_only_schema_id,
+            "schema": {
+                "type": "object",
+                "required": ("summary",),
+                "properties": {"summary": {"type": "string", "min_length": 1}},
+            },
+            "presentation": {"display_name": "Evidence-only report"},
+        }
+    )
+    behavior = cast(list[dict[str, object]], source["completion_behaviors"])[0]
+    behavior["evidence_artifact_schema_ids"] = (
+        generic_lifecycle.BETA_REPORT_SCHEMA_ID,
+        evidence_only_schema_id,
+    )
+
+    compile_result = compile_workflow(
+        source,
+        selected_runner_policy=_CODEX_POLICY,
+    )
+    assert compile_result.plan is not None
+    plan = compile_result.plan
+    fingerprint = authority_fingerprint(plan)
+    exported = compiled_plan_export_record(plan)
+    verified = verify_compiled_plan_export_record(exported)
+    selected = cast(dict[str, object], verified.selected_authority)
+    exported_schemas = cast(list[dict[str, object]], selected["artifact_schemas"])
+    assert evidence_only_schema_id in {
+        str(schema["id"]) for schema in exported_schemas
+    }
+
+    decision = decide(
+        empty_runtime_state(),
+        AdmitPlan(
+            "admit-evidence-only-schema",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(transition_id="transition-admit-evidence-only-schema"),
+    )
+    assert decision.accepted is True
+
+
+def test_closure_plan_export_round_trip_accepts_canonical_completion_authority(
+) -> None:
+    plan, _fingerprint = _compile_closure_plan()
+
+    verified = verify_compiled_plan_export_record(compiled_plan_export_record(plan))
+
+    assert verified.workflow_id == "lifecycle_probe"
+    assert verified.plan_format_version == plan.schema_version
+
+
+def test_closure_plan_export_accepts_completion_action_contract() -> None:
+    plan, _fingerprint = _compile_closure_plan()
+
+    verified = verify_compiled_plan_export_record(compiled_plan_export_record(plan))
+
+    selected = cast(dict[str, object], verified.selected_authority)
+    behavior = cast(list[dict[str, object]], selected["completion_behaviors"])[0]
+    actions = {
+        str(action["id"]): action
+        for action in cast(list[dict[str, object]], selected["terminal_actions"])
+    }
+    expected_kinds = {
+        "pass_action_id": {"close", "complete_work_item"},
+        "gap_action_id": {"closure_gap"},
+        "blocked_action_id": {"close", "block_work_item"},
+    }
+    assert all(
+        actions[str(behavior[field])]["stage_kind_id"]
+        == behavior["target_stage_kind_id"]
+        and actions[str(behavior[field])]["action_kind"] in expected_kinds[field]
+        and actions[str(behavior[field])]["artifact_schema_id"]
+        == behavior["verdict_artifact_schema_id"]
+        for field in ("pass_action_id", "gap_action_id", "blocked_action_id")
+    )
+
+
+@pytest.mark.parametrize(
+    ("action_field", "mutation"),
+    (
+        ("pass_action_id", {"stage_kind_id": "alpha_stage"}),
+        ("gap_action_id", {"stage_kind_id": "alpha_stage"}),
+        ("blocked_action_id", {"stage_kind_id": "alpha_stage"}),
+        ("pass_action_id", {"action_kind": "closure_gap"}),
+        ("gap_action_id", {"action_kind": "complete_work_item"}),
+        ("blocked_action_id", {"action_kind": "closure_gap"}),
+    ),
+)
+def test_closure_plan_export_refuses_completion_action_contract_drift(
+    action_field: str,
+    mutation: Mapping[str, object],
+) -> None:
+    plan, _fingerprint = _compile_closure_plan()
+    record = deepcopy(dict(compiled_plan_export_record(plan)))
+    selected = cast(dict[str, object], record["selected_authority"])
+    behavior = cast(list[dict[str, object]], selected["completion_behaviors"])[0]
+    action_id = str(behavior[action_field])
+    action = next(
+        action
+        for action in cast(list[dict[str, object]], selected["terminal_actions"])
+        if action["id"] == action_id
+    )
+    action.update(mutation)
+    record["authority_fingerprint"] = authority_fingerprint(selected)
+
+    with pytest.raises(
+        CompiledPlanExportError,
+        match="completion behavior terminal action contract",
+    ):
+        verify_compiled_plan_export_record(record)
 
 
 def _artifact_payload(kind: str) -> Mapping[str, AuthorityValue]:
-    report_kind = "beta" if kind == generic_lifecycle.BETA_REPORT_SCHEMA_ID else "alpha"
-    return generic_lifecycle.report_payload(report_kind)
+    if kind != generic_lifecycle.BETA_REPORT_SCHEMA_ID:
+        return generic_lifecycle.report_payload("alpha")
+    return {
+        "artifact_kind": "closure_verdict",
+        "summary": "Review completed.",
+        "closure_target_id": "closure-target",
+        "root_contract_digest": "sha256:" + "a" * 64,
+        "freshness_anchor_digest": "sha256:" + "b" * 64,
+        "rubric": {
+            "criteria": (
+                {
+                    "criterion_id": "criterion-1",
+                    "requirement": "The closure contract is satisfied.",
+                    "evidence_rule": "Use current review evidence.",
+                },
+            )
+        },
+        "criterion_results": (
+            {
+                "criterion_id": "criterion-1",
+                "status": "passed",
+                "provenance": "fresh",
+                "evidence_refs": (
+                    {"evidence_id": "evidence-1", "summary": "reviewed"},
+                ),
+            },
+        ),
+        "observations": (),
+        "remediation_guidance": (),
+        "confidence": "high",
+        "residual_uncertainty": "none",
+    }
+
+
+def _closure_verdict_schema() -> dict[str, object]:
+    string = {"type": "string", "min_length": 1}
+    evidence_ref = {
+        "type": "object",
+        "required": ("evidence_id", "summary"),
+        "properties": {"evidence_id": string, "summary": string},
+    }
+    criterion = {
+        "type": "object",
+        "required": ("criterion_id", "requirement", "evidence_rule"),
+        "properties": {
+            "criterion_id": string,
+            "requirement": string,
+            "evidence_rule": string,
+        },
+    }
+    result = {
+        "type": "object",
+        "required": ("criterion_id", "status", "provenance", "evidence_refs"),
+        "properties": {
+            "criterion_id": string,
+            "status": {"enum": ("passed", "failed", "blocked")},
+            "provenance": {
+                "enum": (
+                    "fresh",
+                    "revalidated",
+                    "historical_only",
+                    "missing",
+                )
+            },
+            "evidence_refs": {
+                "type": "array",
+                "items": evidence_ref,
+                "unique_by": "evidence_id",
+            },
+        },
+    }
+    guidance = {
+        "type": "object",
+        "required": ("guidance_id", "summary", "criterion_refs"),
+        "properties": {
+            "guidance_id": string,
+            "summary": string,
+            "criterion_refs": {
+                "type": "array",
+                "min_items": 1,
+                "items": {
+                    "type": "object",
+                    "required": ("criterion_id",),
+                    "properties": {"criterion_id": string},
+                },
+                "unique_by": "criterion_id",
+            },
+        },
+    }
+    properties = {
+        "bundle_id": string,
+        "artifact_kind": string,
+        "summary": string,
+        "closure_target_id": string,
+        "root_contract_digest": string,
+        "freshness_anchor_digest": string,
+        "rubric": {
+            "type": "object",
+            "required": ("criteria",),
+            "properties": {
+                "criteria": {
+                    "type": "array",
+                    "min_items": 1,
+                    "items": criterion,
+                    "unique_by": "criterion_id",
+                }
+            },
+        },
+        "criterion_results": {
+            "type": "array",
+            "min_items": 1,
+            "items": result,
+            "unique_by": "criterion_id",
+        },
+        "observations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ("observation_id", "summary"),
+                "properties": {"observation_id": string, "summary": string},
+            },
+            "unique_by": "observation_id",
+        },
+        "remediation_guidance": {
+            "type": "array",
+            "items": guidance,
+            "unique_by": "guidance_id",
+        },
+        "confidence": {"enum": ("high", "medium", "low")},
+        "residual_uncertainty": string,
+    }
+    return {
+        "type": "object",
+        "required": tuple(
+            key for key in properties if key != "bundle_id"
+        ),
+        "properties": properties,
+    }
+
+
+def test_compiler_rejects_closure_schema_without_observation_identity_declaration(
+) -> None:
+    source = _closure_source()
+    schema = next(
+        row
+        for row in cast(list[dict[str, object]], source["artifact_schemas"])
+        if row["id"] == generic_lifecycle.BETA_REPORT_SCHEMA_ID
+    )
+    schema_body = cast(dict[str, object], schema["schema"])
+    observations = cast(dict[str, object], schema_body["properties"])["observations"]
+    cast(dict[str, object], observations).pop("unique_by")
+
+    result = compile_workflow(source, selected_runner_policy=_CODEX_POLICY)
+
+    assert result.plan is None
+    assert any(
+        diagnostic.code == "invalid_completion_behavior_declaration"
+        for diagnostic in result.diagnostics
+        if diagnostic.severity == "error"
+    )
+
+
+def test_terminal_semantics_accept_schema_valid_optional_root_field() -> None:
+    payload = dict(_artifact_payload(generic_lifecycle.BETA_REPORT_SCHEMA_ID))
+    payload["bundle_id"] = "optional-root-field"
+    snapshot = {
+        "closure_target_id": "closure-target",
+        "root_contract": {"payload_digest": "sha256:" + "a" * 64},
+        "freshness_anchor_digest": "sha256:" + "b" * 64,
+    }
+
+    assert validate_schema(_closure_verdict_schema(), payload).accepted
+    assert (
+        _closure_verdict_refusal(
+            payload,
+            snapshot=snapshot,
+            prior_rubric=None,
+            terminal_kind="pass",
+        )
+        is None
+    )
 
 
 def _plan_ref(plan: SelectedCompiledPlan, fingerprint: str) -> PlanRef:
@@ -424,7 +1056,7 @@ def _closure_state() -> RuntimeState:
         source_action_id=behavior.gap_action_id,
         artifact=(
             "transition-observe-evaluator-incident:artifact",
-            _artifact_payload(generic_lifecycle.ALPHA_REPORT_SCHEMA_ID),
+            _artifact_payload(generic_lifecycle.BETA_REPORT_SCHEMA_ID),
         ),
     )
     blocked = _evaluator_source_records(
@@ -599,6 +1231,249 @@ def _closure_state() -> RuntimeState:
     )
 
 
+def _renewed_closure_state() -> tuple[
+    RuntimeState,
+    SelectedCompiledPlan,
+    str,
+    str,
+    str,
+]:
+    state = _closure_state()
+    assert state.default_plan_ref is not None
+    plan_ref = state.default_plan_ref
+    plan = state.admitted_plans[plan_ref.authority_fingerprint].selected_plan
+    behavior, _policy, _actions = _selected_authority(plan)
+    target = state.closure_targets["closure-target-incident"]
+    source = _evaluator_source_records(
+        plan=plan,
+        plan_ref=plan_ref,
+        behavior=behavior,
+        closure_target_id=target.closure_target_id,
+        suffix="hostile",
+        source_action_id=behavior.pass_action_id,
+        artifact=None,
+    )
+    work_item, activation, run, evaluation, _observation, _artifact, _transition = (
+        source
+    )
+    work_item = replace(work_item, lineage_id=target.lineage_id)
+    activation = replace(activation, lineage_id=target.lineage_id)
+    evaluation = replace(evaluation, lineage_id=target.lineage_id)
+    state = replace(
+        state,
+        work_items={
+            **state.work_items,
+            work_item.ref.work_item_id: work_item,
+        },
+        activations={activation.activation_id: activation, **state.activations},
+        runs={run.run_ref.run_id: run, **state.runs},
+        closure_evaluations={
+            **state.closure_evaluations,
+            evaluation.record_id: evaluation,
+        },
+    )
+    stage = next(
+        stage
+        for stage in plan.stage_kinds
+        if stage.id == behavior.target_stage_kind_id
+    )
+    request_payload, refusal = _completion_request_payload(
+        state=state,
+        target=target,
+        behavior=behavior,
+        stage=stage,
+    )
+    assert refusal is None
+    assert request_payload is not None
+    work_item = replace(work_item, payload=request_payload)
+    state = replace(
+        state,
+        work_items={
+            **state.work_items,
+            work_item.ref.work_item_id: work_item,
+        },
+    )
+    return (
+        state,
+        plan,
+        target.closure_target_id,
+        work_item.ref.work_item_id,
+        run.run_ref.run_id,
+    )
+
+
+def _hostile_closure_verdict(
+    *,
+    snapshot: Mapping[str, object],
+    case: str,
+) -> Mapping[str, AuthorityValue]:
+    payload = dict(_artifact_payload(generic_lifecycle.BETA_REPORT_SCHEMA_ID))
+    root_contract = cast(Mapping[str, object], snapshot["root_contract"])
+    payload["closure_target_id"] = snapshot["closure_target_id"]
+    payload["root_contract_digest"] = root_contract["payload_digest"]
+    payload["freshness_anchor_digest"] = snapshot["freshness_anchor_digest"]
+    if case == "wrong_root_contract_digest":
+        payload["root_contract_digest"] = "sha256:" + "e" * 64
+    elif case == "changed_rubric":
+        payload["rubric"] = {
+            "criteria": (
+                {
+                    "criterion_id": "criterion-1",
+                    "requirement": "A changed closure requirement.",
+                    "evidence_rule": "Use changed evidence.",
+                },
+            )
+        }
+    elif case == "stale_freshness_anchor":
+        payload["freshness_anchor_digest"] = "sha256:" + "f" * 64
+    elif case == "criterion_set_mismatch":
+        result = dict(
+            cast(
+                tuple[Mapping[str, object], ...],
+                payload["criterion_results"],
+            )[0]
+        )
+        result["criterion_id"] = "criterion-unknown"
+        payload["criterion_results"] = (result,)
+    elif case == "pass_marker_status_contradiction":
+        result = dict(
+            cast(
+                tuple[Mapping[str, object], ...],
+                payload["criterion_results"],
+            )[0]
+        )
+        result["status"] = "failed"
+        payload["criterion_results"] = (result,)
+    return cast(Mapping[str, AuthorityValue], payload)
+
+
+@pytest.mark.parametrize(
+    ("case", "marker", "expected_reason", "restart"),
+    (
+        (
+            "wrong_root_contract_digest",
+            "REVIEW_PASSED",
+            "closure_root_contract_digest_mismatch",
+            False,
+        ),
+        ("changed_rubric", "REVIEW_PASSED", "closure_rubric_mismatch", False),
+        (
+            "stale_freshness_anchor",
+            "REVIEW_PASSED",
+            "closure_freshness_anchor_mismatch",
+            False,
+        ),
+        (
+            "criterion_set_mismatch",
+            "REVIEW_PASSED",
+            "closure_criterion_set_mismatch",
+            False,
+        ),
+        (
+            "pass_marker_status_contradiction",
+            "REVIEW_PASSED",
+            "closure_marker_status_mismatch",
+            False,
+        ),
+        (
+            "gap_marker_status_contradiction",
+            "REVIEW_GAP",
+            "closure_marker_status_mismatch",
+            False,
+        ),
+        (
+            "blocked_marker_status_contradiction",
+            "REVIEW_BLOCKED",
+            "closure_marker_status_mismatch",
+            True,
+        ),
+    ),
+)
+def test_runner_result_observed_refuses_hostile_closure_before_aftermath(
+    tmp_path: Path,
+    case: str,
+    marker: str,
+    expected_reason: str,
+    restart: bool,
+) -> None:
+    state, _plan, target_id, work_item_id, run_id = _renewed_closure_state()
+    persisted_snapshot = state.work_items[work_item_id].payload[
+        "closure_evidence_snapshot"
+    ]
+    if restart:
+        db_path, cas_root = runtime_store_paths(tmp_path)
+        persist_runtime_state(db_path, cas_root, state)
+        state = load_runtime_state(db_path, cas_root)
+        assert (
+            state.work_items[work_item_id].payload["closure_evidence_snapshot"]
+            == persisted_snapshot
+        )
+
+    assert state.default_plan_ref is not None
+    target = state.closure_targets[target_id]
+    work_item = state.work_items[work_item_id]
+    run = state.runs[run_id]
+    activation = state.activations[run.activation_id]
+    snapshot = cast(
+        Mapping[str, object],
+        work_item.payload["closure_evidence_snapshot"],
+    )
+    observation = RunnerResultObserved(
+        f"observe-hostile-{case}",
+        run_id=run.run_ref.run_id,
+        payload=fake_runner_observation_payload(
+            run=run,
+            activation=activation,
+            plan_fingerprint=target.selected_plan_ref.authority_fingerprint,
+            marker=marker,
+            artifact_payload=_hostile_closure_verdict(
+                snapshot=snapshot,
+                case=case,
+            ),
+        ),
+        observed_at=None,
+    )
+    seeded, authorized = fake_completed_runner_observation_state(
+        state=state,
+        observation=observation,
+    )
+    context = deterministic_context(
+        transition_id=f"transition-{observation.input_id}",
+        work_item_id=work_item.ref.work_item_id,
+        activation_id=activation.activation_id,
+        run_id=run.run_ref.run_id,
+        claim_id=run.run_ref.claim_id,
+        fencing_token=run.run_ref.fencing_token,
+    )
+    decision = decide(seeded, authorized, context)
+
+    assert decision.accepted is False
+    assert decision.disposition == "refused"
+    assert decision.refusal is not None
+    assert decision.refusal.reason == expected_reason
+
+    before_terminal_ids = set(seeded.closure_terminal_records)
+    before_remediation_ids = set(seeded.remediation_work_records)
+    before_blocked_ids = set(seeded.closure_blocked_records)
+    before_work_item_ids = set(seeded.work_items)
+    after = apply(seeded, decision)
+    transition = next(
+        item for item in after.transitions if item.record_id == context.transition_id
+    )
+    receipt = after.receipts[authorized.input_id]
+    assert transition.accepted is False
+    assert receipt.accepted is False
+    assert receipt.refusal_reason == expected_reason
+    assert set(after.closure_terminal_records) == before_terminal_ids
+    assert set(after.remediation_work_records) == before_remediation_ids
+    assert set(after.closure_blocked_records) == before_blocked_ids
+    assert set(after.work_items) == before_work_item_ids
+    assert not any(
+        item.created_by_input_id == authorized.input_id
+        for item in after.work_items.values()
+    )
+
+
 def test_closure_records_survive_restart(tmp_path: Path) -> None:
     state = _closure_state()
     db_path, cas_root = runtime_store_paths(tmp_path)
@@ -611,6 +1486,62 @@ def test_closure_records_survive_restart(tmp_path: Path) -> None:
     assert loaded.closure_terminal_records == state.closure_terminal_records
     assert loaded.remediation_work_records == state.remediation_work_records
     assert loaded.closure_blocked_records == state.closure_blocked_records
+
+
+def test_runtime_created_closure_snapshot_survives_restart_and_reauthenticates(
+    tmp_path: Path,
+) -> None:
+    state = _closure_state()
+    plan, _fingerprint = _compile_closure_plan()
+    behavior, _policy, _actions = _selected_authority(plan)
+    target = state.closure_targets["closure-target-incident"]
+    stage = next(
+        stage
+        for stage in plan.stage_kinds
+        if stage.id == behavior.target_stage_kind_id
+    )
+    request_payload, refusal = _completion_request_payload(
+        state=state,
+        target=target,
+        behavior=behavior,
+        stage=stage,
+    )
+    assert refusal is None
+    assert request_payload is not None
+    snapshot = request_payload["closure_evidence_snapshot"]
+    assert isinstance(snapshot, Mapping)
+
+    evaluator = state.work_items["work-evaluator-incident"]
+    work_items = dict(state.work_items)
+    work_items[evaluator.ref.work_item_id] = replace(
+        evaluator,
+        payload=request_payload,
+    )
+    state_with_snapshot = replace(state, work_items=work_items)
+    db_path, cas_root = runtime_store_paths(tmp_path)
+    persist_runtime_state(db_path, cas_root, state_with_snapshot)
+    loaded = load_runtime_state(db_path, cas_root)
+
+    loaded_payload = loaded.work_items[evaluator.ref.work_item_id].payload
+    assert loaded_payload["closure_evidence_snapshot"] == snapshot
+
+    corrupted_snapshot = dict(snapshot)
+    corrupted_snapshot["selected_plan_fingerprint"] = "sha256:" + "b" * 64
+    corrupted_payload = dict(loaded_payload)
+    corrupted_payload["closure_evidence_snapshot"] = corrupted_snapshot
+    corrupted_work_items = dict(loaded.work_items)
+    corrupted_work_items[evaluator.ref.work_item_id] = replace(
+        corrupted_work_items[evaluator.ref.work_item_id],
+        payload=corrupted_payload,
+    )
+    refusal = _closure_snapshot_authority_refusal(
+        state=replace(loaded, work_items=corrupted_work_items),
+        target=loaded.closure_targets[target.closure_target_id],
+        behavior=behavior,
+        snapshot=corrupted_snapshot,
+        selected_plan=plan,
+    )
+    assert refusal == "closure_snapshot_authority_mismatch"
 
 
 @pytest.mark.parametrize(
@@ -828,7 +1759,9 @@ def test_restart_refuses_closure_root_payload_source_kind_drift(
         load_runtime_state(db_path, cas_root)
 
 
-def test_restart_refuses_manual_closure_root_work_item_id(tmp_path: Path) -> None:
+def test_persist_refuses_manual_missing_closure_root_work_item_id(
+    tmp_path: Path,
+) -> None:
     state = _closure_state()
     base_target = next(iter(state.closure_targets.values()))
     manual_target = replace(
@@ -851,20 +1784,9 @@ def test_restart_refuses_manual_closure_root_work_item_id(tmp_path: Path) -> Non
         },
     )
     db_path, cas_root = runtime_store_paths(tmp_path)
-    persist_runtime_state(db_path, cas_root, legal)
 
-    with sqlite3.connect(db_path) as connection:
-        connection.execute(
-            """
-            UPDATE closure_targets
-            SET closure_root_work_item_id = ?
-            WHERE closure_target_id = ?
-            """,
-            ("fake-root-work-item", "closure-target-manual"),
-        )
-
-    with pytest.raises(StorageIntegrityError, match="manual root source"):
-        load_runtime_state(db_path, cas_root)
+    with pytest.raises(StorageIntegrityError, match="closure_root_work_item_id"):
+        persist_runtime_state(db_path, cas_root, legal)
 
 
 def test_restart_refuses_closure_terminal_without_matching_evaluator(

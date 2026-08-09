@@ -131,7 +131,12 @@ def _component_free_codex_source() -> dict[str, object]:
 
 
 def test_generic_runner_component_pin_compiles_into_selected_authority() -> None:
-    result = compile_workflow(_source_with_runner_component())
+    source = _source_with_runner_component()
+    runner = _source_records(source, "runner_bindings")[0]
+    pin = cast(dict[str, object], runner["component_pin"])
+    pin["max_work_item_payload_bytes"] = 16_384
+
+    result = compile_workflow(source)
 
     assert result.plan is not None
     assert [item for item in result.diagnostics if item.severity == "error"] == []
@@ -148,6 +153,7 @@ def test_generic_runner_component_pin_compiles_into_selected_authority() -> None
         == "application/vnd.example.runner+json"
     )
     assert binding.component_pin.descriptor_sha256 == "a" * 64
+    assert binding.component_pin.max_work_item_payload_bytes == 16_384
     assert binding.component_pin.required_capability_ids == (
         CapabilityId("capability.runner.invoke"),
     )
@@ -162,14 +168,14 @@ def test_generic_runner_component_pin_compiles_into_selected_authority() -> None
     assert mapping.outcome_id == OutcomeId("kernel_ping.taskmaster.task_complete")
 
 
-def test_component_free_codex_binding_compiles_as_format_15() -> None:
+def test_component_free_codex_binding_compiles_as_format_16() -> None:
     result = compile_workflow(
         _component_free_codex_source(),
         selected_runner_policy=_CODEX_POLICY,
     )
 
     assert result.plan is not None
-    assert result.plan.schema_version == 15
+    assert result.plan.schema_version == 16
     assert all(binding.component_pin is None for binding in result.plan.runner_bindings)
     assert all(
         binding.terminal_result_mappings == ()

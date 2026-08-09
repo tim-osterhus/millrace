@@ -28,6 +28,21 @@ SUPPORTED_SCHEMA_KEYS = frozenset(
 SUPPORTED_SCHEMA_TYPES = frozenset(
     ("object", "array", "string", "integer", "boolean", "null")
 )
+CLOSURE_VERDICT_REQUIRED_TOP_LEVEL_PROPERTIES = frozenset(
+    {
+        "artifact_kind",
+        "summary",
+        "closure_target_id",
+        "root_contract_digest",
+        "freshness_anchor_digest",
+        "rubric",
+        "criterion_results",
+        "observations",
+        "remediation_guidance",
+        "confidence",
+        "residual_uncertainty",
+    }
+)
 UNSUPPORTED_SCHEMA_NUMBER_TYPES = frozenset(("number", "float"))
 DEFAULT_PROJECTION_SOURCE_ROOTS = frozenset(
     (
@@ -59,6 +74,26 @@ def validate_schema_declaration(schema: Mapping[str, object]) -> SchemaValidatio
     return SchemaValidationResult(accepted=not issues, issues=tuple(issues))
 
 
+def validate_closure_verdict_schema_declaration(
+    schema: object,
+) -> SchemaValidationResult:
+    """Validate the complete generic closure-verdict schema contract."""
+    issues: list[SchemaValidationIssue] = []
+    if not isinstance(schema, Mapping):
+        issues.append(
+            SchemaValidationIssue(
+                "$",
+                "unsupported_schema_value",
+                "closure_verdict_schema",
+            )
+        )
+        return SchemaValidationResult(accepted=False, issues=tuple(issues))
+
+    issues.extend(validate_schema_declaration(schema).issues)
+    _validate_closure_verdict_schema_shape(schema, issues)
+    return SchemaValidationResult(accepted=not issues, issues=tuple(issues))
+
+
 def validate_schema(
     schema: Mapping[str, object],
     payload: object,
@@ -70,6 +105,247 @@ def validate_schema(
     if not issues:
         _validate_schema_value(schema, payload, "$", issues)
     return SchemaValidationResult(accepted=not issues, issues=tuple(issues))
+
+
+def _closure_object_shape(
+    required: Iterable[str],
+    properties: Mapping[str, object],
+    *,
+    root: bool = False,
+) -> Mapping[str, object]:
+    shape: dict[str, object] = {
+        "kind": "object",
+        "required": frozenset(required),
+        "properties": properties,
+    }
+    if root:
+        shape["root"] = True
+    return shape
+
+
+def _closure_array_shape(
+    items: Mapping[str, object],
+    *,
+    unique_by: str | None = None,
+    min_items: int | None = None,
+) -> Mapping[str, object]:
+    shape: dict[str, object] = {"kind": "array", "items": items}
+    if unique_by is not None:
+        shape["unique_by"] = unique_by
+    if min_items is not None:
+        shape["min_items"] = min_items
+    return shape
+
+
+def _closure_enum_shape(values: Iterable[str]) -> Mapping[str, object]:
+    return {"kind": "enum", "values": frozenset(values)}
+
+
+_CLOSURE_STRING_SHAPE: Mapping[str, object] = {"kind": "string"}
+_CLOSURE_CRITERION_SHAPE = _closure_object_shape(
+    ("criterion_id", "requirement", "evidence_rule"),
+    {
+        "criterion_id": _CLOSURE_STRING_SHAPE,
+        "requirement": _CLOSURE_STRING_SHAPE,
+        "evidence_rule": _CLOSURE_STRING_SHAPE,
+    },
+)
+_CLOSURE_EVIDENCE_REF_SHAPE = _closure_object_shape(
+    ("evidence_id", "summary"),
+    {"evidence_id": _CLOSURE_STRING_SHAPE, "summary": _CLOSURE_STRING_SHAPE},
+)
+_CLOSURE_CRITERION_RESULT_SHAPE = _closure_object_shape(
+    ("criterion_id", "status", "provenance", "evidence_refs"),
+    {
+        "criterion_id": _CLOSURE_STRING_SHAPE,
+        "status": _closure_enum_shape(("passed", "failed", "blocked")),
+        "provenance": _closure_enum_shape(
+            ("fresh", "revalidated", "historical_only", "missing")
+        ),
+        "evidence_refs": _closure_array_shape(
+            _CLOSURE_EVIDENCE_REF_SHAPE,
+            unique_by="evidence_id",
+        ),
+    },
+)
+_CLOSURE_OBSERVATION_SHAPE = _closure_object_shape(
+    ("observation_id", "summary"),
+    {"observation_id": _CLOSURE_STRING_SHAPE, "summary": _CLOSURE_STRING_SHAPE},
+)
+_CLOSURE_GUIDANCE_REF_SHAPE = _closure_object_shape(
+    ("criterion_id",),
+    {"criterion_id": _CLOSURE_STRING_SHAPE},
+)
+_CLOSURE_GUIDANCE_SHAPE = _closure_object_shape(
+    ("guidance_id", "summary", "criterion_refs"),
+    {
+        "guidance_id": _CLOSURE_STRING_SHAPE,
+        "summary": _CLOSURE_STRING_SHAPE,
+        "criterion_refs": _closure_array_shape(
+            _CLOSURE_GUIDANCE_REF_SHAPE,
+            unique_by="criterion_id",
+            min_items=1,
+        ),
+    },
+)
+_CLOSURE_VERDICT_SHAPE = _closure_object_shape(
+    CLOSURE_VERDICT_REQUIRED_TOP_LEVEL_PROPERTIES,
+    {
+        "artifact_kind": _CLOSURE_STRING_SHAPE,
+        "summary": _CLOSURE_STRING_SHAPE,
+        "closure_target_id": _CLOSURE_STRING_SHAPE,
+        "root_contract_digest": _CLOSURE_STRING_SHAPE,
+        "freshness_anchor_digest": _CLOSURE_STRING_SHAPE,
+        "rubric": _closure_object_shape(
+            ("criteria",),
+            {
+                "criteria": _closure_array_shape(
+                    _CLOSURE_CRITERION_SHAPE,
+                    unique_by="criterion_id",
+                    min_items=1,
+                )
+            },
+        ),
+        "criterion_results": _closure_array_shape(
+            _CLOSURE_CRITERION_RESULT_SHAPE,
+            unique_by="criterion_id",
+            min_items=1,
+        ),
+        "observations": _closure_array_shape(
+            _CLOSURE_OBSERVATION_SHAPE,
+            unique_by="observation_id",
+        ),
+        "remediation_guidance": _closure_array_shape(
+            _CLOSURE_GUIDANCE_SHAPE,
+            unique_by="guidance_id",
+        ),
+        "confidence": _closure_enum_shape(("high", "medium", "low")),
+        "residual_uncertainty": _CLOSURE_STRING_SHAPE,
+    },
+    root=True,
+)
+
+
+def _validate_closure_verdict_schema_shape(
+    schema: Mapping[object, object],
+    issues: list[SchemaValidationIssue],
+) -> None:
+    _compare_closure_schema(schema, _CLOSURE_VERDICT_SHAPE, "$", issues)
+
+
+def _compare_closure_schema(
+    schema: object,
+    shape: Mapping[str, object],
+    path: str,
+    issues: list[SchemaValidationIssue],
+) -> None:
+    kind = shape.get("kind")
+    if kind == "string":
+        if (
+            not isinstance(schema, Mapping)
+            or set(schema) != {"type", "min_length"}
+            or schema.get("type") != "string"
+            or schema.get("min_length") != 1
+        ):
+            _closure_schema_issue(issues, path, "nonblank_string")
+        return
+    if kind == "enum":
+        values = shape.get("values")
+        raw_values = schema.get("enum") if isinstance(schema, Mapping) else None
+        if (
+            not isinstance(schema, Mapping)
+            or set(schema) != {"enum"}
+            or not _is_sequence(raw_values)
+            or not isinstance(values, frozenset)
+            or any(not isinstance(item, str) for item in raw_values)
+            or set(raw_values) != set(values)
+        ):
+            _closure_schema_issue(issues, path, "enum")
+        return
+    if kind == "array":
+        if not isinstance(schema, Mapping):
+            _closure_schema_issue(issues, path, "array")
+            return
+        expected_keys = {"type", "items"}
+        for key in ("unique_by", "min_items"):
+            if key in shape:
+                expected_keys.add(key)
+        if set(schema) != expected_keys or schema.get("type") != "array":
+            _closure_schema_issue(issues, path, "array")
+        for key in ("unique_by", "min_items"):
+            if key in shape and schema.get(key) != shape[key]:
+                _closure_schema_issue(issues, path, "array")
+        items = shape.get("items")
+        if isinstance(items, Mapping):
+            _compare_closure_schema(schema.get("items"), items, f"{path}[]", issues)
+        return
+    if kind != "object":
+        _closure_schema_issue(issues, path, "unsupported_shape")
+        return
+    if not isinstance(schema, Mapping):
+        _closure_schema_issue(issues, path, "object")
+        return
+    if set(schema) != {"type", "required", "properties"}:
+        _closure_schema_issue(issues, path, "object_keys")
+    if schema.get("type") != "object":
+        _closure_schema_issue(issues, path, "object_type")
+
+    raw_required = schema.get("required")
+    required = (
+        tuple(raw_required)
+        if _is_sequence(raw_required)
+        and all(isinstance(item, str) for item in raw_required)
+        else ()
+    )
+    if not required and raw_required not in ((), []):
+        _closure_schema_issue(issues, path, "required")
+    required_set = set(required)
+    if len(required) != len(required_set):
+        _closure_schema_issue(issues, path, "duplicate_required_property")
+    expected_required = shape.get("required")
+    if not isinstance(expected_required, frozenset):
+        _closure_schema_issue(issues, path, "unsupported_shape")
+        return
+    if shape.get("root") is True:
+        required_ok = expected_required.issubset(required_set)
+    else:
+        required_ok = required_set == set(expected_required)
+    if not required_ok:
+        _closure_schema_issue(issues, path, "required_properties")
+
+    raw_properties = schema.get("properties")
+    if not isinstance(raw_properties, Mapping):
+        _closure_schema_issue(issues, path, "properties")
+        return
+    expected_properties = shape.get("properties")
+    if not isinstance(expected_properties, Mapping):
+        _closure_schema_issue(issues, path, "unsupported_shape")
+        return
+    actual_names = set(raw_properties)
+    expected_names = set(expected_properties)
+    if shape.get("root") is True:
+        if not expected_names.issubset(actual_names):
+            _closure_schema_issue(issues, path, "properties")
+    elif actual_names != expected_names:
+        _closure_schema_issue(issues, path, "nested_properties")
+    if not required_set.issubset(actual_names):
+        _closure_schema_issue(issues, path, "required_properties")
+    for name, child_shape in expected_properties.items():
+        if isinstance(child_shape, Mapping) and name in raw_properties:
+            _compare_closure_schema(
+                raw_properties[name],
+                child_shape,
+                f"{path}.{name}",
+                issues,
+            )
+
+
+def _closure_schema_issue(
+    issues: list[SchemaValidationIssue],
+    path: str,
+    detail: str,
+) -> None:
+    issues.append(SchemaValidationIssue(path, "invalid_closure_verdict_schema", detail))
 
 
 def _validate_schema_declaration(
@@ -443,6 +719,44 @@ def _validate_projection_declaration(
             issues,
         )
         return
+    if kind == "coalesce":
+        _validate_projection_keys(
+            projection,
+            required=frozenset(("kind", "candidates", "default")),
+            allowed=frozenset(("kind", "candidates", "default")),
+            path=path,
+            issues=issues,
+        )
+        candidates = projection.get("candidates")
+        if not _is_sequence(candidates):
+            issues.append(
+                ProjectionDeclarationIssue(
+                    (*path, "candidates"),
+                    "unsupported_projection",
+                )
+            )
+        elif not candidates:
+            issues.append(
+                ProjectionDeclarationIssue(
+                    (*path, "candidates"),
+                    "coalesce_candidates_empty",
+                )
+            )
+        else:
+            for index, candidate in enumerate(candidates):
+                _validate_projection_declaration(
+                    candidate,
+                    allowed_source_roots,
+                    (*path, "candidates", str(index)),
+                    issues,
+                )
+        _validate_projection_declaration(
+            projection.get("default"),
+            allowed_source_roots,
+            (*path, "default"),
+            issues,
+        )
+        return
     issues.append(ProjectionDeclarationIssue(path, "unsupported_projection"))
 
 
@@ -596,6 +910,7 @@ def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:
 
 
 __all__ = (
+    "CLOSURE_VERDICT_REQUIRED_TOP_LEVEL_PROPERTIES",
     "DEFAULT_PROJECTION_SOURCE_ROOTS",
     "ProjectionDeclarationIssue",
     "ProjectionDeclarationResult",
@@ -606,6 +921,7 @@ __all__ = (
     "SUPPORTED_SCHEMA_KEYS",
     "SUPPORTED_SCHEMA_TYPES",
     "UNSUPPORTED_SCHEMA_NUMBER_TYPES",
+    "validate_closure_verdict_schema_declaration",
     "validate_projection_declaration",
     "validate_schema",
     "validate_schema_declaration",

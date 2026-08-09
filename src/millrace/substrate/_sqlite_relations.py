@@ -2834,13 +2834,6 @@ def _validate_closure_root_inventory(
     target: ClosureTargetRecord,
     selected_plan: SelectedCompiledPlan,
 ) -> None:
-    if target.root_source_kind == "manual":
-        if target.closure_root_work_item_id is not None:
-            raise StorageIntegrityError(
-                "closure_targets manual root source must not reference runtime "
-                "inventory"
-            )
-        return
     if target.closure_root_work_item_id is None:
         raise StorageIntegrityError(
             "closure_targets.closure_root_work_item_id is required for runtime "

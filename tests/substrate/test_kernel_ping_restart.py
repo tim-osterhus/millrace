@@ -92,7 +92,7 @@ def _component_source() -> dict[str, object]:
     return source
 
 
-def test_restart_preserves_exact_format_15_runner_component_and_active_plan_pin(
+def test_restart_preserves_exact_format_16_runner_component_and_active_plan_pin(
     tmp_path: Path,
 ) -> None:
     plan, fingerprint = compile_kernel_ping(_component_source())
@@ -101,7 +101,7 @@ def test_restart_preserves_exact_format_15_runner_component_and_active_plan_pin(
     loaded = persist_and_load_runtime_state(tmp_path, state)
     loaded_plan = loaded.admitted_plans[fingerprint].selected_plan
 
-    assert loaded_plan.schema_version == 15
+    assert loaded_plan.schema_version == 16
     assert canonical_authority_bytes(loaded_plan) == canonical_authority_bytes(plan)
     assert loaded_plan.runner_bindings[0].component_pin == (
         plan.runner_bindings[0].component_pin

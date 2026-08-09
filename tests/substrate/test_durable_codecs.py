@@ -11,8 +11,18 @@ import pytest
 from millrace.compiler import compile_workflow
 from millrace.contracts.compiled_plan import (
     AuthorityValue,
+    CompletionBehaviorDeclaration,
     SelectedCompiledPlan,
     authority_fingerprint,
+)
+from millrace.contracts.ids import (
+    ActionId,
+    ArtifactSchemaId,
+    CompletionBehaviorId,
+    QueueFamilyId,
+    RemediationPolicyId,
+    RunnerBindingId,
+    StageKindId,
 )
 from millrace.workflows import kernel_ping
 from support import generic_admission, generic_effect, generic_lifecycle
@@ -81,6 +91,7 @@ def _component_plan() -> SelectedCompiledPlan:
                 "descriptor_sha256": "a" * 64,
                 "required_capability_ids": ("capability.runner.invoke",),
                 "legal_terminal_result_ids": ("COMPLETE", "BLOCKED"),
+                "max_work_item_payload_bytes": 16_384,
             },
             "terminal_result_mappings": (
                 {
@@ -116,6 +127,78 @@ def _component_free_capability_plan() -> SelectedCompiledPlan:
     assert result.plan is not None
     assert result.plan.runner_bindings[0].component_pin is None
     return result.plan
+
+
+def _completion_behavior() -> CompletionBehaviorDeclaration:
+    return CompletionBehaviorDeclaration(
+        id=CompletionBehaviorId("completion.v2"),
+        trigger="backlog_drained",
+        readiness_rule="no_open_lineage_work",
+        request_kind="closure_target",
+        target_selector="active_closure_target",
+        target_stage_kind_id=StageKindId("review"),
+        target_graph_node_id="review.start",
+        runner_binding_id=RunnerBindingId("review.runner"),
+        request_queue_family_id=QueueFamilyId("review"),
+        pass_action_id=ActionId("review.pass"),
+        gap_action_id=ActionId("review.gap"),
+        blocked_action_id=ActionId("review.blocked"),
+        verdict_artifact_schema_id=ArtifactSchemaId("review.verdict"),
+        evidence_artifact_schema_ids=(ArtifactSchemaId("review.evidence"),),
+        evidence_item_limit=8,
+        request_payload_byte_limit=16_384,
+        remediation_policy_id=RemediationPolicyId("review.remediation"),
+        accepted_root_source_kinds=("origin",),
+        root_source_resolution="runtime_inventory",
+        evidence_window_policy="lineage",
+        rubric_policy="reuse_or_create",
+        blocked_work_policy="suppress",
+        skip_if_closed=True,
+        presentation={},
+    )
+
+
+def test_completion_behavior_v2_codec_round_trip_preserves_capacity_contract() -> None:
+    from millrace.substrate.codecs import (
+        _decode_completion_behavior,
+        _encode_completion_behavior,
+    )
+
+    behavior = _completion_behavior()
+    encoded = _encode_completion_behavior(behavior)
+
+    assert encoded["schema_version"] == 2
+    assert _decode_completion_behavior(encoded) == behavior
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ("previous_version", "missing_field", "extra_field"),
+)
+def test_completion_behavior_v2_codec_rejects_incompatible_record_shape(
+    corruption: str,
+) -> None:
+    from millrace.substrate.codecs import (
+        _decode_completion_behavior,
+        _encode_completion_behavior,
+    )
+    from millrace.substrate.errors import InvalidCasObject, UnsupportedSchemaVersion
+
+    record = dict(_encode_completion_behavior(_completion_behavior()))
+    if corruption == "previous_version":
+        record["schema_version"] = 1
+    elif corruption == "missing_field":
+        record.pop("request_payload_byte_limit")
+    else:
+        record["unexpected_completion_field"] = True
+
+    expected_error = (
+        UnsupportedSchemaVersion
+        if corruption == "previous_version"
+        else InvalidCasObject
+    )
+    with pytest.raises(expected_error):
+        _decode_completion_behavior(record)
 
 
 def _partitionless_plan() -> tuple[SelectedCompiledPlan, str]:
@@ -214,7 +297,7 @@ def test_selected_plan_codec_round_trips_kernel_ping_and_preserves_fingerprint()
     assert authority_fingerprint(decoded_plan) == fingerprint
 
 
-def test_selected_plan_codec_encodes_v15_plan_and_v3_component_free_runner() -> None:
+def test_selected_plan_codec_encodes_v16_plan_and_v3_component_free_runner() -> None:
     from millrace.substrate.codecs import encode_selected_compiled_plan
 
     plan = _component_free_capability_plan()
@@ -222,7 +305,7 @@ def test_selected_plan_codec_encodes_v15_plan_and_v3_component_free_runner() -> 
     payload = dict(encode_selected_compiled_plan(plan).payload)
     runner = cast(list[dict[str, object]], payload["runner_bindings"])[0]
 
-    assert payload["schema_version"] == 15
+    assert payload["schema_version"] == 16
     assert runner["schema_version"] == 3
     assert runner["invocation_timeout_seconds"] == 3600
     assert runner["component_pin"] is None
@@ -242,6 +325,22 @@ def test_selected_plan_codec_refuses_exact_v14_plan() -> None:
     payload["schema_version"] = 14
 
     with pytest.raises(UnsupportedSchemaVersion, match="14"):
+        decode_selected_compiled_plan(replace(envelope, payload=payload))
+
+
+def test_selected_plan_codec_refuses_immediately_previous_v15_plan() -> None:
+    from millrace.substrate.codecs import (
+        decode_selected_compiled_plan,
+        encode_selected_compiled_plan,
+    )
+    from millrace.substrate.errors import UnsupportedSchemaVersion
+
+    plan, _fingerprint = compile_kernel_ping()
+    envelope = encode_selected_compiled_plan(plan)
+    payload = dict(envelope.payload)
+    payload["schema_version"] = 15
+
+    with pytest.raises(UnsupportedSchemaVersion, match="15"):
         decode_selected_compiled_plan(replace(envelope, payload=payload))
 
 
@@ -281,7 +380,7 @@ def test_selected_plan_codec_round_trips_exact_runner_component_authority() -> N
 
     assert runner["component_pin"] == {
         "record_kind": "runner_component_pin",
-        "schema_version": 1,
+        "schema_version": 2,
         "component_kind": "opaque.runner",
         "component_id": "example.component",
         "component_version": "1.2.3",
@@ -291,6 +390,7 @@ def test_selected_plan_codec_round_trips_exact_runner_component_authority() -> N
         "descriptor_sha256": "a" * 64,
         "required_capability_ids": ("capability.runner.invoke",),
         "legal_terminal_result_ids": ("BLOCKED", "COMPLETE"),
+        "max_work_item_payload_bytes": 16_384,
     }
     assert runner["terminal_result_mappings"] == (
         {
@@ -302,6 +402,34 @@ def test_selected_plan_codec_round_trips_exact_runner_component_authority() -> N
         },
     )
     assert decode_selected_compiled_plan(envelope) == plan
+
+
+@pytest.mark.parametrize("corruption", ("missing_capacity", "extra_capacity"))
+def test_selected_plan_codec_rejects_runner_component_v2_shape_drift(
+    corruption: str,
+) -> None:
+    from millrace.substrate.codecs import (
+        decode_selected_compiled_plan,
+        encode_selected_compiled_plan,
+    )
+    from millrace.substrate.errors import InvalidCasObject
+
+    envelope = encode_selected_compiled_plan(_component_plan())
+    payload = dict(envelope.payload)
+    runners = [
+        dict(item)
+        for item in cast(list[dict[str, object]], payload["runner_bindings"])
+    ]
+    pin = dict(cast(dict[str, object], runners[0]["component_pin"]))
+    if corruption == "missing_capacity":
+        pin.pop("max_work_item_payload_bytes")
+    else:
+        pin["unexpected_component_field"] = True
+    runners[0]["component_pin"] = pin
+    payload["runner_bindings"] = runners
+
+    with pytest.raises(InvalidCasObject):
+        decode_selected_compiled_plan(replace(envelope, payload=payload))
 
 
 @pytest.mark.parametrize("corruption", ("missing", "duplicate"))

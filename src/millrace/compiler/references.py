@@ -28,6 +28,7 @@ from millrace.compiler.source import (
     text_tuple,
 )
 from millrace.contracts import Diagnostic
+from millrace.contracts.schema import validate_closure_verdict_schema_declaration
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,8 +80,12 @@ _RUNNER_COMPONENT_PIN_FIELDS = frozenset(
         "descriptor_sha256",
         "required_capability_ids",
         "legal_terminal_result_ids",
+        "max_work_item_payload_bytes",
     }
 )
+_LEGACY_RUNNER_COMPONENT_PIN_FIELDS = _RUNNER_COMPONENT_PIN_FIELDS - {
+    "max_work_item_payload_bytes"
+}
 _RUNNER_TERMINAL_RESULT_MAPPING_FIELDS = frozenset(
     {"stage_kind_id", "runner_result_id", "outcome_id"}
 )
@@ -1080,6 +1085,14 @@ def validate_completion_remediation_references(
     runner_stage_ids = _runner_stage_ids(source)
     graph_node_ids = _declared_graph_node_ids(source)
     graph_node_stage_pairs = _declared_graph_node_stage_pairs(source)
+    artifact_schema_records = {
+        str(record.get("id")): record
+        for record in records(source, "artifact_schemas")
+    }
+    runner_records = {
+        str(record.get("id")): record
+        for record in records(source, "runner_bindings")
+    }
     for index, record in enumerate(records(source, "remediation_policies")):
         referrer_path = f"remediation_policies[{index}]"
         _validate_remediation_policy_references(
@@ -1104,6 +1117,8 @@ def validate_completion_remediation_references(
             runner_stage_ids=runner_stage_ids,
             graph_node_ids=graph_node_ids,
             graph_node_stage_pairs=graph_node_stage_pairs,
+            runner_records=runner_records,
+            artifact_schema_records=artifact_schema_records,
             indexes=indexes,
             diagnostics=diagnostics,
         )
@@ -1119,6 +1134,8 @@ def _validate_completion_behavior_references(
     runner_stage_ids: Mapping[str, frozenset[str]],
     graph_node_ids: frozenset[str],
     graph_node_stage_pairs: frozenset[tuple[str, str]],
+    runner_records: Mapping[str, SourceRecord],
+    artifact_schema_records: Mapping[str, SourceRecord],
     indexes: Mapping[str, IdIndex],
     diagnostics: list[Diagnostic],
 ) -> None:
@@ -1163,6 +1180,15 @@ def _validate_completion_behavior_references(
         reference_kind="artifact_schema",
         diagnostics=diagnostics,
     )
+    evidence_schema_ids = _completion_evidence_schema_ids(record)
+    _validate_many_references(
+        raw_values=evidence_schema_ids,
+        ids=indexes["artifact_schemas"].ids,
+        declaration_path=f"{referrer_path}.evidence_artifact_schema_ids",
+        referrer_path=referrer_path,
+        reference_kind="artifact_schema",
+        diagnostics=diagnostics,
+    )
     _validate_single_reference(
         raw_value=record.get("remediation_policy_id"),
         ids=indexes["remediation_policies"].ids,
@@ -1180,6 +1206,18 @@ def _validate_completion_behavior_references(
         diagnostics=diagnostics,
     )
     _validate_completion_behavior_values(record, referrer_path, diagnostics)
+    _validate_completion_verdict_schema(
+        record=record,
+        referrer_path=referrer_path,
+        artifact_schema_records=artifact_schema_records,
+        diagnostics=diagnostics,
+    )
+    _validate_completion_runner_capacity(
+        record=record,
+        referrer_path=referrer_path,
+        runner_records=runner_records,
+        diagnostics=diagnostics,
+    )
     _validate_completion_route_contract(
         record=record,
         referrer_path=referrer_path,
@@ -1336,6 +1374,168 @@ def _validate_completion_behavior_values(
             )
         )
 
+    evidence_schema_ids = _completion_evidence_schema_ids(record)
+    if not evidence_schema_ids:
+        diagnostics.append(
+            _completion_behavior_diagnostic(
+                declaration_path=f"{referrer_path}.evidence_artifact_schema_ids",
+                referrer_path=referrer_path,
+                behavior_id=behavior_id,
+                reason="missing_evidence_artifact_schema_ids",
+            )
+        )
+    elif len(set(evidence_schema_ids)) != len(evidence_schema_ids):
+        diagnostics.append(
+            _completion_behavior_diagnostic(
+                declaration_path=f"{referrer_path}.evidence_artifact_schema_ids",
+                referrer_path=referrer_path,
+                behavior_id=behavior_id,
+                reason="duplicate_evidence_artifact_schema_id",
+            )
+        )
+
+    evidence_item_limit = record.get("evidence_item_limit")
+    if type(evidence_item_limit) is not int or not 1 <= evidence_item_limit <= 256:
+        diagnostics.append(
+            _completion_behavior_diagnostic(
+                declaration_path=f"{referrer_path}.evidence_item_limit",
+                referrer_path=referrer_path,
+                behavior_id=behavior_id,
+                reason="invalid_evidence_item_limit",
+            )
+        )
+    request_payload_byte_limit = record.get("request_payload_byte_limit")
+    if type(request_payload_byte_limit) is not int or request_payload_byte_limit <= 0:
+        diagnostics.append(
+            _completion_behavior_diagnostic(
+                declaration_path=f"{referrer_path}.request_payload_byte_limit",
+                referrer_path=referrer_path,
+                behavior_id=behavior_id,
+                reason="invalid_request_payload_byte_limit",
+            )
+        )
+
+
+def _completion_evidence_schema_ids(record: SourceRecord) -> tuple[str, ...]:
+    raw_values = record.get("evidence_artifact_schema_ids")
+    if not is_sequence(raw_values):
+        return ()
+    if any(not is_non_empty_text(item) for item in raw_values):
+        return ()
+    return tuple(str(item) for item in raw_values)
+
+
+def _validate_completion_verdict_schema(
+    *,
+    record: SourceRecord,
+    referrer_path: str,
+    artifact_schema_records: Mapping[str, SourceRecord],
+    diagnostics: list[Diagnostic],
+) -> None:
+    if record.get("rubric_policy") != "reuse_or_create":
+        return
+    schema_record = artifact_schema_records.get(
+        str(record.get("verdict_artifact_schema_id", ""))
+    )
+    schema = schema_record.get("schema") if schema_record is not None else None
+    if not validate_closure_verdict_schema_declaration(schema).accepted:
+        _completion_behavior_diagnostic_append(
+            diagnostics=diagnostics,
+            declaration_path=f"{referrer_path}.verdict_artifact_schema_id",
+            referrer_path=referrer_path,
+            behavior_id=str(record.get("id", "")),
+            reason="invalid_verdict_artifact_schema",
+        )
+
+
+def _completion_behavior_diagnostic_append(
+    *,
+    diagnostics: list[Diagnostic],
+    declaration_path: str,
+    referrer_path: str,
+    behavior_id: str,
+    reason: str,
+) -> None:
+    diagnostics.append(
+        _completion_behavior_diagnostic(
+            declaration_path=declaration_path,
+            referrer_path=referrer_path,
+            behavior_id=behavior_id,
+            reason=reason,
+        )
+    )
+
+
+def _validate_completion_runner_capacity(
+    *,
+    record: SourceRecord,
+    referrer_path: str,
+    runner_records: Mapping[str, SourceRecord],
+    diagnostics: list[Diagnostic],
+) -> None:
+    runner = runner_records.get(str(record.get("runner_binding_id", "")))
+    if runner is None:
+        _completion_behavior_diagnostic_append(
+            diagnostics=diagnostics,
+            declaration_path=f"{referrer_path}.runner_binding_id",
+            referrer_path=referrer_path,
+            behavior_id=str(record.get("id", "")),
+            reason="missing_runner_binding_capacity",
+        )
+        return
+    raw_pin = runner.get("component_pin")
+    if not isinstance(raw_pin, Mapping):
+        _completion_behavior_diagnostic_append(
+            diagnostics=diagnostics,
+            declaration_path=f"{referrer_path}.runner_binding_id",
+            referrer_path=referrer_path,
+            behavior_id=str(record.get("id", "")),
+            reason="missing_runner_component_pin",
+        )
+        return
+    if "max_work_item_payload_bytes" not in raw_pin:
+        diagnostics.append(
+            _completion_behavior_diagnostic(
+                declaration_path=f"{referrer_path}.request_payload_byte_limit",
+                referrer_path=referrer_path,
+                behavior_id=str(record.get("id", "")),
+                reason="missing_runner_payload_capacity",
+            )
+        )
+        return
+    capacity = raw_pin.get("max_work_item_payload_bytes")
+    request_limit = record.get("request_payload_byte_limit")
+    if capacity is None:
+        diagnostics.append(
+            _completion_behavior_diagnostic(
+                declaration_path=f"{referrer_path}.request_payload_byte_limit",
+                referrer_path=referrer_path,
+                behavior_id=str(record.get("id", "")),
+                reason="missing_runner_payload_capacity",
+            )
+        )
+        return
+    if type(capacity) is not int or capacity <= 0:
+        _completion_behavior_diagnostic_append(
+            diagnostics=diagnostics,
+            declaration_path=(
+                f"{referrer_path}.request_payload_byte_limit"
+            ),
+            referrer_path=referrer_path,
+            behavior_id=str(record.get("id", "")),
+            reason="invalid_runner_payload_capacity",
+        )
+        return
+    if type(request_limit) is int and request_limit > capacity:
+        diagnostics.append(
+            _completion_behavior_diagnostic(
+                declaration_path=f"{referrer_path}.request_payload_byte_limit",
+                referrer_path=referrer_path,
+                behavior_id=str(record.get("id", "")),
+                reason="request_payload_byte_limit_exceeds_runner_capacity",
+            )
+        )
+
 
 def _validate_remediation_policy_values(
     record: SourceRecord,
@@ -1427,20 +1627,21 @@ def _validate_completion_actions(
                     reason="invalid_action_contract",
                 )
             )
-    pass_action = actions.get(str(record.get("pass_action_id", "")))
-    if (
-        pass_action is not None
-        and pass_action.get("artifact_schema_id")
-        != record.get("verdict_artifact_schema_id")
-    ):
-        diagnostics.append(
-            _completion_behavior_diagnostic(
-                declaration_path=f"{referrer_path}.verdict_artifact_schema_id",
-                referrer_path=referrer_path,
-                behavior_id=behavior_id,
-                reason="verdict_action_schema_mismatch",
+    for field_name, _expected_kinds in action_fields:
+        action = actions.get(str(record.get(field_name, "")))
+        if (
+            action is not None
+            and action.get("artifact_schema_id")
+            != record.get("verdict_artifact_schema_id")
+        ):
+            diagnostics.append(
+                _completion_behavior_diagnostic(
+                    declaration_path=f"{referrer_path}.{field_name}",
+                    referrer_path=referrer_path,
+                    behavior_id=behavior_id,
+                    reason="verdict_action_schema_mismatch",
+                )
             )
-        )
     policy = policies.get(str(record.get("remediation_policy_id", "")))
     if policy is not None and policy.get("source_action_id") != record.get(
         "gap_action_id"
@@ -2214,7 +2415,10 @@ def _validate_runner_component_authority(
                 message="Terminal result mappings must be an array.",
             )
         return
-    if not isinstance(raw_pin, Mapping) or set(raw_pin) != _RUNNER_COMPONENT_PIN_FIELDS:
+    if not isinstance(raw_pin, Mapping) or frozenset(raw_pin) not in {
+        _LEGACY_RUNNER_COMPONENT_PIN_FIELDS,
+        _RUNNER_COMPONENT_PIN_FIELDS,
+    }:
         _append_runner_component_error(
             diagnostics,
             code="invalid_runner_component_pin",
@@ -2222,6 +2426,18 @@ def _validate_runner_component_authority(
             message="Runner component pin must contain exactly the selected fields.",
         )
         return
+
+    if "max_work_item_payload_bytes" in raw_pin:
+        capacity = raw_pin["max_work_item_payload_bytes"]
+        if capacity is not None and (type(capacity) is not int or capacity <= 0):
+            _append_runner_component_error(
+                diagnostics,
+                code="invalid_runner_component_payload_capacity",
+                declaration_path=(
+                    f"{referrer_path}.component_pin.max_work_item_payload_bytes"
+                ),
+                message="Runner component payload capacity must be a positive integer.",
+            )
 
     for field_name in (
         "component_kind",

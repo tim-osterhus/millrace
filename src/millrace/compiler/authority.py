@@ -148,6 +148,10 @@ AUTHORITY_BOOL_FIELDS: Mapping[str, tuple[str, ...]] = {
 AUTHORITY_INT_FIELDS: Mapping[str, tuple[str, ...]] = {
     "concurrency_policies": ("max_active_runs",),
     "runner_bindings": ("invocation_timeout_seconds",),
+    "completion_behaviors": (
+        "evidence_item_limit",
+        "request_payload_byte_limit",
+    ),
 }
 
 AUTHORITY_TEXT_SEQUENCE_FIELDS: Mapping[str, tuple[str, ...]] = {
@@ -170,7 +174,10 @@ AUTHORITY_TEXT_SEQUENCE_FIELDS: Mapping[str, tuple[str, ...]] = {
         "audit_metadata_requirements",
     ),
     "effect_declarations": ("allowed_reconciliation_statuses",),
-    "completion_behaviors": ("accepted_root_source_kinds",),
+    "completion_behaviors": (
+        "accepted_root_source_kinds",
+        "evidence_artifact_schema_ids",
+    ),
     "runner_bindings": ("stage_kind_ids", "required_capability_ids"),
 }
 
