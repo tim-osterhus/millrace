@@ -63,6 +63,16 @@ from millrace.contracts.transition import (
     TransitionDecision,
     TransitionMutation,
 )
+from millrace.kernel._closure_lifecycle import (
+    assess_closure_readiness,
+    closure_block_overlay_error,
+    closure_enqueue_creator_refusal,
+    closure_evidence_anchor,
+    closure_lifecycle_identity,
+    closure_root_source_matches,
+    closure_target_id,
+    closure_target_key_for,
+)
 from millrace.kernel.errors import StateConcurrencyError, UnsupportedMutationError
 from millrace.kernel.lookups import (
     active_lineage_quarantine_for,
@@ -263,8 +273,7 @@ def _validate_durable_id_uniqueness(
         state.runner_session_cancellation_attempts
     )
     existing_runner_session_completion_ids = _non_empty_ids(
-        record.completion_id
-        for record in state.runner_session_completions.values()
+        record.completion_id for record in state.runner_session_completions.values()
     )
     existing_runner_session_application_input_ids = _non_empty_ids(
         record.application_input_id
@@ -286,9 +295,7 @@ def _validate_durable_id_uniqueness(
     existing_fanout_record_ids = _non_empty_ids(state.fanout_records)
     existing_work_dependency_ids = _non_empty_ids(state.work_dependencies)
     existing_closure_target_ids = _non_empty_ids(state.closure_targets)
-    existing_closure_evaluation_ids = _non_empty_ids(
-        state.closure_evaluations
-    )
+    existing_closure_evaluation_ids = _non_empty_ids(state.closure_evaluations)
     existing_closure_terminal_ids = _non_empty_ids(state.closure_terminal_records)
     existing_remediation_work_ids = _non_empty_ids(state.remediation_work_records)
     existing_closure_blocked_ids = _non_empty_ids(state.closure_blocked_records)
@@ -853,9 +860,7 @@ def _validate_audit_record_agreement(decision: TransitionDecision) -> None:
             "governance event records disagree with mutation records"
         )
     if tuple(mutation_traces) != decision.trace_records:
-        raise UnsupportedMutationError(
-            "trace records disagree with mutation records"
-        )
+        raise UnsupportedMutationError("trace records disagree with mutation records")
 
 
 def _recheck_expectations(
@@ -868,12 +873,8 @@ def _recheck_expectations(
     suspension_active = suspension is not None and suspension.status == "active"
     if decision.expected_dispatch_suspension_absent and suspension_active:
         raise StateConcurrencyError("dispatch suspension changed")
-    expected_suspension_generation = (
-        decision.expected_dispatch_suspension_generation
-    )
-    actual_suspension_generation = (
-        None if suspension is None else suspension.generation
-    )
+    expected_suspension_generation = decision.expected_dispatch_suspension_generation
+    actual_suspension_generation = None if suspension is None else suspension.generation
     if (
         expected_suspension_generation is not None
         and actual_suspension_generation != expected_suspension_generation
@@ -896,6 +897,7 @@ def _recheck_expectations(
         if (
             _creates_work_item(decision.mutations)
             and not decision.expected_run_generations
+            and not decision.expected_lineage_work_item_ids
         ):
             default_plan_ref = state.default_plan_ref
             if (
@@ -904,6 +906,8 @@ def _recheck_expectations(
                 != decision.expected_plan_fingerprint
             ):
                 raise StateConcurrencyError("default plan fingerprint changed")
+
+    _recheck_closure_readiness_identity(state, decision)
 
     for mutation in decision.mutations:
         if (
@@ -935,10 +939,7 @@ def _recheck_expectations(
 
     for activation_id, claimed_by_run_id in decision.expected_activation_claims.items():
         activation = state.activations.get(activation_id)
-        if (
-            activation is None
-            or activation.claimed_by_run_id != claimed_by_run_id
-        ):
+        if activation is None or activation.claimed_by_run_id != claimed_by_run_id:
             raise StateConcurrencyError("activation claim state changed")
 
     for activation_id in decision.expected_activation_unclaimed:
@@ -963,20 +964,20 @@ def _recheck_expectations(
 
     for session_id, snapshot in decision.expected_runner_session_snapshots.items():
         session = state.runner_sessions.get(session_id)
-        if (
-            session is None
-            or (session.state, session.cleanup_disposition) != snapshot
-        ):
+        if session is None or (session.state, session.cleanup_disposition) != snapshot:
             raise StateConcurrencyError("runner session state changed")
 
-    for lineage_id, expected_work_item_ids in (
-        decision.expected_lineage_work_item_ids.items()
-    ):
+    for (
+        lineage_id,
+        expected_work_item_ids,
+    ) in decision.expected_lineage_work_item_ids.items():
+        plan_ref = state.admitted_plans[decision.expected_plan_fingerprint].plan_ref
         actual_work_item_ids = tuple(
             sorted(
                 work_item.ref.work_item_id
                 for work_item in state.work_items.values()
-                if work_item.lineage_id == lineage_id
+                if work_item.ref.plan_ref == plan_ref
+                and work_item.lineage_id == lineage_id
             )
         )
         if actual_work_item_ids != expected_work_item_ids:
@@ -991,6 +992,89 @@ def _recheck_expectations(
     for work_item_id in decision.expected_work_item_open:
         if work_item_id in state.closed_work_items:
             raise StateConcurrencyError("closed work item state changed")
+
+
+def _recheck_closure_readiness_identity(
+    state: RuntimeState,
+    decision: TransitionDecision,
+) -> None:
+    if (
+        decision.input_kind
+        not in (
+            "workflow.open_closure_target",
+            "workflow.evaluate_completion_behavior",
+        )
+        or not decision.expected_lineage_work_item_ids
+    ):
+        return
+    target = evaluation = work_item = activation = None
+    for mutation in decision.mutations:
+        if isinstance(mutation, RecordClosureTarget):
+            target = mutation.record
+        elif isinstance(mutation, RecordClosureEvaluation):
+            evaluation = mutation.record
+        elif isinstance(mutation, CreateWorkItem):
+            work_item = mutation.work_item
+        elif isinstance(mutation, CreateActivation):
+            activation = mutation.activation
+    if target is None and evaluation is not None:
+        target = state.closure_targets.get(evaluation.closure_target_id)
+    if target is None:
+        raise StateConcurrencyError("closure target expectation is missing")
+    if closure_block_overlay_error(state, target=target) is not None:
+        raise StateConcurrencyError("closure block overlay changed")
+    root = state.work_items.get(target.closure_root_work_item_id or "")
+    if root is None or (
+        (root.ref.plan_ref, root.lineage_id)
+        != (target.selected_plan_ref, target.lineage_id)
+        or not closure_root_source_matches(
+            root,
+            root_source_kind=target.root_source_kind,
+            root_source_id=target.root_source_id,
+        )
+        or closure_enqueue_creator_refusal(state, root) is not None
+    ):
+        raise StateConcurrencyError("closure root authority changed")
+    key = closure_target_key_for(target)
+    readiness = assess_closure_readiness(
+        state,
+        lineage_id=target.lineage_id,
+        plan_ref=target.selected_plan_ref,
+        target_key=key,
+    )
+    if readiness.status != "settled":
+        raise StateConcurrencyError("closure readiness changed")
+    if decision.input_kind == "workflow.open_closure_target":
+        expected_input_id, _ = closure_lifecycle_identity(
+            "open", key, readiness.anchor_digest
+        )
+    else:
+        admitted = state.admitted_plans[decision.expected_plan_fingerprint]
+        if (
+            any(value is None for value in (work_item, activation, evaluation))
+            or (
+                work_item.ref.plan_ref,
+                activation.plan_ref,
+                evaluation.selected_plan_ref,
+                target.selected_plan_ref,
+            )
+            != (admitted.plan_ref,) * 4
+        ):
+            raise StateConcurrencyError("closure evaluator PlanRef changed")
+        evidence_anchor = closure_evidence_anchor(
+            work_item.payload.get("closure_evidence_snapshot"),
+            root_item=root,
+            target=target,
+        )
+        if evidence_anchor is None:
+            raise StateConcurrencyError("closure evidence anchor is missing")
+        expected_input_id, _ = closure_lifecycle_identity(
+            "evaluate", key, readiness.anchor_digest, evidence_anchor
+        )
+    if decision.input_id != expected_input_id:
+        raise StateConcurrencyError("closure readiness identity changed")
+    if target.closure_target_id != closure_target_id(key):
+        raise StateConcurrencyError("closure target identity changed")
 
 
 def _apply_record_receipt(

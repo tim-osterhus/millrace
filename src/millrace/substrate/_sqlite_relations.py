@@ -6,6 +6,7 @@ import json
 from collections.abc import Iterable, Mapping
 from hashlib import sha256
 
+import millrace.kernel._closure_lifecycle as _closure
 from millrace.contracts import ActionId, ArtifactSchemaId, PartitionId, StageKindId
 from millrace.contracts.compiled_plan import (
     ArtifactSchemaDeclaration,
@@ -64,6 +65,8 @@ from millrace.contracts.transition import (
     CancelQueuedLineage,
     CancelQueuedWork,
     ClaimWork,
+    EvaluateCompletionBehavior,
+    OpenClosureTarget,
     ReconcileEffect,
     ResumeDispatch,
     RunnerResultObserved,
@@ -2663,8 +2666,28 @@ def _validate_closure_records(
     activation_ids: frozenset[str],
     run_ids: frozenset[str],
 ) -> None:
+    if any(
+        key != value.closure_target_id for key, value in state.closure_targets.items()
+    ) or any(
+        key != value.record_id
+        for mapping in (
+            state.closure_evaluations,
+            state.closure_terminal_records,
+            state.remediation_work_records,
+            state.closure_blocked_records,
+        )
+        for key, value in mapping.items()
+    ):
+        raise StorageIntegrityError("closure record mapping key must match record ID")
     closure_target_ids = frozenset(state.closure_targets)
     terminal_record_ids = frozenset(state.closure_terminal_records)
+    _validate_unique(
+        "closure_targets.logical_key",
+        (
+            _closure.closure_target_key_for(target)
+            for target in state.closure_targets.values()
+        ),
+    )
     for target in state.closure_targets.values():
         _validate_closure_target_authority(state, target)
         if target.status == "open":
@@ -2686,6 +2709,7 @@ def _validate_closure_records(
         else:
             raise StorageIntegrityError("closure_targets.status is unsupported")
 
+    evaluation_anchors: set[tuple[object, ...]] = set()
     for activation in state.closure_evaluations.values():
         target, behavior = _validate_closure_child_target(
             state,
@@ -2706,32 +2730,37 @@ def _validate_closure_records(
             "activations",
         )
         work_item = state.work_items[activation.target_work_item_id]
-        target_activation = state.activations[activation.target_activation_id]
-        if activation.request_kind != behavior.request_kind:
-            raise StorageIntegrityError(
-                "closure_evaluations.request_kind must match selected "
-                "completion behavior"
-            )
-        if activation.request_kind != target.request_kind:
-            raise StorageIntegrityError(
-                "closure_evaluations.request_kind must match closure target"
-            )
+        if _closure.closure_creator_refusal(
+            state,
+            EvaluateCompletionBehavior(
+                activation.created_by_input_id,
+                activation.selected_plan_ref,
+                str(activation.completion_behavior_id),
+                activation.closure_target_id,
+            ),
+        ) is not None:
+            raise StorageIntegrityError("closure creator payload digest is invalid")
         if (
-            target_activation.work_item_id != activation.target_work_item_id
-            or work_item.ref.plan_ref != activation.selected_plan_ref
-            or target_activation.plan_ref != activation.selected_plan_ref
-            or work_item.lineage_id != activation.lineage_id
-            or target_activation.lineage_id != activation.lineage_id
-            or work_item.queue_family_id != behavior.request_queue_family_id
-            or target_activation.queue_family_id != behavior.request_queue_family_id
-            or target_activation.graph_node_id != behavior.target_graph_node_id
-            or target_activation.stage_kind_id != behavior.target_stage_kind_id
-            or target_activation.runner_binding_id != behavior.runner_binding_id
+            _closure._evaluation_parts(state, activation, target, behavior)[2]
+            is not None
         ):
             raise StorageIntegrityError(
                 "closure_evaluations target context must match selected "
                 "completion behavior"
             )
+        anchor = _closure.closure_evidence_anchor(
+            work_item.payload.get("closure_evidence_snapshot"), target=target
+        )
+        if anchor is None:
+            raise StorageIntegrityError(
+                "closure_evaluations evidence anchor is invalid"
+            )
+        anchor_key = (target.closure_target_id, *tuple(sorted(anchor.items())))
+        if anchor_key in evaluation_anchors:
+            raise StorageIntegrityError(
+                "closure_evaluations evidence anchor must be unique"
+            )
+        evaluation_anchors.add(anchor_key)
 
     for terminal in state.closure_terminal_records.values():
         target, behavior = _validate_closure_child_target(
@@ -2777,18 +2806,12 @@ def _validate_closure_records(
             closure_target_ids,
             blocked,
         )
-        _validate_closure_source_action(
-            state,
-            table_name="closure_blocked_records",
-            behavior=behavior,
-            target=target,
-            selected_plan_ref=blocked.selected_plan_ref,
-            source_run_id=blocked.source_run_id,
-            source_action_id=blocked.source_action_id,
-            expected_action_id=behavior.blocked_action_id,
-            source_artifact_id=None,
-            run_ids=run_ids,
-        )
+        if _closure.closure_block_overlay_error(
+            state, target=target, behavior=behavior
+        ):
+            raise StorageIntegrityError(
+                "closure block overlay operator_required or authority is invalid"
+            )
 
 
 def _validate_closure_target_authority(
@@ -2821,11 +2844,34 @@ def _validate_closure_target_authority(
             "closure_targets.root_source_kind must be accepted by selected "
             "completion behavior"
         )
+    expected_window = {"kind": "lineage", "lineage_id": target.lineage_id}
+    if target.evidence_window != expected_window:
+        raise StorageIntegrityError("closure_targets.evidence_window is noncanonical")
     if behavior.root_source_resolution == "runtime_inventory":
         selected_plan = state.admitted_plans[
             target.selected_plan_ref.authority_fingerprint
         ].selected_plan
         _validate_closure_root_inventory(state, target, selected_plan)
+    target_key = _closure.closure_target_key_for(target)
+    if target.closure_target_id != _closure.closure_target_id(target_key):
+        raise StorageIntegrityError("closure_targets.closure_target_id is noncanonical")
+    if _closure.closure_creator_refusal(
+        state,
+        OpenClosureTarget(
+            target.opened_by_input_id,
+            target.selected_plan_ref,
+            str(target.completion_behavior_id),
+            target.closure_target_id,
+            target.lineage_id,
+            target.root_source_kind,
+            target.root_source_id,
+            target.closure_root_work_item_id,
+            target.request_kind,
+            target.target_graph_node_id,
+            target.evidence_window,
+        ),
+    ) is not None:
+        raise StorageIntegrityError("closure creator payload digest is invalid")
     return behavior
 
 
@@ -2846,12 +2892,20 @@ def _validate_closure_root_inventory(
         work_item
         for work_item in state.work_items.values()
         if work_item.queue_family_id in root_inventory_queue_ids
-        and _work_item_root_source_matches(
+        and _closure.closure_root_source_matches(
             work_item,
             root_source_kind=target.root_source_kind,
             root_source_id=target.root_source_id,
         )
         and work_item.ref.plan_ref == target.selected_plan_ref
+    )
+    if any(
+        not isinstance(item.lineage_id, str) or not item.lineage_id.strip()
+        for item in matches
+    ):
+        raise StorageIntegrityError("invalid_closure_root_lineage")
+    matches = tuple(
+        item for item in matches if item.lineage_id == item.ref.work_item_id
     )
     if not matches:
         raise StorageIntegrityError(
@@ -2869,20 +2923,8 @@ def _validate_closure_root_inventory(
         raise StorageIntegrityError(
             "closure_targets.lineage_id must match runtime inventory root lineage"
         )
-
-
-def _work_item_root_source_matches(
-    work_item: WorkItem,
-    *,
-    root_source_kind: str,
-    root_source_id: str,
-) -> bool:
-    raw_root_source = work_item.payload.get("root_source")
-    return (
-        isinstance(raw_root_source, Mapping)
-        and raw_root_source.get("kind") == root_source_kind
-        and raw_root_source.get("source_id") == root_source_id
-    )
+    if _closure.closure_enqueue_creator_refusal(state, matches[0]) is not None:
+        raise StorageIntegrityError("closure root creator authority is invalid")
 
 
 def _validate_closure_child_target(
@@ -2908,7 +2950,11 @@ def _validate_closure_child_target(
         raise StorageIntegrityError(f"{table_name} PlanRef must match closure target")
     if record.lineage_id != target.lineage_id:
         raise StorageIntegrityError(f"{table_name}.lineage_id must match target")
-    completion_behavior_id = getattr(record, "completion_behavior_id", None)
+    completion_behavior_id = (
+        None
+        if isinstance(record, RemediationWorkRecord)
+        else record.completion_behavior_id
+    )
     if (
         completion_behavior_id is not None
         and completion_behavior_id != target.completion_behavior_id
@@ -4990,8 +5036,8 @@ def _validate_run_and_work_item_record(
         )
 
 
-def _validate_unique(column: str, values: Iterable[str]) -> None:
-    seen: set[str] = set()
+def _validate_unique(column: str, values: Iterable[object]) -> None:
+    seen: set[object] = set()
     for value in values:
         if value in seen:
             raise StorageIntegrityError(f"{column} must be unique")

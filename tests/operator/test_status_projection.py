@@ -17,7 +17,6 @@ from millrace.contracts.ids import (
     StageKindId,
 )
 from millrace.contracts.state import (
-    ClosedWorkItemRecord,
     CooldownWaitRecord,
     OperatorInterventionRecord,
     PlanRef,
@@ -26,14 +25,12 @@ from millrace.contracts.state import (
 )
 from millrace.contracts.transition import (
     AdmitPlan,
-    EnqueueWork,
-    EvaluateCompletionBehavior,
-    OpenClosureTarget,
     ReconcileEffect,
     RunnerResultObserved,
     SelectDefaultPlan,
 )
 from millrace.kernel import apply, empty_runtime_state
+from millrace.kernel.lifecycle import project_next_lifecycle_transition
 from millrace.operator import operator_status
 from millrace.testing import (
     decide_with_fake_runner_completion as decide,
@@ -102,320 +99,16 @@ def _generic_effect_state(*, reconciliation_status: str | None = None):
 
 
 def _generic_closure_state(*, manual_root: bool = False):
-    source = generic_lifecycle.source()
-    source_schema = next(
-        row
-        for row in source["artifact_schemas"]
-        if row["id"] == generic_lifecycle.SOURCE_SCHEMA_ID
-    )["schema"]
-    source_schema["properties"]["root_source"] = {
-        "type": "object",
-        "required": ("kind", "source_id"),
-        "properties": {
-            "kind": {"type": "string", "min_length": 1},
-            "source_id": {"type": "string", "min_length": 1},
-        },
-    }
-    source_schema["properties"].update(
-        {
-            "title": {"type": "string", "min_length": 1},
-            "body": {"type": "string", "min_length": 1},
-        }
-    )
-    source_schema["required"] = ()
-    beta_schema = next(
-        row
-        for row in source["artifact_schemas"]
-        if row["id"] == generic_lifecycle.BETA_REPORT_SCHEMA_ID
-    )
-    beta_schema["schema"] = _closure_verdict_schema()
-    review = next(row for row in source["stage_kinds"] if row["id"] == "review_stage")
-    review["declared_outcome_ids"] = (
-        "lifecycle.review.complete",
-        "lifecycle.review.gap",
-        "lifecycle.review.blocked",
-    )
-    source["terminal_outcomes"].extend(
-        (
-            {
-                "id": "lifecycle.review.complete",
-                "stage_kind_id": "review_stage",
-                "marker": "REVIEW_COMPLETE",
-            },
-            {
-                "id": "lifecycle.review.gap",
-                "stage_kind_id": "review_stage",
-                "marker": "REMEDIATION_NEEDED",
-            },
-            {
-                "id": "lifecycle.review.blocked",
-                "stage_kind_id": "review_stage",
-                "marker": "BLOCKED",
-            },
-        )
-    )
-    source["terminal_actions"].extend(
-        (
-            {
-                "id": "lifecycle.review.close",
-                "stage_kind_id": "review_stage",
-                "outcome_id": "lifecycle.review.complete",
-                "kind": "complete_work_item",
-                "artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
-            },
-            {
-                "id": "lifecycle.review.gap_action",
-                "stage_kind_id": "review_stage",
-                "outcome_id": "lifecycle.review.gap",
-                "kind": "closure_gap",
-                "artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
-            },
-            {
-                "id": "lifecycle.review.block_action",
-                "stage_kind_id": "review_stage",
-                "outcome_id": "lifecycle.review.blocked",
-                "kind": "block_work_item",
-                "artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
-            },
-        )
-    )
-    source["completion_behaviors"] = (
-        {
-            "id": "lifecycle.closure",
-            "trigger": "backlog_drained",
-            "readiness_rule": "no_open_lineage_work",
-            "request_kind": "closure_target",
-            "target_selector": "active_closure_target",
-            "target_stage_kind_id": "review_stage",
-            "target_graph_node_id": "lifecycle.review.start",
-            "runner_binding_id": "lifecycle.runner",
-            "request_queue_family_id": "joined_bundle",
-            "pass_action_id": "lifecycle.review.close",
-            "gap_action_id": "lifecycle.review.gap_action",
-            "blocked_action_id": "lifecycle.review.block_action",
-            "verdict_artifact_schema_id": generic_lifecycle.BETA_REPORT_SCHEMA_ID,
-            "evidence_artifact_schema_ids": (generic_lifecycle.BETA_REPORT_SCHEMA_ID,),
-            "evidence_item_limit": 64,
-            "request_payload_byte_limit": 16_384,
-            "remediation_policy_id": "lifecycle.remediation",
-            "accepted_root_source_kinds": ("manual", "probe"),
-            "root_source_resolution": "runtime_inventory",
-            "evidence_window_policy": "lineage",
-            "rubric_policy": "reuse_or_create",
-            "blocked_work_policy": "suppress",
-            "skip_if_closed": True,
-        },
-    )
-    source["remediation_policies"] = (
-        {
-            "id": "lifecycle.remediation",
-            "source_action_id": "lifecycle.review.gap_action",
-            "target_queue_family_id": "alpha_branch",
-            "target_stage_kind_id": "alpha_stage",
-            "target_graph_node_id": "lifecycle.alpha.start",
-            "target_runner_binding_id": "lifecycle.runner",
-            "payload_schema_id": generic_lifecycle.SOURCE_SCHEMA_ID,
-            "guidance_source": "source_artifact",
-            "dedupe_key": "closure_target_and_source_artifact",
-            "duplicate_policy": "refuse",
-            "suppression_policy": "suppress_repeated_same_evidence",
-            "root_source_kind": "probe",
-        },
-    )
-    runner = next(
-        row for row in source["runner_bindings"] if row["id"] == "lifecycle.runner"
-    )
-    runner["component_pin"] = {
-        "component_kind": "closure.runner",
-        "component_id": "closure-evaluator",
-        "component_version": "1",
-        "provider_distribution": "millrace-test",
-        "provider_version": "1",
-        "descriptor_media_type": "application/json",
-        "descriptor_sha256": "a" * 64,
-        "required_capability_ids": (),
-        "legal_terminal_result_ids": ("BLOCKED", "COMPLETE"),
-        "max_work_item_payload_bytes": 16_384,
-    }
-    runner["terminal_result_mappings"] = ()
-    plan, fingerprint = generic_lifecycle.compile_lifecycle(source)
-    state, _plan, _fingerprint = generic_lifecycle.admitted_state(
-        plan=plan,
-        fingerprint=fingerprint,
-    )
     root_source_kind = "manual" if manual_root else "probe"
-    payload = {
-        **generic_lifecycle.source_payload(),
-        "root_source": {"kind": root_source_kind, "source_id": "source-1"},
-    }
-    state = generic_lifecycle.apply_accepted_input(
-        state,
-        EnqueueWork(
-            "enqueue-origin",
-            queue_family_id=QueueFamilyId("origin"),
-            payload=payload,
-        ),
-        generic_lifecycle.context(
-            "enqueue-origin",
-            work_item_id="work-origin",
-            activation_id="activation-origin",
-        ),
+    source = generic_lifecycle.source_with_completion_behavior(
+        accepted_root_source_kinds=("manual", "probe"),
+        remediation_root_source_kind="probe",
     )
-    lineage_id = "work-origin"
-    root_work_item_id = "work-origin"
-    transition_input = OpenClosureTarget(
-        "open-lifecycle-closure",
-        selected_plan_ref=state.default_plan_ref,
-        completion_behavior_id="lifecycle.closure",
-        closure_target_id="lifecycle-closure",
-        lineage_id=lineage_id,
+    return generic_lifecycle.closure_evaluation_state(
+        source,
         root_source_kind=root_source_kind,
         root_source_id="source-1",
-        closure_root_work_item_id=root_work_item_id,
-        request_kind="closure_target",
-        target_graph_node_id="lifecycle.review.start",
-        evidence_window={"kind": "lineage", "lineage_id": lineage_id},
     )
-    state = generic_lifecycle.apply_accepted_input(
-        state,
-        transition_input,
-        generic_lifecycle.context(transition_input.input_id),
-    )
-    if root_work_item_id is not None:
-        state = replace(
-            state,
-            closed_work_items={
-                root_work_item_id: ClosedWorkItemRecord(
-                    record_id=root_work_item_id,
-                    work_item_id=root_work_item_id,
-                    source_run_id=None,
-                    action_id=None,
-                    created_by_input_id="close-root",
-                )
-            },
-        )
-    transition_input = EvaluateCompletionBehavior(
-        "evaluate-lifecycle-closure",
-        selected_plan_ref=state.default_plan_ref,
-        completion_behavior_id="lifecycle.closure",
-        closure_target_id="lifecycle-closure",
-    )
-    state = generic_lifecycle.apply_accepted_input(
-        state,
-        transition_input,
-        generic_lifecycle.context(
-            transition_input.input_id,
-            work_item_id="work-review-closure",
-            activation_id="activation-review-closure",
-        ),
-    )
-    return state, plan, fingerprint
-
-
-def _closure_verdict_schema() -> dict[str, object]:
-    string = {"type": "string", "min_length": 1}
-    evidence_ref = {
-        "type": "object",
-        "required": ("evidence_id", "summary"),
-        "properties": {"evidence_id": string, "summary": string},
-    }
-    criterion = {
-        "type": "object",
-        "required": ("criterion_id", "requirement", "evidence_rule"),
-        "properties": {
-            "criterion_id": string,
-            "requirement": string,
-            "evidence_rule": string,
-        },
-    }
-    result = {
-        "type": "object",
-        "required": ("criterion_id", "status", "provenance", "evidence_refs"),
-        "properties": {
-            "criterion_id": string,
-            "status": {"enum": ("passed", "failed", "blocked")},
-            "provenance": {
-                "enum": (
-                    "fresh",
-                    "revalidated",
-                    "historical_only",
-                    "missing",
-                )
-            },
-            "evidence_refs": {
-                "type": "array",
-                "items": evidence_ref,
-                "unique_by": "evidence_id",
-            },
-        },
-    }
-    guidance = {
-        "type": "object",
-        "required": ("guidance_id", "summary", "criterion_refs"),
-        "properties": {
-            "guidance_id": string,
-            "summary": string,
-            "criterion_refs": {
-                "type": "array",
-                "min_items": 1,
-                "items": {
-                    "type": "object",
-                    "required": ("criterion_id",),
-                    "properties": {"criterion_id": string},
-                },
-                "unique_by": "criterion_id",
-            },
-        },
-    }
-    properties = {
-        "bundle_id": string,
-        "artifact_kind": string,
-        "summary": string,
-        "closure_target_id": string,
-        "root_contract_digest": string,
-        "freshness_anchor_digest": string,
-        "rubric": {
-            "type": "object",
-            "required": ("criteria",),
-            "properties": {
-                "criteria": {
-                    "type": "array",
-                    "min_items": 1,
-                    "items": criterion,
-                    "unique_by": "criterion_id",
-                }
-            },
-        },
-        "criterion_results": {
-            "type": "array",
-            "min_items": 1,
-            "items": result,
-            "unique_by": "criterion_id",
-        },
-        "observations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ("observation_id", "summary"),
-                "properties": {"observation_id": string, "summary": string},
-            },
-            "unique_by": "observation_id",
-        },
-        "remediation_guidance": {
-            "type": "array",
-            "items": guidance,
-            "unique_by": "guidance_id",
-        },
-        "confidence": {"enum": ("high", "medium", "low")},
-        "residual_uncertainty": string,
-    }
-    return {
-        "type": "object",
-        "required": tuple(
-            key for key in properties if key != "bundle_id"
-        ),
-        "properties": properties,
-    }
 
 
 def _closure_verdict_payload(
@@ -423,8 +116,8 @@ def _closure_verdict_payload(
     *,
     marker: str,
 ) -> dict[str, object]:
-    gap = marker == "REMEDIATION_NEEDED"
-    blocked = marker == "BLOCKED"
+    gap = marker in {"REVIEW_GAP", "REMEDIATION_NEEDED"}
+    blocked = marker in {"REVIEW_BLOCKED", "BLOCKED"}
     result = {
         "criterion_id": "criterion-1",
         "status": "blocked" if blocked else "failed" if gap else "passed",
@@ -1327,7 +1020,7 @@ def test_status_projects_generic_lifecycle_rows_and_excludes_corruption(
 def test_status_projects_generic_closure_lifecycle(case: str) -> None:
     state, plan, fingerprint = _generic_closure_state(manual_root=case == "manual")
     if case == "read_only_corruption":
-        target = state.closure_targets["lifecycle-closure"]
+        target = next(iter(state.closure_targets.values()))
         drifted = replace(
             state,
             closure_targets={
@@ -1339,13 +1032,15 @@ def test_status_projects_generic_closure_lifecycle(case: str) -> None:
         assert drifted == before
         return
     if case in {"remediation", "blocked"}:
+        evaluation = next(iter(state.closure_evaluations.values()))
         state = generic_lifecycle.claim_activation(
             state,
-            activation_id="activation-review-closure",
+            activation_id=evaluation.target_activation_id,
             suffix="review-closure",
         )
         run = state.runs["run-review-closure"]
         activation = state.activations[run.activation_id]
+        work_item = state.work_items[evaluation.target_work_item_id]
         input_id = f"observe-review-{case}"
         state = generic_lifecycle.apply_accepted_input(
             state,
@@ -1357,16 +1052,12 @@ def test_status_projects_generic_closure_lifecycle(case: str) -> None:
                     activation=activation,
                     plan_fingerprint=fingerprint,
                     marker=(
-                        "REMEDIATION_NEEDED" if case == "remediation" else "BLOCKED"
+                        "REVIEW_GAP" if case == "remediation" else "REVIEW_BLOCKED"
                     ),
                     artifact_payload=_closure_verdict_payload(
-                        state.work_items["work-review-closure"].payload[
-                            "closure_evidence_snapshot"
-                        ],
+                        work_item.payload["closure_evidence_snapshot"],
                         marker=(
-                            "REMEDIATION_NEEDED"
-                            if case == "remediation"
-                            else "BLOCKED"
+                            "REVIEW_GAP" if case == "remediation" else "REVIEW_BLOCKED"
                         ),
                     ),
                 ),
@@ -1382,7 +1073,7 @@ def test_status_projects_generic_closure_lifecycle(case: str) -> None:
         )
     status = operator_status(state)
     target = status.closure_targets[0]
-    assert target.closure_target_id == "lifecycle-closure"
+    assert target.closure_target_id in state.closure_targets
     assert target.selected_plan_fingerprint == fingerprint
     if case == "manual":
         assert target.root_source_kind == "manual"
@@ -1392,9 +1083,8 @@ def test_status_projects_generic_closure_lifecycle(case: str) -> None:
         assert status.closure_remediations[0].target_work_item_id == "work-remediation"
     elif case == "blocked":
         assert target.operator_required is True
-        assert status.closure_blocks[0].source_action_id == (
-            "lifecycle.review.block_action"
-        )
+        assert status.closure_blocks[0].source_action_id == ("lifecycle.review.block")
+        assert project_next_lifecycle_transition(state).candidate is None
     else:
         assert target.status == "open"
         assert status.closure_evaluations[0].status == "ready"

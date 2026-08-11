@@ -52,6 +52,7 @@ SUBSTRATE_KERNEL_POLICY_MODULES = (
     "millrace.kernel.fanout_policy",
     "millrace.kernel.join_policy",
     "millrace.kernel.observation_policy",
+    "millrace.kernel._closure_lifecycle",
 )
 SUBSTRATE_KERNEL_POLICY_CONSUMER = Path(
     "millrace/substrate/_sqlite_relations.py"

@@ -21,6 +21,7 @@ CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 PYTEST_CONFTEST = PROJECT_ROOT / "tests" / "conftest.py"
 
 TARGET_KERNEL_MODULES = {
+    "_closure_lifecycle",
     "audit",
     "decision",
     "errors",
@@ -119,6 +120,7 @@ PUBLIC_COMPILER_ENTRYPOINTS = {
 }
 
 PACKAGE_LOCAL_IMPLEMENTATION_MODULES = {
+    "millrace.kernel._closure_lifecycle",
     "millrace.kernel.audit",
     "millrace.kernel.decision",
     "millrace.kernel.errors",
@@ -242,10 +244,12 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
     "millrace.kernel.audit": frozenset[str](),
     "millrace.kernel.decision": frozenset(
         {
+            "millrace.kernel._closure_lifecycle",
             "millrace.kernel.audit",
             "millrace.kernel.fanout_policy",
             "millrace.kernel.joins",
             "millrace.kernel.lookups",
+            "millrace.kernel.observation_policy",
             "millrace.kernel.operator_waits",
             "millrace.kernel.runner_sessions",
             "millrace.kernel.schema",
@@ -269,6 +273,7 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
     ),
     "millrace.kernel.lifecycle": frozenset(
         {
+            "millrace.kernel._closure_lifecycle",
             "millrace.kernel.fanout_policy",
             "millrace.kernel.join_policy",
         }
@@ -276,9 +281,13 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
     "millrace.kernel.lookups": frozenset[str](),
     "millrace.kernel.mutations": frozenset(
         {
+            "millrace.kernel._closure_lifecycle",
             "millrace.kernel.errors",
             "millrace.kernel.lookups",
         }
+    ),
+    "millrace.kernel._closure_lifecycle": frozenset(
+        {"millrace.kernel.observation_policy"}
     ),
     "millrace.kernel.observation_policy": frozenset(
         {"millrace.kernel.lookups", "millrace.kernel.projection"}

@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import replace
+from functools import partial
 from typing import Protocol
+
+from tests.contracts import test_schema
 
 from millrace.compiler import SelectedRunnerAdapterPolicy, compile_workflow
 from millrace.compiler.canonical import authority_fingerprint
@@ -34,6 +37,7 @@ from millrace.contracts.transition import (
     artifact_payload_digest,
 )
 from millrace.kernel import apply, empty_runtime_state
+from millrace.kernel.lifecycle import project_next_lifecycle_transition
 from millrace.testing import (
     decide_with_fake_runner_completion as decide,
 )
@@ -345,6 +349,128 @@ def source_with_reversed_fanouts() -> dict[str, object]:
     return workflow_source
 
 
+def source_with_completion_behavior(
+    *,
+    accepted_root_source_kinds: tuple[str, ...] = ("origin",),
+    remediation_root_source_kind: str | None = None,
+    workflow_version: str = "0.1",
+) -> dict[str, object]:
+    source_data = source_with_version(workflow_version)
+    source_data["fanout_declarations"] = []
+    schemas = source_data["artifact_schemas"]
+    source_body = next(
+        row["schema"] for row in schemas if row["id"] == SOURCE_SCHEMA_ID
+    )
+    source_body["required"] = ()
+    source_body["properties"]["root_source"] = {
+        "type": "object",
+        "required": ("kind", "source_id"),
+        "properties": dict.fromkeys(
+            ("kind", "source_id"), source_body["properties"]["bundle_id"]
+        ),
+    }
+    source_body["properties"].update(
+        title={"type": "string", "min_length": 1},
+        body={"type": "string", "min_length": 1},
+    )
+    next(row for row in source_data["stage_kinds"] if row["id"] == "review_stage")[
+        "declared_outcome_ids"
+    ] = ("lifecycle.review.passed", "lifecycle.review.gap", "lifecycle.review.blocked")
+    for outcome_id, marker, action_id, kind in (
+        (
+            "lifecycle.review.passed",
+            "REVIEW_PASSED",
+            "lifecycle.review.pass",
+            "complete_work_item",
+        ),
+        ("lifecycle.review.gap", "REVIEW_GAP", "lifecycle.review.gap", "closure_gap"),
+        (
+            "lifecycle.review.blocked",
+            "REVIEW_BLOCKED",
+            "lifecycle.review.block",
+            "block_work_item",
+        ),
+    ):
+        source_data["terminal_outcomes"].append(
+            dict(id=outcome_id, stage_kind_id="review_stage", marker=marker)
+        )
+        source_data["terminal_actions"].append(
+            _artifact_action(
+                action_id,
+                stage_kind_id="review_stage",
+                outcome_id=outcome_id,
+                artifact_schema_id=BETA_REPORT_SCHEMA_ID,
+                kind=kind,
+            )
+        )
+    beta = next(row for row in schemas if row["id"] == BETA_REPORT_SCHEMA_ID)
+    beta["schema"] = test_schema._closure_verdict_schema()
+    beta["schema"]["properties"]["bundle_id"] = {"type": "string", "min_length": 1}
+    next(row for row in source_data["stage_kinds"] if row["id"] == "alpha_stage")[
+        "artifact_schema_ids"
+    ] += (SOURCE_SCHEMA_ID,)
+    source_data["completion_behaviors"] = [
+        dict(
+            id="lifecycle.completion",
+            trigger="backlog_drained",
+            readiness_rule="no_open_lineage_work",
+            request_kind="closure_target",
+            target_selector="active_closure_target",
+            target_stage_kind_id="review_stage",
+            target_graph_node_id="lifecycle.review.start",
+            runner_binding_id="lifecycle.runner",
+            request_queue_family_id="joined_bundle",
+            pass_action_id="lifecycle.review.pass",
+            gap_action_id="lifecycle.review.gap",
+            blocked_action_id="lifecycle.review.block",
+            verdict_artifact_schema_id=BETA_REPORT_SCHEMA_ID,
+            evidence_artifact_schema_ids=(BETA_REPORT_SCHEMA_ID,),
+            evidence_item_limit=64,
+            request_payload_byte_limit=16_384,
+            remediation_policy_id="lifecycle.remediation",
+            accepted_root_source_kinds=accepted_root_source_kinds,
+            root_source_resolution="runtime_inventory",
+            evidence_window_policy="lineage",
+            rubric_policy="reuse_or_create",
+            blocked_work_policy="suppress",
+            skip_if_closed=True,
+        )
+    ]
+    source_data["remediation_policies"] = [
+        dict(
+            id="lifecycle.remediation",
+            source_action_id="lifecycle.review.gap",
+            target_queue_family_id="alpha_branch",
+            target_stage_kind_id="alpha_stage",
+            target_graph_node_id="lifecycle.alpha.start",
+            target_runner_binding_id="lifecycle.runner",
+            payload_schema_id=SOURCE_SCHEMA_ID,
+            guidance_source="source_artifact",
+            dedupe_key="closure_target_and_source_artifact",
+            duplicate_policy="refuse",
+            suppression_policy="suppress_repeated_same_evidence",
+            root_source_kind=remediation_root_source_kind
+            or accepted_root_source_kinds[0],
+        )
+    ]
+    source_data["runner_bindings"][0].update(
+        component_pin=dict(
+            component_kind="closure.runner",
+            component_id="closure-evaluator",
+            component_version="1",
+            provider_distribution="millrace-test",
+            provider_version="1",
+            descriptor_media_type="application/json",
+            descriptor_sha256="a" * 64,
+            required_capability_ids=(),
+            legal_terminal_result_ids=("BLOCKED", "COMPLETE"),
+            max_work_item_payload_bytes=16_384,
+        ),
+        terminal_result_mappings=(),
+    )
+    return source_data
+
+
 def source_with_optional_item_collection() -> dict[str, object]:
     workflow_source = source()
     schemas = workflow_source["artifact_schemas"]
@@ -591,12 +717,13 @@ def _artifact_action(
     stage_kind_id: str,
     outcome_id: str,
     artifact_schema_id: str,
+    kind: str = "complete_work_item",
 ) -> dict[str, object]:
     return {
         "id": action_id,
         "stage_kind_id": stage_kind_id,
         "outcome_id": outcome_id,
-        "kind": "complete_work_item",
+        "kind": kind,
         "artifact_schema_id": artifact_schema_id,
         "presentation": {"display_name": action_id},
     }
@@ -750,20 +877,21 @@ def origin_claimed_state() -> tuple[RuntimeState, SelectedCompiledPlan, str]:
 
 
 def enqueue_origin(
-    state: RuntimeState, *, input_id: str = "enqueue-origin"
+    state: RuntimeState,
+    *,
+    input_id: str = "enqueue-origin",
+    payload: Mapping[str, AuthorityValue] | None = None,
+    work_item_id: str | None = None,
+    activation_id: str | None = None,
 ) -> RuntimeState:
     return apply_accepted_input(
         state,
         EnqueueWork(
             input_id,
             queue_family_id=QueueFamilyId("origin"),
-            payload=source_payload(),
+            payload=payload or source_payload(),
         ),
-        context(
-            input_id,
-            work_item_id="work-origin" if input_id == "enqueue-origin" else None,
-            activation_id="activation-origin" if input_id == "enqueue-origin" else None,
-        ),
+        context(input_id, work_item_id=work_item_id, activation_id=activation_id),
     )
 
 
@@ -800,6 +928,25 @@ def origin_closed_state() -> tuple[RuntimeState, SelectedCompiledPlan, str]:
         plan,
         fingerprint,
     )
+
+
+def _closure_state(
+    workflow_source: Mapping[str, object] | None = None,
+    *,
+    steps: int,
+    root_source_kind: str = "origin",
+    root_source_id: str = "generic-root",
+) -> tuple[RuntimeState, SelectedCompiledPlan, str]:
+    return origin_closed_state_from_source(
+        workflow_source or source_with_completion_behavior(),
+        root_source={"kind": root_source_kind, "source_id": root_source_id},
+        steps=steps,
+    )
+
+
+closure_origin_closed_state = partial(_closure_state, steps=0)
+closure_opened_state = partial(_closure_state, steps=1)
+closure_evaluation_state = partial(_closure_state, steps=2)
 
 
 def origin_closed_with_admitted_plan_ref_drift() -> tuple[
@@ -847,24 +994,33 @@ def origin_closed_with_admitted_plan_ref_drift() -> tuple[
 
 def origin_closed_state_from_source(
     workflow_source: Mapping[str, object],
+    *,
+    root_source: Mapping[str, str] | None = None,
+    steps: int = 0,
 ) -> tuple[RuntimeState, SelectedCompiledPlan, str]:
     plan, fingerprint = compile_lifecycle(workflow_source)
     state, plan, fingerprint = admitted_state(plan=plan, fingerprint=fingerprint)
-    state = enqueue_origin(state)
-    state = claim_activation(state, activation_id="activation-origin", suffix="origin")
-    return (
-        apply_observation(
-            state,
-            plan=plan,
-            fingerprint=fingerprint,
-            run_id="run-origin",
-            input_id="observe-origin",
-            marker="SOURCE_READY",
-            artifact_payload=source_payload(),
-        ),
-        plan,
-        fingerprint,
+    payload = (
+        source_payload()
+        if root_source is None
+        else {**source_payload(), "root_source": root_source}
     )
+    state = enqueue_origin(state, payload=payload)
+    state = claim_activation(state, activation_id="activation-origin", suffix="origin")
+    state = apply_observation(
+        state,
+        plan=plan,
+        fingerprint=fingerprint,
+        run_id="run-origin",
+        input_id="observe-origin",
+        marker="SOURCE_READY",
+        artifact_payload=payload,
+    )
+    for expected_kind in ("open", "evaluate")[:steps]:
+        candidate = project_next_lifecycle_transition(state).candidate
+        assert candidate is not None and candidate.kind == expected_kind
+        state = apply_candidate(state, candidate)
+    return state, plan, fingerprint
 
 
 def unrelated_side_report_state() -> tuple[RuntimeState, SelectedCompiledPlan, str]:

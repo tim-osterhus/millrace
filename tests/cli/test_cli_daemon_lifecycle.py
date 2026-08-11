@@ -17,15 +17,13 @@ from millrace.adapters.runner_contract import AdapterLocalConfig
 from support import generic_lifecycle
 
 
-def test_daemon_applies_lifecycle_before_runner_dispatch(
+def test_daemon_closure_lifecycle_fences_stale_state_without_runner_dispatch(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     from millrace.adapters.cli import daemon
 
-    state, _plan, _fingerprint = (
-        generic_lifecycle.origin_closed_with_ready_activation_state()
-    )
+    state, _plan, _fingerprint = generic_lifecycle.closure_origin_closed_state()
     runtime = _runtime(tmp_path, state)
     paths = runtime.paths
     runtime.close()
@@ -46,7 +44,7 @@ def test_daemon_applies_lifecycle_before_runner_dispatch(
 
     assert summary.last_result["code"] == "lifecycle_transition_applied"
     assert summary.lifecycle_transitions_applied == 1
-    assert after.fanout_records
+    assert after.closure_targets
 
 
 def test_daemon_applies_lifecycle_then_ready_runner_on_following_tick(

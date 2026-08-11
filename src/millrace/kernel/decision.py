@@ -12,6 +12,7 @@ from dataclasses import replace
 from hashlib import sha256
 from typing import cast
 
+import millrace.kernel._closure_lifecycle as _closure
 from millrace.contracts.compiled_plan import (
     ArtifactSchemaDeclaration,
     AuthorityValue,
@@ -68,7 +69,6 @@ from millrace.contracts.state import (
     DispatchSuspensionRecord,
     EffectProposalRecord,
     EffectReconciliationRecord,
-    ExternalEnqueueRoute,
     FanoutRecord,
     InputReceipt,
     InputReceiptRef,
@@ -194,6 +194,10 @@ from millrace.kernel.lookups import (
     terminal_action_for,
     terminal_outcome_for,
     wait_state_for_policy,
+)
+from millrace.kernel.observation_policy import (
+    ObservationPolicyDiagnostic,
+    authenticate_artifact_provenance,
 )
 from millrace.kernel.operator_waits import (
     decide_operator_close_wait,
@@ -558,6 +562,22 @@ def _idempotency_decision(
 ) -> TransitionDecision | None:
     existing = state.receipts.get(transition_input.input_id)
     if existing is None:
+        if isinstance(transition_input, OpenClosureTarget) and any(
+            target.opened_by_input_id == transition_input.input_id
+            for target in state.closure_targets.values()
+        ):
+            replay_detail = _closure_replay_invalid_detail(
+                state, transition_input, context
+            )
+            if replay_detail is not None:
+                return _refused_decision(
+                    transition_input=transition_input,
+                    context=context,
+                    digest=digest,
+                    reason="closure_replay_relations_invalid",
+                    record_receipt=False,
+                    detail=replay_detail,
+                )
         return None
     if existing.receipt_ref.input_payload_digest == digest:
         if not existing.accepted:
@@ -593,7 +613,9 @@ def _idempotency_decision(
                 trace_records=(),
             )
         if isinstance(transition_input, EnqueueWork):
-            replay_detail = _enqueue_replay_invalid_detail(state, transition_input)
+            replay_detail = _closure.closure_enqueue_creator_refusal(
+                state, transition_input, require_default_plan=True
+            )
             if replay_detail is not None:
                 reason = (
                     "idempotency_conflict"
@@ -605,6 +627,21 @@ def _idempotency_decision(
                     context=context,
                     digest=digest,
                     reason=reason,
+                    record_receipt=False,
+                    detail=replay_detail,
+                )
+        if isinstance(
+            transition_input, (OpenClosureTarget, EvaluateCompletionBehavior)
+        ):
+            replay_detail = _closure_replay_invalid_detail(
+                state, transition_input, context
+            )
+            if replay_detail is not None:
+                return _refused_decision(
+                    transition_input=transition_input,
+                    context=context,
+                    digest=digest,
+                    reason="closure_replay_relations_invalid",
                     record_receipt=False,
                     detail=replay_detail,
                 )
@@ -647,101 +684,128 @@ def _idempotency_decision(
     )
 
 
-def _enqueue_replay_invalid_detail(
+def _closure_replay_invalid_detail(
     state: RuntimeState,
-    transition_input: EnqueueWork,
+    transition_input: OpenClosureTarget | EvaluateCompletionBehavior,
+    context: TransitionContext,
 ) -> str | None:
-    target_work_items = tuple(
-        work_item
-        for work_item in state.work_items.values()
-        if work_item.created_by_input_id == transition_input.input_id
+    if _closure.closure_creator_refusal(state, transition_input) is not None:
+        return "creating_transition_missing_or_invalid"
+    resolved = _completion_behavior_context(
+        state,
+        transition_input.selected_plan_ref,
+        transition_input.completion_behavior_id,
     )
-    target_activations = tuple(
-        activation
-        for activation in state.activations.values()
-        if activation.created_by_input_id == transition_input.input_id
+    if isinstance(resolved, str):
+        return "target_relation_missing"
+    _selected_plan, behavior = resolved
+
+    def without(values: Mapping[str, object], excluded: str) -> dict[str, object]:
+        return {key: value for key, value in values.items() if key != excluded}
+
+    if isinstance(transition_input, OpenClosureTarget):
+        key = _closure.closure_target_key_for(transition_input)
+        matches = tuple(
+            target
+            for target in state.closure_targets.values()
+            if _closure.closure_target_key_for(target) == key
+        )
+        if len(matches) != 1:
+            return "target_relation_missing_or_ambiguous"
+        target = matches[0]
+        if (
+            transition_input.closure_target_id != _closure.closure_target_id(key)
+            or target.opened_by_input_id != transition_input.input_id
+            or target.request_kind != transition_input.request_kind
+            or target.target_graph_node_id != transition_input.target_graph_node_id
+            or target.evidence_window != transition_input.evidence_window
+        ):
+            return "closure_identity_noncanonical"
+        replay_state = replace(
+            state,
+            closure_targets=without(state.closure_targets, target.closure_target_id),
+        )
+        readiness = _closure.assess_closure_readiness(
+            replay_state,
+            lineage_id=key.lineage_id,
+            plan_ref=key.selected_plan_ref,
+            target_key=key,
+        )
+        if (
+            _open_closure_target_refusal(
+                state=replay_state,
+                transition_input=transition_input,
+                selected_plan=_selected_plan,
+                behavior=behavior,
+                target_key=key,
+                readiness=readiness,
+                context=context,
+            )
+            is not None
+        ):
+            return "closure_identity_noncanonical"
+        return None
+    target = state.closure_targets.get(transition_input.closure_target_id)
+    if target is None or target.selected_plan_ref != transition_input.selected_plan_ref:
+        return "target_relation_missing"
+    target_key = _closure.closure_target_key_for(target)
+    if transition_input.closure_target_id != _closure.closure_target_id(target_key):
+        return "target_id_noncanonical"
+    records = tuple(
+        record
+        for record in state.closure_evaluations.values()
+        if record.created_by_input_id == transition_input.input_id
+        and record.closure_target_id == target.closure_target_id
     )
-    if len(target_work_items) != 1:
-        return "missing_or_ambiguous_work_item"
-    if len(target_activations) != 1:
-        return "missing_or_ambiguous_activation"
-
-    work_item = target_work_items[0]
-    activation = target_activations[0]
-    if activation.work_item_id != work_item.ref.work_item_id:
-        return "activation_work_item_mismatch"
-    if work_item.created_by_input_id != transition_input.input_id:
-        return "work_item_input_mismatch"
-    if activation.created_by_input_id != transition_input.input_id:
-        return "activation_input_mismatch"
-    if work_item.queue_family_id != transition_input.queue_family_id:
-        return "work_item_queue_family_mismatch"
-    if activation.queue_family_id != transition_input.queue_family_id:
-        return "activation_queue_family_mismatch"
-    if work_item.ref.plan_ref != activation.plan_ref:
-        return "activation_plan_ref_mismatch"
-
-    default_plan_ref = state.default_plan_ref
-    if default_plan_ref != work_item.ref.plan_ref:
-        return "default_plan_mismatch"
-
-    admitted = state.admitted_plans.get(work_item.ref.plan_ref.authority_fingerprint)
-    if admitted is None or admitted.plan_ref != work_item.ref.plan_ref:
-        return "missing_admitted_plan"
-    if not verify_authority_fingerprint(
-        admitted.selected_plan,
-        work_item.ref.plan_ref.authority_fingerprint,
+    if len(records) != 1:
+        return "evaluation_relation_missing_or_ambiguous"
+    evaluation = records[0]
+    work = state.work_items.get(evaluation.target_work_item_id)
+    if _closure._evaluation_parts(state, evaluation, target, behavior)[2] is not None:
+        return "evaluation_relation_missing_or_ambiguous"
+    snapshot = work.payload.get("closure_evidence_snapshot")
+    evidence_anchor = _closure.closure_evidence_anchor(snapshot, target=target)
+    if evidence_anchor is None:
+        return "evidence_anchor_missing_or_invalid"
+    stage = stage_kind_for(_selected_plan, str(behavior.target_stage_kind_id))
+    if stage is None:
+        return "target_relation_missing"
+    expected_payload, payload_refusal = _completion_request_payload(
+        state=state,
+        target=target,
+        behavior=behavior,
+        stage=stage,
+        exclude_work_item_id=work.ref.work_item_id,
+    )
+    if (
+        payload_refusal is not None
+        or expected_payload is None
+        or canonical_authority_mapping_bytes(work.payload)
+        != canonical_authority_mapping_bytes(expected_payload)
     ):
-        return "selected_plan_authority_mismatch"
-    selected_route = _selected_external_enqueue_route(
-        admitted.selected_plan,
-        transition_input.queue_family_id,
+        return "closure_snapshot_authority_mismatch"
+    replay_state = replace(
+        state,
+        work_items=without(state.work_items, evaluation.target_work_item_id),
+        activations=without(state.activations, evaluation.target_activation_id),
+        closure_evaluations=without(state.closure_evaluations, evaluation.record_id),
     )
-    if selected_route is None:
-        return "missing_selected_external_enqueue_route"
-    cached_route = admitted.external_enqueue_routes.get(
-        transition_input.queue_family_id,
+    readiness = _closure.assess_closure_readiness(
+        replay_state,
+        lineage_id=target.lineage_id,
+        plan_ref=target.selected_plan_ref,
+        target_key=target_key,
     )
-    if cached_route is None:
-        return "missing_external_enqueue_route"
-    if not _external_enqueue_route_matches_declaration(
-        cached_route,
-        selected_route,
+    expected_input, expected_context = _closure.closure_lifecycle_identity(
+        "evaluate", target_key, readiness.anchor_digest, evidence_anchor
+    )
+    if (
+        readiness.status != "settled"
+        or transition_input.input_id != expected_input
+        or context != expected_context
     ):
-        return "selected_route_authority_mismatch"
-    if selected_route.queue_family_id != work_item.queue_family_id:
-        return "selected_route_queue_family_mismatch"
-    if activation.graph_node_id != selected_route.graph_node_id:
-        return "selected_route_graph_node_mismatch"
-    if activation.stage_kind_id != selected_route.stage_kind_id:
-        return "selected_route_stage_kind_mismatch"
-    if activation.runner_binding_id != selected_route.runner_binding_id:
-        return "selected_route_runner_binding_mismatch"
+        return "closure_identity_noncanonical"
     return None
-
-
-def _selected_external_enqueue_route(
-    selected_plan: SelectedCompiledPlan,
-    queue_family_id: QueueFamilyId,
-) -> ExternalEnqueueRouteDeclaration | None:
-    for route in selected_plan.external_enqueue_routes:
-        if route.queue_family_id == queue_family_id:
-            return route
-    return None
-
-
-def _external_enqueue_route_matches_declaration(
-    route: ExternalEnqueueRoute,
-    declaration: ExternalEnqueueRouteDeclaration,
-) -> bool:
-    return (
-        route.queue_family_id == declaration.queue_family_id
-        and route.graph_node_id == declaration.graph_node_id
-        and route.stage_kind_id == declaration.stage_kind_id
-        and route.runner_binding_id == declaration.runner_binding_id
-        and route.payload_schema_id == declaration.payload_schema_id
-    )
-
 
 def _decide_admit_plan(
     state: RuntimeState,
@@ -1070,6 +1134,7 @@ def _external_enqueue_route_payload_schema_refusal(
         ):
             return f"generated_work_route_payload_schema:{generated_route.id}"
     return None
+
 
 def _selected_enqueue_route_authority_refusal(
     selected_plan: SelectedCompiledPlan,
@@ -3962,11 +4027,21 @@ def _decide_open_closure_target(
             reason=resolved,
         )
     selected_plan, behavior = resolved
+    target_key = _closure.closure_target_key_for(transition_input)
+    readiness = _closure.assess_closure_readiness(
+        state,
+        lineage_id=transition_input.lineage_id,
+        plan_ref=transition_input.selected_plan_ref,
+        target_key=target_key,
+    )
     refusal = _open_closure_target_refusal(
         state=state,
         transition_input=transition_input,
         selected_plan=selected_plan,
         behavior=behavior,
+        target_key=target_key,
+        readiness=readiness,
+        context=context,
     )
     if refusal is not None:
         return _refused_decision(
@@ -4005,7 +4080,11 @@ def _decide_open_closure_target(
         expected_plan_fingerprint=(
             transition_input.selected_plan_ref.authority_fingerprint
         ),
+        expected_lineage_work_item_ids={
+            transition_input.lineage_id: readiness.work_item_ids
+        },
         event_plan_fingerprint=transition_input.selected_plan_ref.authority_fingerprint,
+        event_work_item_id=transition_input.closure_root_work_item_id,
         event_authority_source="completion_behavior",
     )
 
@@ -4016,9 +4095,26 @@ def _open_closure_target_refusal(
     transition_input: OpenClosureTarget,
     selected_plan: SelectedCompiledPlan,
     behavior: CompletionBehaviorDeclaration,
+    target_key: _closure.ClosureLogicalTargetKey,
+    readiness: _closure.ClosureReadiness,
+    context: TransitionContext,
 ) -> str | None:
-    if transition_input.closure_target_id in state.closure_targets:
-        return "closure_target_exists"
+    if readiness.status == "corrupt":
+        return "closure_readiness_corrupt"
+    if readiness.status != "settled":
+        return "closure_target_not_ready"
+    expected_input_id, expected_context = _closure.closure_lifecycle_identity(
+        "open", target_key, readiness.anchor_digest
+    )
+    if transition_input.input_id != expected_input_id or context != expected_context:
+        return "closure_identity_mismatch"
+    if transition_input.closure_target_id != _closure.closure_target_id(target_key):
+        return "closure_identity_mismatch"
+    if any(
+        _closure.closure_target_key_for(target) == target_key
+        for target in state.closure_targets.values()
+    ):
+        return "closure_target_already_exists"
     if transition_input.request_kind != behavior.request_kind:
         return "closure_request_kind_mismatch"
     if transition_input.target_graph_node_id != behavior.target_graph_node_id:
@@ -4039,8 +4135,6 @@ def _open_closure_target_refusal(
         transition_input.evidence_window,
     ):
         return "invalid_closure_evidence_window"
-    if _selected_authority_refusal(selected_plan) is not None:
-        return "unsupported_selected_authority"
     return None
 
 
@@ -4104,12 +4198,20 @@ def _closure_root_refusal(
         work_item
         for work_item in state.work_items.values()
         if work_item.queue_family_id in root_inventory_queue_ids
-        and _work_item_root_source_matches(
+        and _closure.closure_root_source_matches(
             work_item,
             root_source_kind=root_source_kind,
             root_source_id=root_source_id,
         )
         and work_item.ref.plan_ref == selected_plan_ref
+    )
+    if any(
+        not isinstance(item.lineage_id, str) or not item.lineage_id.strip()
+        for item in matches
+    ):
+        return "invalid_closure_root_lineage"
+    matches = tuple(
+        item for item in matches if item.lineage_id == item.ref.work_item_id
     )
     if not matches:
         return "missing_closure_root_source"
@@ -4119,21 +4221,9 @@ def _closure_root_refusal(
         return "closure_root_work_item_mismatch"
     if matches[0].lineage_id != lineage_id:
         return "closure_root_lineage_mismatch"
+    if _closure.closure_enqueue_creator_refusal(state, matches[0]) is not None:
+        return "invalid_closure_root_creator"
     return None
-
-
-def _work_item_root_source_matches(
-    work_item: WorkItem,
-    *,
-    root_source_kind: str,
-    root_source_id: str,
-) -> bool:
-    raw_root_source = work_item.payload.get("root_source")
-    return (
-        isinstance(raw_root_source, Mapping)
-        and raw_root_source.get("kind") == root_source_kind
-        and raw_root_source.get("source_id") == root_source_id
-    )
 
 
 def _decide_evaluate_completion_behavior(
@@ -4163,6 +4253,7 @@ def _decide_evaluate_completion_behavior(
             digest=digest,
             reason="unknown_closure_target",
         )
+    target_key = _closure.closure_target_key_for(target)
     target_refusal = _closure_target_behavior_refusal(
         target=target,
         behavior=behavior,
@@ -4176,11 +4267,25 @@ def _decide_evaluate_completion_behavior(
             reason=target_refusal,
             target=target,
         )
+    progress = _closure.closure_target_progress(state, target=target, behavior=behavior)
+    if progress.status in {"corrupt", "blocked", "closed"}:
+        reason = (
+            progress.detail or "invalid_closure_target"
+            if progress.status == "corrupt"
+            else f"closure_target_{progress.status}"
+        )
+        return _completion_refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason=reason,
+            target=target,
+        )
     root_refusal = _closure_target_root_refusal(
         state=state,
-        target=target,
         selected_plan=selected_plan,
         behavior=behavior,
+        target=target,
     )
     if root_refusal is not None:
         return _completion_refused_decision(
@@ -4190,12 +4295,20 @@ def _decide_evaluate_completion_behavior(
             reason=root_refusal,
             target=target,
         )
-    if target.status != "open":
+    readiness = _closure.assess_closure_readiness(
+        state,
+        lineage_id=target.lineage_id,
+        plan_ref=target.selected_plan_ref,
+        target_key=target_key,
+    )
+    if readiness.status != "settled":
         return _completion_refused_decision(
             transition_input=transition_input,
             context=context,
             digest=digest,
-            reason="closure_target_closed",
+            reason="closure_readiness_corrupt"
+            if readiness.status == "corrupt"
+            else "closure_target_not_ready",
             target=target,
         )
     if (
@@ -4210,18 +4323,6 @@ def _decide_evaluate_completion_behavior(
             context=context,
             digest=digest,
             reason="closure_evaluation_already_active",
-            target=target,
-        )
-    if _has_open_lineage_work(
-        state,
-        lineage_id=target.lineage_id,
-        plan_ref=target.selected_plan_ref,
-    ):
-        return _completion_refused_decision(
-            transition_input=transition_input,
-            context=context,
-            digest=digest,
-            reason="closure_target_not_ready",
             target=target,
         )
     stage = stage_kind_for(selected_plan, str(behavior.target_stage_kind_id))
@@ -4245,6 +4346,27 @@ def _decide_evaluate_completion_behavior(
             context=context,
             digest=digest,
             reason=payload_refusal or "invalid_closure_request_payload",
+            target=target,
+        )
+    snapshot = request_payload.get("closure_evidence_snapshot")
+    evidence_anchor = _closure.closure_evidence_anchor(snapshot, target=target)
+    if evidence_anchor is None:
+        return _completion_refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="closure_snapshot_invalid",
+            target=target,
+        )
+    expected_input_id, expected_context = _closure.closure_lifecycle_identity(
+        "evaluate", target_key, readiness.anchor_digest, evidence_anchor
+    )
+    if transition_input.input_id != expected_input_id or context != expected_context:
+        return _completion_refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="closure_identity_mismatch",
             target=target,
         )
     work_item = WorkItem(
@@ -4296,6 +4418,7 @@ def _decide_evaluate_completion_behavior(
         expected_plan_fingerprint=(
             transition_input.selected_plan_ref.authority_fingerprint
         ),
+        expected_lineage_work_item_ids={target.lineage_id: readiness.work_item_ids},
         event_plan_fingerprint=transition_input.selected_plan_ref.authority_fingerprint,
         event_work_item_id=work_item.ref.work_item_id,
         event_authority_source="completion_behavior",
@@ -4405,32 +4528,20 @@ def _active_closure_evaluation_for_target(
     )
 
 
-def _has_open_lineage_work(
-    state: RuntimeState,
-    *,
-    lineage_id: str,
-    plan_ref: PlanRef,
-) -> bool:
-    return any(
-        work_item.lineage_id == lineage_id
-        and work_item.ref.plan_ref == plan_ref
-        and work_item.ref.work_item_id not in state.closed_work_items
-        for work_item in state.work_items.values()
-    )
-
-
 def _completion_request_payload(
     *,
     state: RuntimeState,
     target: ClosureTargetRecord,
     behavior: CompletionBehaviorDeclaration,
     stage: StageKindDeclaration,
+    exclude_work_item_id: str | None = None,
 ) -> tuple[Mapping[str, AuthorityValue] | None, str | None]:
     asset_ids = tuple(str(asset_id) for asset_id in stage.asset_ids)
     snapshot, snapshot_refusal = _build_closure_evidence_snapshot(
         state=state,
         target=target,
         behavior=behavior,
+        exclude_work_item_id=exclude_work_item_id,
     )
     if snapshot_refusal is not None or snapshot is None:
         return None, snapshot_refusal or "invalid_closure_evidence_snapshot"
@@ -4463,6 +4574,7 @@ def _build_closure_evidence_snapshot(
     state: RuntimeState,
     target: ClosureTargetRecord,
     behavior: CompletionBehaviorDeclaration,
+    exclude_work_item_id: str | None = None,
 ) -> tuple[Mapping[str, AuthorityValue] | None, str | None]:
     root_contract, root_refusal = _closure_root_contract(state=state, target=target)
     if root_refusal is not None or root_contract is None:
@@ -4478,7 +4590,8 @@ def _build_closure_evidence_snapshot(
     prior_candidates: list[tuple[int, ArtifactRecord]] = []
     for evaluation in state.closure_evaluations.values():
         if (
-            evaluation.closure_target_id != target.closure_target_id
+            evaluation.target_work_item_id == exclude_work_item_id
+            or evaluation.closure_target_id != target.closure_target_id
             or evaluation.selected_plan_ref != target.selected_plan_ref
             or evaluation.lineage_id != target.lineage_id
         ):
@@ -4503,6 +4616,11 @@ def _build_closure_evidence_snapshot(
         source_work_item = state.work_items.get(artifact.work_item_id)
         if source_run is None or source_work_item is None:
             return None, "closure_prior_verdict_provenance_missing"
+        if isinstance(
+            authenticate_artifact_provenance(state, artifact),
+            ObservationPolicyDiagnostic,
+        ):
+            return None, "closure_prior_verdict_provenance_mismatch"
         if (
             source_run.work_item_id != evaluation.target_work_item_id
             or source_run.activation_id != evaluation.target_activation_id
@@ -4534,6 +4652,8 @@ def _build_closure_evidence_snapshot(
         state.artifacts.values(),
         key=lambda item: transition_positions.get(item.transition_id, -1),
     ):
+        if artifact.work_item_id == exclude_work_item_id:
+            continue
         if artifact.schema_id not in behavior.evidence_artifact_schema_ids:
             continue
         position = transition_positions.get(artifact.transition_id)
@@ -4554,6 +4674,11 @@ def _build_closure_evidence_snapshot(
             or source_work_item.lineage_id != target.lineage_id
         ):
             continue
+        if isinstance(
+            authenticate_artifact_provenance(state, artifact),
+            ObservationPolicyDiagnostic,
+        ):
+            return None, "closure_evidence_artifact_provenance_mismatch"
         if artifact.payload_digest != artifact_payload_digest(artifact.payload):
             return None, "closure_artifact_payload_digest_mismatch"
         evidence.append(_artifact_envelope(artifact))
@@ -4586,6 +4711,7 @@ def _closure_snapshot_authority_refusal(
     behavior: CompletionBehaviorDeclaration,
     snapshot: Mapping[str, object],
     selected_plan: SelectedCompiledPlan | None = None,
+    exclude_work_item_id: str | None = None,
 ) -> str | None:
     if not isinstance(snapshot, Mapping):
         return "closure_snapshot_invalid"
@@ -4600,6 +4726,7 @@ def _closure_snapshot_authority_refusal(
         state=state,
         target=target,
         behavior=behavior,
+        exclude_work_item_id=exclude_work_item_id,
     )
     if refusal is not None or rebuilt is None:
         return "closure_snapshot_authority_mismatch"
@@ -4627,12 +4754,19 @@ def _closure_root_contract(
         return None, "closure_root_plan_ref_mismatch"
     if root.lineage_id != target.lineage_id:
         return None, "closure_root_lineage_mismatch"
-    if not _work_item_root_source_matches(
+    if not _closure.closure_root_source_matches(
         root,
         root_source_kind=target.root_source_kind,
         root_source_id=target.root_source_id,
     ):
         return None, "closure_root_source_mismatch"
+    creator_refusal = (
+        _closure.closure_enqueue_creator_refusal(state, root)
+        if state.admitted_plans
+        else None
+    )
+    if creator_refusal is not None:
+        return None, creator_refusal
     return {
         "work_item_id": root.ref.work_item_id,
         "payload_digest": artifact_payload_digest(root.payload),
@@ -4721,11 +4855,14 @@ def _closure_verdict_refusal(
         ):
             return "closure_marker_status_mismatch"
     elif terminal_kind == "gap":
-        if not any(
-            result["status"] == "failed"
-            and result["provenance"] in {"fresh", "revalidated"}
-            for result in normalized_results
-        ) or not guidance:
+        if (
+            not any(
+                result["status"] == "failed"
+                and result["provenance"] in {"fresh", "revalidated"}
+                for result in normalized_results
+            )
+            or not guidance
+        ):
             return "closure_marker_status_mismatch"
     elif terminal_kind == "blocked":
         if not any(
@@ -5632,6 +5769,7 @@ def _closure_terminal_aftermath(
             behavior=behavior,
             snapshot=snapshot,
             selected_plan=selected_plan,
+            exclude_work_item_id=work_item.ref.work_item_id,
         )
         if snapshot_refusal is not None:
             return _runner_refused_decision(
@@ -5647,10 +5785,13 @@ def _closure_terminal_aftermath(
             selected_plan,
             str(behavior.verdict_artifact_schema_id),
         )
-        if verdict_schema is None or not validate_schema(
-            verdict_schema.schema,
-            source_artifact.payload,
-        ).accepted:
+        if (
+            verdict_schema is None
+            or not validate_schema(
+                verdict_schema.schema,
+                source_artifact.payload,
+            ).accepted
+        ):
             return _runner_refused_decision(
                 transition_input=transition_input,
                 context=context,
@@ -6256,21 +6397,13 @@ def _runner_session_refused_decision(
     digest: str,
     reason: str,
 ) -> TransitionDecision:
-    run_ref = getattr(transition_input, "run_ref", None)
-    if not isinstance(run_ref, RunRef):
-        return _refused_decision(
-            transition_input=transition_input,
-            context=context,
-            digest=digest,
-            reason=reason,
-        )
     return _refused_decision(
         transition_input=transition_input,
         context=context,
         digest=digest,
         reason=reason,
-        event_plan_fingerprint=run_ref.plan_ref.authority_fingerprint,
-        event_run_id=run_ref.run_id,
+        event_plan_fingerprint=transition_input.run_ref.plan_ref.authority_fingerprint,
+        event_run_id=transition_input.run_ref.run_id,
     )
 
 
@@ -6343,9 +6476,7 @@ def _accepted_decision(
         expected_run_fencing_tokens=expected_run_fencing_tokens or {},
         expected_run_unobserved=expected_run_unobserved,
         expected_pause_absent=expected_pause_absent,
-        expected_dispatch_suspension_absent=(
-            expected_dispatch_suspension_absent
-        ),
+        expected_dispatch_suspension_absent=(expected_dispatch_suspension_absent),
         expected_dispatch_suspension_generation=(
             expected_dispatch_suspension_generation
         ),

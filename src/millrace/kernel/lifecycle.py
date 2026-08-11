@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Literal
 
+import millrace.kernel._closure_lifecycle as _closure
 from millrace.contracts.compiled_plan import (
+    CompletionBehaviorDeclaration,
     FanoutDeclaration,
     JoinDeclaration,
     SelectedCompiledPlan,
 )
 from millrace.contracts.fingerprints import AuthorityFingerprint
-from millrace.contracts.state import RuntimeState
+from millrace.contracts.state import ClosureTargetRecord, RuntimeState
 from millrace.contracts.transition import (
+    EvaluateCompletionBehavior,
     FanoutFromArtifact,
     JoinFromArtifact,
+    OpenClosureTarget,
     TransitionContext,
 )
 from millrace.kernel.fanout_policy import (
@@ -33,8 +38,7 @@ from millrace.kernel.join_policy import (
     join_groups_for_declaration,
 )
 
-LifecycleCandidateKind = Literal["fanout", "join"]
-
+LifecycleCandidateKind = Literal["fanout", "join", "open", "evaluate"]
 _SCHEDULER_ID_DOMAIN = b"millrace-selected-lifecycle-scheduler-v1\0"
 _SOURCE_CLOSED_POLICY = "source_closed"
 _ACCEPTED_TERMINAL_POLICY = "accepted_terminal_observation"
@@ -56,7 +60,12 @@ class ProjectedLifecycleCandidate:
     plan_fingerprint: AuthorityFingerprint
     declaration_id: str
     source_artifact_id: str
-    transition_input: FanoutFromArtifact | JoinFromArtifact
+    transition_input: (
+        FanoutFromArtifact
+        | JoinFromArtifact
+        | OpenClosureTarget
+        | EvaluateCompletionBehavior
+    )
     transition_context: TransitionContext
     correlation_identity: str | None = None
 
@@ -87,7 +96,244 @@ def project_next_lifecycle_transition(state: RuntimeState) -> LifecycleProjectio
         )
         if join_projection.candidate is not None or join_projection.diagnostics:
             return join_projection
-    return LifecycleProjection(candidate=None)
+    return _project_closure(state)
+
+
+def _project_closure(state: RuntimeState) -> LifecycleProjection:
+    targets, diagnostic = _closure_target_index(state)
+    if diagnostic is not None:
+        return _diagnostic_projection(diagnostic)
+    if any(
+        item.closure_target_id not in state.closure_targets
+        for item in state.closure_blocked_records.values()
+    ):
+        return _diagnostic_projection(
+            _diagnostic("invalid_closure_block_overlay", kind="evaluate")
+        )
+
+    def fail(
+        reason: str,
+        *,
+        kind: Literal["open", "evaluate"] = "open",
+        source: str | None = None,
+        detail: str | None = None,
+    ) -> LifecycleProjection:
+        return _diagnostic_projection(
+            _diagnostic(
+                reason,
+                kind=kind,
+                plan_fingerprint=fingerprint,
+                declaration_id=str(behavior.id),
+                source_artifact_id=source,
+                detail=detail,
+            )
+        )
+
+    candidates: list[tuple[tuple[object, ...], ProjectedLifecycleCandidate]] = []
+    for fingerprint, selected_plan in _selected_plans(state):
+        admitted = state.admitted_plans[fingerprint]
+        for behavior in sorted(
+            selected_plan.completion_behaviors, key=lambda item: str(item.id)
+        ):
+            roots, root_error = _closure_roots(
+                state,
+                plan_ref=admitted.plan_ref,
+                selected_plan=selected_plan,
+                behavior=behavior,
+            )
+            if root_error is not None:
+                return fail(root_error)
+            for root in roots:
+                source = root.payload["root_source"]
+                key = _closure.ClosureLogicalTargetKey(
+                    admitted.plan_ref,
+                    str(behavior.id),
+                    root.lineage_id or "",
+                    str(source["kind"]),
+                    str(source["source_id"]),
+                    root.ref.work_item_id,
+                )
+                readiness = _closure.assess_closure_readiness(
+                    state,
+                    lineage_id=key.lineage_id,
+                    plan_ref=key.selected_plan_ref,
+                    target_key=key,
+                )
+                target = targets.get(key)
+                progress = (
+                    _closure.closure_target_progress(
+                        state, target=target, behavior=behavior
+                    )
+                    if target is not None
+                    else None
+                )
+                if progress is not None and progress.status == "corrupt":
+                    return fail(
+                        progress.detail or "invalid_closure_target",
+                        kind="evaluate",
+                        source=progress.source_artifact_id or target.closure_target_id,
+                    )
+                if readiness.status == "corrupt":
+                    return fail(
+                        "closure_readiness_corrupt",
+                        source=root.ref.work_item_id,
+                        detail=readiness.detail,
+                    )
+                if readiness.status != "settled":
+                    continue
+                if target is None:
+                    kind = "open"
+                    evidence_anchor = None
+                else:
+                    if progress is None or progress.status in {
+                        "pending",
+                        "closed",
+                        "blocked",
+                    }:
+                        continue
+                    kind = "evaluate"
+                    evidence_anchor = progress.evidence_anchor
+                candidate = _closure_candidate(
+                    behavior=behavior,
+                    key=key,
+                    kind=kind,
+                    readiness=readiness,
+                    target=target,
+                    evidence_anchor=evidence_anchor,
+                )
+                candidates.append(
+                    (
+                        (
+                            key.selected_plan_ref.authority_fingerprint,
+                            key.selected_plan_ref.plan_id,
+                            key.selected_plan_ref.plan_format_version,
+                            key.completion_behavior_id,
+                            key.root_source_kind,
+                            key.root_source_id,
+                            key.root_work_item_id,
+                            key.lineage_id,
+                            0 if target is None else 1,
+                        ),
+                        candidate,
+                    )
+                )
+    return LifecycleProjection(
+        candidate=min(
+            candidates,
+            key=lambda item: item[0],
+        )[1]
+        if candidates
+        else None
+    )
+
+
+def _closure_roots(
+    state: RuntimeState,
+    *,
+    plan_ref: object,
+    selected_plan: SelectedCompiledPlan,
+    behavior: CompletionBehaviorDeclaration,
+) -> tuple[tuple[object, ...], str | None]:
+    queue_ids = {
+        route.queue_family_id for route in selected_plan.external_enqueue_routes
+    }
+    roots: list[object] = []
+    source_keys: set[tuple[str, str]] = set()
+    for work_item in sorted(
+        state.work_items.values(), key=lambda item: item.ref.work_item_id
+    ):
+        if (
+            work_item.ref.plan_ref != plan_ref
+            or work_item.queue_family_id not in queue_ids
+        ):
+            continue
+        lineage_id = work_item.lineage_id
+        if not isinstance(lineage_id, str) or not lineage_id.strip():
+            return (), "invalid_closure_root_lineage"
+        if lineage_id != work_item.ref.work_item_id:
+            continue
+        source = work_item.payload.get("root_source")
+        if not isinstance(source, Mapping):
+            return (), "missing_closure_root_source"
+        kind, source_id = source.get("kind"), source.get("source_id")
+        if not all(
+            isinstance(value, str) and value.strip() for value in (kind, source_id)
+        ):
+            return (), "invalid_closure_root_source"
+        if kind not in behavior.accepted_root_source_kinds:
+            return (), "unsupported_closure_root_source"
+        if _closure.closure_enqueue_creator_refusal(state, work_item) is not None:
+            return (), "invalid_closure_root_creator"
+        source_key = (kind, source_id)
+        if source_key in source_keys:
+            return (), "ambiguous_closure_root_source"
+        source_keys.add(source_key)
+        roots.append(work_item)
+    return tuple(roots), None
+
+
+def _closure_target_index(state: RuntimeState):
+    index: dict[_closure.ClosureLogicalTargetKey, ClosureTargetRecord] = {}
+    for record_id, target in state.closure_targets.items():
+        if record_id != target.closure_target_id:
+            return {}, _diagnostic("closure_target_mapping_mismatch", kind="open")
+        key = _closure.closure_target_key_for(target)
+        if target.status not in {"open", "closed"}:
+            return {}, _diagnostic("invalid_closure_target_status", kind="open")
+        if target.closure_target_id != _closure.closure_target_id(key):
+            return {}, _diagnostic("closure_target_identity_mismatch", kind="open")
+        if key in index:
+            return {}, _diagnostic("duplicate_closure_target_authority", kind="open")
+        index[key] = target
+    return index, None
+
+
+def _closure_candidate(
+    *,
+    behavior: CompletionBehaviorDeclaration,
+    key: _closure.ClosureLogicalTargetKey,
+    kind: Literal["open", "evaluate"],
+    readiness: _closure.ClosureReadiness,
+    target: ClosureTargetRecord | None = None,
+    evidence_anchor: Mapping[str, object] | None = None,
+) -> ProjectedLifecycleCandidate:
+    if kind == "open":
+        input_id, context = _closure.closure_lifecycle_identity(
+            "open", key, readiness.anchor_digest
+        )
+        transition_input = OpenClosureTarget(
+            input_id=input_id,
+            selected_plan_ref=key.selected_plan_ref,
+            completion_behavior_id=key.completion_behavior_id,
+            closure_target_id=_closure.closure_target_id(key),
+            lineage_id=key.lineage_id,
+            root_source_kind=key.root_source_kind,
+            root_source_id=key.root_source_id,
+            closure_root_work_item_id=key.root_work_item_id,
+            request_kind=behavior.request_kind,
+            target_graph_node_id=behavior.target_graph_node_id,
+            evidence_window={"kind": "lineage", "lineage_id": key.lineage_id},
+        )
+    else:
+        input_id, context = _closure.closure_lifecycle_identity(
+            "evaluate", key, readiness.anchor_digest, evidence_anchor
+        )
+        transition_input = EvaluateCompletionBehavior(
+            input_id=input_id,
+            selected_plan_ref=target.selected_plan_ref,
+            completion_behavior_id=key.completion_behavior_id,
+            closure_target_id=target.closure_target_id,
+        )
+    return ProjectedLifecycleCandidate(
+        kind=kind,
+        plan_fingerprint=key.selected_plan_ref.authority_fingerprint,
+        declaration_id=str(behavior.id),
+        source_artifact_id=(
+            key.root_work_item_id if kind == "open" else target.closure_target_id
+        ),
+        transition_input=transition_input,
+        transition_context=context,
+    )
 
 
 def _project_fanout(

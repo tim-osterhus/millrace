@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import partial
 
 import pytest
 
-from millrace.contracts.state import OperatorWaitRecord
+import millrace.kernel._closure_lifecycle as _closure
+from millrace.contracts.state import OperatorWaitRecord, RecoveryAttemptRecord
 from millrace.contracts.transition import (
     FanoutFromArtifact,
     JoinFromArtifact,
@@ -22,7 +24,8 @@ from millrace.testing import (
     fake_runner_completion_input_id,
     fake_runner_observation_payload,
 )
-from support import generic_lifecycle
+from support import generic_lifecycle, generic_operator_wait
+from tests.operator.test_status_projection import _closure_verdict_payload
 
 
 def _project(state):
@@ -1924,6 +1927,70 @@ def test_operator_wait_records_are_unchanged_by_unrelated_lifecycle_projection()
     assert after.operator_waits == with_wait.operator_waits
 
 
+def _closure_readiness(state):
+    root = state.work_items["work-origin"]
+    source = root.payload["root_source"]
+    key = _closure.ClosureLogicalTargetKey(
+        root.ref.plan_ref,
+        "lifecycle.completion",
+        root.lineage_id or "",
+        source["kind"],
+        source["source_id"],
+        root.ref.work_item_id,
+    )
+    return _closure.assess_closure_readiness(
+        state,
+        lineage_id=key.lineage_id,
+        plan_ref=key.selected_plan_ref,
+        target_key=key,
+    )
+
+
+def test_closure_readiness_anchor_tracks_claim_and_target_authority() -> None:
+    plan, fingerprint = generic_lifecycle.compile_lifecycle(
+        generic_lifecycle.source_with_completion_behavior()
+    )
+    state, plan, fingerprint = generic_lifecycle.admitted_state(
+        plan=plan, fingerprint=fingerprint
+    )
+    payload = {
+        **generic_lifecycle.source_payload(),
+        "root_source": {"kind": "origin", "source_id": "generic-root"},
+    }
+    queued = generic_lifecycle.enqueue_origin(state, payload=payload)
+    claimed = generic_lifecycle.claim_activation(
+        queued,
+        activation_id="activation-origin",
+        suffix="origin",
+    )
+    settled = generic_lifecycle.apply_observation(
+        claimed,
+        plan=plan,
+        fingerprint=fingerprint,
+        run_id="run-origin",
+        input_id="observe-origin",
+        marker="SOURCE_READY",
+        artifact_payload=payload,
+    )
+    opening = _project(settled).candidate
+    assert opening is not None and opening.kind == "open"
+    opened = generic_lifecycle.apply_candidate(settled, opening)
+    queued_readiness = _closure_readiness(queued)
+    claimed_readiness = _closure_readiness(claimed)
+    settled_readiness = _closure_readiness(settled)
+    opened_readiness = _closure_readiness(opened)
+    noisy = _replace_work_item(
+        opened,
+        "work-origin",
+        payload={**payload, "title": "presentation-only change"},
+    )
+    assert queued_readiness.status == claimed_readiness.status == "pending"
+    assert claimed_readiness.anchor_digest != queued_readiness.anchor_digest
+    assert settled_readiness.status == opened_readiness.status == "settled"
+    assert opened_readiness.anchor_digest != settled_readiness.anchor_digest
+    assert _closure_readiness(noisy).anchor_digest == opened_readiness.anchor_digest
+
+
 def test_partial_lifecycle_aftermath_is_not_silently_skipped() -> None:
     state, _plan, _fingerprint = generic_lifecycle.origin_closed_state()
     first = _project(state).candidate
@@ -1955,3 +2022,216 @@ def test_candidate_identity_is_stable_across_mapping_order() -> None:
     assert right is not None
     assert right.transition_input.input_id == left.transition_input.input_id
     assert right.transition_context == left.transition_context
+
+
+def _observe(state, plan, fingerprint, activation, suffix, marker, payload):
+    state = generic_lifecycle.claim_activation(
+        state, activation_id=activation, suffix=suffix
+    )
+    return generic_lifecycle.apply_observation(
+        state,
+        plan=plan,
+        fingerprint=fingerprint,
+        run_id=f"run-{suffix}",
+        input_id=f"observe-{suffix}",
+        marker=marker,
+        artifact_payload=payload,
+    )
+
+
+def _apply_closure_verdict(state, record, marker, suffix, *, plan, fingerprint):
+    work = state.work_items[record.target_work_item_id]
+    payload = (
+        _closure_verdict_payload(
+            work.payload["closure_evidence_snapshot"], marker=marker
+        )
+        if "closure_evidence_snapshot" in work.payload
+        else generic_lifecycle.report_payload("alpha")
+    )
+    return _observe(
+        state, plan, fingerprint, record.target_activation_id, suffix, marker, payload
+    )
+
+
+def test_closure_block_overlay_matches_the_exact_evaluator_after_gap() -> None:
+    state, plan, fingerprint = generic_lifecycle.closure_evaluation_state()
+    apply_verdict = partial(_apply_closure_verdict, plan=plan, fingerprint=fingerprint)
+    first_evaluation = next(iter(state.closure_evaluations.values()))
+    state = apply_verdict(state, first_evaluation, "REVIEW_GAP", "first")
+    remediation = next(iter(state.remediation_work_records.values()))
+    state = apply_verdict(state, remediation, "ALPHA_READY", "remediation")
+    second_candidate = _project(state).candidate
+    assert second_candidate is not None and second_candidate.kind == "evaluate"
+    state = generic_lifecycle.apply_candidate(state, second_candidate)
+    second_evaluation = tuple(
+        record
+        for record in state.closure_evaluations.values()
+        if record.record_id != first_evaluation.record_id
+    )
+    assert len(second_evaluation) == 1
+    state = apply_verdict(state, second_evaluation[0], "REVIEW_BLOCKED", "second")
+    projection = _project(state)
+    assert projection.candidate is None
+    assert projection.diagnostics == ()
+
+
+def test_closure_projection_refuses_missing_root_source() -> None:
+    state, _plan, _fingerprint = generic_lifecycle.closure_origin_closed_state()
+    root = state.work_items["work-origin"]
+    payload = dict(root.payload)
+    payload.pop("root_source")
+    _assert_diagnostic(
+        _replace_work_item(state, root.ref.work_item_id, payload=payload),
+        "missing_closure_root_source",
+    )
+
+
+def test_closure_projection_refuses_duplicate_matching_roots() -> None:
+    state, _plan, _fingerprint = generic_lifecycle.closure_origin_closed_state()
+    root = state.work_items["work-origin"]
+    duplicate = generic_lifecycle.enqueue_origin(
+        state,
+        input_id="enqueue-duplicate-root",
+        payload=dict(root.payload),
+        work_item_id="work-duplicate-root",
+        activation_id="activation-duplicate-root",
+    )
+    _assert_diagnostic(duplicate, "ambiguous_closure_root_source")
+
+
+def test_closure_projection_rejects_internal_routed_external_root() -> None:
+    state, _plan, _fingerprint = generic_lifecycle.closure_origin_closed_state()
+    root = state.work_items["work-origin"]
+    candidate = _project(state).candidate
+    assert candidate is not None
+    key = _closure.closure_target_key_for(command := candidate.transition_input)
+    routed = _replace_work_item(state, root.ref.work_item_id, created_by_input_id="x")
+    _assert_diagnostic(routed, "invalid_closure_root_creator")
+    for lineage in (None, " "):
+        invalid = _replace_work_item(state, root.ref.work_item_id, lineage_id=lineage)
+        _assert_diagnostic(invalid, "invalid_closure_root_lineage")
+        readiness = _closure.assess_closure_readiness(
+            invalid, lineage_id=command.lineage_id,
+            plan_ref=command.selected_plan_ref, target_key=key)
+        input_id, context = _closure.closure_lifecycle_identity(
+            "open", key, readiness.anchor_digest)
+        refusal = decide(invalid, replace(command, input_id=input_id), context).refusal
+        assert refusal is not None and refusal.reason == "invalid_closure_root_lineage"
+    descendant = replace(root, ref=replace(root.ref, work_item_id="child"),
+                         created_by_input_id="x")
+    closed = replace(state.closed_work_items["work-origin"],
+                     record_id="child-close", work_item_id="child")
+    settled = replace(state, work_items={**state.work_items, "child": descendant},
+        closed_work_items={**state.closed_work_items, "child": closed},
+    )
+    opening = _project(settled).candidate
+    assert opening is not None and generic_lifecycle.apply_candidate(settled, opening)
+
+
+def test_direct_open_refuses_wrong_root_work_id() -> None:
+    state, _plan, _fingerprint = generic_lifecycle.closure_origin_closed_state()
+    candidate = _project(state).candidate
+    assert candidate is not None and candidate.kind == "open"
+    transition_input = candidate.transition_input
+    key = replace(_closure.closure_target_key_for(transition_input),
+        root_work_item_id="wrong-root-work-item")
+    readiness = _closure.assess_closure_readiness(
+        state, lineage_id=key.lineage_id, plan_ref=key.selected_plan_ref,
+        target_key=key
+    )
+    identity = _closure.closure_lifecycle_identity
+    input_id, context = identity("open", key, readiness.anchor_digest)
+    wrong = replace(
+        transition_input, input_id=input_id,
+        closure_target_id=_closure.closure_target_id(key),
+        closure_root_work_item_id=key.root_work_item_id,
+    )
+    decision = decide(state, wrong, context)
+    assert decision.accepted is False
+    refusal = decision.refusal
+    assert refusal and refusal.reason == "closure_root_work_item_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    (
+        ("graph_node_id", "selected_route_graph_node_mismatch"),
+        ("stage_kind_id", "selected_route_stage_kind_mismatch"),
+        ("runner_binding_id", "selected_route_runner_binding_mismatch"),
+    ),
+)
+def test_closure_creator_preserves_field_specific_route_diagnostics(
+    field: str, expected: str
+) -> None:
+    state, _plan, _fingerprint = generic_lifecycle.closure_origin_closed_state()
+    root = state.work_items["work-origin"]
+    activation = state.activations["activation-origin"]
+    changed = replace(activation, **{field: f"wrong-{field}"})
+    state = replace(state, activations={**state.activations,
+        activation.activation_id: changed})
+    assert _closure.closure_enqueue_creator_refusal(state, root) == expected
+
+
+@pytest.mark.parametrize("aftermath", ("operator_wait", "recovery"))
+def test_closure_readiness_waits_for_active_aftermath(aftermath: str) -> None:
+    state, _plan, fingerprint = generic_lifecycle.closure_origin_closed_state()
+    work = state.work_items["work-origin"]
+    activation = state.activations["activation-origin"]
+    run = state.runs["run-origin"]
+    if aftermath == "operator_wait":
+        _, wait = generic_operator_wait.wait_state("active")
+        active = replace(
+            wait,
+            selected_plan_ref=work.ref.plan_ref,
+            selected_plan_fingerprint=fingerprint,
+            lineage_id=work.lineage_id or "lineage",
+        )
+        blocked = replace(state, operator_waits={active.wait_id: active})
+        resolved = replace(
+            blocked,
+            operator_waits={active.wait_id: replace(active, status="resolved")},
+        )
+    else:
+        attempt = RecoveryAttemptRecord(
+            record_id="recovery-active",
+            policy_id="lifecycle.recovery",
+            lineage_id=work.lineage_id or "lineage",
+            plan_ref=work.ref.plan_ref,
+            attempt_count=1,
+            phase="active_recovery",
+            source_run_id=run.run_ref.run_id,
+            source_work_item_id=work.ref.work_item_id,
+            source_activation_id=activation.activation_id,
+            source_graph_node_id=activation.graph_node_id,
+            source_stage_kind_id=activation.stage_kind_id,
+            source_runner_binding_id=activation.runner_binding_id,
+            source_queue_family_id=activation.queue_family_id,
+            recovery_action_id="lifecycle.recovery.run",
+            latest_recovery_activation_id=None,
+            latest_recovery_run_id=None,
+            latest_return_action_id=None,
+            created_by_input_id="recovery-input",
+            updated_by_input_id="recovery-input",
+        )
+        blocked = replace(
+            state,
+            recovery_attempts={attempt.record_id: attempt},
+        )
+        resolved = replace(
+            blocked,
+            recovery_attempts={attempt.record_id: replace(attempt, phase="resolved")},
+        )
+    assert _project(blocked).candidate is None
+    candidate = _project(resolved).candidate
+    assert candidate is not None and candidate.kind == "open"
+
+
+def test_closure_pass_explicitly_closes_target_and_stays_idle() -> None:
+    state, plan, fingerprint = generic_lifecycle.closure_evaluation_state()
+    evaluation = next(iter(state.closure_evaluations.values()))
+    apply_verdict = partial(_apply_closure_verdict, plan=plan, fingerprint=fingerprint)
+    passed = apply_verdict(state, evaluation, "REVIEW_PASSED", "pass")
+    target = next(iter(passed.closure_targets.values()))
+    assert target.status == "closed" and target.closed_by_record_id is not None
+    assert _project(passed).candidate is None
+    assert _project(passed).diagnostics == ()
