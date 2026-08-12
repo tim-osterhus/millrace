@@ -33,6 +33,15 @@ from millrace.contracts.compiled_plan import (
     WaitStateDeclaration,
     WorkflowIdentity,
 )
+from millrace.contracts.context_checkout import (
+    ContextCheckoutFile,
+    ContextCheckoutManifest,
+    ContextCheckoutOmission,
+    context_checkout_manifest_digest,
+    decode_context_checkout_manifest,
+    encode_context_checkout_manifest,
+    verify_context_checkout_manifest_digest,
+)
 from millrace.contracts.diagnostics import Diagnostic
 from millrace.contracts.fingerprints import (
     AUTHORITY_FINGERPRINT_DOMAIN_PREFIX,
@@ -205,6 +214,9 @@ __all__ = (
     "CounterId",
     "CounterRecord",
     "ContextSourceDeclaration",
+    "ContextCheckoutFile",
+    "ContextCheckoutManifest",
+    "ContextCheckoutOmission",
     "ContextWriteRule",
     "DispatchSuspensionRecord",
     "CreateActivation",
@@ -328,6 +340,10 @@ __all__ = (
     "WorkflowId",
     "WorkflowIdentity",
     "WorkflowVersion",
+    "context_checkout_manifest_digest",
+    "decode_context_checkout_manifest",
+    "encode_context_checkout_manifest",
+    "verify_context_checkout_manifest_digest",
     "WorkItem",
     "WorkItemRef",
     "WorkDependencyRecord",
