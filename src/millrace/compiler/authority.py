@@ -17,6 +17,7 @@ from millrace.compiler.diagnostics import (
 from millrace.compiler.references import collect_id_index
 from millrace.compiler.source import is_sequence, mapping, records
 from millrace.contracts import Diagnostic
+from millrace.contracts.compiled_plan import context_binding_authority_refusal
 
 AUTHORITY_VALUE_FIELDS: Mapping[str, tuple[str, ...]] = {
     "graphs": ("presentation",),
@@ -238,6 +239,7 @@ KNOWN_SOURCE_SECTIONS = frozenset(
         "operator_waits",
         "runner_bindings",
         "capabilities",
+        "context_bindings",
         UNSELECTED_CATALOG_COLLECTION,
     )
 )
@@ -360,6 +362,24 @@ def validate_selected_authority_values(
         diagnostics,
         declaration_path_prefix=declaration_path_prefix,
     )
+    context_refusal = context_binding_authority_refusal(source)
+    if context_refusal is not None and not context_refusal.startswith(
+        "context_binding_non_nfc_id:"
+    ):
+        diagnostics.append(
+            compiler_error(
+                code=context_refusal.split(":", 1)[0],
+                declaration_path=(
+                    f"{declaration_path_prefix}context_bindings"
+                ),
+                message=(
+                    "Context binding authority is not a closed generic "
+                    "declaration."
+                ),
+                context={"refusal": context_refusal},
+                hint="Correct the context binding declaration before compile.",
+            )
+        )
 
 
 def validate_unselected_catalog(

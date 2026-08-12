@@ -20,6 +20,7 @@ from millrace.contracts.compiled_plan import (
     SelectedWorkflowPackagePin,
     authority_fingerprint,
     canonical_authority_bytes,
+    context_binding_authority_refusal,
 )
 from millrace.contracts.schema import validate_closure_verdict_schema_declaration
 
@@ -81,6 +82,7 @@ _SELECTED_AUTHORITY_KEYS = frozenset(
         "intervention_options",
         "operator_waits",
         "capabilities",
+        "context_bindings",
     }
 )
 
@@ -191,9 +193,12 @@ def verify_compiled_plan_export_record(
     )
 
     selected_authority = _require_mapping(record, "selected_authority")
+    selected_authority_keys = _SELECTED_AUTHORITY_KEYS
+    if "context_bindings" not in selected_authority:
+        selected_authority_keys -= frozenset({"context_bindings"})
     _require_exact_keys(
         selected_authority,
-        _SELECTED_AUTHORITY_KEYS,
+        selected_authority_keys,
         label="selected_authority",
     )
     _require_exact_value(
@@ -236,6 +241,11 @@ def verify_compiled_plan_export_record(
         ),
         runner_bindings=_require_sequence(selected_authority, "runner_bindings"),
     )
+    context_refusal = context_binding_authority_refusal(selected_authority)
+    if context_refusal is not None:
+        raise CompiledPlanExportError(
+            f"selected context binding authority is invalid: {context_refusal}"
+        )
 
     expected_fingerprint = _require_string(record, "authority_fingerprint")
     try:

@@ -7,10 +7,11 @@ apply mutations.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import fields, is_dataclass, replace
 from hashlib import sha256
-from typing import cast
+from typing import Any, cast
 
 import millrace.kernel._closure_lifecycle as _closure
 from millrace.contracts.compiled_plan import (
@@ -30,6 +31,7 @@ from millrace.contracts.compiled_plan import (
     StageKindDeclaration,
     TerminalActionDeclaration,
     authority_fingerprint,
+    context_binding_authority_refusal,
     runner_component_authority_refusal,
     verify_authority_fingerprint,
 )
@@ -87,6 +89,7 @@ from millrace.contracts.state import (
     WorkItemRef,
 )
 from millrace.contracts.transition import (
+    INPUT_PAYLOAD_DIGEST_DOMAIN_PREFIX,
     AdmitPlan,
     AdmitPlanRef,
     AdvanceRunnerSession,
@@ -152,6 +155,8 @@ from millrace.contracts.transition import (
     TransitionDecision,
     TransitionInput,
     TransitionMutation,
+    _canonical_input_value,
+    _transition_input_payload,
     artifact_payload_digest,
     canonical_authority_mapping_bytes,
     input_family,
@@ -285,7 +290,18 @@ def decide(
     context: TransitionContext,
 ) -> TransitionDecision:
     """Build a deterministic transition decision without mutating state."""
-    digest = input_payload_digest(transition_input)
+    context_refusal: str | None = None
+    if isinstance(transition_input, AdmitPlan):
+        context_refusal = context_binding_authority_refusal(
+            transition_input.selected_plan
+        )
+    try:
+        digest = input_payload_digest(transition_input)
+    except (RecursionError, TypeError, UnicodeEncodeError):
+        if context_refusal is None:
+            raise
+        assert isinstance(transition_input, AdmitPlan)
+        digest = _invalid_context_admit_plan_digest(transition_input)
     replay_or_conflict = _idempotency_decision(
         state,
         transition_input,
@@ -303,6 +319,14 @@ def decide(
             mutations=(),
         )
     if isinstance(transition_input, AdmitPlan):
+        if context_refusal is not None:
+            return _refused_decision(
+                transition_input=transition_input,
+                context=context,
+                digest=digest,
+                reason="unsupported_selected_authority",
+                detail=context_refusal,
+            )
         return _decide_admit_plan(state, transition_input, context, digest)
     if isinstance(transition_input, SelectDefaultPlan):
         return _decide_select_default_plan(state, transition_input, context, digest)
@@ -552,6 +576,304 @@ def decide(
         digest=digest,
         reason="unsupported_input",
     )
+
+
+def _invalid_context_admit_plan_digest(transition_input: AdmitPlan) -> str:
+    _invalid_context_check_unrelated_serialization(
+        transition_input.selected_plan
+    )
+    _invalid_context_check_serializable(transition_input.authority_fingerprint)
+    serialized = json.dumps(
+        _invalid_context_canonical_value(_transition_input_payload(transition_input)),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    digest = sha256(INPUT_PAYLOAD_DIGEST_DOMAIN_PREFIX + serialized).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _invalid_context_check_unrelated_serialization(
+    selected_plan: object,
+) -> None:
+    if isinstance(selected_plan, SelectedCompiledPlan):
+        authority_fields = {
+            field.name: getattr(selected_plan, field.name)
+            for field in fields(selected_plan)
+        }
+    elif isinstance(selected_plan, Mapping):
+        authority_fields = dict(selected_plan)
+    else:
+        return
+
+    globally_scoped_fields = {
+        "stage_kinds": {"id", "runner_binding_id", "declared_outcome_ids"},
+        "runner_bindings": {"id", "stage_kind_ids"},
+        "assets": {"id"},
+        "terminal_actions": {
+            "id",
+            "stage_kind_id",
+            "outcome_id",
+            "artifact_schema_id",
+            "runner_binding_id",
+        },
+        "terminal_outcomes": {"id", "stage_kind_id"},
+        "artifact_schemas": {"id"},
+    }
+    closure_scopes = _invalid_context_closure_scopes(authority_fields)
+    for field_name, value in authority_fields.items():
+        if field_name == "context_bindings":
+            continue
+        field_scope = globally_scoped_fields.get(field_name)
+        if field_scope is None:
+            _invalid_context_check_serializable(value)
+            continue
+        if not isinstance(value, (list, tuple)):
+            continue
+        for record in value:
+            record_scope = field_scope | closure_scopes.get(field_name, {}).get(
+                id(record),
+                set(),
+            )
+            _invalid_context_check_record_serialization(record, record_scope)
+
+
+def _invalid_context_closure_scopes(
+    authority_fields: Mapping[str, object],
+) -> dict[str, dict[int, set[str]]]:
+    def field_value(record: object, field_name: str) -> object:
+        if isinstance(record, Mapping):
+            return record.get(field_name)
+        return getattr(record, field_name, None)
+
+    def records_for(field_name: str) -> tuple[object, ...]:
+        value = authority_fields.get(field_name, ())
+        if isinstance(value, (list, tuple)):
+            return tuple(value)
+        return ()
+
+    def rendered_id(value: object) -> str | None:
+        if isinstance(value, str) and value:
+            return value
+        if value.__class__.__module__ != "millrace.contracts.ids":
+            return None
+        rendered = getattr(value, "value", None)
+        return rendered if isinstance(rendered, str) and rendered else None
+
+    def record_id(record: object, field_name: str) -> str | None:
+        return rendered_id(field_value(record, field_name))
+
+    records_by_id: dict[str, dict[str, object]] = {}
+    for collection_name in (
+        "stage_kinds",
+        "runner_bindings",
+        "assets",
+        "terminal_actions",
+        "terminal_outcomes",
+        "artifact_schemas",
+    ):
+        records_by_id[collection_name] = {}
+        for record in records_for(collection_name):
+            record_rendered_id = record_id(record, "id")
+            if record_rendered_id is not None:
+                records_by_id[collection_name].setdefault(record_rendered_id, record)
+
+    def selected_record(collection_name: str, value: object) -> object | None:
+        selected_id = rendered_id(value)
+        if selected_id is None:
+            return None
+        return records_by_id[collection_name].get(selected_id)
+
+    scopes: dict[str, dict[int, set[str]]] = {}
+
+    def skip_field(collection_name: str, record: object, field_name: str) -> None:
+        scopes.setdefault(collection_name, {}).setdefault(id(record), set()).add(
+            field_name
+        )
+
+    for binding in records_for("context_bindings"):
+        stage = selected_record(
+            "stage_kinds",
+            field_value(binding, "stage_kind_id"),
+        )
+        if stage is None:
+            continue
+
+        runner = selected_record(
+            "runner_bindings",
+            field_value(stage, "runner_binding_id"),
+        )
+        if runner is not None:
+            skip_field("runner_bindings", runner, "terminal_result_mappings")
+
+        router_asset = selected_record(
+            "assets",
+            field_value(binding, "router_asset_id"),
+        )
+        if router_asset is not None:
+            skip_field("assets", router_asset, "body")
+
+        action = selected_record(
+            "terminal_actions",
+            field_value(binding, "writeback_terminal_action_id"),
+        )
+        if action is not None:
+            schema = selected_record(
+                "artifact_schemas",
+                field_value(action, "artifact_schema_id"),
+            )
+            if schema is not None:
+                skip_field("artifact_schemas", schema, "schema")
+
+        schema = selected_record(
+            "artifact_schemas",
+            field_value(binding, "writeback_artifact_schema_id"),
+        )
+        if schema is not None:
+            skip_field("artifact_schemas", schema, "schema")
+
+    return scopes
+
+
+def _invalid_context_check_record_serialization(
+    record: object,
+    scoped_fields: set[str],
+) -> None:
+    for field_name, value in _invalid_context_record_items(record):
+        if field_name not in scoped_fields:
+            _invalid_context_check_serializable(value)
+
+
+def _invalid_context_record_items(
+    record: object,
+) -> tuple[tuple[object, object], ...]:
+    if isinstance(record, Mapping):
+        return tuple(record.items())
+    if is_dataclass(record) and not isinstance(record, type):
+        return tuple(
+            (field.name, getattr(record, field.name))
+            for field in fields(cast(Any, record))
+        )
+    return ()
+
+
+def _invalid_context_check_serializable(value: object) -> None:
+    json.dumps(
+        _canonical_input_value(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _invalid_context_canonical_value(
+    value: object,
+    *,
+    _seen: set[int] | None = None,
+) -> object:
+    seen = set() if _seen is None else _seen
+    track_identity = isinstance(value, (Mapping, list, tuple)) or (
+        is_dataclass(value) and not isinstance(value, type)
+    )
+    if track_identity:
+        identity = id(value)
+        if identity in seen:
+            return {"__invalid_context_kind__": "cycle"}
+        seen.add(identity)
+    try:
+        if value is None or isinstance(value, (str, bool)) or type(value) is int:
+            return value
+        string_backed_id_value = _invalid_context_string_backed_id_value(value)
+        if string_backed_id_value is not None:
+            return {
+                "__invalid_context_kind__": "id",
+                "type": _invalid_context_type_name(value),
+                "value": string_backed_id_value,
+            }
+        if isinstance(value, float):
+            return {
+                "__invalid_context_kind__": "scalar",
+                "value": value.hex(),
+            }
+        if isinstance(value, (bytes, bytearray)):
+            return {
+                "__invalid_context_kind__": "scalar",
+                "type": _invalid_context_type_name(value),
+                "value": bytes(value).hex(),
+            }
+        if isinstance(value, complex):
+            return {
+                "__invalid_context_kind__": "scalar",
+                "type": _invalid_context_type_name(value),
+                "real": value.real.hex(),
+                "imaginary": value.imag.hex(),
+            }
+        if isinstance(value, (list, tuple)):
+            return {
+                "__invalid_context_kind__": "sequence",
+                "type": _invalid_context_type_name(value),
+                "items": [
+                    _invalid_context_canonical_value(item, _seen=seen)
+                    for item in value
+                ],
+            }
+        if isinstance(value, Mapping):
+            items = [
+                {
+                    "key": _invalid_context_canonical_value(key, _seen=seen),
+                    "value": _invalid_context_canonical_value(
+                        nested_value,
+                        _seen=seen,
+                    ),
+                }
+                for key, nested_value in value.items()
+            ]
+            items.sort(
+                key=lambda item: json.dumps(
+                    item,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+            return {
+                "__invalid_context_kind__": "mapping",
+                "items": items,
+            }
+        if is_dataclass(value) and not isinstance(value, type):
+            return {
+                "__invalid_context_kind__": "dataclass",
+                "type": _invalid_context_type_name(value),
+                "fields": [
+                    {
+                        "name": field.name,
+                        "value": _invalid_context_canonical_value(
+                            getattr(value, field.name),
+                            _seen=seen,
+                        ),
+                    }
+                    for field in fields(cast(Any, value))
+                ],
+            }
+        return {
+            "__invalid_context_kind__": "unsupported",
+            "type": _invalid_context_type_name(value),
+        }
+    finally:
+        if track_identity:
+            seen.remove(identity)
+
+
+def _invalid_context_string_backed_id_value(value: object) -> str | None:
+    if value.__class__.__module__ != "millrace.contracts.ids":
+        return None
+    rendered = getattr(value, "value", None)
+    return rendered if isinstance(rendered, str) else None
+
+
+def _invalid_context_type_name(value: object) -> str:
+    value_type = type(value)
+    return f"{value_type.__module__}.{value_type.__qualname__}"
 
 
 def _idempotency_decision(
@@ -907,6 +1229,9 @@ def _decide_select_default_plan(
 
 
 def _selected_authority_refusal(selected_plan: SelectedCompiledPlan) -> str | None:
+    context_refusal = context_binding_authority_refusal(selected_plan)
+    if context_refusal is not None:
+        return context_refusal
     component_refusal = runner_component_authority_refusal(selected_plan)
     if component_refusal is not None:
         return component_refusal

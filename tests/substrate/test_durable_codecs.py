@@ -297,7 +297,7 @@ def test_selected_plan_codec_round_trips_kernel_ping_and_preserves_fingerprint()
     assert authority_fingerprint(decoded_plan) == fingerprint
 
 
-def test_selected_plan_codec_encodes_v16_plan_and_v3_component_free_runner() -> None:
+def test_selected_plan_codec_encodes_v17_plan_and_v3_component_free_runner() -> None:
     from millrace.substrate.codecs import encode_selected_compiled_plan
 
     plan = _component_free_capability_plan()
@@ -305,7 +305,7 @@ def test_selected_plan_codec_encodes_v16_plan_and_v3_component_free_runner() -> 
     payload = dict(encode_selected_compiled_plan(plan).payload)
     runner = cast(list[dict[str, object]], payload["runner_bindings"])[0]
 
-    assert payload["schema_version"] == 16
+    assert payload["schema_version"] == 17
     assert runner["schema_version"] == 3
     assert runner["invocation_timeout_seconds"] == 3600
     assert runner["component_pin"] is None

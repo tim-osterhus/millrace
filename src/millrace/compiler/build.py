@@ -68,7 +68,13 @@ from millrace.contracts import (
     WorkflowIdentity,
     WorkflowVersion,
 )
-from millrace.contracts.compiled_plan import AuthorityValue, freeze_authority_value
+from millrace.contracts.compiled_plan import (
+    AuthorityValue,
+    ContextSourceDeclaration,
+    ContextWriteRule,
+    StageContextBindingDeclaration,
+    freeze_authority_value,
+)
 from millrace.contracts.operator_waits import (
     _canonical_operator_wait_resolution_kinds,
     _canonical_operator_wait_source_action_ids,
@@ -535,6 +541,10 @@ def build_selected_plan(
             )
             for record in _records_by_id(source, "capabilities")
         ),
+        context_bindings=tuple(
+            _build_context_binding(record)
+            for record in _records_by_id(source, "context_bindings")
+        ),
     )
 
 
@@ -622,7 +632,51 @@ def _selected_artifact_schema_ids(source: Mapping[str, object]) -> frozenset[str
         raw_schema_id = record.get("payload_schema_id")
         if is_non_empty_text(raw_schema_id):
             schema_ids.add(str(raw_schema_id))
+    for record in records(source, "context_bindings"):
+        raw_schema_id = record.get("writeback_artifact_schema_id")
+        if is_non_empty_text(raw_schema_id):
+            schema_ids.add(str(raw_schema_id))
     return frozenset(schema_ids)
+
+
+def _build_context_binding(record: SourceRecord) -> StageContextBindingDeclaration:
+    return StageContextBindingDeclaration(
+        id=str(record["id"]),
+        stage_kind_id=StageKindId(str(record["stage_kind_id"])),
+        router_asset_id=AssetId(str(record["router_asset_id"])),
+        checkout_root=str(record["checkout_root"]),
+        required_sources=tuple(
+            ContextSourceDeclaration(
+                source_kind=str(source["source_kind"]),
+                source_ref=str(source["source_ref"]),
+                max_files=_required_int(source["max_files"]),
+                max_bytes=_required_int(source["max_bytes"]),
+            )
+            for source in records(record, "required_sources")
+        ),
+        discoverable_sources=tuple(
+            ContextSourceDeclaration(
+                source_kind=str(source["source_kind"]),
+                source_ref=str(source["source_ref"]),
+                max_files=_required_int(source["max_files"]),
+                max_bytes=_required_int(source["max_bytes"]),
+            )
+            for source in records(record, "discoverable_sources")
+        ),
+        write_rules=tuple(
+            ContextWriteRule(
+                relative_root=str(rule["relative_root"]),
+                disposition=str(rule["disposition"]),
+            )
+            for rule in records(record, "write_rules")
+        ),
+        writeback_terminal_action_id=_optional_context_action_id(
+            record.get("writeback_terminal_action_id")
+        ),
+        writeback_artifact_schema_id=_optional_context_artifact_schema_id(
+            record.get("writeback_artifact_schema_id")
+        ),
+    )
 
 
 def _build_fanout_declaration(
@@ -699,8 +753,30 @@ def _optional_queue_family_id(value: object) -> QueueFamilyId | None:
     return QueueFamilyId(str(value)) if is_non_empty_text(value) else None
 
 
+def _optional_action_id(value: object) -> ActionId | None:
+    return ActionId(str(value)) if is_non_empty_text(value) else None
+
+
 def _optional_artifact_schema_id(value: object) -> ArtifactSchemaId | None:
     return ArtifactSchemaId(str(value)) if is_non_empty_text(value) else None
+
+
+def _optional_context_action_id(value: object) -> ActionId | None:
+    if value is None:
+        return None
+    if type(value) is str and value:
+        return ActionId(value)
+    raise TypeError("context writeback action linkage must be text or null")
+
+
+def _optional_context_artifact_schema_id(
+    value: object,
+) -> ArtifactSchemaId | None:
+    if value is None:
+        return None
+    if type(value) is str and value:
+        return ArtifactSchemaId(value)
+    raise TypeError("context writeback schema linkage must be text or null")
 
 
 def _optional_runner_binding_id(value: object) -> RunnerBindingId | None:

@@ -21,6 +21,7 @@ from millrace.contracts import PartitionDeclaration, SelectedCompiledPlan
 from millrace.contracts.ids import PartitionId
 from millrace.workflows import kernel_ping
 from support import kernel_ping as kernel_ping_support
+from tests.compiler.test_context_bindings import _source_with_context_binding
 
 Source = dict[str, object]
 _CODEX_POLICY = SelectedRunnerAdapterPolicy(
@@ -355,6 +356,285 @@ def _parsed_export(plan: SelectedCompiledPlan) -> dict[str, object]:
     return cast(dict[str, object], parsed)
 
 
+def _parsed_context_export(*, write_enabled: bool) -> dict[str, object]:
+    result = compile_workflow(_source_with_context_binding(write_enabled=write_enabled))
+    assert result.plan is not None
+    return _parsed_export(result.plan)
+
+
+def test_unbound_export_omits_empty_context_bindings_and_verifies() -> None:
+    from millrace.compiler import (
+        compiled_plan_export_record,
+        verify_compiled_plan_export_record,
+    )
+
+    record = dict(compiled_plan_export_record(_compile_plan(_source())))
+    selected = cast(dict[str, object], record["selected_authority"])
+
+    assert "context_bindings" not in selected
+    verified = verify_compiled_plan_export_record(record)
+    assert "context_bindings" not in verified.selected_authority
+
+
+def test_bound_context_bindings_are_preserved_in_canonical_export_and_verification(
+) -> None:
+    from millrace.compiler import verify_compiled_plan_export_record
+
+    result = compile_workflow(_source_with_context_binding(write_enabled=False))
+    assert result.plan is not None
+    plan = result.plan
+    authority = json.loads(canonical_authority_bytes(plan).decode("utf-8"))
+    record = _parsed_export(plan)
+    selected = cast(dict[str, object], record["selected_authority"])
+
+    assert isinstance(authority, dict)
+    assert authority["context_bindings"]
+    assert selected["context_bindings"] == authority["context_bindings"]
+    assert record["authority_fingerprint"] == authority_fingerprint(plan)
+    verified = verify_compiled_plan_export_record(record)
+    assert verified.selected_authority["context_bindings"] == selected[
+        "context_bindings"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("_case_id", "write_enabled", "record_kind", "expected_detail"),
+    (
+        pytest.param(
+            "binding",
+            False,
+            "binding",
+            "context_binding_shape:0",
+            id="binding-header",
+        ),
+        pytest.param(
+            "required-source",
+            False,
+            "source",
+            "context_binding_source_shape:kernel_ping.taskmaster_context:0",
+            id="source-header",
+        ),
+        pytest.param(
+            "write-rule",
+            True,
+            "write_rule",
+            "context_binding_write_shape:kernel_ping.taskmaster_context:0",
+            id="write-rule-header",
+        ),
+    ),
+)
+def test_export_verifier_requires_exact_context_record_headers(
+    _case_id: str,
+    write_enabled: bool,
+    record_kind: str,
+    expected_detail: str,
+) -> None:
+    from millrace.compiler import (
+        CompiledPlanExportError,
+        verify_compiled_plan_export_record,
+    )
+
+    record = _parsed_context_export(write_enabled=write_enabled)
+    selected = cast(dict[str, object], record["selected_authority"])
+    bindings = cast(list[dict[str, object]], selected["context_bindings"])
+    binding = bindings[0]
+    if record_kind == "binding":
+        target = binding
+    elif record_kind == "source":
+        target = cast(list[dict[str, object]], binding["required_sources"])[0]
+    else:
+        target = cast(list[dict[str, object]], binding["write_rules"])[0]
+    target.pop("record_kind")
+    target.pop("schema_version")
+    record["authority_fingerprint"] = authority_fingerprint(selected)
+
+    with pytest.raises(
+        CompiledPlanExportError,
+        match=rf"selected context binding authority is invalid: {expected_detail}",
+    ):
+        verify_compiled_plan_export_record(record)
+
+
+@pytest.mark.parametrize(
+    ("write_enabled", "record_kind", "schema_version", "expected_detail"),
+    (
+        pytest.param(
+            False,
+            "binding",
+            True,
+            "context_binding_shape:0",
+            id="binding-bool",
+        ),
+        pytest.param(
+            False,
+            "binding",
+            1.0,
+            "context_binding_shape:0",
+            id="binding-float",
+        ),
+        pytest.param(
+            False,
+            "source",
+            True,
+            "context_binding_source_shape:kernel_ping.taskmaster_context:0",
+            id="source-bool",
+        ),
+        pytest.param(
+            False,
+            "source",
+            1.0,
+            "context_binding_source_shape:kernel_ping.taskmaster_context:0",
+            id="source-float",
+        ),
+        pytest.param(
+            True,
+            "write_rule",
+            True,
+            "context_binding_write_shape:kernel_ping.taskmaster_context:0",
+            id="write-rule-bool",
+        ),
+        pytest.param(
+            True,
+            "write_rule",
+            1.0,
+            "context_binding_write_shape:kernel_ping.taskmaster_context:0",
+            id="write-rule-float",
+        ),
+    ),
+)
+def test_export_verifier_rejects_non_integer_context_record_schema_versions(
+    write_enabled: bool,
+    record_kind: str,
+    schema_version: object,
+    expected_detail: str,
+) -> None:
+    from millrace.compiler import (
+        CompiledPlanExportError,
+        verify_compiled_plan_export_record,
+    )
+
+    record = _parsed_context_export(write_enabled=write_enabled)
+    selected = cast(dict[str, object], record["selected_authority"])
+    binding = cast(list[dict[str, object]], selected["context_bindings"])[0]
+    if record_kind == "binding":
+        target = binding
+    elif record_kind == "source":
+        target = cast(list[dict[str, object]], binding["required_sources"])[0]
+    else:
+        target = cast(list[dict[str, object]], binding["write_rules"])[0]
+    target["schema_version"] = schema_version
+    _tampered_record_with_recomputed_fingerprint(record, selected)
+
+    with pytest.raises(
+        CompiledPlanExportError,
+        match=rf"selected context binding authority is invalid: {expected_detail}",
+    ):
+        verify_compiled_plan_export_record(record)
+
+
+@pytest.mark.parametrize(
+    ("write_enabled", "field_name", "value", "expected_detail"),
+    (
+        (
+            False,
+            "writeback_terminal_action_id",
+            7,
+            "context_binding_read_only_linkage",
+        ),
+        (
+            False,
+            "writeback_terminal_action_id",
+            "",
+            "context_binding_read_only_linkage",
+        ),
+        (
+            False,
+            "writeback_artifact_schema_id",
+            [],
+            "context_binding_read_only_linkage",
+        ),
+        (
+            True,
+            "writeback_terminal_action_id",
+            7,
+            "context_binding_writeback_linkage",
+        ),
+        (
+            True,
+            "writeback_terminal_action_id",
+            "",
+            "context_binding_writeback_linkage",
+        ),
+        (
+            True,
+            "writeback_artifact_schema_id",
+            [],
+            "context_binding_writeback_linkage",
+        ),
+    ),
+)
+def test_export_verifier_refuses_malformed_context_writeback_linkage(
+    write_enabled: bool,
+    field_name: str,
+    value: object,
+    expected_detail: str,
+) -> None:
+    from millrace.compiler import (
+        CompiledPlanExportError,
+        verify_compiled_plan_export_record,
+    )
+
+    record = _parsed_context_export(write_enabled=write_enabled)
+    selected = cast(dict[str, object], record["selected_authority"])
+    binding = cast(list[dict[str, object]], selected["context_bindings"])[0]
+    binding[field_name] = value
+    _tampered_record_with_recomputed_fingerprint(record, selected)
+
+    with pytest.raises(
+        CompiledPlanExportError,
+        match=rf"selected context binding authority is invalid: {expected_detail}:",
+    ):
+        verify_compiled_plan_export_record(record)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_detail"),
+    (
+        (
+            "stage_kind_id",
+            7,
+            "context_binding_stage_id_type:kernel_ping.taskmaster_context",
+        ),
+        (
+            "router_asset_id",
+            [],
+            "context_binding_router_asset_id_type:kernel_ping.taskmaster_context",
+        ),
+    ),
+)
+def test_export_verifier_refuses_non_string_context_binding_ids(
+    field_name: str,
+    value: object,
+    expected_detail: str,
+) -> None:
+    from millrace.compiler import (
+        CompiledPlanExportError,
+        verify_compiled_plan_export_record,
+    )
+
+    record = _parsed_context_export(write_enabled=False)
+    selected = cast(dict[str, object], record["selected_authority"])
+    binding = cast(list[dict[str, object]], selected["context_bindings"])[0]
+    binding[field_name] = value
+    _tampered_record_with_recomputed_fingerprint(record, selected)
+
+    with pytest.raises(
+        CompiledPlanExportError,
+        match=rf"selected context binding authority is invalid: {expected_detail}",
+    ):
+        verify_compiled_plan_export_record(record)
+
+
 def _canonical_json_bytes(value: object) -> bytes:
     return json.dumps(
         value,
@@ -582,11 +862,12 @@ def test_kernel_ping_export_matches_golden_fixture_exactly() -> None:
     export_bytes = compiled_plan_export_bytes(plan)
     fixture_bytes = EXPORT_FIXTURE.read_bytes()
 
-    assert export_bytes == fixture_bytes
     assert not fixture_bytes.endswith(b"\n")
     parsed = json.loads(fixture_bytes.decode("utf-8"))
     assert isinstance(parsed, dict)
     assert _canonical_json_bytes(parsed) == fixture_bytes
+
+    assert export_bytes == fixture_bytes
 
     verified = verify_compiled_plan_export_bytes(fixture_bytes)
     assert verified.authority_fingerprint == authority_fingerprint(plan)
@@ -602,10 +883,10 @@ def test_compiler_provenance_does_not_change_selected_authority() -> None:
 
     assert COMPILER_ID == "millrace-ai"
     assert authority_fingerprint(plan) == (
-        "sha256:cac2bb63793f3cad20361ac51152109fd7e60c63120a70df05b5c40e3149010b"
+        "sha256:3282a891816a1514bc16cce5e4d0ecc086fb874ad8a95add59cce8d386845e8f"
     )
     assert hashlib.sha256(authority_bytes).hexdigest() == (
-        "ca1e565818bf14e55e5d7aff70581603dae2a5dc53c0cf4011569a1a64502f34"
+        "7945fcd272d2fac07969d811df14b9da169ec808f36bca3e9398db2c29867267"
     )
     assert len(authority_bytes) == 13153
 

@@ -496,7 +496,7 @@ _MILLFORGE_WORKER_DESCRIPTOR_SHA256 = (
     "d6b5c75f48565b939ee4d6e30b83e3ad203764b7bda02890ca515a9bfb3318f0"
 )
 _MILLFORGE_PLAN_FINGERPRINT = (
-    "sha256:cac2bb63793f3cad20361ac51152109fd7e60c63120a70df05b5c40e3149010b"
+    "sha256:3282a891816a1514bc16cce5e4d0ecc086fb874ad8a95add59cce8d386845e8f"
 )
 
 
@@ -504,6 +504,29 @@ def _millforge_source() -> dict[str, object]:
     from millrace.workflows import kernel_ping
 
     return kernel_ping.workflow_source()
+
+
+def test_unbound_cli_export_hydrates_empty_context_bindings_with_fingerprint_parity(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli.plans import _selected_plan_from_export
+    from millrace.compiler.export import compiled_plan_export_bytes
+    from millrace.workflows import kernel_ping
+
+    result = compile_workflow(kernel_ping.workflow_source())
+    assert result.plan is not None
+    export_path = tmp_path / "kernel-ping.export.json"
+    export_path.write_bytes(compiled_plan_export_bytes(result.plan))
+
+    selected_plan, fingerprint = _selected_plan_from_export(
+        export_path,
+        command="plan.admit",
+    )
+
+    assert isinstance(selected_plan, SelectedCompiledPlan)
+    assert selected_plan.context_bindings == ()
+    assert fingerprint == authority_fingerprint(result.plan)
+    assert fingerprint == authority_fingerprint(selected_plan)
 
 
 def _active_millforge_state_with_codex_default() -> tuple[

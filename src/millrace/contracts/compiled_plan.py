@@ -6,8 +6,10 @@ import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, fields, is_dataclass
 from hashlib import sha256
+from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Any, ClassVar, TypeAlias, TypeVar, cast
+from unicodedata import normalize
 
 from millrace.contracts.fingerprints import (
     AUTHORITY_FINGERPRINT_DOMAIN_PREFIX,
@@ -35,6 +37,10 @@ from millrace.contracts.ids import (
     WaitStateId,
     WorkflowId,
     WorkflowVersion,
+)
+from millrace.contracts.workflow_package_paths import (
+    WorkflowPackagePathPolicyError,
+    validate_package_path,
 )
 
 AuthorityValue: TypeAlias = (
@@ -209,6 +215,55 @@ class ArtifactSchemaDeclaration:
             "presentation",
             freeze_authority_mapping(cast(Mapping[str, object], self.presentation)),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSourceDeclaration:
+    record_kind: ClassVar[str] = "context_source_declaration"
+    schema_version: ClassVar[int] = 1
+
+    source_kind: str
+    source_ref: str
+    max_files: int
+    max_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ContextWriteRule:
+    record_kind: ClassVar[str] = "context_write_rule"
+    schema_version: ClassVar[int] = 1
+
+    relative_root: str
+    disposition: str
+
+
+@dataclass(frozen=True, slots=True)
+class StageContextBindingDeclaration:
+    record_kind: ClassVar[str] = "stage_context_binding_declaration"
+    schema_version: ClassVar[int] = 1
+
+    id: str
+    stage_kind_id: StageKindId
+    router_asset_id: AssetId
+    checkout_root: str
+    required_sources: tuple[ContextSourceDeclaration, ...]
+    discoverable_sources: tuple[ContextSourceDeclaration, ...]
+    write_rules: tuple[ContextWriteRule, ...] = ()
+    writeback_terminal_action_id: ActionId | None = None
+    writeback_artifact_schema_id: ArtifactSchemaId | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "required_sources",
+            _freeze_sequence(self.required_sources),
+        )
+        object.__setattr__(
+            self,
+            "discoverable_sources",
+            _freeze_sequence(self.discoverable_sources),
+        )
+        object.__setattr__(self, "write_rules", _freeze_sequence(self.write_rules))
 
 
 @dataclass(frozen=True, slots=True)
@@ -901,7 +956,7 @@ class SelectedWorkflowPackagePin:
 @dataclass(frozen=True, slots=True)
 class SelectedCompiledPlan:
     record_kind: ClassVar[str] = "selected_compiled_plan"
-    schema_version: ClassVar[int] = 16
+    schema_version: ClassVar[int] = 17
 
     workflow: WorkflowIdentity
     compatibility_profile: None
@@ -931,6 +986,7 @@ class SelectedCompiledPlan:
     capabilities: tuple[CapabilityDeclaration, ...] = ()
     effect_declarations: tuple[EffectDeclaration, ...] = ()
     workflow_package_pin: SelectedWorkflowPackagePin | None = None
+    context_bindings: tuple[StageContextBindingDeclaration, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1037,6 +1093,916 @@ class SelectedCompiledPlan:
             "capabilities",
             _freeze_sequence(self.capabilities),
         )
+        object.__setattr__(
+            self,
+            "context_bindings",
+            _freeze_sequence(self.context_bindings),
+        )
+
+
+def context_binding_authority_refusal(
+    selected_plan: SelectedCompiledPlan | Mapping[str, object],
+) -> str | None:
+    """Return a stable refusal for malformed generic context authority."""
+
+    typed_authority = isinstance(selected_plan, SelectedCompiledPlan)
+    serialized_authority = (
+        isinstance(selected_plan, Mapping)
+        and selected_plan.get("record_kind") == SelectedCompiledPlan.record_kind
+        and selected_plan.get("schema_version") == SelectedCompiledPlan.schema_version
+    )
+    bindings = _context_authority_records(
+        selected_plan,
+        "context_bindings",
+        tuple_only=typed_authority,
+    )
+    if bindings is None:
+        return "context_binding_collection"
+    if not bindings:
+        return None
+
+    stages = _context_authority_records(
+        selected_plan,
+        "stage_kinds",
+        tuple_only=typed_authority,
+    )
+    runners = _context_authority_records(
+        selected_plan,
+        "runner_bindings",
+        tuple_only=typed_authority,
+    )
+    assets = _context_authority_records(
+        selected_plan,
+        "assets",
+        tuple_only=typed_authority,
+    )
+    actions = _context_authority_records(
+        selected_plan,
+        "terminal_actions",
+        tuple_only=typed_authority,
+    )
+    outcomes = _context_authority_records(
+        selected_plan,
+        "terminal_outcomes",
+        tuple_only=typed_authority,
+    )
+    schemas = _context_authority_records(
+        selected_plan,
+        "artifact_schemas",
+        tuple_only=typed_authority,
+    )
+    if any(
+        collection is None
+        for collection in (stages, runners, assets, actions, outcomes, schemas)
+    ):
+        return "context_binding_selected_authority_collection"
+    assert stages is not None
+    assert runners is not None
+    assert assets is not None
+    assert actions is not None
+    assert outcomes is not None
+    assert schemas is not None
+
+    binding_ids: set[str] = set()
+    bound_stage_ids: set[str] = set()
+    for index, binding in _context_authority_sorted(bindings, "id"):
+        if not _context_authority_record_shape(
+            binding,
+            record_kind=StageContextBindingDeclaration.record_kind,
+            required_fields={
+                "id",
+                "stage_kind_id",
+                "router_asset_id",
+                "checkout_root",
+                "required_sources",
+                "discoverable_sources",
+            },
+            optional_fields={
+                "write_rules",
+                "writeback_terminal_action_id",
+                "writeback_artifact_schema_id",
+            },
+            expected_record_type=(
+                StageContextBindingDeclaration if typed_authority else None
+            ),
+            require_record_headers=serialized_authority,
+        ):
+            return f"context_binding_shape:{index}"
+        binding_value = _context_authority_field(binding, "id")
+        binding_id_status = _context_authority_id_status(
+            binding_value,
+            expected_type=str,
+            typed_authority=typed_authority,
+        )
+        if binding_id_status is not None:
+            if binding_id_status == "encoding":
+                return f"context_binding_id_encoding:{index}"
+            if binding_id_status == "non_nfc":
+                return f"context_binding_non_nfc_id:{binding_value}"
+            return f"context_binding_id:{index}"
+        binding_id = _context_authority_id(binding_value)
+        assert binding_id is not None
+        if binding_id in binding_ids:
+            return f"context_binding_duplicate_id:{binding_id}"
+        binding_ids.add(binding_id)
+
+    closure_id_refusal = _context_closure_id_refusal(
+        stages=stages,
+        runners=runners,
+        assets=assets,
+        actions=actions,
+        outcomes=outcomes,
+        schemas=schemas,
+        typed_authority=typed_authority,
+    )
+    if closure_id_refusal is not None:
+        return closure_id_refusal
+
+    stage_by_id = _context_authority_group_by_id(stages, "id")
+    runner_by_id = _context_authority_group_by_id(runners, "id")
+    asset_by_id = _context_authority_group_by_id(assets, "id")
+    action_by_id = _context_authority_group_by_id(actions, "id")
+    outcome_by_id = _context_authority_group_by_id(outcomes, "id")
+    schema_by_id = _context_authority_group_by_id(schemas, "id")
+    for record_id, records_for_id in sorted(stage_by_id.items()):
+        if len(records_for_id) > 1:
+            return f"context_binding_stage_duplicate_id:{record_id}"
+
+    for index, binding in _context_authority_sorted(bindings, "id"):
+        binding_id = _context_authority_id(
+            _context_authority_field(binding, "id")
+        )
+        if binding_id is None:
+            return f"context_binding_id:{index}"
+
+        stage_value = _context_authority_field(binding, "stage_kind_id")
+        stage_id_status = _context_authority_id_status(
+            stage_value,
+            expected_type=StageKindId,
+            typed_authority=typed_authority,
+        )
+        if stage_id_status is not None:
+            if stage_id_status == "missing":
+                return f"context_binding_stage:{binding_id}"
+            return f"context_binding_stage_id_{stage_id_status}:{binding_id}"
+        stage_id = _context_authority_id(stage_value)
+        assert stage_id is not None
+        if len(stage_by_id.get(stage_id, ())) != 1:
+            return f"context_binding_stage:{binding_id}"
+        if stage_id in bound_stage_ids:
+            return f"context_binding_duplicate_stage:{stage_id}"
+        bound_stage_ids.add(stage_id)
+        stage = stage_by_id[stage_id][0]
+        if typed_authority and type(stage) is not StageKindDeclaration:
+            return f"context_binding_stage_record:{binding_id}"
+
+        router_asset_value = _context_authority_field(binding, "router_asset_id")
+        router_asset_id_status = _context_authority_id_status(
+            router_asset_value,
+            expected_type=AssetId,
+            typed_authority=typed_authority,
+        )
+        if router_asset_id_status is not None:
+            if router_asset_id_status == "missing":
+                return f"context_binding_router_asset:{binding_id}"
+            return (
+                f"context_binding_router_asset_id_{router_asset_id_status}:"
+                f"{binding_id}"
+            )
+        router_asset_id = _context_authority_id(router_asset_value)
+        assert router_asset_id is not None
+        router_assets = asset_by_id.get(router_asset_id, ())
+        if len(router_assets) != 1:
+            return f"context_binding_router_asset:{binding_id}"
+        router_asset = router_assets[0]
+        if typed_authority and type(router_asset) is not AssetDeclaration:
+            return f"context_binding_router_asset_record:{binding_id}"
+        if _context_authority_string(
+            _context_router_asset_kind(
+                router_asset,
+                serialized_authority=serialized_authority,
+            )
+        ) != "template":
+            return f"context_binding_router_asset_kind:{binding_id}"
+        router_body = _context_authority_field(router_asset, "body")
+        if not isinstance(router_body, str):
+            return f"context_binding_router_asset_encoding:{binding_id}"
+        try:
+            router_body.encode("utf-8")
+        except UnicodeEncodeError:
+            return f"context_binding_router_asset_encoding:{binding_id}"
+
+        checkout_root_value = _context_authority_field(binding, "checkout_root")
+        if not _context_safe_workspace_path(checkout_root_value):
+            return f"context_binding_checkout_root:{binding_id}"
+        assert isinstance(checkout_root_value, str)
+        checkout_root = checkout_root_value
+
+        stage_runner_id = _context_authority_id(
+            _context_authority_field(stage, "runner_binding_id")
+        )
+        if stage_runner_id is None or len(runner_by_id.get(stage_runner_id, ())) != 1:
+            return f"context_binding_runner:{binding_id}"
+        runner = runner_by_id[stage_runner_id][0]
+        if typed_authority and type(runner) is not RunnerBindingDeclaration:
+            return f"context_binding_runner_record:{binding_id}"
+        if _context_authority_string(
+            _context_authority_field(runner, "adapter_kind")
+        ) != "codex":
+            return f"context_binding_runner_adapter:{binding_id}"
+        runner_stage_ids = _context_authority_collection(
+            runner,
+            "stage_kind_ids",
+            tuple_only=typed_authority,
+        )
+        if runner_stage_ids is None or stage_id not in {
+            item
+            for item in (
+                _context_authority_id(value) for value in runner_stage_ids
+            )
+            if item is not None
+        }:
+            return f"context_binding_runner_stage:{binding_id}"
+
+        workspace_source_roots: list[str] = []
+        required_workspace_source_roots: list[str] = []
+        for source_field in ("required_sources", "discoverable_sources"):
+            sources = _context_authority_collection(
+                binding,
+                source_field,
+                tuple_only=typed_authority,
+            )
+            if sources is None:
+                return f"context_binding_sources:{binding_id}"
+            for source_index, source in enumerate(sources):
+                if not _context_authority_record_shape(
+                    source,
+                    record_kind=ContextSourceDeclaration.record_kind,
+                    required_fields={
+                        "source_kind",
+                        "source_ref",
+                        "max_files",
+                        "max_bytes",
+                    },
+                    optional_fields=set(),
+                    expected_record_type=(
+                        ContextSourceDeclaration if typed_authority else None
+                    ),
+                    require_record_headers=serialized_authority,
+                ):
+                    return f"context_binding_source_shape:{binding_id}:{source_index}"
+                source_kind = _context_authority_string(
+                    _context_authority_field(source, "source_kind")
+                )
+                source_ref = _context_authority_string(
+                    _context_authority_field(source, "source_ref")
+                )
+                if source_kind is None or source_ref is None:
+                    return f"context_binding_source:{binding_id}:{source_index}"
+                if (source_kind, source_ref) not in {
+                    ("dispatch_material", "current"),
+                    ("accepted_lineage_artifacts", "current_lineage"),
+                    ("lineage_attempt_history", "current_lineage"),
+                } and source_kind != "workspace_relative_root":
+                    return f"context_binding_source_kind:{binding_id}:{source_index}"
+                if source_kind == "workspace_relative_root":
+                    if not _context_safe_workspace_path(source_ref):
+                        return (
+                            f"context_binding_source_path:{binding_id}:"
+                            f"{source_index}"
+                        )
+                    if any(
+                        _context_paths_overlap(source_ref, previous)
+                        for previous in workspace_source_roots
+                    ):
+                        return (
+                            f"context_binding_source_overlap:{binding_id}:"
+                            f"{source_ref}"
+                        )
+                    workspace_source_roots.append(source_ref)
+                    if source_field == "required_sources":
+                        required_workspace_source_roots.append(source_ref)
+                max_files = _context_authority_field(source, "max_files")
+                max_bytes = _context_authority_field(source, "max_bytes")
+                if not _context_positive_int(max_files) or not _context_positive_int(
+                    max_bytes
+                ):
+                    return f"context_binding_source_bounds:{binding_id}:{source_index}"
+
+        if any(
+            _context_paths_overlap(checkout_root, source_root)
+            for source_root in workspace_source_roots
+        ):
+            return f"context_binding_checkout_source_overlap:{binding_id}"
+
+        write_rules: tuple[object, ...] | None
+        if isinstance(binding, Mapping) and "write_rules" not in binding:
+            write_rules = ()
+        else:
+            write_rules = _context_authority_collection(
+                binding,
+                "write_rules",
+                tuple_only=typed_authority,
+            )
+        if write_rules is None:
+            return f"context_binding_write_rules:{binding_id}"
+        write_rule_roots: list[str] = []
+        for rule_index, rule in enumerate(write_rules):
+            if not _context_authority_record_shape(
+                rule,
+                record_kind=ContextWriteRule.record_kind,
+                required_fields={"relative_root", "disposition"},
+                optional_fields=set(),
+                expected_record_type=(
+                    ContextWriteRule if typed_authority else None
+                ),
+                require_record_headers=serialized_authority,
+            ):
+                return f"context_binding_write_shape:{binding_id}:{rule_index}"
+            relative_root = _context_authority_string(
+                _context_authority_field(rule, "relative_root")
+            )
+            disposition = _context_authority_string(
+                _context_authority_field(rule, "disposition")
+            )
+            if relative_root is None or not _context_safe_workspace_path(relative_root):
+                return f"context_binding_write_root:{binding_id}:{rule_index}"
+            if disposition not in {"direct_write", "protected_proposal"}:
+                return f"context_binding_write_disposition:{binding_id}:{rule_index}"
+            if any(
+                _context_paths_overlap(relative_root, previous)
+                for previous in write_rule_roots
+            ):
+                return f"context_binding_write_overlap:{binding_id}:{relative_root}"
+            write_rule_roots.append(relative_root)
+            if not any(
+                _context_path_contains(source_root, relative_root)
+                for source_root in required_workspace_source_roots
+            ):
+                return f"context_binding_write_snapshot:{binding_id}:{relative_root}"
+
+        action_value = _context_authority_field(
+            binding,
+            "writeback_terminal_action_id",
+        )
+        schema_value = _context_authority_field(
+            binding,
+            "writeback_artifact_schema_id",
+        )
+        action_id_status = _context_authority_id_status(
+            action_value,
+            expected_type=ActionId,
+            typed_authority=typed_authority,
+        )
+        schema_id_status = _context_authority_id_status(
+            schema_value,
+            expected_type=ArtifactSchemaId,
+            typed_authority=typed_authority,
+        )
+        if not write_rules:
+            if action_id_status != "missing" or schema_id_status != "missing":
+                return f"context_binding_read_only_linkage:{binding_id}"
+            continue
+        if action_id_status is not None or schema_id_status is not None:
+            return f"context_binding_writeback_linkage:{binding_id}"
+        action_id = _context_authority_id(action_value)
+        schema_id = _context_authority_id(schema_value)
+        assert action_id is not None
+        assert schema_id is not None
+
+        actions_for_id = action_by_id.get(action_id, ())
+        if len(actions_for_id) != 1:
+            return f"context_binding_writeback_action:{binding_id}"
+        action = actions_for_id[0]
+        if typed_authority and type(action) is not TerminalActionDeclaration:
+            return f"context_binding_writeback_action_record:{binding_id}"
+        if _context_authority_id(
+            _context_authority_field(action, "stage_kind_id")
+        ) != stage_id:
+            return f"context_binding_writeback_action_stage:{binding_id}"
+        action_outcome_id = _context_authority_id(
+            _context_authority_field(action, "outcome_id")
+        )
+        declared_outcomes = _context_authority_collection(
+            stage,
+            "declared_outcome_ids",
+            tuple_only=typed_authority,
+        )
+        if (
+            action_outcome_id is None
+            or declared_outcomes is None
+            or action_outcome_id
+            not in {
+                value
+                for value in (
+                    _context_authority_id(item) for item in declared_outcomes
+                )
+                if value is not None
+            }
+        ):
+            return f"context_binding_writeback_action_outcome:{binding_id}"
+        outcomes_for_id = outcome_by_id.get(action_outcome_id, ())
+        if (
+            typed_authority
+            and len(outcomes_for_id) == 1
+            and type(outcomes_for_id[0]) is not TerminalOutcomeDeclaration
+        ):
+            return f"context_binding_writeback_outcome_record:{binding_id}"
+        if len(outcomes_for_id) != 1 or _context_authority_id(
+            _context_authority_field(outcomes_for_id[0], "stage_kind_id")
+        ) != stage_id:
+            return f"context_binding_writeback_action_outcome:{binding_id}"
+
+        schemas_for_id = schema_by_id.get(schema_id, ())
+        if len(schemas_for_id) != 1:
+            return f"context_binding_writeback_schema:{binding_id}"
+        if typed_authority and type(schemas_for_id[0]) is not ArtifactSchemaDeclaration:
+            return f"context_binding_writeback_schema_record:{binding_id}"
+        action_schema_id = _context_authority_id(
+            _context_authority_field(action, "artifact_schema_id")
+        )
+        if action_schema_id != schema_id:
+            return f"context_binding_writeback_schema_mismatch:{binding_id}"
+        if not _context_is_generic_writeback_schema(
+            _context_authority_field(schemas_for_id[0], "schema")
+        ):
+            return f"context_binding_writeback_schema_shape:{binding_id}"
+
+        mappings = _context_authority_collection(runner, "terminal_result_mappings")
+        if mappings is None:
+            return f"context_binding_terminal_result_path:{binding_id}"
+        matching_mappings = 0
+        seen_mapping_paths: set[tuple[str, str]] = set()
+        for mapping in mappings:
+            mapping_stage_value = _context_authority_field(mapping, "stage_kind_id")
+            mapping_stage_status = _context_authority_id_status(
+                mapping_stage_value,
+                expected_type=StageKindId,
+                typed_authority=typed_authority,
+            )
+            if mapping_stage_status is not None:
+                return f"context_binding_terminal_result_stage:{binding_id}"
+            mapping_stage_id = _context_authority_id(mapping_stage_value)
+            runner_result_id = _context_authority_string(
+                _context_authority_field(mapping, "runner_result_id")
+            )
+            if runner_result_id is None:
+                return f"context_binding_terminal_result_path:{binding_id}"
+            try:
+                runner_result_id.encode("utf-8")
+            except UnicodeEncodeError:
+                return f"context_binding_terminal_result_path:{binding_id}"
+            if normalize("NFC", runner_result_id) != runner_result_id:
+                return f"context_binding_terminal_result_path:{binding_id}"
+            mapping_outcome_value = _context_authority_field(mapping, "outcome_id")
+            mapping_outcome_status = _context_authority_id_status(
+                mapping_outcome_value,
+                expected_type=OutcomeId,
+                typed_authority=typed_authority,
+            )
+            if mapping_outcome_status is not None:
+                return f"context_binding_terminal_result_path:{binding_id}"
+            mapping_outcome_id = _context_authority_id(mapping_outcome_value)
+            assert mapping_stage_id is not None
+            assert mapping_outcome_id is not None
+            mapping_path = (mapping_stage_id, runner_result_id)
+            if mapping_path in seen_mapping_paths:
+                return f"context_binding_terminal_result_path_duplicate:{binding_id}"
+            seen_mapping_paths.add(mapping_path)
+            if mapping_stage_id == stage_id and mapping_outcome_id == action_outcome_id:
+                matching_mappings += 1
+        if matching_mappings != 1:
+            return f"context_binding_terminal_result_path_count:{binding_id}"
+
+    return None
+
+
+def _context_authority_field(
+    record: object,
+    field_name: str,
+    *aliases: str,
+) -> object:
+    if isinstance(record, Mapping):
+        if field_name in record:
+            return record[field_name]
+        for alias in aliases:
+            if alias in record:
+                return record[alias]
+        return None
+    value = getattr(record, field_name, None)
+    if value is not None:
+        return value
+    for alias in aliases:
+        value = getattr(record, alias, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _context_router_asset_kind(
+    record: object,
+    *,
+    serialized_authority: bool,
+) -> object:
+    if serialized_authority:
+        return _context_authority_field(record, "asset_kind")
+    if isinstance(record, Mapping):
+        return record.get("kind")
+    return getattr(record, "asset_kind", None)
+
+
+def _context_authority_record_shape(
+    record: object,
+    *,
+    record_kind: str,
+    required_fields: set[str],
+    optional_fields: set[str],
+    expected_record_type: type[object] | None = None,
+    require_record_headers: bool = False,
+) -> bool:
+    if expected_record_type is not None:
+        return type(record) is expected_record_type
+    if not isinstance(record, Mapping):
+        return True
+    keys = set(record)
+    header_keys = keys & {"record_kind", "schema_version"}
+    if header_keys not in (set(), {"record_kind", "schema_version"}):
+        return False
+    if require_record_headers and header_keys != {"record_kind", "schema_version"}:
+        return False
+    if header_keys:
+        if (
+            record.get("record_kind") != record_kind
+            or type(record.get("schema_version")) is not int
+            or record.get("schema_version") != 1
+            or not required_fields.issubset(keys)
+            or not optional_fields.issubset(keys)
+        ):
+            return False
+        allowed_fields = required_fields | optional_fields | header_keys
+    else:
+        if not required_fields.issubset(keys):
+            return False
+        allowed_fields = required_fields | optional_fields
+    return keys.issubset(allowed_fields)
+
+
+def _context_authority_collection(
+    record: object,
+    field_name: str,
+    *,
+    tuple_only: bool = False,
+) -> tuple[object, ...] | None:
+    value = _context_authority_field(record, field_name)
+    if tuple_only:
+        return value if type(value) is tuple else None
+    if isinstance(value, (tuple, list)):
+        return tuple(value)
+    return None
+
+
+def _context_authority_records(
+    authority: SelectedCompiledPlan | Mapping[str, object],
+    field_name: str,
+    *,
+    tuple_only: bool = False,
+) -> tuple[object, ...] | None:
+    if isinstance(authority, Mapping):
+        if field_name not in authority:
+            return ()
+        value = authority[field_name]
+    else:
+        value = getattr(authority, field_name, ())
+    if tuple_only:
+        return value if type(value) is tuple else None
+    if isinstance(value, (tuple, list)):
+        return tuple(value)
+    return None
+
+
+def _context_authority_string(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _context_authority_id_status(
+    value: object,
+    *,
+    expected_type: type[object],
+    typed_authority: bool,
+) -> str | None:
+    if value is None:
+        return "missing"
+    if typed_authority:
+        if type(value) is not expected_type:
+            return "type"
+    elif type(value) is not str:
+        return "type"
+    rendered = _context_authority_id(value)
+    if rendered is None:
+        return "empty"
+    try:
+        rendered.encode("utf-8")
+    except UnicodeEncodeError:
+        return "encoding"
+    if normalize("NFC", rendered) != rendered:
+        return "non_nfc"
+    return None
+
+
+def _context_authority_id(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    if _is_string_backed_id(value):
+        rendered = str(value)
+        return rendered if rendered else None
+    return None
+
+
+def _context_closure_id_refusal(
+    *,
+    stages: tuple[object, ...],
+    runners: tuple[object, ...],
+    assets: tuple[object, ...],
+    actions: tuple[object, ...],
+    outcomes: tuple[object, ...],
+    schemas: tuple[object, ...],
+    typed_authority: bool,
+) -> str | None:
+    def check_field(
+        record: object,
+        collection_name: str,
+        record_index: int,
+        field_name: str,
+        expected_type: type[object],
+        *,
+        allow_none: bool = False,
+    ) -> str | None:
+        status = _context_authority_id_status(
+            _context_authority_field(record, field_name),
+            expected_type=expected_type,
+            typed_authority=typed_authority,
+        )
+        if status is None or (allow_none and status == "missing"):
+            return None
+        return (
+            f"context_binding_{collection_name}_{field_name}_{status}:"
+            f"{record_index}"
+        )
+
+    def check_sequence(
+        record: object,
+        collection_name: str,
+        record_index: int,
+        field_name: str,
+        expected_type: type[object],
+    ) -> str | None:
+        values = _context_authority_collection(
+            record,
+            field_name,
+            tuple_only=typed_authority,
+        )
+        if values is None:
+            return None
+        for value_index, value in enumerate(values):
+            status = _context_authority_id_status(
+                value,
+                expected_type=expected_type,
+                typed_authority=typed_authority,
+            )
+            if status is not None:
+                return (
+                    f"context_binding_{collection_name}_{field_name}_{status}:"
+                    f"{record_index}:{value_index}"
+                )
+        return None
+
+    for index, stage in enumerate(stages):
+        for field_name, expected_type in (
+            ("id", StageKindId),
+            ("runner_binding_id", RunnerBindingId),
+        ):
+            refusal = check_field(
+                stage,
+                "stage",
+                index,
+                field_name,
+                expected_type,
+            )
+            if refusal is not None:
+                return refusal
+        refusal = check_sequence(
+            stage,
+            "stage",
+            index,
+            "declared_outcome_ids",
+            OutcomeId,
+        )
+        if refusal is not None:
+            return refusal
+
+    for index, runner in enumerate(runners):
+        refusal = check_field(
+            runner,
+            "runner",
+            index,
+            "id",
+            RunnerBindingId,
+        )
+        if refusal is not None:
+            return refusal
+        refusal = check_sequence(
+            runner,
+            "runner",
+            index,
+            "stage_kind_ids",
+            StageKindId,
+        )
+        if refusal is not None:
+            return refusal
+
+    for index, asset in enumerate(assets):
+        refusal = check_field(asset, "asset", index, "id", AssetId)
+        if refusal is not None:
+            return refusal
+
+    for index, action in enumerate(actions):
+        for action_field_name, action_expected_type, allow_none in (
+            ("id", ActionId, False),
+            ("stage_kind_id", StageKindId, False),
+            ("outcome_id", OutcomeId, False),
+            ("artifact_schema_id", ArtifactSchemaId, True),
+            ("runner_binding_id", RunnerBindingId, True),
+        ):
+            refusal = check_field(
+                action,
+                "action",
+                index,
+                action_field_name,
+                action_expected_type,
+                allow_none=allow_none,
+            )
+            if refusal is not None:
+                return refusal
+
+    for index, outcome in enumerate(outcomes):
+        for outcome_field_name, outcome_expected_type in (
+            ("id", OutcomeId),
+            ("stage_kind_id", StageKindId),
+        ):
+            refusal = check_field(
+                outcome,
+                "outcome",
+                index,
+                outcome_field_name,
+                outcome_expected_type,
+            )
+            if refusal is not None:
+                return refusal
+
+    for index, schema in enumerate(schemas):
+        refusal = check_field(schema, "schema", index, "id", ArtifactSchemaId)
+        if refusal is not None:
+            return refusal
+    return None
+
+
+def _context_authority_group_by_id(
+    records: tuple[object, ...],
+    field_name: str,
+) -> dict[str, tuple[object, ...]]:
+    grouped: dict[str, list[object]] = {}
+    for record in records:
+        record_id = _context_authority_id(
+            _context_authority_field(record, field_name)
+        )
+        if record_id is None:
+            continue
+        grouped.setdefault(record_id, []).append(record)
+    return {record_id: tuple(items) for record_id, items in grouped.items()}
+
+
+def _context_authority_sorted(
+    records: tuple[object, ...],
+    field_name: str,
+) -> tuple[tuple[int, object], ...]:
+    return tuple(
+        sorted(
+            enumerate(records),
+            key=lambda item: (
+                _context_authority_id(
+                    _context_authority_field(item[1], field_name)
+                )
+                or "",
+                item[0],
+            ),
+        )
+    )
+
+
+def _context_positive_int(value: object) -> bool:
+    return type(value) is int and value > 0
+
+
+def _context_safe_workspace_path(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    if "\x00" in value:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    if normalize("NFC", value) != value or ":" in value.split("/", 1)[0]:
+        return False
+    try:
+        normalized = validate_package_path(value)
+    except WorkflowPackagePathPolicyError:
+        return False
+    return normalized == value and ".millrace" not in PurePosixPath(value).parts
+
+
+def _context_paths_overlap(left: str, right: str) -> bool:
+    left_parts = tuple(left.split("/"))
+    right_parts = tuple(right.split("/"))
+    return left_parts[: len(right_parts)] == right_parts or right_parts[
+        : len(left_parts)
+    ] == left_parts
+
+
+def _context_path_contains(root: str, path: str) -> bool:
+    root_parts = tuple(root.split("/"))
+    path_parts = tuple(path.split("/"))
+    return path_parts[: len(root_parts)] == root_parts
+
+
+def _context_is_generic_writeback_schema(value: object) -> bool:
+    expected = {
+        "type": "object",
+        "required": ("changes", "proposals"),
+        "properties": {
+            "changes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": (
+                        "path",
+                        "change_kind",
+                        "evidence_refs",
+                        "classification",
+                    ),
+                    "properties": {
+                        "path": {"type": "string"},
+                        "change_kind": {
+                            "enum": ("create", "modify", "delete")
+                        },
+                        "before_sha256": {"type": "string"},
+                        "after_sha256": {"type": "string"},
+                        "evidence_refs": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "classification": {"const": "direct_write"},
+                    },
+                },
+            },
+            "proposals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": (
+                        "path",
+                        "proposed_content",
+                        "proposed_content_sha256",
+                        "evidence_refs",
+                        "classification",
+                    ),
+                    "properties": {
+                        "path": {"type": "string"},
+                        "proposed_content": {"type": "string"},
+                        "proposed_content_sha256": {"type": "string"},
+                        "evidence_refs": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "classification": {"const": "protected_proposal"},
+                    },
+                },
+            },
+            "no_op_reason": {"type": "string"},
+        },
+    }
+    try:
+        return canonical_authority_bytes(value) == canonical_authority_bytes(expected)
+    except (
+        CanonicalAuthorityError,
+        RecursionError,
+        TypeError,
+        ValueError,
+        UnicodeEncodeError,
+    ):
+        return False
 
 
 def runner_component_authority_refusal(
@@ -1335,6 +2301,12 @@ def _canonical_record(value: object) -> dict[str, CanonicalValue]:
     for field in fields(cast(Any, value)):
         if field.name == "presentation":
             continue
+        if (
+            field.name == "context_bindings"
+            and isinstance(value, SelectedCompiledPlan)
+            and not value.context_bindings
+        ):
+            continue
         record[field.name] = getattr(value, field.name)
     return _canonical_mapping(record)
 
@@ -1355,6 +2327,8 @@ __all__ = (
     "CanonicalAuthorityError",
     "CompiledPlanEnvelope",
     "CompletionBehaviorDeclaration",
+    "ContextSourceDeclaration",
+    "ContextWriteRule",
     "CounterDeclaration",
     "EffectDeclaration",
     "ExternalEnqueueRouteDeclaration",
@@ -1369,6 +2343,7 @@ __all__ = (
     "RemediationPolicyDeclaration",
     "RunnerBindingDeclaration",
     "SelectedCompiledPlan",
+    "StageContextBindingDeclaration",
     "SelectedWorkflowPackageAssetPin",
     "SelectedWorkflowPackageDependencyPin",
     "SelectedWorkflowPackagePin",
@@ -1380,6 +2355,7 @@ __all__ = (
     "WorkflowIdentity",
     "authority_fingerprint",
     "canonical_authority_bytes",
+    "context_binding_authority_refusal",
     "freeze_authority_mapping",
     "freeze_authority_value",
     "verify_authority_fingerprint",

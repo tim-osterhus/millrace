@@ -309,6 +309,7 @@ def _codec_hydratable_selected_authority(
     selected_authority: Mapping[str, object],
 ) -> dict[str, object]:
     hydratable = dict(selected_authority)
+    hydratable.setdefault("context_bindings", [])
     for key in _PRESENTATION_SEQUENCE_KEYS:
         hydratable[key] = [
             _record_with_empty_presentation(item)

@@ -7,6 +7,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from tests.compiler.test_context_bindings import _source_with_context_binding
+
 from millrace.contracts import RunnerBindingDeclaration
 from support import kernel_ping as kernel_ping_support
 from support.workflow_package_active_pinning import package_manifest
@@ -119,6 +121,19 @@ def _compile_export(path: Path, *, no_pause: bool = False) -> str:
     assert result.plan is not None
     path.write_bytes(compiled_plan_export_bytes(result.plan))
     return authority_fingerprint(result.plan)
+
+
+def _compile_malformed_context_export(path: Path) -> str:
+    from millrace.compiler import authority_fingerprint, compile_workflow
+    from millrace.compiler.export import compiled_plan_export_bytes
+
+    result = compile_workflow(_source_with_context_binding())
+    assert result.plan is not None
+    context_binding = result.plan.context_bindings[0]
+    object.__setattr__(context_binding, "checkout_root", ".millrace")
+    malformed = replace(result.plan, context_bindings=(context_binding,))
+    path.write_bytes(compiled_plan_export_bytes(malformed))
+    return authority_fingerprint(malformed)
 
 
 def _compile_export_with_runner_kind(path: Path, adapter_kind: str) -> str:
@@ -324,6 +339,33 @@ def test_plan_admit_export_decodes_to_typed_selected_plan(tmp_path: Path) -> Non
     admitted = _state(workspace).admitted_plans[fingerprint]
     assert isinstance(admitted.selected_plan, SelectedCompiledPlan)
     assert str(admitted.selected_plan.workflow.workflow_id) == "kernel_ping"
+
+
+def test_plan_admit_rejects_malformed_context_export(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    export_path = tmp_path / "malformed-context.json"
+    _compile_malformed_context_export(export_path)
+    _init_workspace(workspace)
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "plan",
+            "admit",
+            "--compiled-plan-json",
+            str(export_path),
+            "--input-id",
+            "admit-malformed-context",
+        ]
+    )
+
+    assert exit_code == 3
+    assert stdout == ""
+    payload = _json(stderr)
+    assert payload["code"] == "compiled_plan_export_invalid"
+    assert _state(workspace).admitted_plans == {}
 
 
 def test_select_default_a_b_a_uses_fresh_input_ids_without_stale_receipt_replay(

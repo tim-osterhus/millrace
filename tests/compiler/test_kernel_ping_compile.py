@@ -168,14 +168,14 @@ def test_generic_runner_component_pin_compiles_into_selected_authority() -> None
     assert mapping.outcome_id == OutcomeId("kernel_ping.taskmaster.task_complete")
 
 
-def test_component_free_codex_binding_compiles_as_format_16() -> None:
+def test_component_free_codex_binding_compiles_as_format_17() -> None:
     result = compile_workflow(
         _component_free_codex_source(),
         selected_runner_policy=_CODEX_POLICY,
     )
 
     assert result.plan is not None
-    assert result.plan.schema_version == 16
+    assert result.plan.schema_version == 17
     assert all(binding.component_pin is None for binding in result.plan.runner_bindings)
     assert all(
         binding.terminal_result_mappings == ()

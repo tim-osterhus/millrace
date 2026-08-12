@@ -17,6 +17,7 @@ from millrace.contracts import (
 from millrace.contracts.ids import (
     ActionId,
     ArtifactSchemaId,
+    AssetId,
     CounterId,
     OperatorWaitId,
     QueueFamilyId,
@@ -36,6 +37,7 @@ from millrace.kernel import UnsupportedMutationError, apply, decide, empty_runti
 from millrace.kernel.lookups import operator_wait_for_action, plan_ref_for
 from millrace.testing import deterministic_context
 from support import generic_admission, generic_fanout, generic_lifecycle
+from tests.compiler.test_context_bindings import _source_with_context_binding
 
 _CODEX_POLICY = SelectedRunnerAdapterPolicy(
     default_adapter_kind="codex",
@@ -188,6 +190,819 @@ def test_direct_admit_plan_accepts_component_free_required_capability() -> None:
 
     assert decision.accepted is True
     assert decision.refusal is None
+
+
+def test_direct_admit_plan_refuses_malformed_context_binding() -> None:
+    plan, _fingerprint = _compile_source(_source_with_context_binding())
+    context_binding = plan.context_bindings[0]
+    object.__setattr__(context_binding, "checkout_root", ".millrace")
+    tampered = replace(plan, context_bindings=(context_binding,))
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        tampered,
+        "context_binding_checkout_root:kernel_ping.taskmaster_context",
+    )
+
+
+def test_direct_admit_plan_refuses_non_nfc_context_binding_id() -> None:
+    plan, _fingerprint = _compile_source(_source_with_context_binding())
+    object.__setattr__(plan.context_bindings[0], "id", "cafe\u0301")
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        "context_binding_non_nfc_id:cafe\u0301",
+    )
+
+
+def test_direct_admit_plan_refuses_unpaired_surrogate_context_binding_id() -> None:
+    plan, fingerprint = _compile_source(_source_with_context_binding())
+    object.__setattr__(
+        plan.context_bindings[0],
+        "id",
+        "kernel_ping.taskmaster_context\ud800",
+    )
+    state = empty_runtime_state()
+    admit = AdmitPlan(
+        "admit-context-binding-id-surrogate",
+        selected_plan=plan,
+        authority_fingerprint=fingerprint,
+    )
+
+    decision = decide(
+        state,
+        admit,
+        deterministic_context(transition_id="transition-context-binding-id-surrogate"),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "unsupported_selected_authority"
+    assert decision.refusal.detail == "context_binding_id_encoding:0"
+    after_refusal = apply(state, decision)
+    assert after_refusal.receipts[admit.input_id].accepted is False
+
+    replay = decide(
+        after_refusal,
+        admit,
+        deterministic_context(transition_id="transition-context-binding-id-replay"),
+    )
+
+    assert replay.accepted is False
+    assert replay.refusal is not None
+    assert replay.refusal.reason == "unsupported_selected_authority"
+    assert replay.receipt_ref == after_refusal.receipts[admit.input_id].receipt_ref
+    assert replay.mutations == ()
+
+
+@pytest.mark.parametrize(
+    ("path_kind", "write_enabled", "expected_detail"),
+    (
+        (
+            "checkout_root",
+            False,
+            "context_binding_checkout_root:kernel_ping.taskmaster_context",
+        ),
+        (
+            "workspace_relative_root",
+            False,
+            "context_binding_source_path:kernel_ping.taskmaster_context:0",
+        ),
+        (
+            "write_root",
+            True,
+            "context_binding_write_root:kernel_ping.taskmaster_context:0",
+        ),
+    ),
+)
+def test_direct_admit_plan_refuses_unpaired_surrogate_context_paths(
+    path_kind: str,
+    write_enabled: bool,
+    expected_detail: str,
+) -> None:
+    plan, fingerprint = _compile_source(
+        _source_with_context_binding(write_enabled=write_enabled)
+    )
+    binding = plan.context_bindings[0]
+    if path_kind == "checkout_root":
+        object.__setattr__(binding, "checkout_root", "checkout/\ud800")
+    elif path_kind == "workspace_relative_root":
+        source = binding.required_sources[0]
+        object.__setattr__(source, "source_kind", "workspace_relative_root")
+        object.__setattr__(source, "source_ref", "src/\ud800")
+    else:
+        rule = binding.write_rules[0]
+        object.__setattr__(rule, "relative_root", "src/\ud800")
+
+    state = empty_runtime_state()
+    decision = decide(
+        state,
+        AdmitPlan(
+            f"admit-{path_kind}-surrogate",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(
+            transition_id=f"transition-admit-{path_kind}-surrogate"
+        ),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "unsupported_selected_authority"
+    assert decision.refusal.detail == expected_detail
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_detail"),
+    (
+        (
+            "stage_kind_id",
+            AssetId("kernel_ping.taskmaster"),
+            "context_binding_stage_id_type:kernel_ping.taskmaster_context",
+        ),
+        (
+            "router_asset_id",
+            StageKindId("kernel_ping.context_router"),
+            "context_binding_router_asset_id_type:kernel_ping.taskmaster_context",
+        ),
+    ),
+)
+def test_direct_admit_plan_refuses_wrong_typed_context_binding_ids(
+    field_name: str,
+    value: object,
+    expected_detail: str,
+) -> None:
+    plan, _fingerprint = _compile_source(_source_with_context_binding())
+    object.__setattr__(plan.context_bindings[0], field_name, value)
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        expected_detail,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        (
+            "writeback_terminal_action_id",
+            ArtifactSchemaId("kernel_ping.close_worker_success"),
+        ),
+        ("writeback_artifact_schema_id", ActionId("kernel_ping.context_writeback")),
+    ),
+)
+def test_direct_admit_plan_refuses_wrong_typed_writeback_linkage(
+    field_name: str,
+    value: object,
+) -> None:
+    plan, _fingerprint = _compile_source(
+        _source_with_context_binding(write_enabled=True)
+    )
+    object.__setattr__(plan.context_bindings[0], field_name, value)
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        "context_binding_writeback_linkage:kernel_ping.taskmaster_context",
+    )
+
+
+@pytest.mark.parametrize(
+    ("closure_kind", "suffix", "expected_detail"),
+    (
+        (
+            "stage",
+            "\ud800",
+            "context_binding_stage_id_encoding:0",
+        ),
+        (
+            "stage",
+            "\ud801",
+            "context_binding_stage_id_encoding:0",
+        ),
+        (
+            "router",
+            "\ud800",
+            "context_binding_asset_id_encoding:0",
+        ),
+        (
+            "router",
+            "\ud801",
+            "context_binding_asset_id_encoding:0",
+        ),
+    ),
+)
+def test_direct_admit_plan_refuses_coherent_surrogate_context_ids(
+    closure_kind: str,
+    suffix: str,
+    expected_detail: str,
+) -> None:
+    plan, fingerprint = _compile_source(_source_with_context_binding())
+    binding = plan.context_bindings[0]
+    if closure_kind == "stage":
+        bad_id = StageKindId(f"kernel_ping.taskmaster{suffix}")
+        stage = next(
+            stage
+            for stage in plan.stage_kinds
+            if str(stage.id) == "kernel_ping.taskmaster"
+        )
+        object.__setattr__(binding, "stage_kind_id", bad_id)
+        object.__setattr__(stage, "id", bad_id)
+    else:
+        bad_id = AssetId(f"kernel_ping.context_router{suffix}")
+        asset = next(
+            asset
+            for asset in plan.assets
+            if str(asset.id) == "kernel_ping.context_router"
+        )
+        object.__setattr__(binding, "router_asset_id", bad_id)
+        object.__setattr__(asset, "id", bad_id)
+
+    decision = decide(
+        empty_runtime_state(),
+        AdmitPlan(
+            f"admit-{closure_kind}-{suffix}",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(transition_id=f"transition-{closure_kind}-{suffix}"),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "unsupported_selected_authority"
+    assert decision.refusal.detail == expected_detail
+
+
+def test_invalid_context_admit_digest_is_total_replayable_and_conflict_safe() -> None:
+    plan, fingerprint = _compile_source(_source_with_context_binding())
+    object.__setattr__(plan.context_bindings[0], "checkout_root", object())
+    admit = AdmitPlan(
+        "admit-invalid-context-digest",
+        selected_plan=plan,
+        authority_fingerprint=fingerprint,
+    )
+    state = empty_runtime_state()
+
+    first = decide(
+        state,
+        admit,
+        deterministic_context(transition_id="transition-invalid-context-first"),
+    )
+
+    assert first.accepted is False
+    assert first.refusal is not None
+    assert first.refusal.reason == "unsupported_selected_authority"
+    after_first = apply(state, first)
+
+    replay = decide(
+        after_first,
+        admit,
+        deterministic_context(transition_id="transition-invalid-context-replay"),
+    )
+
+    assert replay.accepted is False
+    assert replay.refusal is not None
+    assert replay.refusal.reason == "unsupported_selected_authority"
+    assert replay.receipt_ref == after_first.receipts[admit.input_id].receipt_ref
+    assert replay.mutations == ()
+    assert replay.input_payload_digest == first.input_payload_digest
+
+    conflict_plan, conflict_fingerprint = _compile_source(
+        _source_with_context_binding()
+    )
+    object.__setattr__(conflict_plan.context_bindings[0], "checkout_root", 7)
+    conflict = decide(
+        after_first,
+        AdmitPlan(
+            "admit-invalid-context-digest",
+            selected_plan=conflict_plan,
+            authority_fingerprint=conflict_fingerprint,
+        ),
+        deterministic_context(transition_id="transition-invalid-context-conflict"),
+    )
+
+    assert conflict.accepted is False
+    assert conflict.refusal is not None
+    assert conflict.refusal.reason == "idempotency_conflict"
+    assert conflict.input_payload_digest != first.input_payload_digest
+
+
+def test_direct_admit_plan_refuses_cyclic_writeback_schema_replayably() -> None:
+    plan, fingerprint = _compile_source(
+        _source_with_context_binding(write_enabled=True)
+    )
+    schema = next(
+        schema
+        for schema in plan.artifact_schemas
+        if str(schema.id) == "kernel_ping.context_writeback"
+    )
+    cyclic_schema: dict[str, object] = {}
+    cyclic_schema["self"] = cyclic_schema
+    object.__setattr__(schema, "schema", cyclic_schema)
+    admit = AdmitPlan(
+        "admit-cyclic-writeback-schema",
+        selected_plan=plan,
+        authority_fingerprint=fingerprint,
+    )
+    state = empty_runtime_state()
+
+    first = decide(
+        state,
+        admit,
+        deterministic_context(transition_id="transition-cyclic-writeback-schema"),
+    )
+
+    assert first.accepted is False
+    assert first.refusal is not None
+    assert first.refusal.reason == "unsupported_selected_authority"
+    assert (
+        first.refusal.detail
+        == "context_binding_writeback_schema_shape:kernel_ping.taskmaster_context"
+    )
+    after_first = apply(state, first)
+    assert after_first.receipts[admit.input_id].accepted is False
+
+    replay = decide(
+        after_first,
+        admit,
+        deterministic_context(transition_id="transition-cyclic-writeback-replay"),
+    )
+
+    assert replay.accepted is False
+    assert replay.refusal is not None
+    assert replay.refusal.reason == "unsupported_selected_authority"
+    assert replay.receipt_ref == after_first.receipts[admit.input_id].receipt_ref
+    assert replay.mutations == ()
+
+
+def test_invalid_context_digest_distinguishes_malformed_scalar_values() -> None:
+    decisions: list[TransitionDecision] = []
+    for malformed_value in (7, 8):
+        plan, fingerprint = _compile_source(_source_with_context_binding())
+        object.__setattr__(
+            plan.context_bindings[0],
+            "checkout_root",
+            malformed_value,
+        )
+        decisions.append(
+            decide(
+                empty_runtime_state(),
+                AdmitPlan(
+                    "admit-invalid-context-scalar",
+                    selected_plan=plan,
+                    authority_fingerprint=fingerprint,
+                ),
+                deterministic_context(
+                    transition_id=f"transition-invalid-context-scalar-{malformed_value}"
+                ),
+            )
+        )
+
+    assert all(not decision.accepted for decision in decisions)
+    assert all(decision.refusal is not None for decision in decisions)
+    assert all(
+        decision.refusal.reason == "unsupported_selected_authority"
+        for decision in decisions
+        if decision.refusal is not None
+    )
+    assert decisions[0].input_payload_digest != decisions[1].input_payload_digest
+
+
+def test_invalid_context_digest_does_not_suppress_unrelated_serialization_fault(
+) -> None:
+    plan, fingerprint = _compile_source(_source_with_context_binding())
+    object.__setattr__(plan.context_bindings[0], "checkout_root", ".millrace")
+    object.__setattr__(plan.stage_kinds[0], "presentation", {"unrelated": object()})
+
+    with pytest.raises(TypeError, match="unsupported transition input payload type"):
+        decide(
+            empty_runtime_state(),
+            AdmitPlan(
+                "admit-unrelated-serialization-fault",
+                selected_plan=plan,
+                authority_fingerprint=fingerprint,
+            ),
+            deterministic_context(
+                transition_id="transition-unrelated-serialization-fault"
+            ),
+        )
+
+
+def test_invalid_context_digest_checks_unrelated_asset_serialization() -> None:
+    plan, fingerprint = _compile_source(_source_with_context_binding())
+    object.__setattr__(plan.context_bindings[0], "checkout_root", object())
+    asset = next(
+        asset
+        for asset in plan.assets
+        if str(asset.id) == "kernel_ping.task_artifact_authoring"
+    )
+    object.__setattr__(asset, "body", object())
+
+    with pytest.raises(TypeError, match="unsupported transition input payload type"):
+        decide(
+            empty_runtime_state(),
+            AdmitPlan(
+                "admit-unrelated-asset-serialization-fault",
+                selected_plan=plan,
+                authority_fingerprint=fingerprint,
+            ),
+            deterministic_context(
+                transition_id="transition-unrelated-asset-serialization-fault"
+            ),
+        )
+
+
+def test_invalid_context_digest_checks_unrelated_schema_serialization() -> None:
+    plan, fingerprint = _compile_source(
+        _source_with_context_binding(write_enabled=True)
+    )
+    object.__setattr__(plan.context_bindings[0], "checkout_root", object())
+    schema = next(
+        schema
+        for schema in plan.artifact_schemas
+        if str(schema.id) == "kernel_ping.task_artifact"
+    )
+    object.__setattr__(schema, "schema", {"unsupported": object()})
+
+    with pytest.raises(TypeError, match="unsupported transition input payload type"):
+        decide(
+            empty_runtime_state(),
+            AdmitPlan(
+                "admit-unrelated-schema-serialization-fault",
+                selected_plan=plan,
+                authority_fingerprint=fingerprint,
+            ),
+            deterministic_context(
+                transition_id="transition-unrelated-schema-serialization-fault"
+            ),
+        )
+
+
+def test_invalid_context_digest_checks_unrelated_runner_mapping_serialization() -> None:
+    plan, fingerprint = _compile_source(
+        _source_with_context_binding(write_enabled=True)
+    )
+    object.__setattr__(plan.context_bindings[0], "checkout_root", object())
+    runner = next(
+        runner
+        for runner in plan.runner_bindings
+        if str(runner.id) == "kernel_ping.taskmaster_runner"
+    )
+    object.__setattr__(runner.terminal_result_mappings[0], "runner_result_id", object())
+
+    with pytest.raises(TypeError, match="unsupported transition input payload type"):
+        decide(
+            empty_runtime_state(),
+            AdmitPlan(
+                "admit-unrelated-runner-mapping-serialization-fault",
+                selected_plan=plan,
+                authority_fingerprint=fingerprint,
+            ),
+            deterministic_context(
+                transition_id="transition-unrelated-runner-mapping-serialization-fault"
+            ),
+        )
+
+
+def test_invalid_context_digest_distinguishes_surrogate_stage_and_router_ids() -> None:
+    digests: list[str] = []
+    for closure_kind in ("stage", "router"):
+        for suffix in ("\ud800", "\ud801"):
+            plan, fingerprint = _compile_source(_source_with_context_binding())
+            binding = plan.context_bindings[0]
+            if closure_kind == "stage":
+                bad_id = StageKindId(f"kernel_ping.taskmaster{suffix}")
+                stage = next(
+                    stage
+                    for stage in plan.stage_kinds
+                    if str(stage.id) == "kernel_ping.taskmaster"
+                )
+                object.__setattr__(binding, "stage_kind_id", bad_id)
+                object.__setattr__(stage, "id", bad_id)
+            else:
+                bad_id = AssetId(f"kernel_ping.context_router{suffix}")
+                asset = next(
+                    asset
+                    for asset in plan.assets
+                    if str(asset.id) == "kernel_ping.context_router"
+                )
+                object.__setattr__(binding, "router_asset_id", bad_id)
+                object.__setattr__(asset, "id", bad_id)
+
+            decision = decide(
+                empty_runtime_state(),
+                AdmitPlan(
+                    "admit-surrogate-context-digest",
+                    selected_plan=plan,
+                    authority_fingerprint=fingerprint,
+                ),
+                deterministic_context(
+                    transition_id=f"transition-{closure_kind}-{suffix}"
+                ),
+            )
+
+            assert decision.accepted is False
+            assert decision.refusal is not None
+            assert decision.refusal.reason == "unsupported_selected_authority"
+            digests.append(decision.input_payload_digest)
+
+    assert len(set(digests)) == 4
+
+
+@pytest.mark.parametrize(
+    ("path_kind", "write_enabled", "expected_detail"),
+    (
+        (
+            "checkout_root",
+            False,
+            "context_binding_checkout_root:kernel_ping.taskmaster_context",
+        ),
+        (
+            "workspace_relative_root",
+            False,
+            "context_binding_source_path:kernel_ping.taskmaster_context:0",
+        ),
+        (
+            "write_root",
+            True,
+            "context_binding_write_root:kernel_ping.taskmaster_context:0",
+        ),
+    ),
+)
+def test_direct_admit_plan_refuses_nul_context_paths(
+    path_kind: str,
+    write_enabled: bool,
+    expected_detail: str,
+) -> None:
+    plan, fingerprint = _compile_source(
+        _source_with_context_binding(write_enabled=write_enabled)
+    )
+    binding = plan.context_bindings[0]
+    if path_kind == "checkout_root":
+        object.__setattr__(binding, "checkout_root", "checkout/\x00")
+    elif path_kind == "workspace_relative_root":
+        source = binding.required_sources[0]
+        object.__setattr__(source, "source_kind", "workspace_relative_root")
+        object.__setattr__(source, "source_ref", "src/\x00")
+    else:
+        object.__setattr__(binding.write_rules[0], "relative_root", "src/\x00")
+
+    decision = decide(
+        empty_runtime_state(),
+        AdmitPlan(
+            f"admit-{path_kind}-nul",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(transition_id=f"transition-{path_kind}-nul"),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "unsupported_selected_authority"
+    assert decision.refusal.detail == expected_detail
+
+
+def test_direct_admit_plan_refuses_mutable_context_runner_stage_ids() -> None:
+    plan, _fingerprint = _compile_source(_source_with_context_binding())
+    runner = next(
+        runner
+        for runner in plan.runner_bindings
+        if str(runner.id) == "kernel_ping.taskmaster_runner"
+    )
+    object.__setattr__(runner, "stage_kind_ids", list(runner.stage_kind_ids))
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        "context_binding_runner_stage:kernel_ping.taskmaster_context",
+    )
+
+
+def test_direct_admit_plan_refuses_mutable_context_stage_outcome_ids() -> None:
+    plan, _fingerprint = _compile_source(
+        _source_with_context_binding(write_enabled=True)
+    )
+    stage = next(
+        stage for stage in plan.stage_kinds if str(stage.id) == "kernel_ping.worker"
+    )
+    object.__setattr__(stage, "declared_outcome_ids", list(stage.declared_outcome_ids))
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        "context_binding_writeback_action_outcome:kernel_ping.taskmaster_context",
+    )
+
+
+def test_direct_admit_plan_refuses_headerless_context_source_mapping() -> None:
+    plan, _fingerprint = _compile_source(_source_with_context_binding())
+    binding = plan.context_bindings[0]
+    source = binding.required_sources[0]
+    object.__setattr__(
+        binding,
+        "required_sources",
+        (
+            {
+                "source_kind": source.source_kind,
+                "source_ref": source.source_ref,
+                "max_files": source.max_files,
+                "max_bytes": source.max_bytes,
+            },
+        ),
+    )
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        "context_binding_source_shape:kernel_ping.taskmaster_context:0",
+    )
+
+
+def test_direct_admit_plan_refuses_mapping_context_binding() -> None:
+    plan, _fingerprint = _compile_source(_source_with_context_binding())
+    binding = plan.context_bindings[0]
+    object.__setattr__(
+        plan,
+        "context_bindings",
+        (
+            {
+                "id": binding.id,
+                "stage_kind_id": binding.stage_kind_id,
+                "router_asset_id": binding.router_asset_id,
+                "checkout_root": binding.checkout_root,
+                "required_sources": binding.required_sources,
+                "discoverable_sources": binding.discoverable_sources,
+                "write_rules": binding.write_rules,
+                "writeback_terminal_action_id": binding.writeback_terminal_action_id,
+                "writeback_artifact_schema_id": binding.writeback_artifact_schema_id,
+            },
+        ),
+    )
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        "context_binding_shape:0",
+    )
+
+
+def _compile_context_plan_without_component_pins(
+    *, write_enabled: bool,
+) -> SelectedCompiledPlan:
+    source = _source_with_context_binding(write_enabled=write_enabled)
+    if not write_enabled:
+        for runner in cast(list[dict[str, object]], source["runner_bindings"]):
+            runner.pop("component_pin", None)
+            runner.pop("terminal_result_mappings", None)
+    plan, _fingerprint = _compile_source(
+        source,
+        use_test_runner_policy=not write_enabled,
+    )
+    return plan
+
+
+@pytest.mark.parametrize(
+    ("record_kind", "expected_detail", "write_enabled"),
+    (
+        pytest.param(
+            "stage",
+            "context_binding_stage_record:kernel_ping.taskmaster_context",
+            False,
+            id="stage-record",
+        ),
+        pytest.param(
+            "runner",
+            "context_binding_runner_record:kernel_ping.taskmaster_context",
+            False,
+            id="runner-record",
+        ),
+        pytest.param(
+            "asset",
+            "context_binding_router_asset_record:kernel_ping.taskmaster_context",
+            False,
+            id="router-asset-record",
+        ),
+        pytest.param(
+            "action",
+            "context_binding_writeback_action_record:kernel_ping.taskmaster_context",
+            True,
+            id="writeback-action-record",
+        ),
+        pytest.param(
+            "outcome",
+            "context_binding_writeback_outcome_record:kernel_ping.taskmaster_context",
+            True,
+            id="writeback-outcome-record",
+        ),
+        pytest.param(
+            "schema",
+            "context_binding_writeback_schema_record:kernel_ping.taskmaster_context",
+            True,
+            id="writeback-schema-record",
+        ),
+    ),
+)
+def test_direct_admit_plan_refuses_mapping_context_closure_record(
+    record_kind: str,
+    expected_detail: str,
+    write_enabled: bool,
+) -> None:
+    plan = _compile_context_plan_without_component_pins(
+        write_enabled=write_enabled,
+    )
+    binding = plan.context_bindings[0]
+
+    if record_kind == "stage":
+        records = list(plan.stage_kinds)
+        index = next(
+            index
+            for index, record in enumerate(records)
+            if record.id == binding.stage_kind_id
+        )
+        record = records[index]
+        records[index] = {
+            "id": record.id,
+            "runner_binding_id": record.runner_binding_id,
+            "declared_outcome_ids": record.declared_outcome_ids,
+        }
+        object.__setattr__(plan, "stage_kinds", tuple(records))
+    elif record_kind == "runner":
+        records = list(plan.runner_bindings)
+        stage = next(
+            record for record in plan.stage_kinds if record.id == binding.stage_kind_id
+        )
+        index = next(
+            index
+            for index, record in enumerate(records)
+            if record.id == stage.runner_binding_id
+        )
+        record = records[index]
+        records[index] = {
+            "id": record.id,
+            "adapter_kind": record.adapter_kind,
+            "stage_kind_ids": record.stage_kind_ids,
+            "terminal_result_mappings": (),
+        }
+        object.__setattr__(plan, "runner_bindings", tuple(records))
+    elif record_kind == "asset":
+        records = list(plan.assets)
+        index = next(
+            index
+            for index, record in enumerate(records)
+            if record.id == binding.router_asset_id
+        )
+        record = records[index]
+        records[index] = {
+            "id": record.id,
+            "asset_kind": record.asset_kind,
+            "body": record.body,
+        }
+        object.__setattr__(plan, "assets", tuple(records))
+    elif record_kind == "action":
+        records = list(plan.terminal_actions)
+        index = next(
+            index
+            for index, record in enumerate(records)
+            if record.id == binding.writeback_terminal_action_id
+        )
+        record = records[index]
+        records[index] = {
+            "id": record.id,
+            "stage_kind_id": record.stage_kind_id,
+            "outcome_id": record.outcome_id,
+            "artifact_schema_id": record.artifact_schema_id,
+        }
+        object.__setattr__(plan, "terminal_actions", tuple(records))
+    elif record_kind == "outcome":
+        action = next(
+            record
+            for record in plan.terminal_actions
+            if record.id == binding.writeback_terminal_action_id
+        )
+        records = list(plan.terminal_outcomes)
+        index = next(
+            index
+            for index, record in enumerate(records)
+            if record.id == action.outcome_id
+        )
+        record = records[index]
+        records[index] = {
+            "id": record.id,
+            "stage_kind_id": record.stage_kind_id,
+        }
+        object.__setattr__(plan, "terminal_outcomes", tuple(records))
+    else:
+        records = list(plan.artifact_schemas)
+        index = next(
+            index
+            for index, record in enumerate(records)
+            if record.id == binding.writeback_artifact_schema_id
+        )
+        record = records[index]
+        records[index] = {"id": record.id, "schema": record.schema}
+        object.__setattr__(plan, "artifact_schemas", tuple(records))
+
+    _assert_admit_and_select_default_refuse_selected_authority(
+        plan,
+        expected_detail,
+    )
 
 
 @pytest.mark.parametrize("corruption", ("missing", "duplicate"))

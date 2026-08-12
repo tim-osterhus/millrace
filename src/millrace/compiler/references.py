@@ -59,6 +59,7 @@ COLLECTION_NAMESPACES: tuple[tuple[str, str], ...] = (
     ("intervention_options", "intervention_option"),
     ("operator_waits", "operator_wait"),
     ("runner_bindings", "runner_binding"),
+    ("context_bindings", "context_binding"),
     ("capabilities", "capability"),
     ("graphs", "graph"),
 )
@@ -4182,6 +4183,10 @@ def _selected_artifact_schema_ids(source: Mapping[str, object]) -> frozenset[str
             schema_ids.add(str(raw_schema_id))
     for record in records(source, "operator_waits"):
         raw_schema_id = record.get("payload_schema_id")
+        if is_non_empty_text(raw_schema_id):
+            schema_ids.add(str(raw_schema_id))
+    for record in records(source, "context_bindings"):
+        raw_schema_id = record.get("writeback_artifact_schema_id")
         if is_non_empty_text(raw_schema_id):
             schema_ids.add(str(raw_schema_id))
     return frozenset(schema_ids)

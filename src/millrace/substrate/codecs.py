@@ -14,6 +14,8 @@ from millrace.contracts.compiled_plan import (
     CapabilityDeclaration,
     CompletionBehaviorDeclaration,
     ConcurrencyPolicyDeclaration,
+    ContextSourceDeclaration,
+    ContextWriteRule,
     CounterDeclaration,
     EffectDeclaration,
     ExternalEnqueueRouteDeclaration,
@@ -34,11 +36,13 @@ from millrace.contracts.compiled_plan import (
     SelectedWorkflowPackageAssetPin,
     SelectedWorkflowPackageDependencyPin,
     SelectedWorkflowPackagePin,
+    StageContextBindingDeclaration,
     StageKindDeclaration,
     TerminalActionDeclaration,
     TerminalOutcomeDeclaration,
     WaitStateDeclaration,
     WorkflowIdentity,
+    context_binding_authority_refusal,
     freeze_authority_mapping,
     runner_component_authority_refusal,
 )
@@ -124,6 +128,7 @@ _SELECTED_COMPILED_PLAN_KEYS = frozenset(
         "intervention_options",
         "operator_waits",
         "capabilities",
+        "context_bindings",
     }
 )
 _WORKFLOW_IDENTITY_KEYS = frozenset(
@@ -461,6 +466,34 @@ _CAPABILITY_KEYS = frozenset(
         "approval_policy_id",
     }
 )
+_CONTEXT_SOURCE_KEYS = frozenset(
+    {
+        "record_kind",
+        "schema_version",
+        "source_kind",
+        "source_ref",
+        "max_files",
+        "max_bytes",
+    }
+)
+_CONTEXT_WRITE_RULE_KEYS = frozenset(
+    {"record_kind", "schema_version", "relative_root", "disposition"}
+)
+_STAGE_CONTEXT_BINDING_KEYS = frozenset(
+    {
+        "record_kind",
+        "schema_version",
+        "id",
+        "stage_kind_id",
+        "router_asset_id",
+        "checkout_root",
+        "required_sources",
+        "discoverable_sources",
+        "write_rules",
+        "writeback_terminal_action_id",
+        "writeback_artifact_schema_id",
+    }
+)
 _WORKFLOW_PACKAGE_PIN_KEYS = frozenset(
     {
         "record_kind",
@@ -658,6 +691,9 @@ def _encode_selected_compiled_plan(
         "capabilities": tuple(
             _encode_capability(item) for item in plan.capabilities
         ),
+        "context_bindings": tuple(
+            _encode_stage_context_binding(item) for item in plan.context_bindings
+        ),
     }
 
 
@@ -769,13 +805,140 @@ def _decode_selected_compiled_plan(record: Record) -> SelectedCompiledPlan:
             _decode_capability(item)
             for item in _expect_record_tuple(record, "capabilities")
         ),
+        context_bindings=tuple(
+            _decode_stage_context_binding(item)
+            for item in _expect_record_tuple(record, "context_bindings")
+        ),
     )
     component_refusal = runner_component_authority_refusal(selected_plan)
     if component_refusal is not None:
         raise InvalidCasObject(
             f"selected runner component authority is invalid: {component_refusal}"
         )
+    context_refusal = context_binding_authority_refusal(selected_plan)
+    if context_refusal is not None:
+        raise InvalidCasObject(
+            f"selected context binding authority is invalid: {context_refusal}"
+        )
     return selected_plan
+
+
+def _encode_context_source(
+    source: ContextSourceDeclaration,
+) -> Mapping[str, JsonValue]:
+    return {
+        "record_kind": ContextSourceDeclaration.record_kind,
+        "schema_version": ContextSourceDeclaration.schema_version,
+        "source_kind": source.source_kind,
+        "source_ref": source.source_ref,
+        "max_files": source.max_files,
+        "max_bytes": source.max_bytes,
+    }
+
+
+def _decode_context_source(record: Record) -> ContextSourceDeclaration:
+    _ensure_record_header(
+        record,
+        ContextSourceDeclaration.record_kind,
+        ContextSourceDeclaration.schema_version,
+        _CONTEXT_SOURCE_KEYS,
+    )
+    return ContextSourceDeclaration(
+        source_kind=_expect_string(record, "source_kind"),
+        source_ref=_expect_string(record, "source_ref"),
+        max_files=_expect_int(record, "max_files"),
+        max_bytes=_expect_int(record, "max_bytes"),
+    )
+
+
+def _encode_context_write_rule(
+    rule: ContextWriteRule,
+) -> Mapping[str, JsonValue]:
+    return {
+        "record_kind": ContextWriteRule.record_kind,
+        "schema_version": ContextWriteRule.schema_version,
+        "relative_root": rule.relative_root,
+        "disposition": rule.disposition,
+    }
+
+
+def _decode_context_write_rule(record: Record) -> ContextWriteRule:
+    _ensure_record_header(
+        record,
+        ContextWriteRule.record_kind,
+        ContextWriteRule.schema_version,
+        _CONTEXT_WRITE_RULE_KEYS,
+    )
+    return ContextWriteRule(
+        relative_root=_expect_string(record, "relative_root"),
+        disposition=_expect_string(record, "disposition"),
+    )
+
+
+def _encode_stage_context_binding(
+    binding: StageContextBindingDeclaration,
+) -> Mapping[str, JsonValue]:
+    return {
+        "record_kind": StageContextBindingDeclaration.record_kind,
+        "schema_version": StageContextBindingDeclaration.schema_version,
+        "id": binding.id,
+        "stage_kind_id": str(binding.stage_kind_id),
+        "router_asset_id": str(binding.router_asset_id),
+        "checkout_root": binding.checkout_root,
+        "required_sources": tuple(
+            _encode_context_source(source) for source in binding.required_sources
+        ),
+        "discoverable_sources": tuple(
+            _encode_context_source(source)
+            for source in binding.discoverable_sources
+        ),
+        "write_rules": tuple(
+            _encode_context_write_rule(rule) for rule in binding.write_rules
+        ),
+        "writeback_terminal_action_id": _optional_id(
+            binding.writeback_terminal_action_id
+        ),
+        "writeback_artifact_schema_id": _optional_id(
+            binding.writeback_artifact_schema_id
+        ),
+    }
+
+
+def _decode_stage_context_binding(
+    record: Record,
+) -> StageContextBindingDeclaration:
+    _ensure_record_header(
+        record,
+        StageContextBindingDeclaration.record_kind,
+        StageContextBindingDeclaration.schema_version,
+        _STAGE_CONTEXT_BINDING_KEYS,
+    )
+    return StageContextBindingDeclaration(
+        id=_expect_string(record, "id"),
+        stage_kind_id=StageKindId(_expect_string(record, "stage_kind_id")),
+        router_asset_id=AssetId(_expect_string(record, "router_asset_id")),
+        checkout_root=_expect_string(record, "checkout_root"),
+        required_sources=tuple(
+            _decode_context_source(item)
+            for item in _expect_record_tuple(record, "required_sources")
+        ),
+        discoverable_sources=tuple(
+            _decode_context_source(item)
+            for item in _expect_record_tuple(record, "discoverable_sources")
+        ),
+        write_rules=tuple(
+            _decode_context_write_rule(item)
+            for item in _expect_record_tuple(record, "write_rules")
+        ),
+        writeback_terminal_action_id=_optional_action_id(
+            record,
+            "writeback_terminal_action_id",
+        ),
+        writeback_artifact_schema_id=_optional_artifact_schema_id(
+            record,
+            "writeback_artifact_schema_id",
+        ),
+    )
 
 
 def _encode_workflow_identity(workflow: WorkflowIdentity) -> Mapping[str, JsonValue]:
@@ -2309,6 +2472,13 @@ def _optional_stage_kind_id(record: Record, field_name: str) -> StageKindId | No
     if value is None:
         return None
     return StageKindId(value)
+
+
+def _optional_action_id(record: Record, field_name: str) -> ActionId | None:
+    value = _expect_optional_string(record, field_name)
+    if value is None:
+        return None
+    return ActionId(value)
 
 
 def _optional_queue_family_id(record: Record, field_name: str) -> QueueFamilyId | None:

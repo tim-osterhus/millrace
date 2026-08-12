@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from hashlib import sha256
 from importlib import import_module
+from pathlib import Path
 from typing import cast
 from unicodedata import normalize
 
@@ -300,10 +302,44 @@ def test_kernel_ping_authority_bytes_and_fingerprint_match_golden() -> None:
 
     assert len(authority_bytes) == 13153
     assert sha256(authority_bytes).hexdigest() == (
-        "ca1e565818bf14e55e5d7aff70581603dae2a5dc53c0cf4011569a1a64502f34"
+        "7945fcd272d2fac07969d811df14b9da169ec808f36bca3e9398db2c29867267"
     )
     assert authority_fingerprint(plan) == (
-        "sha256:cac2bb63793f3cad20361ac51152109fd7e60c63120a70df05b5c40e3149010b"
+        "sha256:3282a891816a1514bc16cce5e4d0ecc086fb874ad8a95add59cce8d386845e8f"
+    )
+
+
+def test_unbound_schema17_canonical_authority_omits_empty_context_bindings() -> None:
+    plan = _compile_plan(_source())
+    authority = json.loads(canonical_authority_bytes(plan).decode("utf-8"))
+
+    assert isinstance(authority, dict)
+    assert "context_bindings" not in authority
+
+
+def test_unbound_schema17_authority_restores_head_v16_bytes_by_schema_only() -> None:
+    plan = _compile_plan(_source())
+    current_authority = json.loads(canonical_authority_bytes(plan).decode("utf-8"))
+    assert isinstance(current_authority, dict)
+    current_authority["schema_version"] = 16
+
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "compiled_plan_exports"
+        / "kernel_ping_v0_1.export.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    assert isinstance(fixture, dict)
+    prior_authority = cast(dict[str, object], fixture["selected_authority"])
+    prior_authority.pop("context_bindings", None)
+    prior_authority["schema_version"] = 16
+    prior_bytes = canonical_authority_bytes(prior_authority)
+
+    assert canonical_authority_bytes(current_authority) == prior_bytes
+    assert len(prior_bytes) == 13153
+    assert sha256(prior_bytes).hexdigest() == (
+        "ca1e565818bf14e55e5d7aff70581603dae2a5dc53c0cf4011569a1a64502f34"
     )
 
 
