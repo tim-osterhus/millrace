@@ -332,6 +332,35 @@ class CreateRunnerSession(KernelCommand):
 
 
 @dataclass(frozen=True, slots=True)
+class AttachRunnerSessionContext(KernelCommand):
+    input_kind: ClassVar[str] = "workflow.attach_runner_session_context"
+
+    run_ref: RunRef
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    context_manifest_digest: str
+    selected_binding_id: str
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for field_name in (
+            "session_id",
+            "session_fencing_token",
+            "selected_binding_id",
+        ):
+            _require_runner_session_text(field_name, getattr(self, field_name))
+        _require_durable_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        _require_runner_session_digest(
+            "context_manifest_digest",
+            self.context_manifest_digest,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AdvanceRunnerSession(KernelCommand):
     input_kind: ClassVar[str] = "workflow.advance_runner_session"
 
@@ -1032,6 +1061,16 @@ class AdvanceRunnerSessionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class AttachRunnerSessionContextRecord:
+    session: RunnerSessionRecord
+    expected_run_ref: RunRef
+    expected_session_state: str
+    selected_binding_id: str
+    mutation_kind: ClassVar[str] = "mutation.attach_runner_session_context"
+    mutation_schema_version: ClassVar[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
 class RecordRunnerSessionCancellation:
     record: RunnerSessionCancellationRecord
     expected_run_ref: RunRef
@@ -1304,6 +1343,7 @@ TransitionMutation: TypeAlias = (
     | CreateRun
     | CreateRunnerSessionRecord
     | AdvanceRunnerSessionRecord
+    | AttachRunnerSessionContextRecord
     | RecordRunnerSessionCancellation
     | RecordRunnerSessionCancellationAttemptRecord
     | RecordRunnerSessionCompletionRecord
@@ -1461,6 +1501,16 @@ def _transition_input_payload(
             "session_fencing_token": transition_input.session_fencing_token,
             "created_at": transition_input.created_at,
             "explicit_retry_intent": transition_input.explicit_retry_intent,
+        }
+    if isinstance(transition_input, AttachRunnerSessionContext):
+        return {
+            "input_kind": input_kind(transition_input),
+            "run_ref": transition_input.run_ref,
+            "session_id": transition_input.session_id,
+            "dispatch_generation": transition_input.dispatch_generation,
+            "session_fencing_token": transition_input.session_fencing_token,
+            "context_manifest_digest": transition_input.context_manifest_digest,
+            "selected_binding_id": transition_input.selected_binding_id,
         }
     if isinstance(transition_input, AdvanceRunnerSession):
         return {
@@ -1681,6 +1731,8 @@ __all__ = (
     "AdmitPlanRef",
     "AdvanceRunnerSession",
     "AdvanceRunnerSessionRecord",
+    "AttachRunnerSessionContext",
+    "AttachRunnerSessionContextRecord",
     "CancelQueuedLineage",
     "CancelQueuedWork",
     "ClaimWork",

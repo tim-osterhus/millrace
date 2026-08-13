@@ -175,7 +175,7 @@ class RunRecord:
 @dataclass(frozen=True, slots=True)
 class RunnerSessionRecord:
     record_kind: ClassVar[str] = "runner_session"
-    schema_version: ClassVar[int] = 1
+    schema_version: ClassVar[int] = 2
 
     session_id: str
     run_id: str
@@ -188,6 +188,7 @@ class RunnerSessionRecord:
     ended_at: int | None
     durable_locator_digest: str | None
     cleanup_disposition: str
+    context_manifest_digest: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("session_id", "run_id", "session_fencing_token"):
@@ -231,6 +232,11 @@ class RunnerSessionRecord:
             and not _is_sha256_digest(self.durable_locator_digest)
         ):
             raise ValueError("durable_locator_digest must be a sha256 digest")
+        if (
+            self.context_manifest_digest is not None
+            and not _is_sha256_digest(self.context_manifest_digest)
+        ):
+            raise ValueError("context_manifest_digest must be a sha256 digest")
         if self.state == "created" and self.durable_locator_digest is not None:
             raise ValueError("created runner session cannot have a durable locator")
         if self.started_at is not None and self.start_intent_at is None:

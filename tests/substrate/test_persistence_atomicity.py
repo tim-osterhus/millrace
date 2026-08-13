@@ -50,6 +50,11 @@ from substrate._runtime_store_support import (
     taskmaster_runtime_state,
     worker_runtime_state,
 )
+from substrate.test_runner_session_context_persistence import (
+    _attach_state,
+    _context_manifest,
+    _persist_initial_state,
+)
 from support import kernel_ping as kernel_ping_support
 
 _RUNTIME_TABLES = (
@@ -294,6 +299,57 @@ def test_sqlite_commit_failure_after_cas_prewrites_leaves_no_referenced_state(
     assert _stored_cas_files(cas_root) != ()
     assert _runtime_row_counts(db_path) == dict.fromkeys(_RUNTIME_TABLES, 0)
     assert load_runtime_state(db_path, cas_root) == RuntimeState()
+
+
+def test_context_attach_cas_prewrites_without_sqlite_authority_allow_fresh_capture(
+    tmp_path: Path,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(
+        tmp_path
+    )
+    _manifest_one, digest_one = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+        file_bytes=b"first capture\n",
+    )
+    candidate_one = _attach_state(
+        state,
+        digest=digest_one,
+        input_id="attach-first-capture",
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        with pytest.raises(sqlite3.OperationalError, match="injected commit failure"):
+            persist_runtime_state_rows(
+                connection,
+                candidate_one,
+                cas_store,
+                _before_sqlite_commit=_raise_injected_commit_failure,
+            )
+
+    assert cas_store.get_bytes(digest_one) != b""
+    durable = load_runtime_state(db_path, tmp_path / "cas")
+    assert durable.runner_sessions["session-1"].context_manifest_digest is None
+    assert "attach-first-capture" not in durable.receipts
+
+    _manifest_two, digest_two = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+        file_bytes=b"fresh capture\n",
+    )
+    assert digest_two != digest_one
+    candidate_two = _attach_state(
+        state,
+        digest=digest_two,
+        input_id="attach-fresh-capture",
+    )
+    persist_runtime_state(db_path, tmp_path / "cas", candidate_two)
+    reloaded = load_runtime_state(db_path, tmp_path / "cas")
+    assert reloaded.runner_sessions["session-1"].context_manifest_digest == digest_two
 
 
 def test_failed_persist_does_not_advance_loaded_runtime_state(

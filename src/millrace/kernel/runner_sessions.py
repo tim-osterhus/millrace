@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from millrace.contracts.compiled_plan import StageContextBindingDeclaration
 from millrace.contracts.state import (
     RunnerSessionCancellationAttemptRecord,
     RunnerSessionCancellationRecord,
@@ -14,6 +15,7 @@ from millrace.contracts.state import (
 )
 from millrace.contracts.transition import (
     AdvanceRunnerSession,
+    AttachRunnerSessionContext,
     CreateRunnerSession,
     RecordRunnerSessionCancellationAttempt,
     RecordRunnerSessionCompletion,
@@ -146,6 +148,65 @@ def session_authority_refusal(
     return None
 
 
+def _context_bindings_for_run(
+    state: RuntimeState,
+    run_ref: RunRef,
+) -> tuple[StageContextBindingDeclaration, ...] | None:
+    admitted = state.admitted_plans.get(run_ref.plan_ref.authority_fingerprint)
+    if admitted is None or admitted.plan_ref != run_ref.plan_ref:
+        return None
+    run = state.runs.get(run_ref.run_id)
+    if run is None:
+        return None
+    return tuple(
+        binding
+        for binding in admitted.selected_plan.context_bindings
+        if binding.stage_kind_id == run.stage_kind_id
+    )
+
+
+def attach_runner_session_context_refusal(
+    state: RuntimeState,
+    transition_input: AttachRunnerSessionContext,
+) -> str | None:
+    session = state.runner_sessions.get(transition_input.session_id)
+    expected_state = session.state if session is not None else "created"
+    refusal = session_authority_refusal(
+        state,
+        run_ref=transition_input.run_ref,
+        session_id=transition_input.session_id,
+        dispatch_generation=transition_input.dispatch_generation,
+        session_fencing_token=transition_input.session_fencing_token,
+        expected_state=expected_state,
+    )
+    if refusal is not None:
+        return refusal
+    assert session is not None
+    if session.state != "created":
+        return "invalid_runner_session_transition"
+    bindings = _context_bindings_for_run(state, transition_input.run_ref)
+    if bindings is None or len(bindings) != 1:
+        return "runner_session_reconciliation_contradiction"
+    if str(bindings[0].id) != transition_input.selected_binding_id:
+        return "runner_session_reconciliation_contradiction"
+    if (
+        session.context_manifest_digest is not None
+        and session.context_manifest_digest != transition_input.context_manifest_digest
+    ):
+        return "runner_session_reconciliation_contradiction"
+    return None
+
+
+def runner_session_for_context_attach(
+    state: RuntimeState,
+    transition_input: AttachRunnerSessionContext,
+) -> RunnerSessionRecord:
+    return replace(
+        state.runner_sessions[transition_input.session_id],
+        context_manifest_digest=transition_input.context_manifest_digest,
+    )
+
+
 def advance_runner_session_refusal(
     state: RuntimeState,
     transition_input: AdvanceRunnerSession,
@@ -161,6 +222,15 @@ def advance_runner_session_refusal(
     if refusal is not None:
         return refusal
     session = state.runner_sessions[transition_input.session_id]
+    if (
+        transition_input.expected_state == "created"
+        and transition_input.next_state == "starting"
+    ):
+        bindings = _context_bindings_for_run(state, transition_input.run_ref)
+        if bindings is None or len(bindings) > 1:
+            return "runner_session_reconciliation_contradiction"
+        if len(bindings) == 1 and session.context_manifest_digest is None:
+            return "runner_session_reconciliation_contradiction"
     same_phase_locator_update = (
         transition_input.expected_state == transition_input.next_state
         and transition_input.durable_locator_digest is not None
@@ -540,6 +610,7 @@ def session_for_completion(
 
 __all__ = (
     "advance_runner_session_refusal",
+    "attach_runner_session_context_refusal",
     "cancellation_attempt_record",
     "cancellation_attempt_refusal",
     "cancellation_record",
@@ -548,6 +619,7 @@ __all__ = (
     "create_runner_session_refusal",
     "is_legal_runner_session_transition",
     "runner_session_for_advance",
+    "runner_session_for_context_attach",
     "runner_session_for_creation",
     "session_authority_refusal",
     "session_for_cancellation_request",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from hashlib import sha256
+from typing import Protocol
 
 import millrace.kernel._closure_lifecycle as _closure
 from millrace.contracts import ActionId, ArtifactSchemaId, PartitionId, StageKindId
@@ -19,7 +20,12 @@ from millrace.contracts.compiled_plan import (
     RecoveryPolicyDeclaration,
     RemediationPolicyDeclaration,
     SelectedCompiledPlan,
+    StageContextBindingDeclaration,
     TerminalActionDeclaration,
+)
+from millrace.contracts.context_checkout import (
+    context_checkout_manifest_digest,
+    decode_context_checkout_manifest,
 )
 from millrace.contracts.operator_waits import _operator_wait_record_id
 from millrace.contracts.runner import (
@@ -62,6 +68,7 @@ from millrace.contracts.state import (
     WorkItem,
 )
 from millrace.contracts.transition import (
+    AttachRunnerSessionContext,
     CancelQueuedLineage,
     CancelQueuedWork,
     ClaimWork,
@@ -102,7 +109,11 @@ from millrace.substrate._sqlite_rows import (
     TraceRow,
     TransitionRow,
 )
-from millrace.substrate.errors import StorageIntegrityError
+from millrace.substrate.errors import StorageIntegrityError, SubstrateError
+
+
+class _CasByteReader(Protocol):
+    def get_bytes(self, digest: str) -> bytes: ...
 
 _TERMINAL_CLOSING_ACTION_KINDS = frozenset(
     (
@@ -430,6 +441,172 @@ def runner_session_cas_references(
                 )
             )
     return tuple(references)
+
+
+def validate_runner_session_context_cas(
+    state: RuntimeState,
+    cas_store: _CasByteReader,
+) -> None:
+    for session in state.runner_sessions.values():
+        run = state.runs.get(session.run_id)
+        if run is None:
+            continue
+        admitted = state.admitted_plans.get(
+            run.run_ref.plan_ref.authority_fingerprint
+        )
+        if admitted is None or admitted.plan_ref != run.run_ref.plan_ref:
+            continue
+        bindings = tuple(
+            binding
+            for binding in admitted.selected_plan.context_bindings
+            if binding.stage_kind_id == run.stage_kind_id
+        )
+        if len(bindings) > 1:
+            raise StorageIntegrityError(
+                "runner session context binding is not unique"
+            )
+        context_digest = session.context_manifest_digest
+        if not bindings:
+            if context_digest is not None:
+                raise StorageIntegrityError(
+                    "unbound runner session cannot reference context manifest"
+                )
+            continue
+        if context_digest is None:
+            if (
+                session.start_intent_at is not None
+                or session.started_at is not None
+            ):
+                raise StorageIntegrityError(
+                    "bound runner session must attach context before starting"
+                )
+            continue
+
+        try:
+            manifest_bytes = cas_store.get_bytes(context_digest)
+            manifest = decode_context_checkout_manifest(manifest_bytes)
+            if context_checkout_manifest_digest(manifest_bytes) != context_digest:
+                raise ValueError("manifest digest mismatch")
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise StorageIntegrityError(
+                "runner session context manifest CAS reference is invalid: "
+                f"{context_digest}"
+            ) from exc
+        except SubstrateError as exc:
+            raise StorageIntegrityError(
+                "runner session context manifest CAS reference is unavailable: "
+                f"{context_digest}"
+            ) from exc
+
+        binding = bindings[0]
+        if (
+            manifest.session_id != session.session_id
+            or manifest.dispatch_generation != session.dispatch_generation
+            or manifest.plan_fingerprint != run.run_ref.plan_ref.authority_fingerprint
+            or manifest.binding_id != str(binding.id)
+            or manifest.router_asset_id != str(binding.router_asset_id)
+        ):
+            raise StorageIntegrityError(
+                "runner session context manifest authority does not match"
+            )
+        for context_file in manifest.files:
+            try:
+                file_bytes = cas_store.get_bytes(context_file.content_digest)
+            except SubstrateError as exc:
+                raise StorageIntegrityError(
+                    "runner session context file CAS reference is unavailable: "
+                    f"{context_file.content_digest}"
+                ) from exc
+            if len(file_bytes) != context_file.byte_length:
+                raise StorageIntegrityError(
+                    "runner session context file byte length does not match: "
+                    f"{context_file.checkout_path}"
+                )
+        _validate_runner_session_context_attach_anchor(
+            state,
+            run=run,
+            session=session,
+            binding=binding,
+        )
+
+
+def _validate_runner_session_context_attach_anchor(
+    state: RuntimeState,
+    *,
+    run: RunRecord,
+    session: RunnerSessionRecord,
+    binding: StageContextBindingDeclaration,
+) -> None:
+    context_digest = session.context_manifest_digest
+    assert context_digest is not None
+    expected_plan_fingerprint = run.run_ref.plan_ref.authority_fingerprint
+    for receipt in state.receipts.values():
+        if not receipt.accepted:
+            continue
+        input_id = receipt.receipt_ref.input_id
+        transition = next(
+            (
+                candidate
+                for candidate in state.transitions
+                if candidate.record_id == receipt.transition_id
+            ),
+            None,
+        )
+        if (
+            transition is None
+            or not transition.accepted
+            or transition.input_id != input_id
+            or transition.input_kind != AttachRunnerSessionContext.input_kind
+            or transition.input_family != "workflow_kernel_command"
+        ):
+            continue
+        events = tuple(
+            event
+            for event in state.governance_events
+            if event.input_id == input_id
+            and event.input_kind == AttachRunnerSessionContext.input_kind
+            and event.input_family == "workflow_kernel_command"
+            and event.disposition == "accepted"
+            and event.plan_fingerprint == expected_plan_fingerprint
+            and event.run_id == run.run_ref.run_id
+            and event.authority_source == "run"
+        )
+        traces = tuple(
+            trace
+            for trace in state.traces
+            if trace.input_id == input_id
+            and trace.input_kind == AttachRunnerSessionContext.input_kind
+            and trace.input_family == "workflow_kernel_command"
+            and trace.disposition == "accepted"
+            and trace.plan_fingerprint == expected_plan_fingerprint
+            and trace.run_id == run.run_ref.run_id
+            and trace.authority_source == "run"
+        )
+        if len(events) != 1 or len(traces) != 1:
+            continue
+        event = events[0]
+        trace = traces[0]
+        if (
+            event.record_id != f"{transition.record_id}:governance"
+            or trace.record_id != f"{transition.record_id}:trace"
+        ):
+            continue
+        expected_input = AttachRunnerSessionContext(
+            input_id,
+            run_ref=run.run_ref,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            session_fencing_token=session.session_fencing_token,
+            context_manifest_digest=context_digest,
+            selected_binding_id=str(binding.id),
+        )
+        if receipt.receipt_ref.input_payload_digest == input_payload_digest(
+            expected_input
+        ):
+            return
+    raise StorageIntegrityError(
+        "runner session context attach audit anchor is missing or mismatched"
+    )
 
 
 def validate_completed_runner_evidence(
@@ -5203,6 +5380,7 @@ __all__ = (
     "runner_session_cas_references",
     "runner_result_refusal_chain",
     "validate_completed_runner_evidence",
+    "validate_runner_session_context_cas",
     "validate_audit_transition_rows",
     "validate_loaded_runtime_state",
     "validate_receipt_transition_rows",

@@ -13,6 +13,7 @@ from millrace.substrate._sqlite_relations import (
     validate_completed_runner_evidence,
     validate_loaded_runtime_state,
     validate_receipt_transition_rows,
+    validate_runner_session_context_cas,
     validate_trace_governance_rows,
     validate_transition_rows,
 )
@@ -455,6 +456,7 @@ def _validate_runner_session_cas_references(
                 raise StorageIntegrityError(
                     f"runner session locator CAS reference is invalid: {digest}"
                 ) from exc
+    validate_runner_session_context_cas(state, cas_store)
 
 
 def _validate_runner_session_evidence_authority(
@@ -695,6 +697,7 @@ _RUNTIME_TABLE_SIGNATURE_COLUMNS = (
             "ended_at",
             "durable_locator_digest",
             "cleanup_disposition",
+            "context_manifest_digest",
         ),
         "session_id",
     ),
@@ -1865,9 +1868,10 @@ def _replace_runtime_rows(
             started_at,
             ended_at,
             durable_locator_digest,
-            cleanup_disposition
+            cleanup_disposition,
+            context_manifest_digest
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         tuple(
             (
@@ -1883,6 +1887,7 @@ def _replace_runtime_rows(
                 row.ended_at,
                 row.durable_locator_digest,
                 row.cleanup_disposition,
+                row.context_manifest_digest,
             )
             for row in runner_session_rows
         ),

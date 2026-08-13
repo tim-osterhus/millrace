@@ -94,6 +94,8 @@ from millrace.contracts.transition import (
     AdmitPlanRef,
     AdvanceRunnerSession,
     AdvanceRunnerSessionRecord,
+    AttachRunnerSessionContext,
+    AttachRunnerSessionContextRecord,
     CancelQueuedLineage,
     CancelQueuedWork,
     ClaimWork,
@@ -211,6 +213,7 @@ from millrace.kernel.operator_waits import (
 )
 from millrace.kernel.runner_sessions import (
     advance_runner_session_refusal,
+    attach_runner_session_context_refusal,
     cancellation_attempt_record,
     cancellation_attempt_refusal,
     cancellation_record,
@@ -218,6 +221,7 @@ from millrace.kernel.runner_sessions import (
     completion_refusal,
     create_runner_session_refusal,
     runner_session_for_advance,
+    runner_session_for_context_attach,
     runner_session_for_creation,
     session_authority_refusal,
     session_for_cancellation_request,
@@ -390,6 +394,32 @@ def decide(
             event_plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
             event_run_id=run.run_ref.run_id,
             event_authority_source="run",
+        )
+    if isinstance(transition_input, AttachRunnerSessionContext):
+        refusal = attach_runner_session_context_refusal(state, transition_input)
+        if refusal is not None:
+            return _runner_session_refused_decision(
+                transition_input,
+                context,
+                digest,
+                refusal,
+            )
+        return _runner_session_accepted_decision(
+            transition_input,
+            context,
+            digest,
+            transition_input.run_ref,
+            (
+                AttachRunnerSessionContextRecord(
+                    session=runner_session_for_context_attach(
+                        state,
+                        transition_input,
+                    ),
+                    expected_run_ref=transition_input.run_ref,
+                    expected_session_state="created",
+                    selected_binding_id=transition_input.selected_binding_id,
+                ),
+            ),
         )
     if isinstance(transition_input, AdvanceRunnerSession):
         refusal = advance_runner_session_refusal(state, transition_input)

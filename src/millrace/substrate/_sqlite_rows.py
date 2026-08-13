@@ -159,6 +159,7 @@ class RunnerSessionRow:
     ended_at: int | None
     durable_locator_digest: str | None
     cleanup_disposition: str
+    context_manifest_digest: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -865,9 +866,11 @@ def _expect_record_schema_version(
     row: tuple[object, ...],
     index: int,
     column: str,
+    *,
+    expected: int = 1,
 ) -> int:
     value = _expect_positive_int(row, index, column)
-    if value != 1:
+    if value != expected:
         raise StorageIntegrityError(f"{column} unsupported schema_version: {value}")
     return value
 
@@ -1189,13 +1192,14 @@ def encode_runner_session_row(session: RunnerSessionRecord) -> RunnerSessionRow:
         ended_at=session.ended_at,
         durable_locator_digest=session.durable_locator_digest,
         cleanup_disposition=session.cleanup_disposition,
+        context_manifest_digest=session.context_manifest_digest,
     )
 
 
 def decode_runner_session_row(row: tuple[object, ...]) -> RunnerSessionRow:
     return RunnerSessionRow(
         schema_version=_expect_record_schema_version(
-            row, 0, "runner_sessions.schema_version"
+            row, 0, "runner_sessions.schema_version", expected=2
         ),
         session_id=_expect_runner_session_text(
             row, 1, "runner_sessions.session_id"
@@ -1225,6 +1229,11 @@ def decode_runner_session_row(row: tuple[object, ...]) -> RunnerSessionRow:
         ),
         cleanup_disposition=_expect_runner_session_text(
             row, 11, "runner_sessions.cleanup_disposition"
+        ),
+        context_manifest_digest=_expect_optional_runner_session_digest(
+            row,
+            12,
+            "runner_sessions.context_manifest_digest",
         ),
     )
 

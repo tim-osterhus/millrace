@@ -22,6 +22,8 @@ from millrace.contracts.state import (
 from millrace.contracts.transition import (
     AdmitPlanRef,
     AdvanceRunnerSessionRecord,
+    AttachRunnerSessionContext,
+    AttachRunnerSessionContextRecord,
     CloseClosureTarget,
     CloseWorkItem,
     CreateActivation,
@@ -62,6 +64,7 @@ from millrace.contracts.transition import (
     SupersedeLineageQuarantine,
     TransitionDecision,
     TransitionMutation,
+    input_payload_digest,
 )
 from millrace.kernel._closure_lifecycle import (
     assess_closure_readiness,
@@ -113,6 +116,12 @@ def apply(state: RuntimeState, decision: TransitionDecision) -> RuntimeState:
             next_state = _apply_create_runner_session(next_state, mutation)
         elif isinstance(mutation, AdvanceRunnerSessionRecord):
             next_state = _apply_advance_runner_session(next_state, mutation)
+        elif isinstance(mutation, AttachRunnerSessionContextRecord):
+            next_state = _apply_attach_runner_session_context(
+                next_state,
+                decision,
+                mutation,
+            )
         elif isinstance(mutation, RecordRunnerSessionCancellation):
             next_state = _apply_record_runner_session_cancellation(
                 next_state,
@@ -1183,6 +1192,8 @@ def _apply_create_runner_session(
     mutation: CreateRunnerSessionRecord,
 ) -> RuntimeState:
     session = mutation.session
+    if session.context_manifest_digest is not None:
+        raise StateConcurrencyError("runner session context authority changed")
     run = state.runs.get(session.run_id)
     if run is None:
         raise StateConcurrencyError("runner session run is missing")
@@ -1245,6 +1256,52 @@ def _apply_advance_runner_session(
         or mutation.session.session_fencing_token != prior.session_fencing_token
     ):
         raise StateConcurrencyError("runner session authority changed")
+    if mutation.session.context_manifest_digest != prior.context_manifest_digest:
+        raise StateConcurrencyError("runner session context authority changed")
+    return replace(
+        state,
+        runner_sessions=_mapping_with(
+            state.runner_sessions,
+            mutation.session.session_id,
+            mutation.session,
+        ),
+    )
+
+
+def _apply_attach_runner_session_context(
+    state: RuntimeState,
+    decision: TransitionDecision,
+    mutation: AttachRunnerSessionContextRecord,
+) -> RuntimeState:
+    if mutation.expected_session_state != "created":
+        raise StateConcurrencyError("runner session context authority changed")
+    prior = _runner_session_for_mutation(
+        state,
+        run_ref=mutation.expected_run_ref,
+        session_id=mutation.session.session_id,
+        expected_session_state="created",
+    )
+    digest = mutation.session.context_manifest_digest
+    if digest is None:
+        raise StateConcurrencyError("runner session context authority changed")
+    reconstructed_input = AttachRunnerSessionContext(
+        decision.input_id,
+        run_ref=mutation.expected_run_ref,
+        session_id=mutation.session.session_id,
+        dispatch_generation=mutation.session.dispatch_generation,
+        session_fencing_token=mutation.session.session_fencing_token,
+        context_manifest_digest=digest,
+        selected_binding_id=mutation.selected_binding_id,
+    )
+    if input_payload_digest(reconstructed_input) != decision.input_payload_digest:
+        raise StateConcurrencyError("runner session context authority changed")
+    if (
+        prior.context_manifest_digest is not None
+        and prior.context_manifest_digest != digest
+    ):
+        raise StateConcurrencyError("runner session context authority changed")
+    if mutation.session != replace(prior, context_manifest_digest=digest):
+        raise StateConcurrencyError("runner session context authority changed")
     return replace(
         state,
         runner_sessions=_mapping_with(

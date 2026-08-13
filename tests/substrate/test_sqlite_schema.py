@@ -98,6 +98,7 @@ EXPECTED_TABLE_COLUMNS = {
         "ended_at",
         "durable_locator_digest",
         "cleanup_disposition",
+        "context_manifest_digest",
     ),
     "runner_session_cancellation_requests": (
         "schema_version",
@@ -988,10 +989,10 @@ def test_open_refuses_unknown_store_schema_version_without_mutation(
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     db_path = tmp_path / "runtime.sqlite3"
-    _create_marked_store_metadata(db_path, store_schema_version=9)
+    _create_marked_store_metadata(db_path, store_schema_version=10)
 
     before = _store_snapshot(db_path)
-    with pytest.raises(UnsupportedStoreSchemaVersion, match="9"):
+    with pytest.raises(UnsupportedStoreSchemaVersion, match="10"):
         SQLiteRuntimeStore.open(db_path)
     assert _store_snapshot(db_path) == before
 
@@ -1027,16 +1028,43 @@ def test_workflow_package_command_audit_schema_bumps_sqlite_store_version() -> N
     assert SQLITE_STORE_SCHEMA_VERSION >= 5
 
 
-def test_runner_session_schema_uses_store_version_7() -> None:
+def test_runner_session_schema_uses_store_version_9() -> None:
     from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
 
-    assert SQLITE_STORE_SCHEMA_VERSION == 8
+    assert SQLITE_STORE_SCHEMA_VERSION == 9
 
 
-def test_daemon_budget_store_schema_remains_version_8() -> None:
+@pytest.mark.parametrize("operation", ("open", "initialize"))
+def test_schema_8_open_and_initialize_refuse_without_byte_mutation(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    from millrace.substrate.errors import UnsupportedStoreSchemaVersion
+    from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    db_path = tmp_path / "runtime.sqlite3"
+    store = SQLiteRuntimeStore.initialize(db_path)
+    store.close()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE store_metadata SET store_schema_version = 8"
+        )
+    before = db_path.read_bytes()
+
+    with pytest.raises(
+        UnsupportedStoreSchemaVersion,
+        match=rf"8; expected {SQLITE_STORE_SCHEMA_VERSION}",
+    ):
+        getattr(SQLiteRuntimeStore, operation)(db_path)
+
+    assert db_path.read_bytes() == before
+
+
+def test_daemon_budget_store_schema_remains_version_9() -> None:
     from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
 
-    assert SQLITE_STORE_SCHEMA_VERSION == 8
+    assert SQLITE_STORE_SCHEMA_VERSION == 9
 
 
 def test_open_refuses_package_registry_table_shape_drift(tmp_path: Path) -> None:
@@ -1194,17 +1222,17 @@ def test_initialize_refuses_store_schema_version_5_without_mutation(
     assert _store_snapshot(db_path) == before
 
 
-def test_initialize_refuses_store_schema_version_9_without_mutation(
+def test_initialize_refuses_store_schema_version_10_without_mutation(
     tmp_path: Path,
 ) -> None:
     from millrace.substrate.errors import UnsupportedStoreSchemaVersion
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     db_path = tmp_path / "runtime.sqlite3"
-    _create_marked_store_metadata(db_path, store_schema_version=9)
+    _create_marked_store_metadata(db_path, store_schema_version=10)
 
     before = _store_snapshot(db_path)
-    with pytest.raises(UnsupportedStoreSchemaVersion, match="9"):
+    with pytest.raises(UnsupportedStoreSchemaVersion, match="10"):
         SQLiteRuntimeStore.initialize(db_path)
     assert _store_snapshot(db_path) == before
 

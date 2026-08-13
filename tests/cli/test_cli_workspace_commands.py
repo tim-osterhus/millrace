@@ -177,7 +177,7 @@ def test_workspace_check_reports_initialized_store_without_writing(
         "workspace_path": str(workspace),
         "db_path": str(workspace / ".millrace" / "runtime.sqlite3"),
         "cas_path": str(workspace / ".millrace" / "cas"),
-        "schema_version": 8,
+        "schema_version": 9,
         "initialized": True,
         "admitted_plan_count": 0,
         "default_plan_fingerprint": None,

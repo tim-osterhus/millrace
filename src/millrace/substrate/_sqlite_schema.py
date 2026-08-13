@@ -144,7 +144,7 @@ _RUNTIME_TABLE_SQL = (
     """,
     f"""
     CREATE TABLE IF NOT EXISTS runner_sessions (
-        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        schema_version INTEGER NOT NULL CHECK (schema_version = 2),
         session_id TEXT PRIMARY KEY CHECK (
             length(CAST(session_id AS BLOB))
                 BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
@@ -192,6 +192,15 @@ _RUNTIME_TABLE_SQL = (
                 'not_required',
                 'complete',
                 'orphan_risk'
+            )
+        ),
+        context_manifest_digest TEXT CHECK (
+            context_manifest_digest IS NULL
+            OR (
+                length(CAST(context_manifest_digest AS BLOB)) = 71
+                AND substr(context_manifest_digest, 1, 7) = 'sha256:'
+                AND substr(context_manifest_digest, 8)
+                    NOT GLOB '*[^0-9a-f]*'
             )
         ),
         UNIQUE (run_id, dispatch_generation)
@@ -1468,6 +1477,7 @@ EXPECTED_TABLE_COLUMNS = {
         "ended_at",
         "durable_locator_digest",
         "cleanup_disposition",
+        "context_manifest_digest",
     ),
     "runner_session_cancellation_requests": (
         "schema_version",

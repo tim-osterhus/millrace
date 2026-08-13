@@ -11,6 +11,11 @@ from millrace.substrate.errors import (
     StoreSchemaUpgradeRequired,
 )
 from millrace.substrate.sqlite import SQLiteRuntimeStore
+from substrate.test_runner_session_context_persistence import (
+    _attach_state,
+    _context_manifest,
+    _persist_initial_state,
+)
 from substrate.test_runner_session_persistence import (
     _cas_backed_session_state,
     _session_state,
@@ -586,6 +591,37 @@ def test_runner_session_schema_rejects_oversized_text(tmp_path) -> None:
                 """,
                 ("x" * 4097,),
             )
+
+
+def test_attached_context_missing_manifest_on_reload_is_refused_read_only(
+    tmp_path,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(
+        tmp_path
+    )
+    _manifest, digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    attached = _attach_state(state, digest=digest)
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        store.persist_runtime_state(attached, cas_store)
+    finally:
+        store.close()
+
+    missing_digest = "sha256:" + "f" * 64
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE runner_sessions SET context_manifest_digest = ? "
+            "WHERE session_id = 'session-1'",
+            (missing_digest,),
+        )
+    database_before = db_path.read_bytes()
+    _assert_load_refused(db_path, cas_store, "context")
+    assert db_path.read_bytes() == database_before
 
 
 @pytest.mark.parametrize(
