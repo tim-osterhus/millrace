@@ -192,6 +192,7 @@ def prepare_context_checkout(
     binding: StageContextBindingDeclaration,
     state: RuntimeState,
     cas_store: ContentAddressedByteStore,
+    reuse_existing: bool = True,
 ) -> PreparedContextCheckout:
     """Capture and atomically publish one canonical runner context checkout."""
     try:
@@ -213,7 +214,16 @@ def prepare_context_checkout(
         final_root = _final_root(path_authority.checkout_root, session=session)
         _validate_materialization_target(final_root)
         if _path_exists_without_following(final_root):
-            return _reuse_existing_checkout(
+            if reuse_existing:
+                return _reuse_existing_checkout(
+                    final_root=final_root,
+                    session=session,
+                    plan_fingerprint=plan_fingerprint,
+                    binding=binding,
+                    selections=selections,
+                    cas_store=cas_store,
+                )
+            _discard_unattached_checkout(
                 final_root=final_root,
                 session=session,
                 plan_fingerprint=plan_fingerprint,
@@ -353,12 +363,107 @@ def prepare_context_checkout(
         _refuse("context checkout preparation refused", exc)
 
 
+def rematerialize_attached_context_checkout(
+    *,
+    paths: CliWorkspacePaths,
+    session: RunnerSessionRecord,
+    plan_fingerprint: str,
+    binding: StageContextBindingDeclaration,
+    manifest_digest: str,
+    state: RuntimeState,
+    cas_store: ContentAddressedByteStore,
+) -> PreparedContextCheckout:
+    """Verify or materialize an already-attached checkout from its CAS manifest."""
+    try:
+        _validate_relation(
+            session=session,
+            plan_fingerprint=plan_fingerprint,
+            binding=binding,
+            state=state,
+            require_created=False,
+        )
+        if not isinstance(session, RunnerSessionRecord):
+            _refuse("session must be a RunnerSessionRecord")
+        _require_identity(session.session_id, "session_id")
+        _require_identity(plan_fingerprint, "plan_fingerprint")
+        if not isinstance(manifest_digest, str):
+            _refuse("manifest_digest must be a string")
+        if session.context_manifest_digest != manifest_digest:
+            _refuse("manifest digest is not the attached session authority")
+        path_authority = _validate_paths(
+            paths=paths,
+            binding=binding,
+            cas_store=cas_store,
+        )
+        selections = _validate_sources(
+            binding=binding,
+            path_authority=path_authority,
+        )
+        final_root = _final_root(path_authority.checkout_root, session=session)
+        _validate_materialization_target(final_root)
+        try:
+            manifest_bytes = cas_store.get_bytes(manifest_digest)
+            manifest = decode_context_checkout_manifest(manifest_bytes)
+            verify_context_checkout_manifest_digest(manifest_bytes, manifest_digest)
+        except ContextCheckoutPreparationError:
+            raise
+        except Exception as exc:
+            _refuse("attached context manifest CAS material is not authentic", exc)
+        if (
+            manifest.session_id != session.session_id
+            or manifest.dispatch_generation != session.dispatch_generation
+            or manifest.plan_fingerprint != plan_fingerprint
+            or manifest.binding_id != str(binding.id)
+            or manifest.router_asset_id != str(binding.router_asset_id)
+        ):
+            _refuse("attached context manifest authority does not match")
+        _validate_checkout_manifest_shape(
+            manifest,
+            binding=binding,
+            selections=selections,
+        )
+        payload_by_path = _load_existing_checkout_payloads(
+            manifest=manifest,
+            manifest_bytes=manifest_bytes,
+            manifest_digest=manifest_digest,
+            cas_store=cas_store,
+        )
+        if _path_exists_without_following(final_root):
+            _verify_existing_checkout(
+                final_root=final_root,
+                manifest=manifest,
+                manifest_bytes=manifest_bytes,
+                manifest_digest=manifest_digest,
+                payload_by_path=payload_by_path,
+                cas_store=cas_store,
+            )
+        else:
+            _publish_checkout(
+                final_root=final_root,
+                manifest=manifest,
+                manifest_bytes=manifest_bytes,
+                payload_by_path=payload_by_path,
+                cas_store=cas_store,
+                manifest_digest=manifest_digest,
+            )
+        return PreparedContextCheckout(
+            manifest=manifest,
+            manifest_digest=manifest_digest,
+            materialized_checkout_root=final_root,
+        )
+    except ContextCheckoutPreparationError:
+        raise
+    except Exception as exc:
+        _refuse("attached context checkout rematerialization refused", exc)
+
+
 def _validate_relation(
     *,
     session: RunnerSessionRecord,
     plan_fingerprint: str,
     binding: StageContextBindingDeclaration,
     state: RuntimeState,
+    require_created: bool = True,
 ) -> _Relation:
     if not isinstance(session, RunnerSessionRecord):
         _refuse("session must be a RunnerSessionRecord")
@@ -374,8 +479,17 @@ def _validate_relation(
     ):
         _refuse("session dispatch generation must be positive")
     _require_identity(plan_fingerprint, "plan_fingerprint")
-    if session.state != "created":
-        _refuse("runner session must be in created state")
+    if require_created:
+        if session.state != "created":
+            _refuse("runner session must be in created state")
+    elif session.state not in {
+        "created",
+        "starting",
+        "running",
+        "cancellation_requested",
+        "terminating",
+    }:
+        _refuse("runner session is not an attached live session")
     stored_session = state.runner_sessions.get(session.session_id)
     if stored_session != session:
         _refuse("supplied runner session is not current state authority")
@@ -415,6 +529,13 @@ def _validate_relation(
         _refuse("supplied context binding is not selected plan authority")
     if binding.stage_kind_id != run.stage_kind_id:
         _refuse("context binding stage does not match run")
+    stage_bindings = tuple(
+        candidate
+        for candidate in selected_plan.context_bindings
+        if candidate.stage_kind_id == run.stage_kind_id
+    )
+    if len(stage_bindings) != 1 or stage_bindings[0] != binding:
+        _refuse("supplied context binding is not unique for run stage")
     selected_stage = tuple(
         stage for stage in selected_plan.stage_kinds if stage.id == run.stage_kind_id
     )
@@ -438,9 +559,9 @@ def _validate_relation(
         _refuse("run, activation, and work item identities have drifted")
 
     try:
-        envelope = build_dispatch_envelope_for_run(
+        envelope = _dispatch_envelope_for_relation(
             state=state,
-            run_id=session.run_id,
+            session=session,
         )
     except Exception as exc:
         _refuse("dispatch relation authority refused", exc)
@@ -468,6 +589,43 @@ def _validate_relation(
         envelope=envelope,
         router_body=router.body,
     )
+
+
+def _dispatch_envelope_for_relation(
+    *,
+    state: RuntimeState,
+    session: RunnerSessionRecord,
+) -> RunnerDispatchEnvelope:
+    if session.context_manifest_digest is None:
+        if session.state != "created":
+            _refuse("attached live session has no context manifest")
+        transient_digest = "sha256:" + "0" * 64
+        transient_session = replace(
+            session,
+            context_manifest_digest=transient_digest,
+        )
+        transient_state = replace(
+            state,
+            runner_sessions={
+                **state.runner_sessions,
+                session.session_id: transient_session,
+            },
+        )
+        try:
+            transient_envelope = build_dispatch_envelope_for_run(
+                state=transient_state,
+                run_id=session.run_id,
+            )
+        except Exception as exc:
+            _refuse("dispatch relation authority refused", exc)
+        return replace(transient_envelope, context_checkout=None)
+    try:
+        return build_dispatch_envelope_for_run(
+            state=state,
+            run_id=session.run_id,
+        )
+    except Exception as exc:
+        _refuse("dispatch relation authority refused", exc)
 
 
 def _run_links_are_drifted(
@@ -1875,6 +2033,38 @@ def _reuse_existing_checkout(
     )
 
 
+def _discard_unattached_checkout(
+    *,
+    final_root: Path,
+    session: RunnerSessionRecord,
+    plan_fingerprint: str,
+    binding: StageContextBindingDeclaration,
+    selections: Sequence[_SourceSelection],
+    cas_store: ContentAddressedByteStore,
+) -> None:
+    _reuse_existing_checkout(
+        final_root=final_root,
+        session=session,
+        plan_fingerprint=plan_fingerprint,
+        binding=binding,
+        selections=selections,
+        cas_store=cas_store,
+    )
+    _reject_symlink_components(final_root, stop=None)
+    try:
+        root_stat = final_root.lstat()
+    except OSError as exc:
+        _refuse("existing checkout root cannot be inspected", exc)
+    if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+        _refuse("existing checkout root is not a regular directory")
+    _cleanup_published_checkout(
+        final_root,
+        expected_identity=(root_stat.st_dev, root_stat.st_ino),
+    )
+    if _path_exists_without_following(final_root):
+        _refuse("validated existing checkout could not be discarded")
+
+
 def _validate_checkout_manifest_shape(
     manifest: ContextCheckoutManifest,
     *,
@@ -2479,4 +2669,5 @@ __all__ = (
     "ContextCheckoutPreparationError",
     "PreparedContextCheckout",
     "prepare_context_checkout",
+    "rematerialize_attached_context_checkout",
 )

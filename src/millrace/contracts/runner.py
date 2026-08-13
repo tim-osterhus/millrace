@@ -19,7 +19,7 @@ from millrace.contracts.compiled_plan import (
 )
 
 RUNNER_DISPATCH_RECORD_KIND = "runner_dispatch_envelope"
-RUNNER_DISPATCH_SCHEMA_VERSION = 6
+RUNNER_DISPATCH_SCHEMA_VERSION = 7
 RUNNER_RESULT_RECORD_KIND = "runner_result_evidence"
 RUNNER_RESULT_SCHEMA_VERSION = 3
 RUNNER_SESSION_COMPLETION_DIAGNOSTIC_RECORD_KIND = (
@@ -102,6 +102,15 @@ _RUNNER_ADAPTER_PROVENANCE_REQUIRED_KEYS = frozenset(
 )
 _LOWER_HEX = frozenset("0123456789abcdef")
 RUNNER_SESSION_LOCATOR_MAX_BYTES = 16 * 1024
+_CONTEXT_CHECKOUT_REQUIRED_KEYS = frozenset(
+    {
+        "manifest_digest",
+        "binding_id",
+        "router_asset_id",
+        "checkout_relative_path",
+        "router_relative_path",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +145,7 @@ class RunnerDispatchEnvelope:
     terminal_options: tuple[Mapping[str, AuthorityValue], ...] = ()
     selected_join_evidence: Mapping[str, AuthorityValue] | None = None
     selected_wait_evidence: Mapping[str, AuthorityValue] | None = None
+    context_checkout: Mapping[str, AuthorityValue] | None = None
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.run_id, "run_id")
@@ -215,6 +225,11 @@ class RunnerDispatchEnvelope:
             "selected_wait_evidence",
             _coerce_selected_wait_evidence(self.selected_wait_evidence),
         )
+        object.__setattr__(
+            self,
+            "context_checkout",
+            _coerce_context_checkout(self.context_checkout),
+        )
 
     def payload(self) -> Mapping[str, AuthorityValue]:
         return MappingProxyType(
@@ -248,6 +263,7 @@ class RunnerDispatchEnvelope:
                 "terminal_options": self.terminal_options,
                 "selected_join_evidence": self.selected_join_evidence,
                 "selected_wait_evidence": self.selected_wait_evidence,
+                "context_checkout": self.context_checkout,
             },
         )
 
@@ -980,6 +996,40 @@ def _coerce_selected_wait_evidence(
     return _coerce_payload_mapping(value, "selected_wait_evidence")
 
 
+def _coerce_context_checkout(
+    value: object,
+) -> Mapping[str, AuthorityValue] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("context_checkout must be a mapping or None")
+    raw = cast(Mapping[object, object], value)
+    _require_exact_keys(raw, _CONTEXT_CHECKOUT_REQUIRED_KEYS, "context_checkout")
+    _require_sha256_prefixed_digest(
+        raw["manifest_digest"],
+        "context_checkout.manifest_digest",
+    )
+    _require_nonblank_string(raw["binding_id"], "context_checkout.binding_id")
+    _require_nonblank_string(
+        raw["router_asset_id"],
+        "context_checkout.router_asset_id",
+    )
+    _safe_workspace_relative_path(
+        raw["checkout_relative_path"],
+        "context_checkout.checkout_relative_path",
+    )
+    _safe_workspace_relative_path(
+        raw["router_relative_path"],
+        "context_checkout.router_relative_path",
+    )
+    if raw["router_relative_path"] != f"{raw['checkout_relative_path']}/CONTEXT.md":
+        raise ValueError(
+            "context_checkout.router_relative_path must be "
+            "checkout_relative_path/CONTEXT.md"
+        )
+    return _coerce_payload_mapping(value, "context_checkout")
+
+
 def _require_exact_keys(
     value: Mapping[object, object],
     expected_keys: frozenset[str],
@@ -1028,6 +1078,20 @@ def _require_sha256_prefixed_digest(value: object, field_name: str) -> str:
             f"{field_name} must be 'sha256:' followed by 64 lowercase hex characters",
         )
     return digest
+
+
+def _safe_workspace_relative_path(value: object, field_name: str) -> str:
+    path = _require_nonblank_string(value, field_name)
+    if (
+        path.startswith("/")
+        or "\\" in path
+        or "\x00" in path
+        or ":" in path.split("/", 1)[0]
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+        or any(part == ".millrace" for part in path.split("/"))
+    ):
+        raise ValueError(f"{field_name} must be a safe relative POSIX path")
+    return path
 
 
 def _coerce_string_tuple(value: object, field_name: str) -> tuple[str, ...]:

@@ -46,6 +46,9 @@ session_correlation_id = reconcile.session_correlation_id
 terminate_grace_seconds = cancel.terminate_grace_seconds
 
 _POLL_INTERVAL_SECONDS = 0.01
+_PrepareCreatedSession = Callable[
+    [RunnerSessionRecord], RunnerSessionRecord
+]
 
 
 def execute_runner_session(
@@ -55,6 +58,7 @@ def execute_runner_session(
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
     explicit_retry_intent: bool,
+    prepare_created_session: _PrepareCreatedSession | None = None,
     on_start_reserved: Callable[[RunnerSessionRecord], None] | None = None,
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
@@ -76,6 +80,7 @@ def execute_runner_session(
         adapter,
         request_factory,
         explicit_retry_intent,
+        prepare_created_session,
         on_start_reserved,
         on_accepted_start,
         daemon_stop_requested,
@@ -106,6 +111,7 @@ def execute_runner_session(
         session=persisted.runner_sessions[session_id],
         adapter=adapter,
         request_factory=request_factory,
+        prepare_created_session=prepare_created_session,
         on_start_reserved=on_start_reserved,
         on_accepted_start=on_accepted_start,
         daemon_stop_requested=daemon_stop_requested,
@@ -129,6 +135,7 @@ def _resume_current_session(
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
     explicit_retry_intent: bool,
+    prepare_created_session: _PrepareCreatedSession | None,
     on_start_reserved: Callable[[RunnerSessionRecord], None] | None,
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None,
     daemon_stop_requested: Callable[[], bool] | None,
@@ -183,12 +190,37 @@ def _resume_current_session(
             session=current,
             adapter=adapter,
             request_factory=request_factory,
+            prepare_created_session=prepare_created_session,
             on_start_reserved=on_start_reserved,
             on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
             effective_timeout_seconds=effective_timeout_seconds,
         )
     return None
+
+
+def _prepare_created_session(
+    runtime: OpenRuntimeContext,
+    session: RunnerSessionRecord,
+    prepare_created_session: _PrepareCreatedSession | None,
+) -> RunnerSessionRecord | SessionExecutionResult:
+    if prepare_created_session is None:
+        return session
+    try:
+        prepared_session = prepare_created_session(session)
+        durable_prepared_session = complete._load(runtime).runner_sessions.get(
+            session.session_id
+        )
+    except Exception:
+        return SessionExecutionResult("session_preparation_refused")
+    if (
+        not isinstance(prepared_session, RunnerSessionRecord)
+        or durable_prepared_session != prepared_session
+        or prepared_session.session_id != session.session_id
+        or prepared_session.state != "created"
+    ):
+        return SessionExecutionResult("session_preparation_refused")
+    return prepared_session
 
 
 def _start_created_session(
@@ -198,6 +230,7 @@ def _start_created_session(
     session: RunnerSessionRecord,
     adapter: RunnerAdapter,
     request_factory: Callable[[RunnerSessionRecord], AdapterInvocationRequest],
+    prepare_created_session: _PrepareCreatedSession | None,
     on_start_reserved: Callable[[RunnerSessionRecord], None] | None,
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None,
     daemon_stop_requested: Callable[[], bool] | None,
@@ -211,6 +244,14 @@ def _start_created_session(
     )
     if cancellation is not None:
         return cancellation
+    prepared_session = _prepare_created_session(
+        runtime,
+        durable_session,
+        prepare_created_session,
+    )
+    if isinstance(prepared_session, SessionExecutionResult):
+        return prepared_session
+    durable_session = session = prepared_session
     if on_start_reserved is not None:
         on_start_reserved(durable_session)
     persisted = complete._persist_transition(
@@ -262,8 +303,7 @@ def _start_created_session(
     if cancellation is not None:
         return cancellation
     timeout = request.timeout_seconds
-    if effective_timeout_seconds is not None:
-        timeout = min(timeout, effective_timeout_seconds)
+    timeout = min(timeout, effective_timeout_seconds or timeout)
     deadline = _monotonic() + timeout
     try:
         start_outcome = adapter.start_session(request)

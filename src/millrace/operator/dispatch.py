@@ -12,6 +12,7 @@ from millrace.contracts.compiled_plan import (
     JoinDeclaration,
     SelectedCompiledPlan,
     StageKindDeclaration,
+    context_binding_authority_refusal,
 )
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId, RunnerBindingId, StageKindId
@@ -301,6 +302,12 @@ def build_dispatch_envelope_for_run(
     ) not in _selected_route_targets(selected_plan):
         raise _dispatch_error("graph_stage_runner_drift", run_id=run_id)
 
+    context_checkout = _context_checkout_for_dispatch(
+        selected_plan=selected_plan,
+        run=run,
+        session=session,
+    )
+
     assets_by_id = {asset.id: asset for asset in selected_plan.assets}
     if any(asset_id not in assets_by_id for asset_id in stage.asset_ids):
         raise _dispatch_error("missing_selected_asset", run_id=run_id)
@@ -386,6 +393,129 @@ def build_dispatch_envelope_for_run(
         ),
         selected_join_evidence=selected_join_evidence,
         selected_wait_evidence=selected_wait_evidence,
+        context_checkout=context_checkout,
+    )
+
+
+def _context_checkout_for_dispatch(
+    *,
+    selected_plan: SelectedCompiledPlan,
+    run: RunRecord,
+    session: object,
+) -> Mapping[str, AuthorityValue] | None:
+    try:
+        refusal = context_binding_authority_refusal(selected_plan)
+    except Exception as exc:
+        raise _dispatch_error(
+            "context_binding_authority_mismatch",
+            run_id=run.run_ref.run_id,
+        ) from exc
+    if refusal is not None:
+        raise _dispatch_error(
+            "context_binding_authority_mismatch",
+            run_id=run.run_ref.run_id,
+            detail=refusal,
+        )
+    bindings = tuple(
+        binding
+        for binding in selected_plan.context_bindings
+        if binding.stage_kind_id == run.stage_kind_id
+    )
+    if not bindings:
+        return None
+    if len(bindings) != 1:
+        raise _dispatch_error(
+            "context_binding_authority_mismatch",
+            run_id=run.run_ref.run_id,
+        )
+    manifest_digest = getattr(session, "context_manifest_digest", None)
+    if not isinstance(manifest_digest, str) or not _is_sha256_digest(manifest_digest):
+        raise _dispatch_error(
+            "missing_context_manifest",
+            run_id=run.run_ref.run_id,
+        )
+    binding = bindings[0]
+    binding_id = getattr(binding, "id", None)
+    router_asset_id = getattr(binding, "router_asset_id", None)
+    checkout_root = getattr(binding, "checkout_root", None)
+    session_id = getattr(session, "session_id", None)
+    dispatch_generation = getattr(session, "dispatch_generation", None)
+    if (
+        not isinstance(binding_id, str)
+        or not binding_id.strip()
+        or router_asset_id is None
+        or not isinstance(session_id, str)
+        or type(dispatch_generation) is not int
+        or dispatch_generation < 1
+        or not isinstance(checkout_root, str)
+    ):
+        raise _dispatch_error(
+            "context_binding_authority_mismatch",
+            run_id=run.run_ref.run_id,
+        )
+    session_id = _safe_dispatch_component(
+        session_id,
+        run_id=run.run_ref.run_id,
+    )
+    router_asset_id_text = str(router_asset_id)
+    if not router_asset_id_text.strip():
+        raise _dispatch_error(
+            "context_binding_authority_mismatch",
+            run_id=run.run_ref.run_id,
+        )
+    checkout_relative_path = _safe_dispatch_relative_path(
+        f"{checkout_root}/{session_id}/{dispatch_generation}",
+        run_id=run.run_ref.run_id,
+    )
+    router_relative_path = _safe_dispatch_relative_path(
+        f"{checkout_relative_path}/CONTEXT.md",
+        run_id=run.run_ref.run_id,
+    )
+    return {
+        "manifest_digest": manifest_digest,
+        "binding_id": binding_id,
+        "router_asset_id": router_asset_id_text,
+        "checkout_relative_path": checkout_relative_path,
+        "router_relative_path": router_relative_path,
+    }
+
+
+def _safe_dispatch_relative_path(value: str, *, run_id: str) -> str:
+    parts = value.split("/")
+    if (
+        not value
+        or value.startswith("/")
+        or "\\" in value
+        or ":" in parts[0]
+        or any(part in {"", ".", "..", ".millrace"} for part in parts)
+    ):
+        raise _dispatch_error(
+            "context_binding_authority_mismatch",
+            run_id=run_id,
+        )
+    return value
+
+
+def _safe_dispatch_component(value: str, *, run_id: str) -> str:
+    if (
+        not value.strip()
+        or value in {".", ".."}
+        or "/" in value
+        or "\\" in value
+        or "\x00" in value
+    ):
+        raise _dispatch_error(
+            "context_binding_authority_mismatch",
+            run_id=run_id,
+        )
+    return value
+
+
+def _is_sha256_digest(value: str) -> bool:
+    return (
+        len(value) == 71
+        and value.startswith("sha256:")
+        and all(character in "0123456789abcdef" for character in value[7:])
     )
 
 

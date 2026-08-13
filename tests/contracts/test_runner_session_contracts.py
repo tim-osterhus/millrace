@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, cast
 
@@ -82,6 +83,17 @@ def _dispatch_values() -> dict[str, object]:
         "terminal_options": (),
         "selected_join_evidence": None,
         "selected_wait_evidence": None,
+        "context_checkout": _context_checkout(),
+    }
+
+
+def _context_checkout() -> dict[str, str]:
+    return {
+        "manifest_digest": "sha256:" + "a" * 64,
+        "binding_id": "runner-context-1",
+        "router_asset_id": "router-asset-1",
+        "checkout_relative_path": "checkout/session-1/1",
+        "router_relative_path": "checkout/session-1/1/CONTEXT.md",
     }
 
 
@@ -109,7 +121,7 @@ def test_session_fields_are_required_in_dispatch_echo_and_result_evidence() -> N
     dispatch_constructor = cast(Any, RunnerDispatchEnvelope)
     result_constructor = cast(Any, RunnerResultEvidence)
     echo_constructor = cast(Any, DispatchEcho)
-    assert RunnerDispatchEnvelope.schema_version == 6
+    assert RunnerDispatchEnvelope.schema_version == 7
     assert RunnerResultEvidence.schema_version == 3
     dispatch_constructor(**_dispatch_values())
     result_constructor(**_result_values())
@@ -172,7 +184,7 @@ def test_adapter_request_refuses_session_authority_mismatch() -> None:
         )
 
 
-def test_reconcile_request_carries_v6_selected_authority() -> None:
+def test_reconcile_request_carries_v7_selected_authority() -> None:
     dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
     invocation = AdapterInvocationRequest(
         adapter_id="adapter-1",
@@ -193,10 +205,11 @@ def test_reconcile_request_carries_v6_selected_authority() -> None:
         {"provider_request_id": "owned-request"},
     )
 
-    assert reconcile.invocation_request.dispatch_envelope.schema_version == 6
+    assert reconcile.invocation_request.dispatch_envelope.schema_version == 7
     payload = reconcile.invocation_request.dispatch_envelope.payload()
     assert payload["record_kind"] == "runner_dispatch_envelope"
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
+    assert payload["context_checkout"] == _context_checkout()
     for field_name in (
         "run_id",
         "claim_id",
@@ -264,9 +277,10 @@ def test_dispatch_echo_refuses_session_authority_mismatch() -> None:
         "terminal_options",
         "selected_join_evidence",
         "selected_wait_evidence",
+        "context_checkout",
     ),
 )
-def test_dispatch_echo_full_authority_proof_refuses_every_v6_mismatch(
+def test_dispatch_echo_full_authority_proof_refuses_every_v7_mismatch(
     field_name: str,
 ) -> None:
     dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
@@ -290,6 +304,74 @@ def test_dispatch_echo_full_authority_proof_refuses_every_v6_mismatch(
     )
     mismatched = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
     object.__setattr__(mismatched, field_name, changed[field_name])
+
+    with pytest.raises(ValueError, match="dispatch echo mismatch"):
+        echo.validate_against(
+            mismatched,
+            correlation_id="correlation-1",
+            selected_adapter_kind="fake",
+        )
+
+
+def test_context_checkout_descriptor_is_exact_frozen_and_strict() -> None:
+    dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+
+    descriptor = dispatch.context_checkout
+    assert isinstance(descriptor, Mapping)
+    assert set(descriptor) == set(_context_checkout())
+    with pytest.raises(TypeError):
+        descriptor["binding_id"] = "mutated"  # type: ignore[index]
+
+    for malformed in (
+        {**_context_checkout(), "extra": "forbidden"},
+        {
+            key: value
+            for key, value in _context_checkout().items()
+            if key != "router_relative_path"
+        },
+        {**_context_checkout(), "manifest_digest": "SHA256:" + "a" * 64},
+        {**_context_checkout(), "binding_id": " "},
+        {**_context_checkout(), "checkout_relative_path": "../escape"},
+        {
+            **_context_checkout(),
+            "router_relative_path": "checkout/session-1/1/CONTEXT.md/",
+        },
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            RunnerDispatchEnvelope(
+                **{**_dispatch_values(), "context_checkout": malformed}
+            )  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "descriptor_field",
+    (
+        "manifest_digest",
+        "binding_id",
+        "router_asset_id",
+        "checkout_relative_path",
+        "router_relative_path",
+    ),
+)
+def test_dispatch_echo_refuses_each_context_checkout_mutation(
+    descriptor_field: str,
+) -> None:
+    dispatch = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch,
+        correlation_id="correlation-1",
+        selected_adapter_kind="fake",
+    )
+    changed = _context_checkout()
+    changed[descriptor_field] = {
+        "manifest_digest": "sha256:" + "b" * 64,
+        "binding_id": "runner-context-1-changed",
+        "router_asset_id": "router-asset-1-changed",
+        "checkout_relative_path": "checkout/session-1/2",
+        "router_relative_path": "checkout/session-1/2/CONTEXT.md",
+    }[descriptor_field]
+    mismatched = RunnerDispatchEnvelope(**_dispatch_values())  # type: ignore[arg-type]
+    object.__setattr__(mismatched, "context_checkout", changed)
 
     with pytest.raises(ValueError, match="dispatch echo mismatch"):
         echo.validate_against(

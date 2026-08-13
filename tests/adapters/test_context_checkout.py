@@ -359,6 +359,65 @@ def test_prepare_context_checkout_materializes_canonical_sources(
     assert cas_store.put_calls == len(prepared.manifest.files) + 1
 
 
+def test_rematerialize_attached_context_checkout_rejects_noncurrent_session(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli.context_checkout import (
+        prepare_context_checkout,
+        rematerialize_attached_context_checkout,
+    )
+
+    plan, fingerprint = _plan_with_all_context_sources()
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    session = state.runner_sessions["test-session:run-taskmaster"]
+    workspace = tmp_path / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    (workspace / "docs" / "guide.txt").write_text("Guide\n", encoding="utf-8")
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    cas_path = workspace / ".millrace" / "cas"
+    db_path.parent.mkdir()
+    db_path.touch()
+    cas_path.mkdir()
+    paths = CliWorkspacePaths(workspace, db_path, cas_path)
+    cas_store = _CountingCas(cas_path)
+    prepared = prepare_context_checkout(
+        paths=paths,
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=plan.context_bindings[0],
+        state=state,
+        cas_store=cas_store,
+    )
+    attached = replace(session, context_manifest_digest=prepared.manifest_digest)
+    current_state = replace(
+        state,
+        runner_sessions={session.session_id: attached},
+    )
+    noncurrent = replace(attached, session_id="stale-session")
+    checkout = (
+        workspace
+        / "checkout"
+        / noncurrent.session_id
+        / str(noncurrent.dispatch_generation)
+    )
+    put_calls = cas_store.put_calls
+
+    with pytest.raises(ValueError, match="current state authority"):
+        rematerialize_attached_context_checkout(
+            paths=paths,
+            session=noncurrent,
+            plan_fingerprint=fingerprint,
+            binding=plan.context_bindings[0],
+            manifest_digest=prepared.manifest_digest,
+            state=current_state,
+            cas_store=cas_store,
+        )
+
+    assert not checkout.exists()
+    assert cas_store.put_calls == put_calls
+
+
 def test_existing_checkout_reuse_is_recapture_free_after_live_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -6,6 +6,8 @@ from typing import cast
 
 import pytest
 
+from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
+from millrace.compiler import authority_fingerprint, compile_workflow
 from millrace.contracts import ClaimWork
 from millrace.contracts.compiled_plan import (
     SelectedWorkflowPackageAssetPin,
@@ -1060,10 +1062,100 @@ def test_dispatch_envelope_for_run_is_production_owned_and_read_only() -> None:
     assert envelope.graph_node_id == "lifecycle.origin.start"
     assert envelope.stage_kind_id == "origin_stage"
     assert envelope.runner_binding_id == "lifecycle.runner"
+    assert envelope.context_checkout is None
     assert envelope.external_enqueue_route_id == "route.origin"
     assert envelope.entrypoint_asset_id == "asset.origin"
     assert envelope.skill_asset_ids == ()
     assert envelope.work_item_payload == generic_lifecycle.source_payload()
+
+
+def _bound_context_state() -> tuple[object, object, str]:
+    from tests.compiler.test_context_bindings import _source_with_context_binding
+
+    result = compile_workflow(_source_with_context_binding())
+    assert result.plan is not None, result.diagnostics
+    fingerprint = authority_fingerprint(result.plan)
+    state = bootstrap_to_taskmaster_claim(result.plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    return state, result.plan, fingerprint
+
+
+def test_bound_dispatch_projects_attached_context_checkout_descriptor() -> None:
+    state, plan, fingerprint = _bound_context_state()
+    session_id = state.runs["run-taskmaster"].current_session_id
+    assert session_id is not None
+    session = state.runner_sessions[session_id]
+    attached = replace(session, context_manifest_digest="sha256:" + "a" * 64)
+    state = replace(
+        state,
+        runner_sessions={session_id: attached},
+        admitted_plans={
+            fingerprint: replace(
+                state.admitted_plans[fingerprint],
+                selected_plan=plan,
+            )
+        },
+    )
+
+    envelope = build_dispatch_envelope_for_run(
+        state=state,
+        run_id="run-taskmaster",
+    )
+
+    assert envelope.context_checkout == {
+        "manifest_digest": "sha256:" + "a" * 64,
+        "binding_id": "kernel_ping.taskmaster_context",
+        "router_asset_id": "kernel_ping.context_router",
+        "checkout_relative_path": (
+            f"checkout/{session_id}/{session.dispatch_generation}"
+        ),
+        "router_relative_path": (
+            f"checkout/{session_id}/{session.dispatch_generation}/CONTEXT.md"
+        ),
+    }
+
+
+def test_bound_dispatch_refuses_unattached_and_multiple_context_authority() -> None:
+    state, plan, fingerprint = _bound_context_state()
+
+    with pytest.raises(DispatchProjectionError) as unattached:
+        build_dispatch_envelope_for_run(state=state, run_id="run-taskmaster")
+    assert unattached.value.reason == "missing_context_manifest"
+
+    duplicate_plan = replace(
+        plan,
+        context_bindings=(plan.context_bindings[0], plan.context_bindings[0]),
+    )
+    duplicate_state = replace(
+        state,
+        admitted_plans={
+            fingerprint: replace(
+                state.admitted_plans[fingerprint],
+                selected_plan=duplicate_plan,
+            )
+        },
+    )
+    with pytest.raises(DispatchProjectionError) as duplicate:
+        build_dispatch_envelope_for_run(
+            state=duplicate_state,
+            run_id="run-taskmaster",
+        )
+    assert duplicate.value.reason == "context_binding_authority_mismatch"
+
+
+def test_bound_dispatch_rejects_public_unattached_override() -> None:
+    state, _plan, _fingerprint = _bound_context_state()
+
+    with pytest.raises(DispatchProjectionError) as ordinary:
+        build_dispatch_envelope_for_run(state=state, run_id="run-taskmaster")
+    assert ordinary.value.reason == "missing_context_manifest"
+
+    with pytest.raises(TypeError):
+        _build_dispatch_envelope_for_run(
+            state=state,
+            run_id="run-taskmaster",
+            _allow_unattached_context_checkout=True,
+        )
 
 
 def test_dispatch_envelope_for_run_emits_package_entrypoint_prompt_and_stage_skill_refs() -> (  # noqa: E501

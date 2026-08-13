@@ -199,7 +199,7 @@ def test_restart_unsupported_marks_potentially_started_session_orphan_risk(
     invocation = reconcile.invocation_request
     session = next(iter(after.runner_sessions.values()))
     run = after.runs[session.run_id]
-    assert invocation.dispatch_envelope.schema_version == 6
+    assert invocation.dispatch_envelope.schema_version == 7
     assert invocation.dispatch_envelope.run_id == run.run_ref.run_id
     assert invocation.dispatch_envelope.claim_id == run.run_ref.claim_id
     assert invocation.dispatch_envelope.plan_fingerprint == (

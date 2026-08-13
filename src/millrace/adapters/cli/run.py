@@ -5,15 +5,22 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
+from millrace.adapters.cli import session_completion as complete
 from millrace.adapters.cli.context import (
     CliCommandError,
     OpenRuntimeContext,
+    contextual_input_id,
     transition_context,
+)
+from millrace.adapters.cli.context_checkout import (
+    ContextCheckoutPreparationError,
+    prepare_context_checkout,
+    rematerialize_attached_context_checkout,
 )
 from millrace.adapters.cli.output import ExitCode
 from millrace.adapters.cli.session_coordinator import (
@@ -41,6 +48,8 @@ from millrace.contracts.compiled_plan import (
     RunnerComponentPin,
     RunnerTerminalResultMapping,
     SelectedCompiledPlan,
+    StageContextBindingDeclaration,
+    context_binding_authority_refusal,
 )
 from millrace.contracts.runner import RunnerDispatchEnvelope
 from millrace.contracts.state import (
@@ -50,7 +59,7 @@ from millrace.contracts.state import (
     RuntimeState,
     WorkItem,
 )
-from millrace.contracts.transition import ClaimWork
+from millrace.contracts.transition import AttachRunnerSessionContext, ClaimWork
 from millrace.kernel import apply, decide
 from millrace.operator.dispatch import (
     DispatchProjectionError,
@@ -170,6 +179,18 @@ def run_bounded_execution_unit(
     selected_kind = normalized_adapter_kind or active.adapter_kind
     try:
         adapter = resolve_adapter(selected_kind, effective_config)
+        cwd_refusal = _bound_codex_cwd_refusal(
+            runtime,
+            active=active,
+            selected_kind=selected_kind,
+            adapter=adapter,
+        )
+        if cwd_refusal is not None:
+            return _with_active_ids(cwd_refusal, active)
+        prepare_created_session = _prepare_created_session_callback(
+            runtime,
+            active=active,
+        )
         session_result = execute_runner_session(
             runtime,
             run_ref=active.run.run_ref,
@@ -182,6 +203,7 @@ def run_bounded_execution_unit(
                 session=session,
             ),
             explicit_retry_intent=normalized_activation_id is not None,
+            prepare_created_session=prepare_created_session,
             on_start_reserved=on_start_reserved,
             on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
@@ -355,8 +377,28 @@ def _session_invocation_request(
     effective_config: AdapterLocalConfig,
     session: RunnerSessionRecord,
 ) -> AdapterInvocationRequest:
+    state = _load(runtime)
+    binding = _context_binding_for_stage(
+        active.selected_plan,
+        active.run.stage_kind_id,
+    )
+    if binding is not None:
+        manifest_digest = session.context_manifest_digest
+        if manifest_digest is None:
+            raise ContextCheckoutPreparationError(
+                "bound runner session has no attached context manifest"
+            )
+        rematerialize_attached_context_checkout(
+            paths=runtime.paths,
+            session=session,
+            plan_fingerprint=active.run.run_ref.plan_ref.authority_fingerprint,
+            binding=binding,
+            manifest_digest=manifest_digest,
+            state=state,
+            cas_store=runtime.cas_store,
+        )
     dispatch = build_dispatch_envelope_for_run(
-        state=_load(runtime),
+        state=state,
         run_id=active.run.run_ref.run_id,
     )
     selected_asset_material = build_selected_asset_material(
@@ -390,6 +432,92 @@ def _session_invocation_request(
         selected_terminal_result_mappings=selected_terminal_mappings,
         selected_artifact_schemas=selected_schemas,
     )
+
+
+def _prepare_created_session_callback(
+    runtime: OpenRuntimeContext,
+    *,
+    active: _ActiveRun,
+) -> Callable[[RunnerSessionRecord], RunnerSessionRecord] | None:
+    binding = _context_binding_for_stage(
+        active.selected_plan,
+        active.run.stage_kind_id,
+    )
+    if binding is None:
+        return None
+
+    def prepare(session: RunnerSessionRecord) -> RunnerSessionRecord:
+        state = _load(runtime)
+        if state.runner_sessions.get(session.session_id) != session:
+            raise ContextCheckoutPreparationError(
+                "created runner session is not current authority"
+            )
+        if session.context_manifest_digest is None:
+            prepared = prepare_context_checkout(
+                paths=runtime.paths,
+                session=session,
+                plan_fingerprint=active.run.run_ref.plan_ref.authority_fingerprint,
+                binding=binding,
+                state=state,
+                cas_store=runtime.cas_store,
+                reuse_existing=False,
+            )
+            attachment = AttachRunnerSessionContext(
+                f"cli:run.session-context-attach:{session.session_id}",
+                run_ref=active.run.run_ref,
+                session_id=session.session_id,
+                dispatch_generation=session.dispatch_generation,
+                session_fencing_token=session.session_fencing_token,
+                context_manifest_digest=prepared.manifest_digest,
+                selected_binding_id=str(binding.id),
+            )
+            persisted = complete._persist_transition(
+                runtime,
+                replace(attachment, input_id=contextual_input_id(attachment)),
+            )
+            if persisted is None:
+                raise ContextCheckoutPreparationError(
+                    "runner session context attachment was refused"
+                )
+        else:
+            rematerialize_attached_context_checkout(
+                paths=runtime.paths,
+                session=session,
+                plan_fingerprint=active.run.run_ref.plan_ref.authority_fingerprint,
+                binding=binding,
+                manifest_digest=session.context_manifest_digest,
+                state=state,
+                cas_store=runtime.cas_store,
+            )
+        reloaded = _load(runtime)
+        durable = reloaded.runner_sessions.get(session.session_id)
+        if durable is None or durable.state != "created":
+            raise ContextCheckoutPreparationError(
+                "created runner session authority changed during preparation"
+            )
+        return durable
+
+    return prepare
+
+
+def _context_binding_for_stage(
+    selected_plan: SelectedCompiledPlan,
+    stage_kind_id: object,
+) -> StageContextBindingDeclaration | None:
+    try:
+        refusal = context_binding_authority_refusal(selected_plan)
+    except Exception as exc:
+        raise ValueError("selected context binding authority is malformed") from exc
+    if refusal is not None:
+        raise ValueError(f"selected context binding authority refused: {refusal}")
+    bindings = tuple(
+        binding
+        for binding in selected_plan.context_bindings
+        if binding.stage_kind_id == stage_kind_id
+    )
+    if len(bindings) > 1:
+        raise ValueError("selected stage context binding is not unique")
+    return bindings[0] if bindings else None
 
 
 def _select_ready_activation(
@@ -614,6 +742,52 @@ def _build_dispatch(
             code="ready_state_corrupt",
             diagnostics=({"reason": exc.reason},),
         )
+
+
+def _bound_codex_cwd_refusal(
+    runtime: OpenRuntimeContext,
+    *,
+    active: _ActiveRun,
+    selected_kind: str,
+    adapter: object,
+) -> BoundedExecutionUnitResult | None:
+    if selected_kind != CODEX_ADAPTER_KIND:
+        return None
+    if _context_binding_for_stage(
+        active.selected_plan,
+        active.run.stage_kind_id,
+    ) is None:
+        return None
+    config = (
+        _codex_adapter_config(adapter) if isinstance(adapter, CodexAdapter) else None
+    )
+    configured_cwd = None if config is None else config.cwd
+    if configured_cwd is None:
+        candidate_config = getattr(adapter, "config", None)
+        candidate_cwd = getattr(candidate_config, "cwd", None)
+        if isinstance(candidate_cwd, Path):
+            configured_cwd = candidate_cwd
+    if not isinstance(configured_cwd, Path):
+        return BoundedExecutionUnitResult(
+            code="adapter_failure",
+            diagnostics=({"reason": "bound_codex_cwd_unresolvable"},),
+        )
+    try:
+        configured_cwd = configured_cwd.resolve(strict=False)
+        workspace_root = runtime.paths.workspace_path.resolve(strict=False)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return BoundedExecutionUnitResult(
+            code="adapter_failure",
+            diagnostics=({"reason": "bound_codex_cwd_unresolvable"},),
+        )
+    if configured_cwd != workspace_root:
+        return BoundedExecutionUnitResult(
+            code="adapter_failure",
+            diagnostics=(
+                {"reason": "bound_codex_cwd_mismatch"},
+            ),
+        )
+    return None
 
 
 def _preclaim_adapter_refusal(

@@ -34,7 +34,10 @@ from millrace.contracts.runner import (
     runner_session_completion_diagnostic_from_payload,
 )
 from millrace.contracts.state import RuntimeState
-from millrace.operator.dispatch import run_may_start_while_dispatch_suspended
+from millrace.operator.dispatch import (
+    list_ready_dispatch_candidates,
+    run_may_start_while_dispatch_suspended,
+)
 from millrace.operator.intake import OperatorInputError
 from millrace.operator.status import daemon_budget_projection, operator_status
 from millrace.substrate._sqlite_relations import (
@@ -93,6 +96,7 @@ def _status(namespace: object) -> CliSuccess:
                 max_events=max_events,
             )
             budgets = _daemon_budget_projections(runtime, state)
+            ready_dispatch = list_ready_dispatch_candidates(state)
         except OperatorInputError as exc:
             raise _operator_error(command, exc) from exc
     finally:
@@ -101,7 +105,12 @@ def _status(namespace: object) -> CliSuccess:
         command=command,
         code="status_projected",
         message="Status projected.",
-        data=_status_projection(status, state=state, budgets=budgets),
+        data=_status_projection(
+            status,
+            state=state,
+            budgets=budgets,
+            ready_dispatch=ready_dispatch,
+        ),
     )
 
 
@@ -505,6 +514,7 @@ def _status_projection(
     *,
     state: RuntimeState | None = None,
     budgets: list[dict[str, object]] | None = None,
+    ready_dispatch: object | None = None,
 ) -> dict[str, object]:
     runner_sessions = (
         []
@@ -572,6 +582,20 @@ def _status_projection(
         ],
         "runner_sessions": runner_sessions,
         "daemon_budgets": [] if budgets is None else budgets,
+        "ready_dispatch": _ready_dispatch_projection(ready_dispatch),
+    }
+
+
+def _ready_dispatch_projection(ready_dispatch: object | None) -> dict[str, object]:
+    if ready_dispatch is None:
+        return {"candidates": [], "diagnostics": []}
+    return {
+        "candidates": [
+            json_ready(item) for item in getattr(ready_dispatch, "candidates", ())
+        ],
+        "diagnostics": [
+            json_ready(item) for item in getattr(ready_dispatch, "diagnostics", ())
+        ],
     }
 
 

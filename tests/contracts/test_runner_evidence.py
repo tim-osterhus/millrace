@@ -54,6 +54,7 @@ def _valid_dispatch_payload() -> dict[str, AuthorityValue]:
         "work_item_payload": {"body": "proof it out"},
         "governance_context": {},
         "terminal_options": (),
+        "context_checkout": None,
     }
 
 
@@ -279,7 +280,7 @@ def test_runner_dispatch_and_result_records_expose_stable_protocol_metadata() ->
 
     assert dispatch.payload()["record_kind"] == RUNNER_DISPATCH_RECORD_KIND
     assert dispatch.payload()["schema_version"] == RUNNER_DISPATCH_SCHEMA_VERSION
-    assert dispatch.payload()["schema_version"] == 6
+    assert dispatch.payload()["schema_version"] == 7
     assert dispatch.payload()["selected_join_evidence"] is None
     assert dispatch.payload()["selected_wait_evidence"] is None
     assert evidence.payload()["record_kind"] == RUNNER_RESULT_RECORD_KIND
@@ -412,7 +413,7 @@ def test_runner_dispatch_selected_join_evidence_is_versioned_exact_and_immutable
     first_payload = cast(Mapping[str, AuthorityValue], first_artifact["payload"])
     nested_payload = cast(Mapping[str, AuthorityValue], first_payload["nested"])
 
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
     assert selected == selected_join_evidence
     assert set(selected) == {
         "record_kind",

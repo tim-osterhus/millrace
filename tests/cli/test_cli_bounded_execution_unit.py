@@ -179,6 +179,40 @@ def _ready_state_with_selected_codex_authority() -> tuple[RuntimeState, str]:
     return _ready_state_for_plan(plan, fingerprint)
 
 
+def _ready_bound_context_state() -> tuple[RuntimeState, str]:
+    from tests.compiler.test_context_bindings import _source_with_context_binding
+
+    source = _source_with_context_binding()
+    binding = cast(list[dict[str, object]], source["context_bindings"])[0]
+    binding["required_sources"] = (
+        *cast(tuple[object, ...], binding["required_sources"]),
+        {
+            "source_kind": "workspace_relative_root",
+            "source_ref": "docs",
+            "max_files": 4,
+            "max_bytes": 4096,
+        },
+    )
+    binding["discoverable_sources"] = []
+    plan, fingerprint = _compile_codex_with_selected_authority(source)
+    return _ready_state_for_plan(plan, fingerprint)
+
+
+def _bound_codex_success_config(*, cwd: Path) -> object:
+    from millrace.adapters.codex import CodexAdapter, CodexAdapterConfig
+    from millrace.adapters.runner_contract import AdapterLocalConfig
+
+    base = cast(AdapterLocalConfig, _codex_success_config())
+    adapter = cast(CodexAdapter, base.adapters["codex"])
+    return AdapterLocalConfig(
+        adapters={
+            "codex": CodexAdapter(
+                cast(CodexAdapterConfig, replace(adapter._config, cwd=cwd))
+            )
+        }
+    )
+
+
 def _ready_state_for_plan(
     plan: SelectedCompiledPlan,
     fingerprint: str,
@@ -1817,6 +1851,170 @@ def test_codex_config_and_bounded_execution_are_unchanged(
     assert result.code == "observation_accepted"
     assert result.run_id in after.runs
     assert len(after.runner_observations) == 1
+
+
+def test_bound_context_is_prepared_and_attached_before_codex_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+
+    state, _fingerprint = _ready_bound_context_state()
+    runtime = _runtime(tmp_path, state)
+    docs = runtime.paths.workspace_path / "docs"
+    docs.mkdir(parents=True)
+    (docs / "guide.txt").write_text("bound context\n", encoding="utf-8")
+    config = _bound_codex_success_config(cwd=runtime.paths.workspace_path)
+    captured: list[str] = []
+    original_prepare = context_checkout.prepare_context_checkout
+
+    def prepare(**kwargs: object):
+        session = kwargs["session"]
+        captured.append(f"prepare:{session.state}")
+        return original_prepare(**kwargs)
+
+    monkeypatch.setattr(context_checkout, "prepare_context_checkout", prepare)
+    from millrace.adapters.cli import run as run_module
+
+    monkeypatch.setattr(run_module, "prepare_context_checkout", prepare)
+    result = run_bounded_execution_unit(runtime, local_config=config)
+    after = _load(runtime)
+
+    assert result.code == "observation_accepted"
+    assert captured == ["prepare:created"]
+    session = next(iter(after.runner_sessions.values()))
+    assert session.context_manifest_digest is not None
+
+
+def test_bound_manifest_mismatch_refuses_before_start_or_external_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout, session_completion
+    from millrace.adapters.cli import run as run_module
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+    from support.runner_sessions import _config, _RecordingAdapter, _success_start
+
+    state, _fingerprint = _ready_bound_context_state()
+    runtime = _runtime(tmp_path, state)
+    docs = runtime.paths.workspace_path / "docs"
+    docs.mkdir(parents=True)
+    (docs / "guide.txt").write_text("bound context\n", encoding="utf-8")
+    original_persist = session_completion._persist_transition
+
+    def crash_before_start(current_runtime, transition):
+        if (
+            getattr(transition, "expected_state", None) == "created"
+            and getattr(transition, "next_state", None) == "starting"
+        ):
+            raise RuntimeError("crash before bound start")
+        return original_persist(current_runtime, transition)
+
+    monkeypatch.setattr(session_completion, "_persist_transition", crash_before_start)
+    adapter = _RecordingAdapter(_success_start)
+    setattr(adapter, "config", SimpleNamespace(cwd=runtime.paths.workspace_path))
+    with pytest.raises(RuntimeError, match="crash before bound start"):
+        run_bounded_execution_unit(
+            runtime,
+            local_config=_config(adapter),
+        )
+
+    current = _load(runtime)
+    session = next(iter(current.runner_sessions.values()))
+    corrupted = replace(
+        session,
+        context_manifest_digest="sha256:" + "b" * 64,
+    )
+    corrupted_state = replace(
+        current,
+        runner_sessions={session.session_id: corrupted},
+    )
+    monkeypatch.setattr(
+        runtime.store,
+        "load_runtime_state",
+        lambda _cas_store: corrupted_state,
+    )
+    monkeypatch.setattr(session_completion, "_persist_transition", original_persist)
+
+    def fail_capture(**_kwargs: object) -> object:
+        raise AssertionError("attached manifest mismatch recaptured context")
+
+    monkeypatch.setattr(context_checkout, "prepare_context_checkout", fail_capture)
+    monkeypatch.setattr(run_module, "prepare_context_checkout", fail_capture)
+    resumed = run_bounded_execution_unit(
+        runtime,
+        activation_id=current.runs[session.run_id].activation_id,
+        local_config=_config(adapter),
+    )
+
+    assert resumed.code == "session_preparation_refused"
+    assert adapter.requests == []
+    assert adapter.reconcile_requests == []
+
+
+def test_bound_codex_cwd_mismatch_refuses_before_context_capture_or_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import run as run_module
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+
+    state, _fingerprint = _ready_bound_context_state()
+    runtime = _runtime(tmp_path, state)
+    docs = runtime.paths.workspace_path / "docs"
+    docs.mkdir(parents=True)
+    (docs / "guide.txt").write_text("bound context\n", encoding="utf-8")
+    config = _bound_codex_success_config(cwd=tmp_path / "wrong-cwd")
+    captured = False
+
+    def fail_capture(**_kwargs: object) -> object:
+        nonlocal captured
+        captured = True
+        raise AssertionError("cwd refusal reached context capture")
+
+    monkeypatch.setattr(run_module, "prepare_context_checkout", fail_capture)
+    result = run_bounded_execution_unit(runtime, local_config=config)
+
+    assert result.code == "adapter_failure"
+    assert captured is False
+    assert _load(runtime).runner_observations == {}
+
+
+def test_bound_codex_without_discoverable_cwd_refuses_before_capture_or_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout
+    from millrace.adapters.cli import run as run_module
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+    from support.runner_sessions import _config, _RecordingAdapter, _success_start
+
+    state, _fingerprint = _ready_bound_context_state()
+    runtime = _runtime(tmp_path, state)
+    docs = runtime.paths.workspace_path / "docs"
+    docs.mkdir(parents=True)
+    (docs / "guide.txt").write_text("bound context\n", encoding="utf-8")
+    adapter = _RecordingAdapter(_success_start)
+    captured = False
+
+    def fail_capture(**_kwargs: object) -> object:
+        nonlocal captured
+        captured = True
+        raise AssertionError("missing cwd refusal reached context capture")
+
+    monkeypatch.setattr(context_checkout, "prepare_context_checkout", fail_capture)
+    monkeypatch.setattr(run_module, "prepare_context_checkout", fail_capture)
+    result = run_bounded_execution_unit(runtime, local_config=_config(adapter))
+
+    assert result.code == "adapter_failure"
+    assert result.diagnostics == ({"reason": "bound_codex_cwd_unresolvable"},)
+    assert captured is False
+    assert adapter.requests == []
+    assert adapter.reconcile_requests == []
+    after = _load(runtime)
+    assert after.runner_observations == {}
+    assert after.runner_session_completions == {}
 
 
 @pytest.mark.parametrize(

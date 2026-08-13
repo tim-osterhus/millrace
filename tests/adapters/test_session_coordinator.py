@@ -43,9 +43,11 @@ from millrace.contracts.runner import (
     runner_session_completion_diagnostic_from_payload,
 )
 from millrace.contracts.transition import (
+    ClaimWork,
     RunnerResultObserved,
 )
 from millrace.operator.prompt_material import SelectedAssetMaterializationError
+from support.kernel_ping import apply_accepted_input, kernel_ping_context
 from support.runner_sessions import (
     _assert_heartbeat_stopped,
     _CancellingHandle,
@@ -55,6 +57,7 @@ from support.runner_sessions import (
     _dispatch_echo,
     _heartbeat_wrapper,
     _ImmediateHandle,
+    _indeterminate_start,
     _kill_recorded_process,
     _ready_runtime,
     _RecordingAdapter,
@@ -66,6 +69,147 @@ from support.runner_sessions import (
 def _ready_codex_runtime(tmp_path):
     state, _ = _ready_state_with_selected_codex_authority()
     return _runtime(tmp_path, state)
+
+
+def _claimed_codex_runtime(tmp_path):
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
+    state = apply_accepted_input(
+        state,
+        ClaimWork("claim-taskmaster", activation_id="activation-taskmaster"),
+        kernel_ping_context("claim-taskmaster"),
+    )
+    return _runtime(tmp_path, state)
+
+
+def _coordinator_request_factory(runtime, run_id: str, order: list[str]):
+    from millrace.operator.dispatch import build_dispatch_envelope_for_run
+
+    def request_factory(session):
+        order.append("request_factory")
+        dispatch = build_dispatch_envelope_for_run(
+            state=_load(runtime),
+            run_id=run_id,
+        )
+        return AdapterInvocationRequest(
+            adapter_id="test-adapter",
+            selected_runner_binding_id=dispatch.runner_binding_id,
+            selected_adapter_kind="codex",
+            dispatch_envelope=dispatch,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            session_fencing_token=session.session_fencing_token,
+            timeout_seconds=1,
+            correlation_id=session_coordinator.session_correlation_id(session),
+            redaction_policy=RedactionPolicy(policy_id="test"),
+            cancellation_token=session_coordinator.session_cancellation_token(session),
+        )
+
+    return request_factory
+
+
+def test_created_session_preparation_runs_before_start_reservation_request_and_adapter(
+    tmp_path,
+) -> None:
+    runtime = _claimed_codex_runtime(tmp_path)
+    state = _load(runtime)
+    run_ref = state.runs["run-taskmaster"].run_ref
+    order: list[str] = []
+    adapter = _RecordingAdapter(
+        lambda request: (order.append("adapter"), _indeterminate_start(request))[1]
+    )
+
+    def prepare_created_session(session):
+        order.append("prepare_created_session")
+        assert session.state == "created"
+        return _load(runtime).runner_sessions[session.session_id]
+
+    result = session_coordinator.execute_runner_session(
+        runtime,
+        run_ref=run_ref,
+        adapter=adapter,
+        request_factory=_coordinator_request_factory(
+            runtime,
+            run_ref.run_id,
+            order,
+        ),
+        explicit_retry_intent=False,
+        prepare_created_session=prepare_created_session,
+        on_start_reserved=lambda _session: order.append("start_reserved"),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    assert order == [
+        "prepare_created_session",
+        "start_reserved",
+        "request_factory",
+        "adapter",
+    ]
+
+
+def test_unbound_created_session_preserves_no_callback_order(tmp_path) -> None:
+    runtime = _claimed_codex_runtime(tmp_path)
+    state = _load(runtime)
+    run_ref = state.runs["run-taskmaster"].run_ref
+    order: list[str] = []
+    adapter = _RecordingAdapter(
+        lambda request: (order.append("adapter"), _indeterminate_start(request))[1]
+    )
+
+    result = session_coordinator.execute_runner_session(
+        runtime,
+        run_ref=run_ref,
+        adapter=adapter,
+        request_factory=_coordinator_request_factory(
+            runtime,
+            run_ref.run_id,
+            order,
+        ),
+        explicit_retry_intent=False,
+        on_start_reserved=lambda _session: order.append("start_reserved"),
+    )
+
+    assert result.code == "session_reconciliation_required"
+    assert order == ["start_reserved", "request_factory", "adapter"]
+
+
+def test_created_session_preparation_failure_does_not_start_or_invoke_adapter(
+    tmp_path,
+) -> None:
+    runtime = _claimed_codex_runtime(tmp_path)
+    state = _load(runtime)
+    run_ref = state.runs["run-taskmaster"].run_ref
+    budgets_before = runtime.store.list_daemon_budget_epochs()
+    order: list[str] = []
+    adapter = _RecordingAdapter(
+        lambda request: (order.append("adapter"), _indeterminate_start(request))[1]
+    )
+
+    def prepare_created_session(_session):
+        order.append("prepare_created_session")
+        raise ValueError("context preparation refused")
+
+    result = session_coordinator.execute_runner_session(
+        runtime,
+        run_ref=run_ref,
+        adapter=adapter,
+        request_factory=_coordinator_request_factory(
+            runtime,
+            run_ref.run_id,
+            order,
+        ),
+        explicit_retry_intent=False,
+        prepare_created_session=prepare_created_session,
+        on_start_reserved=lambda _session: order.append("start_reserved"),
+    )
+    after = _load(runtime)
+
+    assert result.code == "session_preparation_refused"
+    assert order == ["prepare_created_session"]
+    session = after.runner_sessions[after.runs[run_ref.run_id].current_session_id]
+    assert session.state == "created"
+    assert adapter.requests == []
+    assert after.runner_session_completions == {}
+    assert runtime.store.list_daemon_budget_epochs() == budgets_before
 
 
 def test_request_factory_side_effect_occurs_after_start_intent(

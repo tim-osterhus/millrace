@@ -240,6 +240,28 @@ def test_status_and_list_commands_are_read_only(tmp_path: Path) -> None:
     assert _state(workspace) == before
 
 
+def test_json_status_projects_ready_dispatch_candidates_and_diagnostics(
+    tmp_path: Path,
+) -> None:
+    workspace, _fingerprint, _work_item_id, activation_id = _workspace_with_work(
+        tmp_path
+    )
+
+    exit_code, stdout, stderr = _invoke(
+        ["--json", "--workspace", str(workspace), "status"]
+    )
+
+    assert exit_code == 0, (stdout, stderr)
+    ready_dispatch = _json(stdout)["data"]["ready_dispatch"]
+    assert set(ready_dispatch) == {"candidates", "diagnostics"}
+    assert ready_dispatch["diagnostics"] == []
+    candidate = ready_dispatch["candidates"][0]
+    assert candidate["activation_id"] == activation_id
+    assert candidate["stage_kind_id"] == "kernel_ping.taskmaster"
+    assert "runner_binding_id" in candidate
+    assert "body" not in json.dumps(ready_dispatch)
+
+
 def test_rejected_evidence_flag_is_only_available_on_runs_show() -> None:
     from millrace.adapters.cli.main import _build_parser
 
