@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Mapping
 
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
     terminalize_daemon_budget_with_suspension,
 )
-from millrace.adapters.runner_contract import AdapterInvocationOutcome
+from millrace.adapters.runner_contract import AdapterInvocationOutcome, RedactionPolicy
 from millrace.contracts.runner import (
     RunnerResultEvidence,
     runner_result_evidence_from_payload,
@@ -90,3 +91,45 @@ def _refuse_governed_usage(
         reason="runner_usage_evidence_refused",
         command=_COMMAND,
     )
+
+
+def _record_session_event(
+    runtime: OpenRuntimeContext,
+    *,
+    session: RunnerSessionRecord,
+    kind: str,
+    observed_at: int,
+    payload: Mapping[str, object],
+    replay_key: str,
+    redaction_policy: RedactionPolicy,
+) -> None:
+    """Best-effort projection after durable state; never session authority."""
+
+    from millrace.substrate.runner_session_events import (
+        RunnerSessionEventStore,
+        RunnerSessionEventWriter,
+        runner_session_event_store_path,
+    )
+
+    store = None
+    try:
+        store = RunnerSessionEventStore.initialize(
+            runner_session_event_store_path(runtime.paths.db_path)
+        )
+        RunnerSessionEventWriter(
+            store,
+            session_id=session.session_id,
+            run_id=session.run_id,
+            dispatch_generation=session.dispatch_generation,
+            redaction_policy=redaction_policy,
+        ).record(
+            kind,
+            payload,
+            observed_at=observed_at,
+            replay_key=replay_key,
+        )
+    except Exception:
+        return
+    finally:
+        if store is not None:
+            store.close()

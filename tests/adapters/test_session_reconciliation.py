@@ -7,9 +7,15 @@ import sqlite3
 import sys
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
+from adapters.test_context_writeback import (
+    _bound_fixture,
+    _writeback_report,
+    _writeback_success_start,
+)
 from cli.test_cli_bounded_execution_unit import (
     _load,
     _ready_state_with_selected_codex_authority,
@@ -66,6 +72,61 @@ from support.runner_sessions import (
 def _ready_codex_runtime(tmp_path):
     state, _ = _ready_state_with_selected_codex_authority()
     return _runtime(tmp_path, state)
+
+
+def test_restart_reconciliation_refuses_mutated_completed_writeback(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    before = _load(runtime)
+
+    def start(request: AdapterInvocationRequest) -> object:
+        return _writeback_success_start(
+            request,
+            artifact=_writeback_report(no_op_reason="No update."),
+        )
+
+    adapter = _RecordingAdapter(start)
+    adapter.config = SimpleNamespace(
+        cwd=runtime.paths.workspace_path,
+        wrapper_protocol_version=4,
+    )
+    original_decide = session_completion.decide
+
+    def crash_before_application(current, transition_input, context):
+        if isinstance(transition_input, RunnerResultObserved):
+            raise RuntimeError("application crash")
+        return original_decide(current, transition_input, context)
+
+    monkeypatch.setattr(session_completion, "decide", crash_before_application)
+    with pytest.raises(RuntimeError, match="application crash"):
+        run_bounded_execution_unit(
+            runtime,
+            activation_id=state.runs[session.run_id].activation_id,
+            local_config=_config(adapter),
+        )
+
+    persisted = _load(runtime)
+    assert len(persisted.runner_session_completions) == (
+        len(before.runner_session_completions) + 1
+    )
+    assert persisted.runner_observations == before.runner_observations
+    mutated = runtime.paths.workspace_path / "src" / "unreported.txt"
+    mutated.write_text("unreported\n", encoding="utf-8")
+
+    monkeypatch.setattr(session_completion, "decide", original_decide)
+    runtime = _reopen_runtime(runtime)
+    replay = reconcile_pending_runner_sessions(
+        runtime,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert replay.code == "completion_refused"
+    assert after.runner_observations == before.runner_observations
+    assert after.artifacts == persisted.artifacts
+    assert after.closed_work_items == persisted.closed_work_items
 
 
 @pytest.mark.parametrize(

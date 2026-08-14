@@ -14,6 +14,7 @@ from millrace.adapters.cli.context import (
     refusal_is_pre_persist,
     transition_context,
 )
+from millrace.adapters.cli.context_writeback import validate_context_writeback
 from millrace.adapters.cli.session_diagnostics import (
     _completion_diagnostic_bytes,
     _completion_diagnostic_bytes_for_dispatch,
@@ -225,7 +226,12 @@ def _completion_refusal(
                 signal_digest=_signal_digest(outcome),
             )
             return SessionExecutionResult("session_reconciliation_required")
-        return None
+        return _context_writeback_refusal(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            evidence=None,
+        )
     try:
         evidence = runner_evidence_from_adapter_outcome(outcome, request)
     except (TypeError, ValueError):
@@ -252,7 +258,41 @@ def _completion_refusal(
             signal_digest=_signal_digest(evidence.payload()),
         )
         return SessionExecutionResult("completion_refused")
-    return None
+    return _context_writeback_refusal(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        evidence=evidence,
+    )
+
+
+def _context_writeback_refusal(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    evidence: RunnerResultEvidence | None,
+) -> SessionExecutionResult | None:
+    refusal = validate_context_writeback(
+        runtime,
+        session=session,
+        evidence=evidence,
+    )
+    if refusal is None:
+        return None
+    _audit_session_refusal(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        reason="runner_session_reconciliation_contradiction",
+        signal_kind=(
+            "runner_completion_outcome"
+            if evidence is None
+            else "runner_result_evidence"
+        ),
+        signal_digest=_signal_digest({"context_writeback_refusal": refusal}),
+    )
+    return SessionExecutionResult("completion_refused")
 
 
 def _persist_error_completion(
@@ -391,6 +431,14 @@ def _persist_adapter_error(
     redaction_policy: RedactionPolicy,
     request: AdapterInvocationRequest | None = None,
 ) -> SessionExecutionResult:
+    refusal = _context_writeback_refusal(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        evidence=None,
+    )
+    if refusal is not None:
+        return refusal
     try:
         raw_diagnostic_bytes = runtime.cas_store.get_bytes(diagnostic_digest)
         dispatch = (
@@ -497,7 +545,7 @@ def _persist_completion_record(
         ),
     )
     if persisted is not None:
-        _record_session_event(
+        persistence._record_session_event(
             runtime,
             session=persisted.runner_sessions[session.session_id],
             kind="session_terminal",
@@ -562,6 +610,14 @@ def _apply_persisted_completion(
         completion=completion,
     ):
         return SessionExecutionResult("completion_refused")
+    refusal = _context_writeback_refusal(
+        runtime,
+        run_ref=run.run_ref,
+        session=session,
+        evidence=evidence,
+    )
+    if refusal is not None:
+        return refusal
     observation = RunnerResultObserved(
         completion.application_input_id,
         run_id=completion.run_id,
@@ -630,36 +686,15 @@ def _record_session_event(
     replay_key: str,
     redaction_policy: RedactionPolicy,
 ) -> None:
-    """Best-effort projection after durable state; never session authority."""
-
-    from millrace.substrate.runner_session_events import (
-        RunnerSessionEventStore,
-        RunnerSessionEventWriter,
-        runner_session_event_store_path,
+    persistence._record_session_event(
+        runtime,
+        session=session,
+        kind=kind,
+        observed_at=observed_at,
+        payload=payload,
+        replay_key=replay_key,
+        redaction_policy=redaction_policy,
     )
-
-    store = None
-    try:
-        store = RunnerSessionEventStore.initialize(
-            runner_session_event_store_path(runtime.paths.db_path)
-        )
-        RunnerSessionEventWriter(
-            store,
-            session_id=session.session_id,
-            run_id=session.run_id,
-            dispatch_generation=session.dispatch_generation,
-            redaction_policy=redaction_policy,
-        ).record(
-            kind,
-            payload,
-            observed_at=observed_at,
-            replay_key=replay_key,
-        )
-    except Exception:
-        return
-    finally:
-        if store is not None:
-            store.close()
 
 
 def _audit_session_refusal(

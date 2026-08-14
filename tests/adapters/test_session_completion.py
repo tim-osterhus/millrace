@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
+from adapters.test_context_writeback import (
+    _bound_fixture,
+    _digest,
+    _writeback_report,
+    _writeback_success_start,
+)
 from cli.test_cli_bounded_execution_unit import (
     _codex_error_config,
     _codex_success_config,
@@ -46,6 +53,7 @@ from millrace.contracts.runner import (
 from millrace.contracts.transition import (
     RunnerResultObserved,
 )
+from millrace.substrate.cas import storage_digest_for_bytes
 from support.runner_sessions import (
     _assert_single_refusal_audit,
     _CapturingImmediateHandle,
@@ -84,6 +92,180 @@ def test_adapter_error_without_dispatch_echo_is_durably_audited(tmp_path) -> Non
         reason="runner_session_reconciliation_contradiction",
         emergency_cancellation=True,
     )
+
+
+def test_context_writeback_unruled_proposal_refusal_has_no_accepted_state(
+    tmp_path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(
+        tmp_path,
+        unruled_required_root=True,
+    )
+    before = _load(runtime)
+    proposed = "candidate\n"
+
+    def start(request: AdapterInvocationRequest) -> object:
+        return _writeback_success_start(
+            request,
+            artifact=_writeback_report(
+                proposals=(
+                    {
+                        "path": "unruled/locked.txt",
+                        "proposed_content": proposed,
+                        "proposed_content_sha256": storage_digest_for_bytes(
+                            proposed.encode("utf-8")
+                        ),
+                        "evidence_refs": ("runner:1",),
+                        "classification": "protected_proposal",
+                    },
+                )
+            ),
+        )
+
+    adapter = _RecordingAdapter(start)
+    adapter.config = SimpleNamespace(
+        cwd=runtime.paths.workspace_path,
+        wrapper_protocol_version=4,
+    )
+    result = run_bounded_execution_unit(
+        runtime,
+        activation_id=state.runs[session.run_id].activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert result.code in {
+        "completion_refused",
+        "session_reconciliation_required",
+    }
+    assert after.runner_observations == before.runner_observations
+    assert after.runner_session_completions == before.runner_session_completions
+    assert after.artifacts == before.artifacts
+    assert after.closed_work_items == before.closed_work_items
+
+
+def test_context_writeback_adapter_error_requires_unchanged_roots(
+    tmp_path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    before = _load(runtime)
+    mutated = runtime.paths.workspace_path / "src" / "unreported.txt"
+
+    def start(request: AdapterInvocationRequest) -> object:
+        mutated.write_text("unreported\n", encoding="utf-8")
+        return replace(
+            _success_start(request),
+            handle=_ImmediateHandle(_error_outcome(request)),
+        )
+
+    adapter = _RecordingAdapter(start)
+    adapter.config = SimpleNamespace(
+        cwd=runtime.paths.workspace_path,
+        wrapper_protocol_version=4,
+    )
+    result = run_bounded_execution_unit(
+        runtime,
+        activation_id=state.runs[session.run_id].activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert result.code == "session_reconciliation_required"
+    assert after.runner_observations == before.runner_observations
+    assert after.runner_session_completions == before.runner_session_completions
+
+
+def test_context_writeback_start_refusal_requires_unchanged_roots(
+    tmp_path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    before = _load(runtime)
+    mutated = runtime.paths.workspace_path / "src" / "unreported.txt"
+    snapshots = []
+
+    def refuse(request: AdapterInvocationRequest) -> StartRefusedBeforeExternalWork:
+        mutated.write_text("unreported\n", encoding="utf-8")
+        snapshots.append(_load(runtime))
+        error = _error_outcome(request, dispatch_echo=_dispatch_echo(request))
+        return StartRefusedBeforeExternalWork(
+            _dispatch_echo(request),
+            error,
+            start_refusal_diagnostic_digest(error),
+        )
+
+    adapter = _RecordingAdapter(refuse)
+    adapter.config = SimpleNamespace(
+        cwd=runtime.paths.workspace_path,
+        wrapper_protocol_version=4,
+    )
+    result = run_bounded_execution_unit(
+        runtime,
+        activation_id=state.runs[session.run_id].activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert result.code == "completion_refused"
+    assert len(snapshots) == 1
+    assert mutated.read_text(encoding="utf-8") == "unreported\n"
+    assert after.runner_session_completions == before.runner_session_completions
+    assert after.runner_observations == before.runner_observations
+    assert after.artifacts == before.artifacts
+    assert after.closed_work_items == before.closed_work_items
+    before_signal = snapshots[0]
+    assert len(after.receipts) == len(before_signal.receipts) + 1
+    assert len(after.refusals) == len(before_signal.refusals) + 1
+    assert len(after.governance_events) == len(before_signal.governance_events) + 1
+    assert len(after.traces) == len(before_signal.traces) + 1
+    assert after.runner_sessions == before_signal.runner_sessions
+    assert after.runner_sessions[session.session_id].state == "starting"
+    refusal = next(
+        refusal
+        for refusal in after.refusals
+        if refusal.record_id
+        not in {existing.record_id for existing in before_signal.refusals}
+    )
+    assert refusal.input_kind == "workflow.refuse_runner_session_signal"
+    assert refusal.reason == "runner_session_reconciliation_contradiction"
+
+
+def test_context_writeback_direct_update_is_accepted(
+    tmp_path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    path = runtime.paths.workspace_path / "src" / "new.txt"
+
+    def start(request: AdapterInvocationRequest) -> object:
+        path.write_text("new\n", encoding="utf-8")
+        return _writeback_success_start(
+            request,
+            artifact=_writeback_report(
+                changes=(
+                    {
+                        "path": "src/new.txt",
+                        "change_kind": "create",
+                        "after_sha256": _digest(path),
+                        "evidence_refs": ("runner:1",),
+                        "classification": "direct_write",
+                    },
+                )
+            ),
+        )
+
+    adapter = _RecordingAdapter(start)
+    adapter.config = SimpleNamespace(
+        cwd=runtime.paths.workspace_path,
+        wrapper_protocol_version=4,
+    )
+    result = run_bounded_execution_unit(
+        runtime,
+        activation_id=state.runs[session.run_id].activation_id,
+        local_config=_config(adapter),
+    )
+    after = _load(runtime)
+
+    assert result.code == "observation_accepted"
+    assert len(after.runner_observations) == len(state.runner_observations) + 1
 
 
 @pytest.mark.parametrize("outcome_kind", ("success", "error"))
