@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sqlite3
+import sys
 import threading
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
@@ -19,6 +20,7 @@ from tests.cli.test_cli_bounded_execution_unit import (
     _codex_success_config,
     _load,
     _observed_counts,
+    _ready_bound_context_state,
     _ready_state,
     _ready_state_with_selected_codex_authority,
     _runtime,
@@ -71,6 +73,52 @@ def _daemon_options(
 
 def _close(runtime: object) -> None:
     runtime.close()
+
+
+def _protocol4_codex_config(
+    *,
+    error: bool = False,
+    include_usage: bool = True,
+    cwd: Path | None = None,
+) -> AdapterLocalConfig:
+    from millrace.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+    base = cast(AdapterLocalConfig, _codex_success_config())
+    adapter = cast(CodexAdapter, base.adapters["codex"])
+    config = adapter._config
+    argv = config.wrapper_argv
+    assert argv is not None
+    if error:
+        wrapper = (
+            "import json,sys\n"
+            "bundle=json.loads(sys.stdin.read())\n"
+            "print(json.dumps({\n"
+            " 'outcome_kind':'error',\n"
+            " 'adapter_id':bundle['adapter_id'],\n"
+            " 'error_kind':'timeout',\n"
+            " 'redaction_policy_id':bundle['redaction_policy']['policy_id'],\n"
+            " 'dispatch_echo':bundle['dispatch_echo'],\n"
+            " 'diagnostics':{'provider':'timeout'},\n"
+            " 'token_usage':{'input_tokens':3,'output_tokens':2,'total_tokens':5}\n"
+            "}))\n"
+        )
+    else:
+        wrapper = argv[2]
+        if include_usage:
+            wrapper = wrapper.replace(
+                "    'evidence_construction_diagnostics': {},\n",
+                "    'evidence_construction_diagnostics': {},\n"
+                "    'token_usage': {'input_tokens': 3, 'output_tokens': 2, "
+                "'total_tokens': 5},\n",
+            )
+    updated = replace(
+        config,
+        wrapper_argv=(sys.executable, "-c", wrapper),
+        cwd=config.cwd if cwd is None else cwd,
+        wrapper_protocol_version=4,
+    )
+    assert isinstance(updated, CodexAdapterConfig)
+    return AdapterLocalConfig(adapters={"codex": CodexAdapter(updated)})
 
 
 def test_daemon_run_repeats_cli_0004_bounded_unit_until_max_ticks(
@@ -1241,6 +1289,161 @@ def test_token_budget_refuses_same_name_adapter_without_reviewed_mapping(
 
     assert exc_info.value.code == "runner_usage_mapping_unsupported"
     assert runtime.store.load_daemon_budget_epoch("budget-spoof") is None
+    runtime.close()
+
+
+def test_protocol3_codex_token_budget_is_refused_before_epoch_creation(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli import daemon
+    from millrace.adapters.cli.context import CliCommandError
+
+    state, _fingerprint = _state_with_runner_kind("codex")
+    runtime = _runtime(tmp_path, state)
+    options = replace(
+        _daemon_options(
+            runtime.paths,
+            max_ticks=1,
+            adapter_kind="codex",
+            local_config=_codex_success_config(),
+        ),
+        budget_id="budget-codex-v3",
+        max_total_tokens=100,
+    )
+
+    with pytest.raises(CliCommandError) as exc_info:
+        daemon._prepare_budget_epoch(options, now=100)
+
+    assert exc_info.value.code == "runner_usage_mapping_unsupported"
+    assert runtime.store.load_daemon_budget_epoch("budget-codex-v3") is None
+    runtime.close()
+
+
+@pytest.mark.parametrize("error", (False, True))
+def test_protocol4_codex_persists_success_and_authenticated_error_usage(
+    tmp_path: Path,
+    error: bool,
+) -> None:
+    from millrace.adapters.cli import daemon
+
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
+    runtime = _runtime(tmp_path, state)
+    paths = runtime.paths
+    runtime.close()
+    budget_id = "budget-codex-v4-error" if error else "budget-codex-v4-success"
+    summary = daemon.run_daemon_loop(
+        replace(
+            _daemon_options(
+                paths,
+                max_ticks=1,
+                adapter_kind="codex",
+                local_config=_protocol4_codex_config(error=error),
+            ),
+            budget_id=budget_id,
+            max_total_tokens=100,
+        ),
+        wall_clock=lambda: 100.0,
+    )
+
+    reopened = daemon.open_runtime_context(paths, command="test")
+    try:
+        epoch = reopened.store.load_daemon_budget_epoch(budget_id)
+        assert epoch is not None
+        usage = reopened.store.load_runner_session_usage(
+            next(iter(_load(reopened).runner_sessions))
+        )
+    finally:
+        reopened.close()
+
+    assert summary.units_started == 1
+    assert usage is not None
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (3, 2, 5)
+    assert (
+        epoch.cumulative_input_tokens,
+        epoch.cumulative_output_tokens,
+        epoch.cumulative_total_tokens,
+    ) == (3, 2, 5)
+
+
+def test_protocol4_started_session_missing_usage_refuses_budget_evidence(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli import daemon
+
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
+    runtime = _runtime(tmp_path, state)
+    paths = runtime.paths
+    runtime.close()
+    budget_id = "budget-codex-v4-missing-usage"
+    summary = daemon.run_daemon_loop(
+        replace(
+            _daemon_options(
+                paths,
+                max_ticks=1,
+                adapter_kind="codex",
+                local_config=_protocol4_codex_config(include_usage=False),
+            ),
+            budget_id=budget_id,
+            max_total_tokens=100,
+        ),
+        wall_clock=lambda: 100.0,
+    )
+
+    reopened = daemon.open_runtime_context(paths, command="test")
+    try:
+        epoch = reopened.store.load_daemon_budget_epoch(budget_id)
+        durable = _load(reopened)
+    finally:
+        reopened.close()
+
+    assert summary.stopped_reason == "runner_usage_evidence_refused"
+    assert epoch is not None
+    assert (epoch.status, epoch.terminal_reason) == (
+        "refused",
+        "runner_usage_evidence_refused",
+    )
+    assert durable.dispatch_suspension is not None
+
+
+def test_bound_protocol3_codex_refuses_before_capture_or_transport_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import run as run_module
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+    from millrace.adapters.codex import CodexAdapter
+
+    state, _fingerprint = _ready_bound_context_state()
+    runtime = _runtime(tmp_path, state)
+    docs = runtime.paths.workspace_path / "docs"
+    docs.mkdir(parents=True)
+    (docs / "guide.txt").write_text("bound context\n", encoding="utf-8")
+    config = _codex_success_config(
+        cwd=runtime.paths.workspace_path,
+        wrapper_protocol_version=3,
+    )
+    capture_calls: list[str] = []
+    start_calls: list[str] = []
+    original_prepare = run_module.prepare_context_checkout
+    original_start = CodexAdapter.start_session
+
+    def capture(**kwargs: object) -> object:
+        capture_calls.append(str(kwargs["session"]))
+        return original_prepare(**kwargs)
+
+    def start(self: CodexAdapter, request: object) -> object:
+        start_calls.append(str(request))
+        return original_start(self, cast(Any, request))
+
+    monkeypatch.setattr(run_module, "prepare_context_checkout", capture)
+    monkeypatch.setattr(CodexAdapter, "start_session", start)
+    result = run_bounded_execution_unit(runtime, local_config=config)
+
+    assert result.code == "adapter_failure"
+    assert result.diagnostics == ({"reason": "bound_codex_protocol_unsupported"},)
+    assert capture_calls == []
+    assert start_calls == []
+    assert _load(runtime).runner_observations == {}
     runtime.close()
 
 

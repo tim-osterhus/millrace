@@ -199,18 +199,7 @@ def _ready_bound_context_state() -> tuple[RuntimeState, str]:
 
 
 def _bound_codex_success_config(*, cwd: Path) -> object:
-    from millrace.adapters.codex import CodexAdapter, CodexAdapterConfig
-    from millrace.adapters.runner_contract import AdapterLocalConfig
-
-    base = cast(AdapterLocalConfig, _codex_success_config())
-    adapter = cast(CodexAdapter, base.adapters["codex"])
-    return AdapterLocalConfig(
-        adapters={
-            "codex": CodexAdapter(
-                cast(CodexAdapterConfig, replace(adapter._config, cwd=cwd))
-            )
-        }
-    )
+    return _codex_success_config(cwd=cwd, wrapper_protocol_version=4)
 
 
 def _ready_state_for_plan(
@@ -375,6 +364,8 @@ def _codex_success_config(
     marker: str = "TASK_COMPLETE",
     capture_bundle_path: Path | None = None,
     timeout_seconds: float = 5,
+    cwd: Path | None = None,
+    wrapper_protocol_version: int = 3,
 ) -> object:
     from millrace.adapters.codex import CodexAdapter, CodexAdapterConfig
     from millrace.adapters.runner_contract import AdapterLocalConfig, RedactionPolicy
@@ -384,20 +375,29 @@ def _codex_success_config(
         if capture_bundle_path is None
         else {"CAPTURE_BUNDLE_PATH": str(capture_bundle_path)}
     )
+    wrapper = _codex_success_wrapper(marker)
+    if wrapper_protocol_version == 4:
+        wrapper = wrapper.replace(
+            "    'evidence_construction_diagnostics': {},\n",
+            "    'evidence_construction_diagnostics': {},\n"
+            "    'token_usage': {'input_tokens': 3, 'output_tokens': 2, "
+            "'total_tokens': 5},\n",
+        )
     return AdapterLocalConfig(
         adapters={
             "codex": CodexAdapter(
                 CodexAdapterConfig(
                     adapter_id="codex-default",
                     wrapper_mode="offline_fake",
-                    wrapper_argv=(sys.executable, "-c", _codex_success_wrapper(marker)),
-                    cwd=Path.cwd(),
+                    wrapper_argv=(sys.executable, "-c", wrapper),
+                    cwd=Path.cwd() if cwd is None else cwd,
                     env_allowlist=env_allowlist,
                     timeout_seconds=timeout_seconds,
                     max_input_bundle_bytes=16384,
                     max_stdout_bytes=8192,
                     max_stderr_diagnostic_bytes=512,
                     redaction_policy=RedactionPolicy(policy_id="redact-default"),
+                    wrapper_protocol_version=wrapper_protocol_version,
                 )
             )
         }
@@ -1913,7 +1913,14 @@ def test_bound_manifest_mismatch_refuses_before_start_or_external_work(
 
     monkeypatch.setattr(session_completion, "_persist_transition", crash_before_start)
     adapter = _RecordingAdapter(_success_start)
-    setattr(adapter, "config", SimpleNamespace(cwd=runtime.paths.workspace_path))
+    setattr(
+        adapter,
+        "config",
+        SimpleNamespace(
+            cwd=runtime.paths.workspace_path,
+            wrapper_protocol_version=4,
+        ),
+    )
     with pytest.raises(RuntimeError, match="crash before bound start"):
         run_bounded_execution_unit(
             runtime,

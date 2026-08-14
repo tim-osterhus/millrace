@@ -60,7 +60,14 @@ def _remove_read_only_checkout(root: Path) -> None:
 
 
 def _bound_config(runtime, adapter):
-    setattr(adapter, "config", SimpleNamespace(cwd=runtime.paths.workspace_path))
+    setattr(
+        adapter,
+        "config",
+        SimpleNamespace(
+            cwd=runtime.paths.workspace_path,
+            wrapper_protocol_version=4,
+        ),
+    )
     return _config(adapter)
 
 

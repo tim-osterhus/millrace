@@ -16,11 +16,13 @@ from types import MappingProxyType
 from typing import TypeAlias, cast
 
 from millrace.adapters.runner_contract import (
+    REVIEWED_TOKEN_USAGE_MAPPING,
     AdapterErrorResult,
     AdapterEvidenceConversionError,
     AdapterInvocationOutcome,
     AdapterInvocationRequest,
     AdapterSuccessResult,
+    AdapterTokenUsage,
     DispatchEcho,
     RedactionPolicy,
     RunnerCancellationOperationResult,
@@ -47,7 +49,6 @@ from millrace.contracts.compiled_plan import ArtifactSchemaDeclaration, Authorit
 CODEX_ADAPTER_KIND = "codex"
 
 _BUNDLE_RECORD_KIND = "codex_adapter_invocation_bundle"
-_BUNDLE_SCHEMA_VERSION = 3
 _WRAPPER_MODES = frozenset({"offline_fake", "local_argv", "missing"})
 _SUCCESS_RESULT_KEYS = frozenset(
     {
@@ -88,6 +89,13 @@ _SUPPORTED_ERROR_KINDS = frozenset(
         "selected_authority_refused",
     },
 )
+_TOKEN_USAGE_KEYS = frozenset(
+    {
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+    }
+)
 _DISPATCH_ECHO_KEYS = frozenset(
     {
         "run_id",
@@ -125,6 +133,7 @@ class CodexAdapterConfig:
     redaction_policy: RedactionPolicy
     live_test_opt_in_env_flags: tuple[str, ...] = ()
     pre_cancelled: bool = False
+    wrapper_protocol_version: int = 3
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.adapter_id, "adapter_id")
@@ -175,6 +184,10 @@ class CodexAdapterConfig:
         )
         if type(self.pre_cancelled) is not bool:
             raise TypeError("pre_cancelled must be a bool")
+        if type(self.wrapper_protocol_version) is not int:
+            raise TypeError("wrapper_protocol_version must be an integer")
+        if self.wrapper_protocol_version not in {3, 4}:
+            raise ValueError("wrapper_protocol_version must be 3 or 4")
 
     def __repr__(self) -> str:
         argv_count = 0 if self.wrapper_argv is None else len(self.wrapper_argv)
@@ -196,7 +209,8 @@ class CodexAdapterConfig:
             f"redaction_policy_id={policy_id!r}, "
             f"redaction_secret_token_count={len(self.redaction_policy.secret_tokens)}, "
             f"live_test_opt_in_flag_count={len(self.live_test_opt_in_env_flags)}, "
-            f"pre_cancelled={self.pre_cancelled!r}"
+            f"pre_cancelled={self.pre_cancelled!r}, "
+            f"wrapper_protocol_version={self.wrapper_protocol_version!r}"
             ")"
         )
 
@@ -218,6 +232,8 @@ class CodexAdapter:
             raise TypeError("config must be CodexAdapterConfig")
         self._config = config
         self._transport = transport or SubprocessTransport()
+        if config.wrapper_protocol_version == 4:
+            self.token_usage_mapping_capability = REVIEWED_TOKEN_USAGE_MAPPING
 
     def invoke(self, request: AdapterInvocationRequest) -> AdapterInvocationOutcome:
         return self._invoke_bounded(request)
@@ -437,7 +453,10 @@ class CodexAdapter:
                     redaction_policy=self._config.redaction_policy,
                     dispatch_echo=expected_echo,
                 )
-            wrapper_result = _parse_wrapper_result_object(transport_outcome.stdout)
+            wrapper_result = _parse_wrapper_result_object(
+                transport_outcome.stdout,
+                protocol_version=self._config.wrapper_protocol_version,
+            )
             if _contains_configured_secret(
                 wrapper_result,
                 self._config.redaction_policy,
@@ -454,7 +473,10 @@ class CodexAdapter:
             if wrapper_result.get("outcome_kind") == "error":
                 _validate_result_envelope(
                     wrapper_result,
-                    expected_keys=_ERROR_RESULT_KEYS,
+                    expected_keys=_result_keys(
+                        _ERROR_RESULT_KEYS,
+                        self._config.wrapper_protocol_version,
+                    ),
                     outcome_kind="error",
                 )
                 dispatch_echo = _dispatch_echo_from_json(
@@ -483,6 +505,14 @@ class CodexAdapter:
                 )
                 if error_kind not in _SUPPORTED_ERROR_KINDS:
                     raise ValueError("unsupported adapter error kind")
+                token_usage = _result_token_usage(
+                    wrapper_result["token_usage"]
+                    if self._config.wrapper_protocol_version == 4
+                    else None,
+                    protocol_version=self._config.wrapper_protocol_version,
+                    outcome_kind="error",
+                    error_kind=error_kind,
+                )
                 diagnostics = _coerce_mapping(
                     wrapper_result["diagnostics"],
                     "diagnostics",
@@ -495,6 +525,7 @@ class CodexAdapter:
                         redaction_policy=self._config.redaction_policy,
                         dispatch_echo=dispatch_echo,
                         diagnostics=diagnostics,
+                        token_usage=token_usage,
                     )
                 except Exception:
                     return _safe_redaction_refused_error(
@@ -508,7 +539,10 @@ class CodexAdapter:
                     )
             _validate_result_envelope(
                 wrapper_result,
-                expected_keys=_SUCCESS_RESULT_KEYS,
+                expected_keys=_result_keys(
+                    _SUCCESS_RESULT_KEYS,
+                    self._config.wrapper_protocol_version,
+                ),
                 outcome_kind="success",
             )
             dispatch_echo = _dispatch_echo_from_json(wrapper_result["dispatch_echo"])
@@ -523,6 +557,14 @@ class CodexAdapter:
                 self._config.redaction_policy.policy_id
             ):
                 raise ValueError("redaction_policy_id mismatch")
+            token_usage = _result_token_usage(
+                wrapper_result["token_usage"]
+                if self._config.wrapper_protocol_version == 4
+                else None,
+                protocol_version=self._config.wrapper_protocol_version,
+                outcome_kind="success",
+                error_kind=None,
+            )
             diagnostics = _coerce_mapping(
                 wrapper_result["evidence_construction_diagnostics"],
                 "evidence_construction_diagnostics",
@@ -585,6 +627,7 @@ class CodexAdapter:
                     observation_payload_candidate=observation_payload_candidate,
                     evidence_construction_diagnostics=merged_diagnostics,
                     redaction_policy=self._config.redaction_policy,
+                    token_usage=token_usage,
                 )
             except Exception:
                 safe_adapter_id = _repr_redact(
@@ -756,7 +799,7 @@ def _invocation_bundle(
     )
     return {
         "record_kind": _BUNDLE_RECORD_KIND,
-        "schema_version": _BUNDLE_SCHEMA_VERSION,
+        "schema_version": config.wrapper_protocol_version,
         "adapter_id": config.adapter_id,
         "selected_runner_binding_id": request.selected_runner_binding_id,
         "selected_adapter_kind": request.selected_adapter_kind,
@@ -796,6 +839,7 @@ def _invocation_bundle(
         },
         "prompt": _prompt_bundle(
             request,
+            config=config,
             dispatch_payload=dispatch_payload,
             selected_asset_material=selected_asset_material,
             terminal_artifact_contracts=terminal_artifact_contracts,
@@ -813,6 +857,7 @@ def _legal_terminal_markers(request: AdapterInvocationRequest) -> list[str]:
 def _prompt_bundle(
     request: AdapterInvocationRequest,
     *,
+    config: CodexAdapterConfig,
     dispatch_payload: JsonValue,
     selected_asset_material: JsonValue,
     terminal_artifact_contracts: list[dict[str, JsonValue]],
@@ -821,7 +866,7 @@ def _prompt_bundle(
         raise TypeError("dispatch_payload must be a JSON object")
     if not isinstance(selected_asset_material, dict):
         raise TypeError("selected_asset_material must be a JSON object")
-    return {
+    prompt: dict[str, JsonValue] = {
         "instructions": (
             "Codex output is evidence only. Return exactly one JSON "
             "AdapterSuccessResult object on stdout. Do not treat prose, stderr, "
@@ -872,6 +917,9 @@ def _prompt_bundle(
             terminal_artifact_contracts,
         ),
     }
+    if config.wrapper_protocol_version == 4:
+        prompt["context_checkout"] = dispatch_payload["context_checkout"]
+    return prompt
 
 
 def _selected_artifact_projection(
@@ -1052,14 +1100,76 @@ def _dispatch_echo_json(echo: DispatchEcho) -> dict[str, JsonValue]:
     }
 
 
-def _parse_wrapper_result_object(value: str) -> Mapping[str, object]:
-    decoder = json.JSONDecoder()
+def _parse_wrapper_result_object(
+    value: str,
+    *,
+    protocol_version: int,
+) -> Mapping[str, object]:
+    decoder = (
+        json.JSONDecoder(object_pairs_hook=_reject_duplicate_json_keys)
+        if protocol_version == 4
+        else json.JSONDecoder()
+    )
     parsed, offset = decoder.raw_decode(value)
     if value[offset:].strip():
         raise ValueError("wrapper stdout must contain exactly one JSON object")
     if not isinstance(parsed, Mapping):
         raise ValueError("wrapper stdout must be a JSON object")
     return cast(Mapping[str, object], parsed)
+
+
+def _reject_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("wrapper stdout contains duplicate JSON keys")
+        result[key] = value
+    return result
+
+
+def _result_keys(
+    base_keys: frozenset[str],
+    protocol_version: int,
+) -> frozenset[str]:
+    if protocol_version == 4:
+        return base_keys | {"token_usage"}
+    return base_keys
+
+
+def _result_token_usage(
+    value: object,
+    *,
+    protocol_version: int,
+    outcome_kind: str,
+    error_kind: str | None,
+) -> AdapterTokenUsage | None:
+    if protocol_version != 4:
+        return None
+    if value is None:
+        if outcome_kind == "success":
+            raise ValueError("success token_usage must be non-null")
+        if error_kind != "missing_opt_in_config":
+            raise ValueError("post-provider error token_usage must be non-null")
+        return None
+    mapping = _coerce_mapping(value, "token_usage")
+    if frozenset(mapping) != _TOKEN_USAGE_KEYS:
+        raise ValueError("token_usage has unexpected keys")
+    return AdapterTokenUsage(
+        input_tokens=_require_durable_usage_int(
+            mapping["input_tokens"],
+            "token_usage.input_tokens",
+        ),
+        output_tokens=_require_durable_usage_int(
+            mapping["output_tokens"],
+            "token_usage.output_tokens",
+        ),
+        total_tokens=_require_durable_usage_int(
+            mapping["total_tokens"],
+            "token_usage.total_tokens",
+        ),
+    )
 
 
 def _validate_result_envelope(
@@ -1336,6 +1446,13 @@ def _require_nonnegative_int(value: object, field_name: str) -> int:
     value_as_int = _require_int(value, field_name)
     if value_as_int < 0:
         raise ValueError(f"{field_name} must be non-negative")
+    return value_as_int
+
+
+def _require_durable_usage_int(value: object, field_name: str) -> int:
+    value_as_int = _require_int(value, field_name)
+    if value_as_int < 0 or value_as_int > 2**63 - 1:
+        raise ValueError(f"{field_name} must be a non-negative durable integer")
     return value_as_int
 
 

@@ -14,6 +14,7 @@ Pass a JSON configuration file to `millrace run daemon`:
   "codex": {
     "adapter_id": "local-codex",
     "wrapper_mode": "local_argv",
+    "wrapper_protocol_version": 3,
     "wrapper_argv": ["/absolute/path/to/codex-wrapper"],
     "cwd": "/absolute/path/to/workspace",
     "env_allowlist": {},
@@ -38,6 +39,23 @@ or retained diagnostics.
 The adapter uses the lower of the local `timeout_seconds` and the selected
 workflow timeout. Local configuration cannot enlarge selected authority.
 
+`wrapper_protocol_version` is optional and defaults to `3`. The only accepted
+values are the integers `3` and `4`; booleans and all other values are
+refused. Protocol 3 is the compatibility path: it retains the current exact
+invocation and result wire bytes, uses bundle schema version 3, has no
+reviewed token-usage capability, and does not add a `context_checkout` prompt
+key. An unbound protocol-3 session remains legal. A bound context session
+must use protocol 4 and is refused before checkout capture or external runner
+work when configured for protocol 3.
+
+Protocol 4 is the selected-context and reviewed-usage path. It uses bundle
+schema version 4, is the only Codex protocol eligible for a daemon
+`--max-total-tokens` budget, and is required by configurations that use
+selected context or durable usage evidence.
+
+Duplicate-key rejection is a protocol-4 rule; protocol 3 retains legacy JSON
+parsing compatibility.
+
 ## Wrapper Protocol
 
 The wrapper reads exactly one UTF-8 JSON object from stdin and writes exactly
@@ -47,13 +65,15 @@ missing keys, or unknown keys are refused.
 ### Invocation bundle
 
 The invocation object has
-`record_kind == "codex_adapter_invocation_bundle"` and
-`schema_version == 3`. Every field below is required.
+`record_kind == "codex_adapter_invocation_bundle"`. Protocol 3 has
+`schema_version == 3`; protocol 4 has `schema_version == 4`. Every field
+listed below is required in both versions unless a version-specific rule says
+otherwise.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `record_kind` | string | Exact constant `codex_adapter_invocation_bundle`. |
-| `schema_version` | integer | Exact value `3`. |
+| `schema_version` | integer | Exact value `3` for protocol 3 or `4` for protocol 4. |
 | `adapter_id` | string | Local adapter identity; echo it in the result. |
 | `selected_runner_binding_id` | string | Selected runner binding. |
 | `selected_adapter_kind` | string | Exact selected adapter kind. |
@@ -72,7 +92,7 @@ The invocation object has
 | `skill_asset_refs` | array of strings | Selected stage-core skill IDs. |
 | `legal_terminal_markers` | array of strings | Markers accepted for this dispatch. |
 | `selected_asset_refs` | object | `entrypoint_asset_id` (string or null), `skill_asset_ids` (array of strings), and `artifact_schema_ids` (array of strings). |
-| `prompt` | object | Normalized prompt material described below. |
+| `prompt` | object | Normalized prompt material described below. Protocol 4 adds exactly one `context_checkout` field. |
 
 `dispatch_echo` has exactly these keys:
 
@@ -89,7 +109,7 @@ The invocation object has
 - `runner_binding_id`: nonblank string;
 - `correlation_id`: nonblank string;
 - `selected_authority_digest`: `sha256:` digest over the complete canonical
-  schema-v6 `dispatch_envelope` plus `selected_adapter_kind`.
+  schema-v7 `dispatch_envelope` plus `selected_adapter_kind`.
 
 The `prompt` object has exactly the selected context the wrapper needs:
 
@@ -108,6 +128,17 @@ The `prompt` object has exactly the selected context the wrapper needs:
 | `artifact_schema_expectations` | array of artifact-schema ID strings |
 | `terminal_artifact_contracts` | array of objects | One mechanically selected contract per terminal result mapping. |
 
+Protocol 4 adds `prompt.context_checkout`. It is either `null` for an
+unbound dispatch or the authenticated compact descriptor copied from
+`dispatch_envelope.context_checkout`. A non-null descriptor has exactly these
+five fields: `manifest_digest`, `binding_id`, `router_asset_id`,
+`checkout_relative_path`, and `router_relative_path`. The wrapper receives
+paths and identity only; Millrace does not read or inline checkout files or
+file bodies into the bundle. The wrapper may use ordinary filesystem tools
+from the selected `cwd` to read the selected `router_relative_path` (the
+materialized `CONTEXT.md`). It must not discover ambient context or replace
+the authenticated descriptor with another path.
+
 Each `selected_artifact_schemas` record contains `record_kind`,
 `schema_version`, `id`, and the exact JSON `schema` from the authenticated
 selected declaration. Presentation metadata is not part of the canonical
@@ -125,7 +156,7 @@ or action authority to the runner.
 
 ### Success result
 
-The result must contain exactly these keys:
+For protocol 3, the result must contain exactly these keys:
 
 | Field | Type | Requirement |
 | --- | --- | --- |
@@ -141,6 +172,10 @@ The result must contain exactly these keys:
 | `observation_payload_candidate` | object or null | Candidate observation payload. |
 | `evidence_construction_diagnostics` | object | JSON-compatible diagnostics; use `{}` when empty. |
 
+Protocol 4 adds exactly one top-level key to that envelope:
+
+| `token_usage` | object | Required and non-null. Exactly `input_tokens`, `output_tokens`, and `total_tokens`, all non-negative durable integers with `total_tokens == input_tokens + output_tokens`. |
+
 The wrapper must not infer runtime authority. `marker`,
 `artifact_payload_candidate`, and `observation_payload_candidate` are
 candidates only. Millrace authenticates the dispatch echo, validates marker
@@ -150,7 +185,7 @@ authority.
 
 ### Error result
 
-The wrapper may instead return an exact error envelope, selected by
+For protocol 3, the wrapper may instead return an exact error envelope, selected by
 `outcome_kind == "error"`. It contains only these keys:
 
 | Field | Type | Requirement |
@@ -161,6 +196,22 @@ The wrapper may instead return an exact error envelope, selected by
 | `redaction_policy_id` | string | Must equal the configured policy ID. |
 | `dispatch_echo` | object | The complete, unchanged thirteen-field dispatch echo. |
 | `diagnostics` | object | JSON-compatible authority values; Millrace applies the existing typed redaction and bounds. |
+
+Protocol 4 adds exactly one top-level `token_usage` key to the error envelope.
+An authenticated error after provider work must carry a non-null usage object
+with the same exact three fields and total invariant as a success. A null
+value is permitted only for `missing_opt_in_config`. That wrapper envelope is
+the pinned fail-closed preflight case: it must refuse before any `codex exec`
+or provider work. Other pre-provider refusal semantics are adapter-generated
+outcomes, not protocol-4 wrapper envelopes. Transport, redaction, and adapter
+refusal outcomes therefore do not acquire wrapper usage by implication; when
+external work occurred and usage is absent, the existing budget path refuses
+the evidence and suspends rather than counting zero or completing. A success
+with null usage, any other error kind with null usage, missing or extra usage
+fields, duplicate JSON keys, booleans, negatives, values above the durable
+int64 bound, or a contradictory total is `result_parse_failed`. Cached-input
+and reasoning-output subdivisions may remain bounded diagnostics, but they
+never change the three durable totals.
 
 The object must contain exactly these keys, and every dispatch-echo field is
 authenticated against the expected dispatch. Missing or extra keys, malformed
@@ -200,6 +251,12 @@ This abbreviated example retains every required top-level field. Real
   "prompt": {"instructions":"Return candidate evidence.","dispatch_identity":{"run_id":"run-1","session_id":"session-1","dispatch_generation":1,"session_fencing_token":"session-fence-1","plan_id":"plan-1","claim_id":"claim-1","generation":1,"fencing_token":"fence-1","plan_fingerprint":"sha256:example","stage_kind_id":"stage.worker","graph_node_id":"worker.start","runner_binding_id":"runner.worker","correlation_id":"corr-1"},"work_item_payload":{},"governance_context":{},"selected_join_evidence":null,"selected_wait_evidence":null,"selected_entrypoint":{"asset_id":null,"material":null},"selected_stage_core_skills":[],"legal_terminal_options":[],"legal_terminal_markers":["WORK_COMPLETE"],"artifact_schema_expectations":[],"terminal_artifact_contracts":[]}
 }
 ```
+
+A minimal exchange above is protocol 3 and is intentionally unchanged: it has
+no `prompt.context_checkout` and no `token_usage` key. A protocol-4 exchange
+uses the same surrounding envelope with `schema_version: 4`, adds
+`prompt.context_checkout` (the five-field descriptor or `null`), and requires
+`token_usage` in the wrapper result.
 
 A populated artifact-bearing and null-artifact projection is shaped like this:
 
@@ -248,11 +305,16 @@ continues polling until stopped.
 ## Session Lifecycle And Cancellation
 
 Codex uses the generic durable runner-session lifecycle. The wrapper bundle
-uses schema 3, while its schema-6 dispatch envelope and dispatch echo carry
-the required `session_id`, `dispatch_generation`, and
-`session_fencing_token`. Millrace derives the session-unique correlation and
-cancellation identities; once a session is active they are non-null and may
-not be supplied as alternate authority by wrapper output.
+uses protocol 3/schema 3 by default or protocol 4/schema 4 when selected,
+while its schema-7 dispatch envelope and dispatch echo carry the required
+`session_id`, `dispatch_generation`, and `session_fencing_token`. Millrace
+derives the session-unique correlation and cancellation identities; once a
+session is active they are non-null and may not be supplied as alternate
+authority by wrapper output. Only protocol 4 exposes the reviewed usage
+mapping marker. When a token budget is selected, daemon startup refuses a
+protocol-3 Codex configuration before creating the budget epoch; a started
+protocol-4 session whose authenticated result lacks usage refuses the budget
+evidence and suspends the dispatch rather than completing silently.
 
 `millrace runs cancel RUN_ID --input-id ID` records a durable operator request.
 The coordinator signals only the exact owned subprocess session, then records

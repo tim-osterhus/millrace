@@ -187,6 +187,13 @@ def run_bounded_execution_unit(
         )
         if cwd_refusal is not None:
             return _with_active_ids(cwd_refusal, active)
+        protocol_refusal = _bound_codex_protocol_refusal(
+            active=active,
+            selected_kind=selected_kind,
+            adapter=adapter,
+        )
+        if protocol_refusal is not None:
+            return _with_active_ids(protocol_refusal, active)
         prepare_created_session = _prepare_created_session_callback(
             runtime,
             active=active,
@@ -790,6 +797,31 @@ def _bound_codex_cwd_refusal(
     return None
 
 
+def _bound_codex_protocol_refusal(
+    *,
+    active: _ActiveRun,
+    selected_kind: str,
+    adapter: object,
+) -> BoundedExecutionUnitResult | None:
+    if selected_kind != CODEX_ADAPTER_KIND:
+        return None
+    if _context_binding_for_stage(
+        active.selected_plan,
+        active.run.stage_kind_id,
+    ) is None:
+        return None
+    config = _adapter_config(adapter)
+    protocol_version = getattr(config, "wrapper_protocol_version", None)
+    if protocol_version != 4:
+        return BoundedExecutionUnitResult(
+            code="adapter_failure",
+            diagnostics=(
+                {"reason": "bound_codex_protocol_unsupported"},
+            ),
+        )
+    return None
+
+
 def _preclaim_adapter_refusal(
     *,
     requested_adapter_kind: str | None,
@@ -972,6 +1004,10 @@ def _codex_config_from_json(value: object) -> CodexAdapterConfig:
             "live_test_opt_in_env_flags",
         ),
         pre_cancelled=_json_bool(value.get("pre_cancelled", False), "pre_cancelled"),
+        wrapper_protocol_version=_json_int_value(
+            value.get("wrapper_protocol_version", 3),
+            "wrapper_protocol_version",
+        ),
     )
 
 
@@ -1030,7 +1066,10 @@ def _json_string(mapping: Mapping[str, object], key: str) -> str:
 
 
 def _json_int(mapping: Mapping[str, object], key: str) -> int:
-    value = mapping.get(key)
+    return _json_int_value(mapping.get(key), key)
+
+
+def _json_int_value(value: object, key: str) -> int:
     if type(value) is not int:
         raise ValueError(f"{key} must be an integer")
     return value

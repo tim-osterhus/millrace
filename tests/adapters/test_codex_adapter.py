@@ -50,6 +50,7 @@ def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
         ),
         "selected_join_evidence": None,
         "selected_wait_evidence": None,
+        "context_checkout": None,
     }
     values.update(overrides)
     return RunnerDispatchEnvelope(
@@ -95,7 +96,21 @@ def _valid_dispatch_envelope(**overrides: object) -> RunnerDispatchEnvelope:
             dict[str, AuthorityValue] | None,
             values["selected_wait_evidence"],
         ),
+        context_checkout=cast(
+            dict[str, AuthorityValue] | None,
+            values["context_checkout"],
+        ),
     )
+
+
+def _context_checkout() -> dict[str, str]:
+    return {
+        "manifest_digest": "sha256:" + "a" * 64,
+        "binding_id": "binding-1",
+        "router_asset_id": "router-1",
+        "checkout_relative_path": "checkout/session-1/1",
+        "router_relative_path": "checkout/session-1/1/CONTEXT.md",
+    }
 
 
 _CORRELATION_IDENTITY = (
@@ -307,6 +322,7 @@ def _config(
     max_stderr_bytes: int = 512,
     timeout_seconds: float = 5,
     pre_cancelled: bool = False,
+    wrapper_protocol_version: int = 3,
 ) -> object:
     from millrace.adapters.codex import CodexAdapterConfig
     from millrace.adapters.runner_contract import RedactionPolicy
@@ -332,6 +348,7 @@ def _config(
         ),
         live_test_opt_in_env_flags=(),
         pre_cancelled=pre_cancelled,
+        wrapper_protocol_version=wrapper_protocol_version,
     )
 
 
@@ -390,6 +407,9 @@ def _secret_surface_wrapper_code(secret: str = "token-secret") -> str:
     )
 
 
+_MISSING = object()
+
+
 def _error_wrapper_code(
     *,
     error_kind: object = "timeout",
@@ -402,6 +422,7 @@ def _error_wrapper_code(
     extra_key: str | None = None,
     trailing_data: bool = False,
     trailing_suffix: str | None = None,
+    token_usage: object = _MISSING,
 ) -> str:
     adapter_expression = (
         "bundle['adapter_id']" if adapter_id is None else repr(adapter_id)
@@ -430,6 +451,8 @@ def _error_wrapper_code(
         code += f"del result[{missing_key!r}]\n"
     if extra_key is not None:
         code += f"result[{extra_key!r}]=None\n"
+    if token_usage is not _MISSING:
+        code += f"result['token_usage']={token_usage!r}\n"
     code += "sys.stdout.write(json.dumps(result))\n"
     if trailing_data:
         suffix = " {}" if trailing_suffix is None else trailing_suffix
@@ -437,6 +460,125 @@ def _error_wrapper_code(
     else:
         code += "sys.stdout.write('\\n')\n"
     return code
+
+
+def _protocol4_success_wrapper_code(
+    *,
+    token_usage: object = (3, 2, 5),
+    diagnostics: str | None = None,
+    usage_mapping: object = _MISSING,
+    include_token_usage: bool = True,
+) -> str:
+    usage: object = None
+    if usage_mapping is not _MISSING:
+        usage = usage_mapping
+    elif token_usage is not None:
+        input_tokens, output_tokens, total_tokens = cast(
+            tuple[object, ...],
+            token_usage,
+        )
+        usage = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
+    wrapper = _success_wrapper_code()
+    wrapper = wrapper.replace(
+        "    'evidence_construction_diagnostics': {'diag': 'safe-value'},\n",
+        "    'evidence_construction_diagnostics': "
+        + (diagnostics or "{'diag': 'safe-value'}")
+        + ",\n",
+    )
+    if not include_token_usage:
+        return wrapper
+    return wrapper.replace(
+        "    'evidence_construction_diagnostics': "
+        + (diagnostics or "{'diag': 'safe-value'}")
+        + ",\n",
+        "    'evidence_construction_diagnostics': "
+        + (diagnostics or "{'diag': 'safe-value'}")
+        + ",\n"
+        + f"    'token_usage': {usage!r},\n",
+    )
+
+
+def _duplicate_usage_wrapper_code() -> str:
+    wrapper = _protocol4_success_wrapper_code()
+    return wrapper.replace(
+        "print(json.dumps(result, sort_keys=True))\n",
+        "payload = json.dumps(result, sort_keys=True)\n"
+        "payload = payload.replace(\"\\\"input_tokens\\\": 3,\", "
+        "\"\\\"input_tokens\\\": 3, \\\"input_tokens\\\": 4,\")\n"
+        "print(payload)\n",
+    )
+
+
+def _duplicate_error_usage_wrapper_code() -> str:
+    wrapper = _error_wrapper_code(
+        error_kind="timeout",
+        diagnostics={"provider": "timeout"},
+        token_usage={"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+    )
+    return wrapper.replace(
+        "sys.stdout.write(json.dumps(result))\n",
+        "payload = json.dumps(result)\n"
+        "payload = payload.replace(\"\\\"input_tokens\\\": 3,\", "
+        "\"\\\"input_tokens\\\": 3, \\\"input_tokens\\\": 4,\")\n"
+        "sys.stdout.write(payload)\n",
+    )
+
+
+def _protocol3_duplicate_marker_wrapper_code() -> str:
+    wrapper = _success_wrapper_code()
+    return wrapper.replace(
+        "print(json.dumps(result, sort_keys=True))\n",
+        "payload = json.dumps(result, sort_keys=True)\n"
+        "payload = payload.replace(\"\\\"marker\\\": \\\"TASK_COMPLETE\\\",\", "
+        "\"\\\"marker\\\": \\\"TASK_COMPLETE\\\", "
+        "\\\"marker\\\": \\\"TASK_COMPLETE\\\",\")\n"
+        "print(payload)\n",
+    )
+
+
+def _provider_marker_plus_null_error_wrapper_code(
+    marker_path: Path,
+    *,
+    error_kind: str = "selected_authority_refused",
+) -> str:
+    wrapper = _error_wrapper_code(
+        error_kind=error_kind,
+        diagnostics={"reason": "provider_work_already_started"},
+        token_usage=None,
+    )
+    return wrapper.replace(
+        "import json, sys\n",
+        "import json, pathlib, sys\n"
+        f"pathlib.Path({str(marker_path)!r}).write_text('provider-started')\n",
+    )
+
+
+def _missing_opt_in_preflight_wrapper_code(marker_path: Path) -> str:
+    return (
+        "import json, pathlib, sys\n"
+        "bundle=json.loads(sys.stdin.read())\n"
+        f"provider_marker = pathlib.Path({str(marker_path)!r})\n"
+        "missing_opt_in_config = True\n"
+        "if missing_opt_in_config:\n"
+        "    result = {\n"
+        "        'outcome_kind': 'error',\n"
+        "        'adapter_id': bundle['adapter_id'],\n"
+        "        'error_kind': 'missing_opt_in_config',\n"
+        "        'redaction_policy_id': bundle['redaction_policy']['policy_id'],\n"
+        "        'dispatch_echo': dict(bundle['dispatch_echo']),\n"
+        "        'diagnostics': {'reason': 'wrapper_preflight_refused'},\n"
+        "        'token_usage': None,\n"
+        "    }\n"
+        "    sys.stdout.write(json.dumps(result, sort_keys=True))\n"
+        "    sys.stdout.write('\\n')\n"
+        "    raise SystemExit(0)\n"
+        "provider_marker.write_text('provider-started')\n"
+        "raise RuntimeError('provider work unexpectedly started')\n"
+    )
 
 
 def _generic_projection_request(
@@ -834,6 +976,455 @@ def test_codex_schema3_bundle_bytes_ignore_selected_catalog_order(
         )
 
     assert bundle_bytes(request_a) == bundle_bytes(request_b)
+
+
+def test_codex_protocol3_bundle_bytes_remain_golden(tmp_path: Path) -> None:
+    from hashlib import sha256
+
+    from millrace.adapters.codex import (
+        CodexAdapterConfig,
+        _bundle_stdin_bytes,
+    )
+    from millrace.adapters.runner_contract import (
+        AdapterInvocationRequest,
+        DispatchEcho,
+    )
+
+    request = cast(AdapterInvocationRequest, _request())
+    config = cast(CodexAdapterConfig, _config(tmp_path))
+    echo = DispatchEcho.from_dispatch_envelope(
+        request.dispatch_envelope,
+        correlation_id=request.correlation_id,
+        selected_adapter_kind=request.selected_adapter_kind,
+    )
+    raw = _bundle_stdin_bytes(request, config=config, dispatch_echo=echo)
+
+    assert len(raw) == 4492
+    assert sha256(raw).hexdigest() == (
+        "25df07edd911623a2ffb5e2e2bb4f2e81ee711e32edbb638f61b21394b55e3e6"
+    )
+    assert b'"schema_version":3' in raw
+    assert b'"token_usage"' not in raw
+
+
+@pytest.mark.parametrize(
+    "context_checkout",
+    (None, _context_checkout()),
+)
+def test_codex_protocol4_prompt_projects_only_authenticated_context_descriptor(
+    tmp_path: Path,
+    context_checkout: dict[str, str] | None,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    capture_path = tmp_path / "bundle.json"
+    request = _request(
+        dispatch_envelope=_valid_dispatch_envelope(
+            context_checkout=context_checkout,
+        ),
+    )
+    adapter = CodexAdapter(
+        _config(
+            tmp_path,
+            env_allowlist={"CAPTURE_BUNDLE_PATH": str(capture_path)},
+            wrapper_code=_protocol4_success_wrapper_code(),
+            wrapper_protocol_version=4,
+        ),
+    )
+
+    result = adapter.invoke(request)
+
+    assert isinstance(result, AdapterSuccessResult)
+    bundle = json.loads(capture_path.read_text())
+    assert bundle["schema_version"] == 4
+    assert bundle["prompt"]["context_checkout"] == context_checkout
+    if context_checkout is not None:
+        assert set(bundle["prompt"]["context_checkout"]) == {
+            "manifest_digest",
+            "binding_id",
+            "router_asset_id",
+            "checkout_relative_path",
+            "router_relative_path",
+        }
+        assert "body" not in repr(bundle["prompt"]["context_checkout"])
+
+
+def test_codex_protocol3_prompt_has_no_context_checkout_key(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    capture_path = tmp_path / "bundle.json"
+    adapter = CodexAdapter(
+        _config(
+            tmp_path,
+            env_allowlist={"CAPTURE_BUNDLE_PATH": str(capture_path)},
+        ),
+    )
+
+    result = adapter.invoke(
+        _request(
+            dispatch_envelope=_valid_dispatch_envelope(
+                context_checkout=_context_checkout(),
+            ),
+        ),
+    )
+
+    assert isinstance(result, AdapterSuccessResult)
+    bundle = json.loads(capture_path.read_text())
+    assert bundle["schema_version"] == 3
+    assert "context_checkout" not in bundle["prompt"]
+    assert "token_usage" not in bundle
+
+
+def test_codex_protocol4_only_exposes_reviewed_usage_capability(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import REVIEWED_TOKEN_USAGE_MAPPING
+
+    protocol3 = CodexAdapter(_config(tmp_path))
+    protocol4 = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_protocol4_success_wrapper_code(),
+            wrapper_protocol_version=4,
+        ),
+    )
+
+    assert not hasattr(protocol3, "token_usage_mapping_capability")
+    assert (
+        protocol4.token_usage_mapping_capability is REVIEWED_TOKEN_USAGE_MAPPING
+    )
+
+
+def test_codex_protocol4_maps_success_usage_and_keeps_diagnostics_bounded(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import (
+        AdapterSuccessResult,
+        AdapterTokenUsage,
+    )
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_protocol4_success_wrapper_code(
+                diagnostics=(
+                    "{'cached_input_tokens': 11, 'reasoning_output_tokens': 7}"
+                ),
+            ),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterSuccessResult)
+    assert result.token_usage == AdapterTokenUsage(
+        input_tokens=3,
+        output_tokens=2,
+        total_tokens=5,
+    )
+    assert result.evidence_construction_diagnostics == {
+        "cached_input_tokens": 11,
+        "reasoning_output_tokens": 7,
+    }
+
+
+def test_codex_protocol4_maps_authenticated_error_usage(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult, AdapterTokenUsage
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                error_kind="timeout",
+                diagnostics={"provider": "timeout"},
+                token_usage={
+                    "input_tokens": 8,
+                    "output_tokens": 2,
+                    "total_tokens": 10,
+                },
+            ),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "timeout"
+    assert result.token_usage == AdapterTokenUsage(
+        input_tokens=8,
+        output_tokens=2,
+        total_tokens=10,
+    )
+
+
+@pytest.mark.parametrize(
+    "usage_mapping",
+    (
+        {"input_tokens": True, "output_tokens": 2, "total_tokens": 3},
+        {"input_tokens": -1, "output_tokens": 2, "total_tokens": 1},
+        {
+            "input_tokens": 2**63,
+            "output_tokens": 0,
+            "total_tokens": 2**63,
+        },
+        {"input_tokens": 3, "output_tokens": 2, "total_tokens": 6},
+        {"input_tokens": 3, "output_tokens": 2},
+        {
+            "input_tokens": 3,
+            "output_tokens": 2,
+            "total_tokens": 5,
+            "cached_input_tokens": 1,
+        },
+    ),
+    ids=(
+        "boolean",
+        "negative",
+        "overflow",
+        "mismatched_total",
+        "missing_total",
+        "extra_key",
+    ),
+)
+def test_codex_protocol4_rejects_malformed_success_usage(
+    tmp_path: Path,
+    usage_mapping: dict[str, object],
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_protocol4_success_wrapper_code(
+                usage_mapping=usage_mapping,
+            ),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+    assert result.token_usage is None
+
+
+def test_codex_protocol4_rejects_duplicate_usage_keys(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_duplicate_usage_wrapper_code(),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+def test_codex_protocol4_rejects_duplicate_error_usage_keys(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_duplicate_error_usage_wrapper_code(),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+def test_codex_protocol3_retains_duplicate_key_parsing_compatibility(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_protocol3_duplicate_marker_wrapper_code(),
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterSuccessResult)
+    assert result.marker == "TASK_COMPLETE"
+
+
+def test_codex_protocol4_requires_success_usage(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_protocol4_success_wrapper_code(
+                include_token_usage=False,
+            ),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+def test_codex_protocol4_allows_null_usage_only_for_missing_opt_in_preflight(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    marker_path = tmp_path / "provider.marker"
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_missing_opt_in_preflight_wrapper_code(marker_path),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "missing_opt_in_config"
+    assert result.token_usage is None
+    assert not marker_path.exists()
+
+
+@pytest.mark.parametrize(
+    "error_kind",
+    (
+        "timeout",
+        "cancelled",
+        "invocation_failed",
+        "result_parse_failed",
+        "unsupported_adapter_kind",
+        "input_too_large",
+        "output_too_large",
+        "redaction_refused",
+        "selected_authority_refused",
+    ),
+)
+def test_codex_protocol4_rejects_null_usage_for_every_other_error_kind(
+    tmp_path: Path,
+    error_kind: str,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                error_kind=error_kind,
+                diagnostics={"reason": "ambiguous_or_post_provider"},
+                token_usage=None,
+            ),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+def test_codex_protocol4_provider_marker_plus_null_requires_parse_refusal(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    marker_path = tmp_path / "provider.marker"
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_provider_marker_plus_null_error_wrapper_code(marker_path),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert marker_path.read_text(encoding="utf-8") == "provider-started"
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+    assert result.token_usage is None
+
+
+def test_codex_protocol4_error_requires_top_level_token_usage(tmp_path: Path) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                error_kind="timeout",
+                diagnostics={"provider": "timeout"},
+            ),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+
+
+@pytest.mark.parametrize(
+    "usage_mapping",
+    (
+        {"input_tokens": 3, "output_tokens": 2},
+        {
+            "input_tokens": 3,
+            "output_tokens": 2,
+            "total_tokens": 5,
+            "extra": 1,
+        },
+        {"input_tokens": True, "output_tokens": 2, "total_tokens": 3},
+        {"input_tokens": -1, "output_tokens": 2, "total_tokens": 1},
+        {
+            "input_tokens": 2**63,
+            "output_tokens": 0,
+            "total_tokens": 2**63,
+        },
+        {"input_tokens": 3, "output_tokens": 2, "total_tokens": 6},
+    ),
+    ids=(
+        "missing_nested_key",
+        "extra_nested_key",
+        "boolean",
+        "negative",
+        "int64_overflow",
+        "mismatched_total",
+    ),
+)
+def test_codex_protocol4_rejects_malformed_error_usage(
+    tmp_path: Path,
+    usage_mapping: dict[str, object],
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_error_wrapper_code(
+                error_kind="timeout",
+                diagnostics={"provider": "timeout"},
+                token_usage=usage_mapping,
+            ),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "result_parse_failed"
+    assert result.token_usage is None
 
 
 @pytest.mark.parametrize("case", ("missing", "duplicate", "unselected", "mismatched"))
