@@ -1110,6 +1110,8 @@ def _render_command_exception(
     if isinstance(exc, CliCommandError):
         return render_error(exc.to_cli_error(), json_mode=json_mode)
     if isinstance(exc, StoreSchemaUpgradeRequired):
+        from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
+
         error = error_result(
             command=command,
             code="workspace_upgrade_required",
@@ -1117,7 +1119,7 @@ def _render_command_exception(
             exit_code=ExitCode.PERSISTENCE_FAILURE,
             details={
                 "current_schema_version": exc.current_schema_version,
-                "required_schema_version": 8,
+                "required_schema_version": SQLITE_STORE_SCHEMA_VERSION,
             },
         )
         return render_error(error, json_mode=json_mode)

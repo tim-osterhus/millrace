@@ -358,6 +358,8 @@ def workspace_upgrade_required(
     *,
     current_schema_version: int,
 ) -> CliCommandError:
+    from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
+
     return CliCommandError(
         command=command,
         code="workspace_upgrade_required",
@@ -365,7 +367,7 @@ def workspace_upgrade_required(
         exit_code=ExitCode.PERSISTENCE_FAILURE,
         details={
             "current_schema_version": current_schema_version,
-            "required_schema_version": 8,
+            "required_schema_version": SQLITE_STORE_SCHEMA_VERSION,
         },
     )
 

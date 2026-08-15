@@ -7,6 +7,7 @@ import sys
 import tarfile
 import textwrap
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +33,12 @@ LIVE_E2E_ARTIFACT_SUFFIXES = (
     "/tests/support/e2e_actual_model.py",
     "/docs/e2e-live-smoke.md",
 )
+HOSTED_CONTEXT_WORKFLOW_LITERALS = (
+    "millrace-agents",
+    "semantic_worktree",
+    "governed-semantic-worktree",
+)
+SHIPPED_TEXT_SUFFIXES = frozenset({".json", ".md", ".py", ".rst", ".txt"})
 
 
 def _subprocess_env() -> dict[str, str]:
@@ -104,6 +111,24 @@ def _sdist_workflow_modules(names: set[str]) -> set[str]:
     }
 
 
+def _archive_text_matches(
+    names: set[str],
+    read_member: Callable[[str], bytes],
+) -> list[tuple[str, str]]:
+    matches: list[tuple[str, str]] = []
+    for name in sorted(names):
+        path = Path(name)
+        if path.suffix not in SHIPPED_TEXT_SUFFIXES or "tests" in path.parts:
+            continue
+        text = read_member(name).decode("utf-8")
+        matches.extend(
+            (name, literal)
+            for literal in HOSTED_CONTEXT_WORKFLOW_LITERALS
+            if literal in text
+        )
+    return matches
+
+
 def test_source_workflow_surface_has_exact_public_allowlist() -> None:
     workflow_root = PROJECT_ROOT / "src" / "millrace" / "workflows"
     assert {path.name for path in workflow_root.iterdir() if path.is_file()} == (
@@ -133,10 +158,21 @@ def test_built_base_artifacts_ship_only_kernel_ping_workflow_modules(
     with zipfile.ZipFile(wheels[0]) as archive:
         wheel_names = set(archive.namelist())
         wheel_workflows = _wheel_workflow_modules(wheel_names)
+        wheel_text_matches = _archive_text_matches(wheel_names, archive.read)
 
     with tarfile.open(sdists[0], "r:gz") as archive:
         sdist_names = {member.name for member in archive.getmembers()}
         sdist_workflows = _sdist_workflow_modules(sdist_names)
+
+        def read_sdist_member(name: str) -> bytes:
+            member = archive.extractfile(name)
+            assert member is not None
+            return member.read()
+
+        sdist_text_matches = _archive_text_matches(
+            sdist_names,
+            read_sdist_member,
+        )
 
     assert wheel_workflows == ALLOWED_BASE_WORKFLOW_MODULES
     assert wheel_workflows.isdisjoint(DONOR_WORKFLOW_MODULES)
@@ -151,6 +187,13 @@ def test_built_base_artifacts_ship_only_kernel_ping_workflow_modules(
             for name in names
             for suffix in LIVE_E2E_ARTIFACT_SUFFIXES
         )
+        assert not any(
+            token in name
+            for name in names
+            for token in HOSTED_CONTEXT_WORKFLOW_LITERALS
+        )
+    assert wheel_text_matches == []
+    assert sdist_text_matches == []
     assert not any("/tests/" in f"/{name}" for name in sdist_names)
 
 
@@ -211,7 +254,16 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
             verify_compiled_plan_export_bytes,
             verify_compiled_plan_export_record,
         )
-        from millrace.contracts import SelectedCompiledPlan
+        from millrace.contracts import (
+            ContextCheckoutFile,
+            ContextCheckoutManifest,
+            ContextCheckoutOmission,
+            SelectedCompiledPlan,
+            context_checkout_manifest_digest,
+            decode_context_checkout_manifest,
+            encode_context_checkout_manifest,
+            verify_context_checkout_manifest_digest,
+        )
         from millrace.kernel import decide
         from millrace.substrate import (
             ContentAddressedByteStore,
@@ -239,6 +291,13 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
         assert callable(verify_compiled_plan_export_record)
         assert issubclass(CompiledPlanExportError, ValueError)
         assert SelectedCompiledPlan.__name__ == "SelectedCompiledPlan"
+        assert ContextCheckoutFile.__name__ == "ContextCheckoutFile"
+        assert ContextCheckoutManifest.__name__ == "ContextCheckoutManifest"
+        assert ContextCheckoutOmission.__name__ == "ContextCheckoutOmission"
+        assert callable(context_checkout_manifest_digest)
+        assert callable(decode_context_checkout_manifest)
+        assert callable(encode_context_checkout_manifest)
+        assert callable(verify_context_checkout_manifest_digest)
         assert callable(decide)
         assert SQLiteRuntimeStore.__name__ == "SQLiteRuntimeStore"
         assert ContentAddressedByteStore.__name__ == "ContentAddressedByteStore"

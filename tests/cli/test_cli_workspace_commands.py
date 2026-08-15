@@ -240,7 +240,7 @@ def test_workspace_check_maps_prior_schema_to_upgrade_required_json_and_human(
         "message": "Workspace schema upgrade is required.",
         "details": {
             "current_schema_version": old_schema_version,
-            "required_schema_version": 8,
+            "required_schema_version": 9,
         },
     }
     assert (
@@ -308,7 +308,7 @@ def test_daemon_maps_prior_schema_to_upgrade_required_without_mutation(
         "message": "Workspace schema upgrade is required.",
         "details": {
             "current_schema_version": old_schema_version,
-            "required_schema_version": 8,
+            "required_schema_version": 9,
         },
     }
     assert human_stderr == (
@@ -415,7 +415,7 @@ def test_session_projection_commands_refuse_prior_schema_without_mutation(
     assert error["code"] == "workspace_upgrade_required"
     assert error["details"] == {
         "current_schema_version": old_schema_version,
-        "required_schema_version": 8,
+        "required_schema_version": 9,
     }
     human_exit, human_stdout, human_stderr = _invoke(
         ["--workspace", str(workspace), *command]

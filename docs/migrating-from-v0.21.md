@@ -70,7 +70,7 @@ Then run a bounded daemon session with explicit adapter configuration and
 inspect status and trace output before leaving it active.
 
 If a v0.22 schema-version-6 workspace contains active work, finish or retire
-that work with the matching runtime. The schema-8 runtime refuses exact
+that work with the matching runtime. The schema-9 runtime refuses exact
 schema-6 and schema-7 workspaces unchanged as `workspace_upgrade_required`;
 it does not automatically migrate the database/CAS or infer operator-control
 state.

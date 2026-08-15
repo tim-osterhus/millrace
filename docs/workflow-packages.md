@@ -20,9 +20,46 @@ A complete workflow definition describes its decision tree or graph:
 - recovery, retry, wait, and quarantine behavior;
 - fanout, join, lineage, and completion rules;
 - selected prompt and skill assets.
+- optional stage context bindings, including a router asset, bounded source
+  declarations, checkout root, and writeback policy.
 
 The compiler rejects missing references, ambiguous markers, invalid schemas,
 unsupported actions, and incomplete routes before runtime admission.
+
+## Context Bindings
+
+Context bindings are selected workflow authority, not ambient workspace
+discovery. A binding selects one `template` router asset and a normalized
+workspace-relative checkout root. Its sources are limited to
+`dispatch_material:current`, `accepted_lineage_artifacts:current_lineage`,
+`lineage_attempt_history:current_lineage`, and explicitly selected
+`workspace_relative_root` paths, each with file and byte bounds. Required
+sources fail closed; discoverable sources may be recorded as whole-source
+omissions with a deterministic reason.
+
+The compiler validates the binding against the selected stage, runner, router,
+source roots, and optional writeback action/schema. `direct_write` and
+`protected_proposal` are the only write dispositions. A write-enabled binding
+must select both sides of its writeback linkage; a read-only binding selects
+neither. The selected plan fingerprint therefore covers context policy just
+as it covers graph, asset, and runner authority.
+
+At runtime, a bound session captures a schema-1 manifest and its selected file
+bytes into the existing CAS before external start. The runner receives a
+compact, authenticated descriptor for the materialized checkout; it does not
+receive an ambient file search or an inline copy of the checkout. A bound
+Codex session uses wrapper protocol 4 and the initialized Millrace workspace
+as its `cwd`. An unbound workflow keeps the existing dispatch behavior and
+does not create a checkout.
+
+The base package remains the diagnostic `kernel_ping` surface and carries no
+hosted workflow checkout policy. A custom or Plus package may select its own
+generic bindings and relative roots, including workflow-specific assets, but
+the runtime never branches on those names. Before a bound result is accepted,
+Millrace verifies the materialized checkout and, for write-enabled bindings,
+validates the linked direct/protected/no-op report against the selected live
+roots. Refusal prevents the result from becoming a workflow artifact or route;
+protected proposals are not promoted automatically.
 
 ## Assets
 
@@ -56,7 +93,7 @@ After import, an operator can:
 5. enqueue work through one of its declared external routes.
 
 Package updates and removals affect future selections. An active run remains
-pinned to the exact plan and package assets it started with.
+pinned to the exact plan, context policy, and package assets it started with.
 
 ## Official And Custom Packages
 

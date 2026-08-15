@@ -121,12 +121,16 @@ TEXT_FILE_SUFFIXES = frozenset({".md", ".py", ".rst", ".txt"})
 
 OFFICIAL_WORKFLOW_IDENTIFIERS = (
     "execution.lad",
+    "execution.lad_codex_control",
+    "execution.lad_codex_semantic_worktree",
     "execution.lad_integrator",
     "planning.lad",
     "lad.full",
     "simple_loop",
     "vendor_selection",
 )
+
+WORKFLOW_SPECIFIC_CONTEXT_LITERALS = ("millrace-agents",)
 
 
 def _kernel_package() -> Path:
@@ -176,6 +180,26 @@ def _official_workflow_identifier_matches(root: Path) -> list[tuple[Path, str]]:
 
 def test_production_source_omits_official_workflow_identifiers() -> None:
     assert _official_workflow_identifier_matches(PACKAGE_ROOT) == []
+
+
+def test_runtime_context_checkout_omits_hosted_workspace_path_literals() -> None:
+    matches: list[tuple[Path, str]] = []
+    for package_name in (
+        "adapters",
+        "compiler",
+        "contracts",
+        "kernel",
+        "substrate",
+        "operator",
+    ):
+        package_path = PACKAGE_ROOT / package_name
+        for relative_path, literal in _literal_matches(
+            package_path,
+            WORKFLOW_SPECIFIC_CONTEXT_LITERALS,
+        ):
+            matches.append((Path(package_name) / relative_path, literal))
+
+    assert matches == []
 
 
 def test_lad_b_literal_guardrail_still_catches_probe_in_generic_source(

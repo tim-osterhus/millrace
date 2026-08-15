@@ -19,6 +19,15 @@ This file starts at `0.13.0`, the current documented public baseline.
   projections.
 - Added selected closure-evidence snapshots with deterministic ordering and
   durable restart preservation.
+- Added generic selected-plan context bindings and schema-1 CAS-backed
+  immutable context checkouts pinned to schema-2 runner sessions. Bound
+  sessions attach stable context before start; unbound workflows retain their
+  existing dispatch behavior.
+- Added schema-7 dispatch descriptors and Codex wrapper protocol 4 for
+  authenticated checkout navigation and reviewed token usage while preserving
+  byte-compatible protocol-3 behavior for unbound sessions.
+- Added fail-closed checkout rematerialization and selected direct/protected
+  writeback validation before runner evidence becomes workflow authority.
 
 ### Fixed
 
@@ -27,6 +36,12 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Added fail-closed capacity checks that reject oversized requests before
   external dispatch and enforce the 65536-byte Millforge instruction-envelope
   limit.
+- Enforced the same generic context-binding closure at compilation, plan
+  admission, dispatch, session attachment, and durable reload; corrupt or
+  drifted manifest/CAS links now refuse without repairing state.
+- Advanced the current workspace store to schema 9 for immutable context
+  linkage. Exact schema-6 and schema-7 workspaces retain the unchanged
+  `workspace_upgrade_required` boundary, while schema 8 remains unsupported.
 
 ## [0.22.2] - 2026-08-05
 

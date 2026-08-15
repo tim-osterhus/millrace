@@ -29,7 +29,7 @@ positive integer and any limit requires a nonblank caller-selected
 budget.
 
 The first use pins the budget ID to the workspace, selected default plan,
-limits, start time, and wall deadline in the schema-8 store. Reusing the same
+limits, start time, and wall deadline in the schema-9 store. Reusing the same
 ID with identical authority resumes its totals and deadline. Changed limits,
 workspace, or plan are refused. Accepted runner start intents are counted once
 per fenced runner session, and reviewed adapter usage is accumulated

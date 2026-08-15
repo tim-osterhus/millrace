@@ -228,6 +228,16 @@ EXPECTED_COMPILER_EXPORT_API = (
     "verify_compiled_plan_export_record",
 )
 
+EXPECTED_CONTEXT_CHECKOUT_API = (
+    "ContextCheckoutFile",
+    "ContextCheckoutManifest",
+    "ContextCheckoutOmission",
+    "context_checkout_manifest_digest",
+    "decode_context_checkout_manifest",
+    "encode_context_checkout_manifest",
+    "verify_context_checkout_manifest_digest",
+)
+
 PYTEST_REPOSITORY_CLEANUP_CALLS = {
     "rmtree",
     "unlink",
@@ -843,6 +853,17 @@ def test_public_compiler_export_api_is_intentional_facade() -> None:
     assert [name for name in compiler.__all__ if name.startswith("_")] == []
     assert [name for name in compiler_export.__all__ if name.startswith("_")] == []
     assert not hasattr(compiler, "import_compiled_plan_export")
+
+
+def test_public_context_checkout_api_is_intentional_facade() -> None:
+    import millrace.contracts as contracts
+
+    assert all(name in contracts.__all__ for name in EXPECTED_CONTEXT_CHECKOUT_API)
+    assert all(hasattr(contracts, name) for name in EXPECTED_CONTEXT_CHECKOUT_API)
+    assert "ContextCheckoutContractError" not in contracts.__all__
+    assert "PreparedContextCheckout" not in contracts.__all__
+    assert not hasattr(contracts, "ContextCheckoutContractError")
+    assert not hasattr(contracts, "PreparedContextCheckout")
 
 
 def test_compiler_export_module_has_no_runtime_dependency_leaks() -> None:
