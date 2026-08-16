@@ -295,6 +295,18 @@ def _build_parser() -> tuple[
             )
             daemon_parser.set_defaults(command="run.daemon")
             help_parsers["run.daemon"] = daemon_parser
+            budget_stop_parser = run_subparsers.add_parser(
+                "budget-stop",
+                help="Stop one safely closable daemon budget epoch.",
+            )
+            budget_stop_parser.add_argument(
+                "--budget-id",
+                metavar="ID",
+                default=argparse.SUPPRESS,
+                help="Existing durable daemon budget epoch ID.",
+            )
+            budget_stop_parser.set_defaults(command="run.budget-stop")
+            help_parsers["run.budget-stop"] = budget_stop_parser
 
     parser.set_defaults(command="cli")
     return parser, help_parsers
@@ -920,6 +932,8 @@ def _help_command_from_args(args: Sequence[str]) -> str:
             break
     if command_parts == ["run", "daemon"]:
         return "run.daemon"
+    if command_parts == ["run", "budget-stop"]:
+        return "run.budget-stop"
     if (
         len(command_parts) == 2
         and command_parts[0]
@@ -1082,9 +1096,9 @@ def _dispatch_doctor(namespace: argparse.Namespace) -> int:
 
 def _dispatch_run(namespace: argparse.Namespace) -> int:
     try:
-        from millrace.adapters.cli.daemon import handle_daemon_command
+        from millrace.adapters.cli.daemon import handle_run_command
 
-        result = handle_daemon_command(namespace)
+        result = handle_run_command(namespace)
     except Exception as exc:
         return _render_command_exception(
             exc,

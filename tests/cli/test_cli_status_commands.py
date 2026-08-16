@@ -1433,6 +1433,15 @@ def test_populated_daemon_budget_projects_across_every_bounded_surface(
         assert projected["runner_session_count"] == 2
         assert len(projected["runner_sessions"]) == 1
         assert projected["omitted_runner_session_count"] == 1
+        retained_session = projected["runner_sessions"][0]
+        retained = next(
+            session
+            for session in sessions
+            if session.session_id == retained_session["session_id"]
+        )
+        assert retained_session["session_fencing_token"] == (
+            retained.session_fencing_token
+        )
         assert projected["runner_sessions"][0]["usage_evidence"]["status"] in {
             "contradictory",
             "missing",
@@ -1443,6 +1452,12 @@ def test_populated_daemon_budget_projects_across_every_bounded_surface(
         sessions[1].session_id,
     }
     for session_id, projected_session in session_projections.items():
+        expected_session = next(
+            session for session in sessions if session.session_id == session_id
+        )
+        assert projected_session["session_fencing_token"] == (
+            expected_session.session_fencing_token
+        )
         projected_budget = projected_session["budget"]
         assert_core_budget(projected_budget)
         expected_status = (

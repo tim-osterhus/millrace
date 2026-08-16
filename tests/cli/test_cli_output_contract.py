@@ -269,6 +269,159 @@ def test_json_help_renders_single_success_objects() -> None:
     assert isinstance(daemon["data"]["help"], str)
 
 
+def test_budget_stop_help_and_missing_id_are_bounded_json_contracts() -> None:
+    help_code, help_stdout, help_stderr = _invoke(
+        ["--json", "run", "budget-stop", "--help"]
+    )
+
+    assert help_code == 0
+    assert help_stderr == ""
+    help_result = _single_json_object(help_stdout)
+    assert help_result["ok"] is True
+    assert help_result["command"] == "run.budget-stop"
+    assert "--budget-id" in help_result["data"]["help"]
+
+    missing_code, missing_stdout, missing_stderr = _invoke(
+        ["--json", "run", "budget-stop"]
+    )
+
+    assert missing_code == 2
+    assert missing_stdout == ""
+    missing = _single_json_object(missing_stderr)
+    assert missing["ok"] is False
+    assert missing["command"] == "run.budget-stop"
+    assert missing["code"] == "invalid_budget_id"
+    assert missing["details"] == {"budget_id": ""}
+
+    blank_code, blank_stdout, blank_stderr = _invoke(
+        ["--json", "run", "budget-stop", "--budget-id", "  "]
+    )
+
+    assert blank_code == 2
+    assert blank_stdout == ""
+    blank = _single_json_object(blank_stderr)
+    assert blank["command"] == "run.budget-stop"
+    assert blank["code"] == "invalid_budget_id"
+    assert blank["details"] == {"budget_id": "  "}
+
+
+def test_budget_stop_rejects_oversized_id_without_echoing_raw_input(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    init_code, init_stdout, init_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "workspace",
+            "init",
+            "--input-id",
+            "init-oversized-budget-id",
+        ]
+    )
+    assert init_code == 0, (init_stdout, init_stderr)
+
+    oversized_id = "x" * 1_000_000
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            oversized_id,
+        ]
+    )
+
+    assert exit_code == 2
+    assert stdout == ""
+    assert len(stderr.encode("utf-8")) <= 1024
+    assert oversized_id not in stderr
+    error = _single_json_object(stderr)
+    assert error["ok"] is False
+    assert error["command"] == "run.budget-stop"
+    assert error["code"] == "invalid_budget_id"
+    assert error["details"] == {}
+
+
+def test_budget_stop_rejects_one_byte_over_derived_id_limit_before_lookup_or_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.contracts.state import RUNNER_SESSION_TEXT_MAX_BYTES
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    workspace = tmp_path / "workspace"
+    init_code, init_stdout, init_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "workspace",
+            "init",
+            "--input-id",
+            "init-budget-stop-boundary",
+        ]
+    )
+    assert init_code == 0, (init_stdout, init_stderr)
+
+    fixed_suspension_input_id = "daemon-budget::suspend"
+    budget_id = "x" * (
+        RUNNER_SESSION_TEXT_MAX_BYTES
+        - len(fixed_suspension_input_id.encode("utf-8"))
+        + 1
+    )
+    assert len(budget_id.encode("utf-8")) == 4075
+    lookups: list[str] = []
+    mutations: list[object] = []
+    original_load = SQLiteRuntimeStore.load_daemon_budget_epoch
+    original_persist = SQLiteRuntimeStore.persist_runtime_state
+
+    def record_lookup(store: object, value: str) -> object:
+        lookups.append(value)
+        return original_load(store, value)  # type: ignore[arg-type]
+
+    def record_mutation(store: object, *args: object, **kwargs: object) -> object:
+        mutations.append((args, kwargs))
+        return original_persist(store, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        SQLiteRuntimeStore,
+        "load_daemon_budget_epoch",
+        record_lookup,
+    )
+    monkeypatch.setattr(
+        SQLiteRuntimeStore,
+        "persist_runtime_state",
+        record_mutation,
+    )
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            budget_id,
+        ]
+    )
+
+    assert exit_code == 2
+    assert stdout == ""
+    assert len(stderr.encode("utf-8")) <= 1024
+    assert budget_id not in stderr
+    error = _single_json_object(stderr)
+    assert error["command"] == "run.budget-stop"
+    assert error["code"] == "invalid_budget_id"
+    assert error["details"] == {}
+    assert lookups == []
+    assert mutations == []
+
+
 def test_cli_has_no_runtime_dependency_added_without_review() -> None:
     runtime_dependencies = PROJECT_METADATA.get("dependencies", [])
     normalized = {

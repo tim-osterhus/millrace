@@ -27,7 +27,12 @@ from millrace.adapters.cli.context import (
     open_runtime_context as _open_runtime_context,
 )
 from millrace.adapters.cli.lifecycle import run_lifecycle_transition_once
-from millrace.adapters.cli.output import CliSuccess, ExitCode, success_result
+from millrace.adapters.cli.output import (
+    CliSuccess,
+    ExitCode,
+    json_ready,
+    success_result,
+)
 from millrace.adapters.cli.run import (
     BoundedExecutionUnitResult,
     load_adapter_local_config,
@@ -42,6 +47,7 @@ from millrace.adapters.runner_contract import (
 )
 from millrace.contracts.state import (
     DURABLE_INT64_MAX,
+    RUNNER_SESSION_TEXT_MAX_BYTES,
     DaemonBudgetEpochRecord,
     RunnerSessionRecord,
 )
@@ -49,6 +55,9 @@ from millrace.substrate.errors import SubstrateError
 
 _COMMAND = "run.daemon"
 _LOCK_FILENAME = "daemon.lock"
+_BUDGET_STOP_ID_MAX_BYTES = RUNNER_SESSION_TEXT_MAX_BYTES - len(
+    b"daemon-budget::suspend"
+)
 _SUCCESS_REASONS = frozenset({"max_ticks", "signal", "budget_exhausted"})
 _RUNNER_FAILURE_REASONS = frozenset(
     {
@@ -212,6 +221,376 @@ def handle_daemon_command(namespace: object) -> CliSuccess:
             data=summary.data(),
         )
     raise _summary_error(summary)
+
+
+def handle_run_command(namespace: object) -> CliSuccess:
+    command = str(getattr(namespace, "command", "run"))
+    if command == _COMMAND:
+        return handle_daemon_command(namespace)
+    if command == "run.budget-stop":
+        return handle_budget_stop_command(namespace)
+    raise CliCommandError(
+        command=command,
+        code="command_not_implemented",
+        message="Command is not implemented.",
+        exit_code=ExitCode.DOMAIN_REFUSAL,
+        details={},
+    )
+
+
+def handle_budget_stop_command(namespace: object) -> CliSuccess:
+    command = "run.budget-stop"
+    budget_id_value = str(getattr(namespace, "budget_id", ""))
+    if len(budget_id_value.encode("utf-8")) > _BUDGET_STOP_ID_MAX_BYTES:
+        raise CliCommandError(
+            command=command,
+            code="invalid_budget_id",
+            message=(
+                "--budget-id must be at most "
+                f"{_BUDGET_STOP_ID_MAX_BYTES} UTF-8 bytes."
+            ),
+            exit_code=ExitCode.CLI_USAGE,
+            details={},
+        )
+    budget_id = require_nonblank(
+        budget_id_value,
+        option="--budget-id",
+        command=command,
+    )
+    actor = require_nonblank(
+        str(getattr(namespace, "actor_id", "local_operator")),
+        option="--actor-id",
+        command=command,
+    )
+    runtime = open_runtime_context(namespace, command=command)
+    replayed = False
+    try:
+        try:
+            epoch = runtime.store.load_daemon_budget_epoch(budget_id)
+        except ValueError as exc:
+            raise _budget_projection_refusal(command, budget_id, exc) from exc
+        if epoch is None:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_not_found",
+                details={"budget_id": budget_id},
+            )
+        if epoch.workspace_path != str(runtime.paths.workspace_path):
+            raise _budget_stop_refusal(
+                command,
+                code="budget_workspace_mismatch",
+                details={
+                    "budget_id": budget_id,
+                    "budget_workspace": epoch.workspace_path,
+                    "workspace": str(runtime.paths.workspace_path),
+                },
+            )
+        replayed = (
+            epoch.status == "stopped"
+            and epoch.terminal_reason == "operator_completed"
+        )
+        if epoch.status != "active" and not replayed:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_terminal_conflict",
+                details={
+                    "budget_id": budget_id,
+                    "status": epoch.status,
+                    "terminal_reason": epoch.terminal_reason,
+                },
+            )
+        if replayed:
+            try:
+                state = runtime.store.load_runtime_state(runtime.cas_store)
+                _validate_budget_stop_preconditions(
+                    runtime,
+                    state,
+                    epoch,
+                    command=command,
+                )
+            except CliCommandError:
+                raise
+            except ValueError as exc:
+                raise _budget_projection_refusal(command, budget_id, exc) from exc
+        else:
+            def validate_budget_stop(
+                checked_runtime: OpenRuntimeContext,
+                checked_state: object,
+                checked_epoch: DaemonBudgetEpochRecord,
+            ) -> None:
+                if checked_epoch.status != "active":
+                    raise _budget_stop_refusal(
+                        command,
+                        code="budget_terminal_conflict",
+                        details={
+                            "budget_id": checked_epoch.budget_id,
+                            "status": checked_epoch.status,
+                            "terminal_reason": checked_epoch.terminal_reason,
+                        },
+                    )
+                _validate_budget_stop_preconditions(
+                    checked_runtime,
+                    checked_state,
+                    checked_epoch,
+                    command=command,
+                )
+
+            try:
+                terminalize_daemon_budget_with_suspension(
+                    runtime,
+                    budget_id=budget_id,
+                    observed_at=max(int(time.time()), epoch.last_observed_at),
+                    status="stopped",
+                    reason="operator_completed",
+                    command=command,
+                    actor_id=actor,
+                    validate=validate_budget_stop,
+                )
+            except CliCommandError:
+                raise
+            except ValueError as exc:
+                raise _budget_projection_refusal(command, budget_id, exc) from exc
+        final_epoch = runtime.store.load_daemon_budget_epoch(budget_id)
+        if final_epoch is None:
+            raise _budget_projection_refusal(
+                command,
+                budget_id,
+                ValueError("daemon budget epoch disappeared after terminalization"),
+            )
+        final_state = runtime.store.load_runtime_state(runtime.cas_store)
+        budget = _budget_stop_projection(runtime, final_state, final_epoch)
+        suspension = final_state.dispatch_suspension
+        if suspension is None:
+            raise CliCommandError(
+                command=command,
+                code="budget_dispatch_suspension_missing",
+                message="Budget stopped without a dispatch-suspension projection.",
+                exit_code=ExitCode.PERSISTENCE_FAILURE,
+                details={"budget_id": budget_id},
+            )
+    finally:
+        runtime.close()
+    return success_result(
+        command=command,
+        code="budget_stopped",
+        message="Daemon budget stopped.",
+        data={
+            "budget": budget,
+            "dispatch_suspension": json_ready(suspension),
+            "replayed": replayed,
+        },
+    )
+
+
+def _validate_budget_stop_preconditions(
+    runtime: OpenRuntimeContext,
+    state: object,
+    epoch: DaemonBudgetEpochRecord,
+    *,
+    command: str,
+) -> None:
+    if epoch.status == "active":
+        if getattr(state, "default_plan_ref", None) != epoch.selected_plan_ref:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_plan_mismatch",
+                details={"budget_id": epoch.budget_id},
+            )
+        suspension = getattr(state, "dispatch_suspension", None)
+        if (
+            suspension is not None
+            and suspension.status == "active"
+            and suspension.selected_plan_ref != epoch.selected_plan_ref
+        ):
+            raise _budget_stop_refusal(
+                command,
+                code="budget_dispatch_suspension_mismatch",
+                details={"budget_id": epoch.budget_id},
+            )
+    pending_ids = runtime.store.pending_budgeted_runner_start_session_ids(
+        epoch.budget_id
+    )
+    if pending_ids:
+        raise _budget_stop_refusal(
+            command,
+            code="budget_pending_reservation",
+            details={
+                "budget_id": epoch.budget_id,
+                "session_ids": list(pending_ids[:100]),
+                "session_count": len(pending_ids),
+            },
+        )
+    session_count, session_ids = runtime.store.daemon_budget_session_ids(
+        epoch.budget_id,
+        limit=100,
+    )
+    if session_count != len(session_ids):
+        raise _budget_stop_refusal(
+            command,
+            code="budget_session_projection_unbounded",
+            details={
+                "budget_id": epoch.budget_id,
+                "session_count": session_count,
+                "projection_limit": 100,
+            },
+        )
+    for session_id in session_ids:
+        session = getattr(state, "runner_sessions", {}).get(session_id)
+        if session is None:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_missing",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        bound_budget_id = runtime.store.daemon_budget_id_for_session(session_id)
+        if bound_budget_id != epoch.budget_id:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_identity_mismatch",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        run = getattr(state, "runs", {}).get(session.run_id)
+        if (
+            run is None
+            or run.run_ref.run_id != session.run_id
+            or run.run_ref.plan_ref != epoch.selected_plan_ref
+        ):
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_identity_mismatch",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        if session.state == "lost":
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_lost",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        if session.state not in {"completed", "interrupted", "failed"}:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_not_terminal",
+                details={
+                    "budget_id": epoch.budget_id,
+                    "session_id": session_id,
+                    "state": session.state,
+                },
+            )
+        if session.cleanup_disposition == "orphan_risk":
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_orphan_risk",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        if session.cleanup_disposition not in {"complete", "not_required"}:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_cleanup_incomplete",
+                details={
+                    "budget_id": epoch.budget_id,
+                    "session_id": session_id,
+                    "cleanup_disposition": session.cleanup_disposition,
+                },
+            )
+        completion = getattr(state, "runner_session_completions", {}).get(
+            session_id
+        )
+        if completion is None:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_completion_missing",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        if (
+            completion.session_id != session.session_id
+            or completion.run_id != session.run_id
+            or completion.dispatch_generation != session.dispatch_generation
+            or completion.session_fencing_token != session.session_fencing_token
+            or completion.terminal_state != session.state
+            or completion.cleanup_disposition != session.cleanup_disposition
+        ):
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_identity_mismatch",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        try:
+            usage = runtime.store.load_runner_session_usage(session_id)
+        except ValueError as exc:
+            raise _budget_projection_refusal(
+                command,
+                epoch.budget_id,
+                exc,
+                session_id=session_id,
+            ) from exc
+        if usage is None:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_usage_missing",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        if (
+            usage.budget_id != epoch.budget_id
+            or usage.run_id != session.run_id
+            or usage.dispatch_generation != session.dispatch_generation
+            or usage.session_fencing_token != session.session_fencing_token
+        ):
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_identity_mismatch",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+        if not usage.final:
+            raise _budget_stop_refusal(
+                command,
+                code="budget_session_usage_not_final",
+                details={"budget_id": epoch.budget_id, "session_id": session_id},
+            )
+
+
+def _budget_stop_projection(
+    runtime: OpenRuntimeContext,
+    state: object,
+    epoch: DaemonBudgetEpochRecord,
+) -> dict[str, object]:
+    from millrace.adapters.cli.status import _daemon_budget_projection
+
+    return _daemon_budget_projection(runtime, state, epoch)
+
+
+def _budget_stop_refusal(
+    command: str,
+    *,
+    code: str,
+    details: dict[str, object],
+) -> CliCommandError:
+    return CliCommandError(
+        command=command,
+        code=code,
+        message="Daemon budget stop was refused.",
+        exit_code=ExitCode.DOMAIN_REFUSAL,
+        details=details,
+    )
+
+
+def _budget_projection_refusal(
+    command: str,
+    budget_id: str,
+    exc: ValueError,
+    *,
+    session_id: str | None = None,
+) -> CliCommandError:
+    details: dict[str, object] = {
+        "budget_id": budget_id,
+        "reason": str(exc),
+    }
+    if session_id is not None:
+        details["session_id"] = session_id
+    return _budget_stop_refusal(
+        command,
+        code="budget_projection_corrupt",
+        details=details,
+    )
 
 
 def daemon_options_from_namespace(namespace: object) -> DaemonRunOptions:

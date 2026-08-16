@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING
 from millrace.adapters.cli.output import CliError, ExitCode, error_result
 
 if TYPE_CHECKING:
-    from millrace.contracts.state import RuntimeState
+    from millrace.contracts.state import DaemonBudgetEpochRecord, RuntimeState
     from millrace.contracts.transition import (
         TransitionContext,
         TransitionDecision,
@@ -273,6 +274,11 @@ def terminalize_daemon_budget_with_suspension(
     status: str,
     reason: str,
     command: str,
+    actor_id: str = "daemon_budget",
+    validate: Callable[
+        [OpenRuntimeContext, RuntimeState, DaemonBudgetEpochRecord], None
+    ]
+    | None = None,
 ) -> None:
     """Persist budget terminalization and its admission gate as one SQLite unit."""
     from millrace.contracts.transition import SuspendDispatch
@@ -285,6 +291,8 @@ def terminalize_daemon_budget_with_suspension(
         if epoch is None:
             raise ValueError("daemon budget epoch is missing")
         state = runtime.store.load_runtime_state(runtime.cas_store)
+        if validate is not None:
+            validate(runtime, state, epoch)
         if state.dispatch_suspension is None or (
             state.dispatch_suspension.status != "active"
         ):
@@ -294,7 +302,7 @@ def terminalize_daemon_budget_with_suspension(
                 SuspendDispatch(
                     f"daemon-budget:{epoch.budget_id}:suspend",
                     plan_fingerprint=epoch.selected_plan_ref.authority_fingerprint,
-                    actor_id="daemon_budget",
+                    actor_id=actor_id,
                     reason=reason,
                 ),
                 command=command,

@@ -33,7 +33,7 @@ from millrace.contracts.runner import (
     runner_session_completion_diagnostic_bytes,
     runner_session_completion_diagnostic_from_payload,
 )
-from millrace.contracts.state import RuntimeState
+from millrace.contracts.state import DaemonBudgetEpochRecord, RuntimeState
 from millrace.operator.dispatch import (
     list_ready_dispatch_candidates,
     run_may_start_while_dispatch_suspended,
@@ -623,60 +623,66 @@ def _daemon_budget_projections(
     runtime: OpenRuntimeContext,
     state: RuntimeState,
 ) -> list[dict[str, object]]:
-    projections: list[dict[str, object]] = []
-    for epoch in runtime.store.list_daemon_budget_epochs():
-        projection = daemon_budget_projection(epoch)
-        count, session_ids = runtime.store.daemon_budget_session_ids(
-            epoch.budget_id,
-            limit=_DAEMON_BUDGET_SESSION_MAX_ITEMS,
-        )
-        sessions: list[dict[str, object]] = []
-        for session_id in session_ids:
-            session = state.runner_sessions.get(session_id)
-            if session is None:
-                sessions.append(
-                    {
-                        "session_id": session_id,
-                        "usage_evidence": {
-                            "status": "contradictory",
-                            "reason": "runner_usage_evidence_refused",
-                        },
-                    }
-                )
-                continue
-            usage_evidence: dict[str, object]
-            try:
-                bound_budget_id = runtime.store.daemon_budget_id_for_session(
-                    session_id
-                )
-            except ValueError:
-                usage_evidence = {
+    return [
+        _daemon_budget_projection(runtime, state, epoch)
+        for epoch in runtime.store.list_daemon_budget_epochs()
+    ]
+
+
+def _daemon_budget_projection(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+    epoch: DaemonBudgetEpochRecord,
+) -> dict[str, object]:
+    projection = daemon_budget_projection(epoch)
+    count, session_ids = runtime.store.daemon_budget_session_ids(
+        epoch.budget_id,
+        limit=_DAEMON_BUDGET_SESSION_MAX_ITEMS,
+    )
+    sessions: list[dict[str, object]] = []
+    for session_id in session_ids:
+        session = state.runner_sessions.get(session_id)
+        if session is None:
+            sessions.append(
+                {
+                    "session_id": session_id,
+                    "usage_evidence": {
+                        "status": "contradictory",
+                        "reason": "runner_usage_evidence_refused",
+                    },
+                }
+            )
+            continue
+        usage_evidence: dict[str, object]
+        try:
+            bound_budget_id = runtime.store.daemon_budget_id_for_session(session_id)
+        except ValueError:
+            usage_evidence = {
+                "status": "contradictory",
+                "reason": "runner_usage_evidence_refused",
+            }
+        else:
+            usage_evidence = (
+                _usage_evidence_projection(runtime, session_id)
+                if bound_budget_id == epoch.budget_id
+                else {
                     "status": "contradictory",
                     "reason": "runner_usage_evidence_refused",
                 }
-            else:
-                usage_evidence = (
-                    _usage_evidence_projection(runtime, session_id)
-                    if bound_budget_id == epoch.budget_id
-                    else {
-                        "status": "contradictory",
-                        "reason": "runner_usage_evidence_refused",
-                    }
-                )
-            sessions.append(
-                {
-                    "session_id": session.session_id,
-                    "run_id": session.run_id,
-                    "dispatch_generation": session.dispatch_generation,
-                    "session_fencing_token": session.session_fencing_token,
-                    "usage_evidence": usage_evidence,
-                }
             )
-        projection["runner_session_count"] = count
-        projection["runner_sessions"] = sessions
-        projection["omitted_runner_session_count"] = count - len(sessions)
-        projections.append(projection)
-    return projections
+        sessions.append(
+            {
+                "session_id": session.session_id,
+                "run_id": session.run_id,
+                "dispatch_generation": session.dispatch_generation,
+                "session_fencing_token": session.session_fencing_token,
+                "usage_evidence": usage_evidence,
+            }
+        )
+    projection["runner_session_count"] = count
+    projection["runner_sessions"] = sessions
+    projection["omitted_runner_session_count"] = count - len(sessions)
+    return projection
 
 
 def _usage_evidence_projection(
@@ -974,6 +980,7 @@ def runner_session_projection(
         "session_id": session.session_id,
         "run_id": session.run_id,
         "dispatch_generation": session.dispatch_generation,
+        "session_fencing_token": session.session_fencing_token,
         "state": session.state,
         "adapter_kind": _selected_adapter_kind(state, run_id),
         "primary_cancellation_reason": (

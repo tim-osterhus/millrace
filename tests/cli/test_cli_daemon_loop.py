@@ -15,6 +15,7 @@ from typing import Any, cast
 
 import pytest
 from tests.cli.test_cli_bounded_execution_unit import (
+    _claim_only_state,
     _codex_error_config,
     _codex_mismatch_config,
     _codex_success_config,
@@ -795,6 +796,901 @@ def test_budget_terminalization_rolls_back_when_dispatch_suspension_fails(
     )
     assert _load(runtime).dispatch_suspension is not None
     runtime.close()
+
+
+def test_budget_stop_accepts_the_maximum_safe_ascii_id_with_active_suspension(
+    tmp_path: Path,
+) -> None:
+    from millrace.contracts.state import (
+        RUNNER_SESSION_TEXT_MAX_BYTES,
+        DaemonBudgetEpochRecord,
+    )
+
+    state, fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    assert state.default_plan_ref is not None
+    fixed_suspension_input_id = "daemon-budget::suspend"
+    budget_id = "x" * (
+        RUNNER_SESSION_TEXT_MAX_BYTES
+        - len(fixed_suspension_input_id.encode("utf-8"))
+    )
+    assert len(budget_id.encode("utf-8")) == 4074
+    epoch = DaemonBudgetEpochRecord(
+        budget_id=budget_id,
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=3,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    runtime.close()
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            budget_id,
+        ]
+    )
+
+    assert exit_code == 0, stderr
+    assert stderr == ""
+    result = _json(stdout)
+    suspension = result["data"]["dispatch_suspension"]
+    assert result["code"] == "budget_stopped"
+    assert result["data"]["budget"]["status"] == "stopped"
+    assert suspension["status"] == "active"
+    assert suspension["suspended_by_input_id"] == (
+        f"daemon-budget:{budget_id}:suspend"
+    )
+    assert len(suspension["suspended_by_input_id"].encode("utf-8")) == (
+        RUNNER_SESSION_TEXT_MAX_BYTES
+    )
+    assert suspension["selected_plan_ref"]["authority_fingerprint"] == fingerprint
+
+
+def test_budget_stop_closes_an_active_safe_epoch_with_a_bounded_public_envelope(
+    tmp_path: Path,
+) -> None:
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+
+    state, fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    assert state.default_plan_ref is not None
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-operator-stop",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=3,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    runtime.close()
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--actor-id",
+            "operator-7",
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+
+    assert exit_code == 0, stderr
+    assert stderr == ""
+    result = _json(stdout)
+    assert result["ok"] is True
+    assert result["command"] == "run.budget-stop"
+    assert result["code"] == "budget_stopped"
+    assert result["data"]["replayed"] is False
+    budget = result["data"]["budget"]
+    assert budget["budget_id"] == epoch.budget_id
+    assert budget["status"] == "stopped"
+    assert budget["terminal_reason"] == "operator_completed"
+    assert budget["plan_authority_fingerprint"] == fingerprint
+    assert budget["accepted_start_count"] == 0
+    assert budget["cumulative_total_tokens"] == 0
+    suspension = result["data"]["dispatch_suspension"]
+    assert suspension["status"] == "active"
+    assert suspension["actor_id"] == "operator-7"
+    assert suspension["reason"] == "operator_completed"
+    assert suspension["selected_plan_ref"]["authority_fingerprint"] == fingerprint
+
+
+def test_budget_stop_projects_target_beyond_global_budget_projection_cap(
+    tmp_path: Path,
+) -> None:
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+
+    state, _fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    assert state.default_plan_ref is not None
+    target = DaemonBudgetEpochRecord(
+        budget_id="budget-stop-target-101",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=1,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(target)
+    for index in range(100):
+        runtime.store.create_or_resume_daemon_budget_epoch(
+            DaemonBudgetEpochRecord(
+                budget_id=f"budget-stop-newer-{index:03d}",
+                workspace_path=str(runtime.paths.workspace_path),
+                selected_plan_ref=state.default_plan_ref,
+                max_wall_seconds=None,
+                max_invocations=1,
+                max_total_tokens=None,
+                started_at=index + 1,
+                wall_deadline=None,
+                last_observed_at=index + 1,
+            )
+        )
+    paths = runtime.paths
+    runtime.close()
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            target.budget_id,
+        ]
+    )
+
+    assert exit_code == 0, stderr
+    assert stderr == ""
+    result = _json(stdout)
+    assert result["data"]["budget"]["budget_id"] == target.budget_id
+    assert result["data"]["budget"]["status"] == "stopped"
+    assert result["data"]["budget"]["terminal_reason"] == "operator_completed"
+    assert result["data"]["dispatch_suspension"]["status"] == "active"
+
+
+def _terminal_budget_runtime(
+    tmp_path: Path,
+    *,
+    error: bool = False,
+    usage_final: bool | None = True,
+) -> tuple[object, object, object]:
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+    from millrace.contracts.state import (
+        DaemonBudgetEpochRecord,
+        RunnerSessionUsageRecord,
+    )
+
+    state, _fingerprint = _state_with_runner_kind("codex")
+    runtime = _runtime(tmp_path, state)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=(_codex_error_config() if error else _codex_success_config()),
+    )
+    assert result.run_id is not None
+    durable = _load(runtime)
+    run = durable.runs[result.run_id]
+    assert run.current_session_id is not None
+    session = durable.runner_sessions[run.current_session_id]
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-stop-session",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=run.run_ref.plan_ref,
+        max_wall_seconds=None,
+        max_invocations=2,
+        max_total_tokens=100,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    runtime.store.reserve_budgeted_runner_start(epoch.budget_id, session)
+    runtime.store.record_budgeted_runner_start(epoch.budget_id, session)
+    if usage_final is not None:
+        runtime.store.record_runner_session_usage(
+            RunnerSessionUsageRecord(
+                budget_id=epoch.budget_id,
+                session_id=session.session_id,
+                run_id=session.run_id,
+                dispatch_generation=session.dispatch_generation,
+                session_fencing_token=session.session_fencing_token,
+                input_tokens=10,
+                output_tokens=5,
+                total_tokens=15,
+                observed_at=session.start_intent_at or 0,
+                final=usage_final,
+            )
+        )
+    return runtime, epoch, session
+
+
+def test_budget_stop_preserves_bound_session_identity_counters_and_usage(
+    tmp_path: Path,
+) -> None:
+    runtime, epoch, session = _terminal_budget_runtime(tmp_path)
+    paths = runtime.paths
+    runtime.close()
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+
+    assert exit_code == 0, stderr
+    result = _json(stdout)
+    budget = result["data"]["budget"]
+    assert budget["accepted_start_count"] == 1
+    assert budget["cumulative_input_tokens"] == 10
+    assert budget["cumulative_output_tokens"] == 5
+    assert budget["cumulative_total_tokens"] == 15
+    projected_session = budget["runner_sessions"][0]
+    assert projected_session["session_id"] == session.session_id
+    assert projected_session["run_id"] == session.run_id
+    assert projected_session["dispatch_generation"] == session.dispatch_generation
+    assert projected_session["session_fencing_token"] == session.session_fencing_token
+    assert projected_session["usage_evidence"]["final"] is True
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_code"),
+    (
+        ("created", "budget_pending_reservation"),
+        ("starting", "budget_session_not_terminal"),
+        ("running", "budget_session_not_terminal"),
+    ),
+)
+def test_budget_stop_refuses_live_or_pending_runner_sessions_without_mutation(
+    tmp_path: Path,
+    kind: str,
+    expected_code: str,
+) -> None:
+    from millrace.adapters.cli.context import transition_context
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+    from millrace.contracts.transition import AdvanceRunnerSession, CreateRunnerSession
+    from millrace.kernel import apply, decide
+
+    state = _claim_only_state()
+    runtime = _runtime(tmp_path, state)
+    run = next(iter(state.runs.values()))
+    session_id = f"session-budget-stop-{kind}"
+    session_fence = f"fence-budget-stop-{kind}"
+    create = CreateRunnerSession(
+        f"create-{kind}",
+        run_ref=run.run_ref,
+        session_id=session_id,
+        session_fencing_token=session_fence,
+        created_at=1,
+        explicit_retry_intent=False,
+    )
+    decision = decide(
+        state,
+        create,
+        transition_context(command="test", input_id_value=create.input_id),
+    )
+    assert decision.accepted is True
+    state = apply(state, decision)
+    if kind in {"starting", "running"}:
+        starting = AdvanceRunnerSession(
+            f"start-{kind}",
+            run_ref=run.run_ref,
+            session_id=session_id,
+            dispatch_generation=1,
+            session_fencing_token=session_fence,
+            expected_state="created",
+            next_state="starting",
+            occurred_at=2,
+        )
+        decision = decide(
+            state,
+            starting,
+            transition_context(command="test", input_id_value=starting.input_id),
+        )
+        assert decision.accepted is True
+        state = apply(state, decision)
+    if kind == "running":
+        running = AdvanceRunnerSession(
+            "running-budget-stop",
+            run_ref=run.run_ref,
+            session_id=session_id,
+            dispatch_generation=1,
+            session_fencing_token=session_fence,
+            expected_state="starting",
+            next_state="running",
+            occurred_at=3,
+        )
+        decision = decide(
+            state,
+            running,
+            transition_context(command="test", input_id_value=running.input_id),
+        )
+        assert decision.accepted is True
+        state = apply(state, decision)
+    runtime.store.persist_runtime_state(state, runtime.cas_store)
+    durable = _load(runtime)
+    session = durable.runner_sessions[session_id]
+    epoch = DaemonBudgetEpochRecord(
+        budget_id=f"budget-live-{kind}",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=run.run_ref.plan_ref,
+        max_wall_seconds=None,
+        max_invocations=2,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    runtime.store.reserve_budgeted_runner_start(epoch.budget_id, session)
+    if session.start_intent_at is not None:
+        runtime.store.record_budgeted_runner_start(epoch.budget_id, session)
+    paths = runtime.paths
+    runtime.close()
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+
+    assert exit_code == 3, stdout
+    assert stdout == ""
+    assert _json(stderr)["code"] == expected_code
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    observer = SQLiteRuntimeStore.open(paths.db_path)
+    try:
+        persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
+        assert persisted is not None
+        assert persisted.status == "active"
+        state_after = observer.load_runtime_state(
+            ContentAddressedByteStore(paths.cas_path)
+        )
+        assert state_after.dispatch_suspension is None
+    finally:
+        observer.close()
+
+
+@pytest.mark.parametrize(
+    ("usage_final", "expected_code"),
+    (
+        (None, "budget_session_usage_missing"),
+        (False, "budget_session_usage_not_final"),
+    ),
+)
+def test_budget_stop_refuses_missing_or_nonfinal_governed_usage_without_mutation(
+    tmp_path: Path,
+    usage_final: bool | None,
+    expected_code: str,
+) -> None:
+    runtime, epoch, _session = _terminal_budget_runtime(
+        tmp_path,
+        error=True,
+        usage_final=usage_final,
+    )
+    paths = runtime.paths
+    runtime.close()
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+
+    assert exit_code == 3, stdout
+    assert stdout == ""
+    assert _json(stderr)["code"] == expected_code
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    observer = SQLiteRuntimeStore.open(paths.db_path)
+    try:
+        persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
+        assert persisted is not None
+        assert persisted.status == "active"
+        assert observer.load_runtime_state(
+            ContentAddressedByteStore(paths.cas_path)
+        ).dispatch_suspension is None
+    finally:
+        observer.close()
+
+
+def test_budget_stop_refuses_lost_orphan_risk_session_without_mutation(
+    tmp_path: Path,
+) -> None:
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    runtime, epoch, session = _terminal_budget_runtime(tmp_path, error=True)
+    runtime.store._connection.execute(
+        """
+        UPDATE runner_sessions
+        SET state = 'lost', cleanup_disposition = 'orphan_risk'
+        WHERE session_id = ?
+        """,
+        (session.session_id,),
+    )
+    runtime.store._connection.execute(
+        """
+        UPDATE runner_session_completions
+        SET terminal_state = 'lost', cleanup_disposition = 'orphan_risk'
+        WHERE session_id = ?
+        """,
+        (session.session_id,),
+    )
+    runtime.store._connection.commit()
+    paths = runtime.paths
+    runtime.close()
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+
+    assert exit_code == 3, stdout
+    assert stdout == ""
+    assert _json(stderr)["code"] == "budget_session_lost"
+    observer = SQLiteRuntimeStore.open(paths.db_path)
+    try:
+        persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
+        assert persisted is not None
+        assert persisted.status == "active"
+        assert observer.load_runtime_state(
+            ContentAddressedByteStore(paths.cas_path)
+        ).dispatch_suspension is None
+    finally:
+        observer.close()
+
+
+def test_budget_stop_missing_completion_is_a_bounded_persistence_refusal(
+    tmp_path: Path,
+) -> None:
+    runtime, epoch, session = _terminal_budget_runtime(tmp_path, error=True)
+    runtime.store._connection.execute(
+        "DELETE FROM runner_session_completions WHERE session_id = ?",
+        (session.session_id,),
+    )
+    runtime.store._connection.commit()
+    paths = runtime.paths
+    runtime.close()
+
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+
+    assert exit_code == 4
+    assert stdout == ""
+    assert _json(stderr)["code"] == "substrate_error"
+def test_budget_stop_refuses_unknown_wrong_workspace_and_terminal_conflicts(
+    tmp_path: Path,
+) -> None:
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+
+    state, _fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    assert state.default_plan_ref is not None
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-stop-conflict",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=1,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    runtime.close()
+
+    unknown_code, unknown_stdout, unknown_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            "unknown-budget",
+        ]
+    )
+    assert unknown_code == 3
+    assert unknown_stdout == ""
+    assert _json(unknown_stderr)["code"] == "budget_not_found"
+
+    wrong_code, wrong_stdout, wrong_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(tmp_path / "wrong-workspace"),
+            "--db",
+            str(tmp_path / "workspace" / ".millrace" / "runtime.sqlite3"),
+            "--cas",
+            str(tmp_path / "workspace" / ".millrace" / "cas"),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+    assert wrong_code == 3
+    assert wrong_stdout == ""
+    assert _json(wrong_stderr)["code"] == "budget_workspace_mismatch"
+
+    runtime = _runtime(tmp_path / "terminal", state)
+    terminal_epoch = replace(
+        epoch,
+        budget_id="budget-stop-terminal-conflict",
+        workspace_path=str(runtime.paths.workspace_path),
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(terminal_epoch)
+    runtime.store._stop_daemon_budget_epoch(
+        terminal_epoch.budget_id,
+        observed_at=1,
+        status="exhausted",
+        reason="invocation_limit_exhausted",
+    )
+    terminal_paths = runtime.paths
+    runtime.close()
+    conflict_code, conflict_stdout, conflict_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(terminal_paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            terminal_epoch.budget_id,
+        ]
+    )
+    assert conflict_code == 3
+    assert conflict_stdout == ""
+    assert _json(conflict_stderr)["code"] == "budget_terminal_conflict"
+
+
+def test_budget_stop_maps_active_to_concurrent_terminal_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import daemon
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+
+    state, _fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    assert state.default_plan_ref is not None
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-stop-concurrent-terminal",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=1,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    paths = runtime.paths
+    runtime.close()
+
+    original_terminalize = daemon.terminalize_daemon_budget_with_suspension
+
+    def terminalize_after_concurrent_stop(
+        checked_runtime: object,
+        **kwargs: object,
+    ) -> None:
+        checked_runtime.store._stop_daemon_budget_epoch(
+            epoch.budget_id,
+            observed_at=1,
+            status="exhausted",
+            reason="invocation_limit_exhausted",
+        )
+        original_terminalize(checked_runtime, **kwargs)
+
+    monkeypatch.setattr(
+        daemon,
+        "terminalize_daemon_budget_with_suspension",
+        terminalize_after_concurrent_stop,
+    )
+    exit_code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+
+    assert exit_code == 3
+    assert stdout == ""
+    error = _json(stderr)
+    assert error["command"] == "run.budget-stop"
+    assert error["code"] == "budget_terminal_conflict"
+    assert error["details"] == {
+        "budget_id": epoch.budget_id,
+        "status": "exhausted",
+        "terminal_reason": "invocation_limit_exhausted",
+    }
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    observer = SQLiteRuntimeStore.open(paths.db_path)
+    try:
+        persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
+        assert persisted is not None
+        assert persisted.status == "exhausted"
+        assert observer.load_runtime_state(
+            ContentAddressedByteStore(paths.cas_path)
+        ).dispatch_suspension is None
+    finally:
+        observer.close()
+
+
+def test_budget_stop_replay_after_public_dispatch_resume_does_not_resuspend(
+    tmp_path: Path,
+) -> None:
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+
+    state, fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    assert state.default_plan_ref is not None
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-stop-replay",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=1,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    paths = runtime.paths
+    runtime.close()
+
+    first_code, first_stdout, first_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+    assert first_code == 0, first_stderr
+    first = _json(first_stdout)["data"]
+    suspension = first["dispatch_suspension"]
+    resume_code, resume_stdout, resume_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "dispatch",
+            "resume",
+            "--plan-fingerprint",
+            fingerprint,
+            "--suspension-id",
+            suspension["suspension_id"],
+            "--input-id",
+            "resume-after-budget-stop",
+            "--reason",
+            "operator-review-complete",
+        ]
+    )
+    assert resume_code == 0, resume_stderr
+    assert _json(resume_stdout)["data"]["dispatch_suspension"]["status"] == (
+        "resumed"
+    )
+
+    replay_code, replay_stdout, replay_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+    assert replay_code == 0, replay_stderr
+    replay = _json(replay_stdout)
+    assert replay["data"]["replayed"] is True
+    assert replay["data"]["budget"]["status"] == "stopped"
+    assert replay["data"]["dispatch_suspension"]["status"] == "resumed"
+    assert replay["data"]["dispatch_suspension"]["generation"] == (
+        suspension["generation"]
+    )
+
+
+def test_automatic_daemon_restart_replays_publicly_stopped_budget(
+    tmp_path: Path,
+) -> None:
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+
+    state, _fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    assert state.default_plan_ref is not None
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-automatic-restart-after-stop",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=1,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    paths = runtime.paths
+    runtime.close()
+
+    stop_code, stop_stdout, stop_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "budget-stop",
+            "--budget-id",
+            epoch.budget_id,
+        ]
+    )
+    assert stop_code == 0, stop_stderr
+    restart_code, restart_stdout, restart_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(paths.workspace_path),
+            "run",
+            "daemon",
+            "--max-ticks",
+            "1",
+            "--budget-id",
+            epoch.budget_id,
+            "--max-invocations",
+            "1",
+        ]
+    )
+
+    assert restart_code == 0, restart_stderr
+    restart = _json(restart_stdout)
+    assert restart["data"]["stopped_reason"] == "budget_exhausted"
+    assert restart["data"]["budget"]["status"] == "stopped"
+    assert restart["data"]["budget"]["terminal_reason"] == "operator_completed"
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    observer = SQLiteRuntimeStore.open(paths.db_path)
+    try:
+        state_after = observer.load_runtime_state(
+            ContentAddressedByteStore(paths.cas_path)
+        )
+        assert state_after.dispatch_suspension is not None
+        assert state_after.dispatch_suspension.status == "active"
+        assert state_after.dispatch_suspension.actor_id == "local_operator"
+    finally:
+        observer.close()
+
+
+def test_budget_stop_rolls_back_when_dispatch_suspension_persistence_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli.daemon import handle_budget_stop_command
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    state, _fingerprint = _ready_state()
+    runtime = _runtime(tmp_path, state)
+    assert state.default_plan_ref is not None
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-stop-rollback",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=state.default_plan_ref,
+        max_wall_seconds=None,
+        max_invocations=1,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    paths = runtime.paths
+    runtime.close()
+
+    def fail_persist(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected budget-stop suspension failure")
+
+    monkeypatch.setattr(SQLiteRuntimeStore, "persist_runtime_state", fail_persist)
+    with pytest.raises(
+        RuntimeError,
+        match="injected budget-stop suspension failure",
+    ):
+        handle_budget_stop_command(
+            SimpleNamespace(
+                workspace=str(paths.workspace_path),
+                db=str(paths.db_path),
+                cas=str(paths.cas_path),
+                budget_id=epoch.budget_id,
+                actor_id="operator-rollback",
+            )
+        )
+
+    observer = SQLiteRuntimeStore.open(paths.db_path)
+    try:
+        persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
+        assert persisted == epoch
+        assert observer.load_runtime_state(
+            ContentAddressedByteStore(paths.cas_path)
+        ).dispatch_suspension is None
+    finally:
+        observer.close()
 
 
 def test_invocation_ceiling_prevents_another_start_before_adapter_call(

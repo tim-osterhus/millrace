@@ -172,7 +172,8 @@ to each listed active run. `runs show RUN_ID` and `trace show RUN_ID` expose
 the current session for that run. `status` exposes current sessions across its
 runtime scope. The projection can include:
 
-- session ID, dispatch generation, state, and selected adapter kind;
+- session ID, dispatch generation, session fencing token, state, and selected
+  adapter kind;
 - primary cancellation reason and current phase;
 - cleanup disposition and orphan-risk state;
 - completion persistence and deterministic application-receipt status;

@@ -41,6 +41,22 @@ These normalized input, output, and total token counters enforce the selected
 daemon ceiling. They are adapter-reported execution evidence, not billing,
 invoice, provider spend, price, or provider rate-limit truth.
 
+An explicit operator close is available for one existing epoch:
+
+```bash
+millrace run budget-stop --budget-id bounded-run-1
+```
+
+The command uses the global `--actor-id` and has no caller-selected terminal
+reason. It refuses unless every session bound to the epoch is terminal, clean,
+non-lost, completed, and backed by final governed usage evidence. A successful
+close records status `stopped` with the exact reason `operator_completed` and
+atomically suspends new dispatch. The success envelope contains the bounded
+final budget projection and the suspension record needed by the existing
+`dispatch resume` command. Replaying the exact stopped/operator-completed
+epoch is idempotent, including after that suspension has legitimately been
+resumed.
+
 Wall expiry uses the existing `daemon_shutdown` runner-session cancellation
 path. Invocation and completed-token exhaustion prevent another daemon unit.
 The daemon summary, `status`, run/trace projections, and `doctor` expose
@@ -80,11 +96,11 @@ authority.
 
 JSON stop output reports bounded counters, `stopped_reason`, `last_result`,
 diagnostics, and the affected `runner_session` when available. That session
-projection includes selected adapter kind, cancellation reason/phase, cleanup,
-completion/application status, orphan risk, mechanical grace constants, and
-the last persisted cancellation operation/result when available. It does not
-claim static operation support that a live handle has not proved. Human output
-remains compact.
+projection includes session identity and fencing, selected adapter kind,
+cancellation reason/phase, cleanup, completion/application status, orphan risk,
+mechanical grace constants, and the last persisted cancellation
+operation/result when available. It does not claim static operation support
+that a live handle has not proved. Human output remains compact.
 
 Stop summaries are read-only projections. They do not repair state, replace a
 session, or create workflow meaning.

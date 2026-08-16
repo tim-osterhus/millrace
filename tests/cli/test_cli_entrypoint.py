@@ -415,6 +415,7 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
         (("dispatch", "show", "run.id"), "_dispatch_dispatch"),
         (("doctor",), "_dispatch_doctor"),
         (("run", "daemon"), "_dispatch_run"),
+        (("run", "budget-stop", "--budget-id", "budget.id"), "_dispatch_run"),
     )
     called: list[str] = []
 
@@ -440,7 +441,7 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
         for command in help_parsers
         if command in {"status", "doctor"} or "." in command
     }
-    assert len(command_cases) == 43
+    assert len(command_cases) == 44
     assert registered_leaves == {
         ".".join(argv[:2]) if argv[0] not in {"status", "doctor"} else argv[0]
         for argv, _expected in command_cases
