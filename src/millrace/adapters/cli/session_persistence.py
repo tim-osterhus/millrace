@@ -47,12 +47,12 @@ def _persist_governed_runner_usage(
         epoch = runtime.store.load_daemon_budget_epoch(budget_id)
         if epoch is None:
             return False
-        if epoch.max_total_tokens is None:
-            return True
         usage = None if outcome is None else outcome.token_usage
         if usage is None:
-            _refuse_governed_usage(runtime, epoch)
-            return False
+            if epoch.max_total_tokens is not None:
+                _refuse_governed_usage(runtime, epoch)
+                return False
+            return True
         runtime.store.record_runner_session_usage(
             RunnerSessionUsageRecord(
                 budget_id=budget_id,

@@ -31,6 +31,12 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Fixed
 
+- Preserved authenticated Codex protocol-4 errors when trustworthy token usage
+  is unavailable, while keeping non-null exact usage mandatory for successful
+  results.
+- Decoupled durable runner-usage recording from total-token enforcement. Valid
+  usage is now retained for any budget-bound session, while missing usage
+  refuses only epochs that actually enforce a token ceiling.
 - Made verdict admission and restart reconciliation strict. Invalid evidence
   now causes a durable refusal instead of a restart fallback.
 - Added fail-closed capacity checks that reject oversized requests before

@@ -33,13 +33,16 @@ limits, start time, and wall deadline in the schema-9 store. Reusing the same
 ID with identical authority resumes its totals and deadline. Changed limits,
 workspace, or plan are refused. Accepted runner start intents are counted once
 per fenced runner session, and reviewed adapter usage is accumulated
-monotonically against that same session identity. Missing or contradictory
-usage under a token-governed epoch refuses the epoch rather than treating
-usage as zero.
+monotonically against that same session identity whenever it is available,
+including for epochs that enforce only wall or invocation limits. Missing or
+contradictory usage under a token-governed epoch refuses the epoch rather than
+treating usage as zero; without a token ceiling, absent usage does not replace
+the runner's primary outcome with a usage-governance refusal.
 
-These normalized input, output, and total token counters enforce the selected
-daemon ceiling. They are adapter-reported execution evidence, not billing,
-invoice, provider spend, price, or provider rate-limit truth.
+When a total-token ceiling is selected, these normalized input, output, and
+total counters enforce it. Otherwise they remain durable measurement evidence.
+They are adapter-reported execution evidence, not billing, invoice, provider
+spend, price, or provider rate-limit truth.
 
 An explicit operator close is available for one existing epoch:
 

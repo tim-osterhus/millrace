@@ -51,7 +51,8 @@ work when configured for protocol 3.
 Protocol 4 is the selected-context and reviewed-usage path. It uses bundle
 schema version 4, is the only Codex protocol eligible for a daemon
 `--max-total-tokens` budget, and is required by configurations that use
-selected context or durable usage evidence.
+selected context. Valid protocol-4 usage is also retained as durable evidence
+for any budget-bound runner session, even when no total-token ceiling is set.
 
 Duplicate-key rejection is a protocol-4 rule; protocol 3 retains legacy JSON
 parsing compatibility.
@@ -198,20 +199,17 @@ For protocol 3, the wrapper may instead return an exact error envelope, selected
 | `diagnostics` | object | JSON-compatible authority values; Millrace applies the existing typed redaction and bounds. |
 
 Protocol 4 adds exactly one top-level `token_usage` key to the error envelope.
-An authenticated error after provider work must carry a non-null usage object
-with the same exact three fields and total invariant as a success. A null
-value is permitted only for `missing_opt_in_config`. That wrapper envelope is
-the pinned fail-closed preflight case: it must refuse before any `codex exec`
-or provider work. Other pre-provider refusal semantics are adapter-generated
-outcomes, not protocol-4 wrapper envelopes. Transport, redaction, and adapter
-refusal outcomes therefore do not acquire wrapper usage by implication; when
-external work occurred and usage is absent, the existing budget path refuses
-the evidence and suspends rather than counting zero or completing. A success
-with null usage, any other error kind with null usage, missing or extra usage
-fields, duplicate JSON keys, booleans, negatives, values above the durable
-int64 bound, or a contradictory total is `result_parse_failed`. Cached-input
-and reasoning-output subdivisions may remain bounded diagnostics, but they
-never change the three durable totals.
+It may be `null` when the wrapper cannot establish trustworthy provider usage;
+this preserves the authenticated error kind and bounded diagnostics without
+inventing counters. When usage is available, it must use the same exact three
+fields and total invariant as a success. A token-governed budget still refuses
+missing usage and suspends rather than counting zero. Without a total-token
+ceiling, Millrace preserves the original error and records valid usage when it
+is present. A success with null usage, missing or extra usage fields, duplicate
+JSON keys, booleans, negatives, values above the durable int64 bound, or a
+contradictory total is `result_parse_failed`. Cached-input and reasoning-output
+subdivisions may remain bounded diagnostics, but they never change the three
+durable totals.
 
 The object must contain exactly these keys, and every dispatch-echo field is
 authenticated against the expected dispatch. Missing or extra keys, malformed
@@ -311,10 +309,11 @@ while its schema-7 dispatch envelope and dispatch echo carry the required
 derives the session-unique correlation and cancellation identities; once a
 session is active they are non-null and may not be supplied as alternate
 authority by wrapper output. Only protocol 4 exposes the reviewed usage
-mapping marker. When a token budget is selected, daemon startup refuses a
-protocol-3 Codex configuration before creating the budget epoch; a started
-protocol-4 session whose authenticated result lacks usage refuses the budget
-evidence and suspends the dispatch rather than completing silently.
+mapping marker. Valid usage is persisted for any budget-bound protocol-4
+session. When a token budget is selected, daemon startup refuses a protocol-3
+Codex configuration before creating the budget epoch; a started protocol-4
+session whose authenticated result lacks usage refuses the budget evidence and
+suspends the dispatch rather than completing silently.
 
 `millrace runs cancel RUN_ID --input-id ID` records a durable operator request.
 The coordinator signals only the exact owned subprocess session, then records

@@ -4045,6 +4045,91 @@ def test_missing_governed_usage_on_lost_session_refuses_budget_and_suspends(
     runtime.close()
 
 
+def test_governed_usage_persists_without_total_token_limit(tmp_path: Path) -> None:
+    from millrace.adapters.cli import (
+        session_cancellation,
+        session_completion,
+        session_reconciliation,
+    )
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+    from millrace.adapters.runner_contract import AdapterTokenUsage
+    from millrace.contracts.state import DaemonBudgetEpochRecord
+    from support.runner_sessions import (
+        _config,
+        _indeterminate_start,
+        _ready_state_with_two_activations,
+        _RecordingAdapter,
+        _success_outcome,
+    )
+
+    state, _fingerprint = _ready_state_with_two_activations()
+    runtime = _runtime(tmp_path, state)
+    adapter = _RecordingAdapter(_indeterminate_start)
+    config = _config(adapter)
+    started = run_bounded_execution_unit(runtime, local_config=config)
+    assert started.code == "session_reconciliation_required"
+    assert started.run_id is not None
+    durable = _load(runtime)
+    run = durable.runs[started.run_id]
+    assert run.current_session_id is not None
+    session = durable.runner_sessions[run.current_session_id]
+    epoch = DaemonBudgetEpochRecord(
+        budget_id="budget-usage-without-token-limit",
+        workspace_path=str(runtime.paths.workspace_path),
+        selected_plan_ref=run.run_ref.plan_ref,
+        max_wall_seconds=None,
+        max_invocations=2,
+        max_total_tokens=None,
+        started_at=0,
+        wall_deadline=None,
+        last_observed_at=0,
+    )
+    runtime.store.create_or_resume_daemon_budget_epoch(epoch)
+    runtime.store.reserve_budgeted_runner_start(epoch.budget_id, session)
+    runtime.store.record_budgeted_runner_start(epoch.budget_id, session)
+    running = session_reconciliation._advance_reconciled_starting_session(
+        runtime,
+        run_ref=run.run_ref,
+        session=session,
+        locator_digest=session.durable_locator_digest,
+    )
+    assert running is not None
+    request = adapter.requests[0]
+    outcome = replace(
+        _success_outcome(request),
+        token_usage=AdapterTokenUsage(
+            input_tokens=10,
+            output_tokens=5,
+            total_tokens=15,
+        ),
+    )
+
+    result = session_completion._persist_completion(
+        runtime,
+        run_ref=run.run_ref,
+        session=running,
+        request=request,
+        outcome=outcome,
+        cleanup=session_cancellation._terminal_cleanup_result(None, "complete"),
+        primary=None,
+        adapter_error_terminal_state="failed",
+    )
+
+    assert result.code != "runner_usage_evidence_refused"
+    persisted_epoch = runtime.store.load_daemon_budget_epoch(epoch.budget_id)
+    assert persisted_epoch is not None
+    assert (
+        persisted_epoch.cumulative_input_tokens,
+        persisted_epoch.cumulative_output_tokens,
+        persisted_epoch.cumulative_total_tokens,
+    ) == (10, 5, 15)
+    final_usage = runtime.store.load_runner_session_usage(session.session_id)
+    assert final_usage is not None
+    assert final_usage.final
+    assert _load(runtime).dispatch_suspension is None
+    runtime.close()
+
+
 @pytest.mark.parametrize(
     "terminal_path",
     ("success", "failure", "cancellation", "timeout", "loss"),

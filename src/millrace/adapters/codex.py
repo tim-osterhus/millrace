@@ -511,7 +511,6 @@ class CodexAdapter:
                     else None,
                     protocol_version=self._config.wrapper_protocol_version,
                     outcome_kind="error",
-                    error_kind=error_kind,
                 )
                 diagnostics = _coerce_mapping(
                     wrapper_result["diagnostics"],
@@ -563,7 +562,6 @@ class CodexAdapter:
                 else None,
                 protocol_version=self._config.wrapper_protocol_version,
                 outcome_kind="success",
-                error_kind=None,
             )
             diagnostics = _coerce_mapping(
                 wrapper_result["evidence_construction_diagnostics"],
@@ -1143,15 +1141,12 @@ def _result_token_usage(
     *,
     protocol_version: int,
     outcome_kind: str,
-    error_kind: str | None,
 ) -> AdapterTokenUsage | None:
     if protocol_version != 4:
         return None
     if value is None:
         if outcome_kind == "success":
             raise ValueError("success token_usage must be non-null")
-        if error_kind != "missing_opt_in_config":
-            raise ValueError("post-provider error token_usage must be non-null")
         return None
     mapping = _coerce_mapping(value, "token_usage")
     if frozenset(mapping) != _TOKEN_USAGE_KEYS:

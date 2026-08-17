@@ -1277,7 +1277,7 @@ def test_codex_protocol4_requires_success_usage(tmp_path: Path) -> None:
     assert result.error_kind == "result_parse_failed"
 
 
-def test_codex_protocol4_allows_null_usage_only_for_missing_opt_in_preflight(
+def test_codex_protocol4_allows_null_usage_for_missing_opt_in_preflight(
     tmp_path: Path,
 ) -> None:
     from millrace.adapters.codex import CodexAdapter
@@ -1312,7 +1312,7 @@ def test_codex_protocol4_allows_null_usage_only_for_missing_opt_in_preflight(
         "selected_authority_refused",
     ),
 )
-def test_codex_protocol4_rejects_null_usage_for_every_other_error_kind(
+def test_codex_protocol4_preserves_authenticated_errors_with_null_usage(
     tmp_path: Path,
     error_kind: str,
 ) -> None:
@@ -1332,10 +1332,12 @@ def test_codex_protocol4_rejects_null_usage_for_every_other_error_kind(
     ).invoke(_request())
 
     assert isinstance(result, AdapterErrorResult)
-    assert result.error_kind == "result_parse_failed"
+    assert result.error_kind == error_kind
+    assert result.token_usage is None
+    assert result.diagnostics["reason"] == "ambiguous_or_post_provider"
 
 
-def test_codex_protocol4_provider_marker_plus_null_requires_parse_refusal(
+def test_codex_protocol4_provider_marker_plus_null_preserves_original_error(
     tmp_path: Path,
 ) -> None:
     from millrace.adapters.codex import CodexAdapter
@@ -1352,7 +1354,7 @@ def test_codex_protocol4_provider_marker_plus_null_requires_parse_refusal(
 
     assert marker_path.read_text(encoding="utf-8") == "provider-started"
     assert isinstance(result, AdapterErrorResult)
-    assert result.error_kind == "result_parse_failed"
+    assert result.error_kind == "selected_authority_refused"
     assert result.token_usage is None
 
 
