@@ -1066,6 +1066,41 @@ def test_completion_persists_before_workflow_application(
     assert observed_completion is True
 
 
+def test_pending_session_uses_quarter_second_poll_interval(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handle = None
+    sleep_calls: list[float] = []
+
+    class PendingThenTerminalHandle(_ImmediateHandle):
+        poll_calls = 0
+
+        def poll_completion(self):
+            self.poll_calls += 1
+            if self.poll_calls == 1:
+                return None
+            return super().poll_completion()
+
+    def start(request: AdapterInvocationRequest) -> StartedSession:
+        nonlocal handle
+        started = _success_start(request)
+        handle = PendingThenTerminalHandle(started.handle.poll_completion())
+        return replace(started, handle=handle)
+
+    monkeypatch.setattr(session_coordinator, "_sleep", sleep_calls.append)
+    runtime = _ready_runtime(tmp_path)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+
+    assert result.code == "observation_accepted"
+    assert handle is not None
+    assert handle.poll_calls == 2
+    assert sleep_calls == [0.25]
+
+
 def test_terminal_completion_requires_clean_handle_cleanup(tmp_path) -> None:
     cleaned = 0
 

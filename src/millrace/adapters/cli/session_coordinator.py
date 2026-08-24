@@ -45,7 +45,7 @@ session_cancellation_token = reconcile.session_cancellation_token
 session_correlation_id = reconcile.session_correlation_id
 terminate_grace_seconds = cancel.terminate_grace_seconds
 
-_POLL_INTERVAL_SECONDS = 0.01
+_POLL_INTERVAL_SECONDS = 0.25
 _PrepareCreatedSession = Callable[
     [RunnerSessionRecord], RunnerSessionRecord
 ]

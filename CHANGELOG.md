@@ -31,6 +31,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Fixed
 
+- Reconstructed counter pre-state when authenticating accepted lineage
+  artifacts for context checkouts after increment and threshold actions.
+- Reduced active runner-session polling frequency to lower daemon CPU usage.
 - Preserved authenticated Codex protocol-4 errors when trustworthy token usage
   is unavailable, while keeping non-null exact usage mandatory for successful
   results.

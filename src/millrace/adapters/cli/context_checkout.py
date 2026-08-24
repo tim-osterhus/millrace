@@ -40,7 +40,9 @@ from millrace.contracts.state import (
     Activation,
     AdmittedPlan,
     ArtifactRecord,
+    CounterRecord,
     GovernanceEventRecord,
+    PlanRef,
     RecoveryAttemptRecord,
     RunnerSessionRecord,
     RunRecord,
@@ -125,6 +127,12 @@ class _AuthenticatedArtifactSource:
     work_item: WorkItem
     activation: Activation
     selected_plan: SelectedCompiledPlan
+
+
+@dataclass(frozen=True, slots=True)
+class _CounterReplayHistory:
+    transition_indices_by_input_id: Mapping[str, tuple[int, ...]]
+    updates_by_counter_id: Mapping[str, tuple[tuple[int, str], ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1195,6 +1203,15 @@ def _runtime_bound_result(
 def _artifact_records(relation: _Relation) -> tuple[bytes, ...]:
     lineage = relation.work_item.lineage_id
     accepted: list[tuple[str, JSONValue]] = []
+    counter_action_ids = {
+        str(action_id)
+        for counter in relation.selected_plan.counters
+        for action_id in (
+            counter.increment_action_id,
+            counter.threshold_action_id,
+        )
+    }
+    counter_replay_history: _CounterReplayHistory | None = None
     artifacts = sorted(
         relation.state.artifacts.values(),
         key=lambda item: item.artifact_id.encode("utf-8"),
@@ -1203,9 +1220,20 @@ def _artifact_records(relation: _Relation) -> tuple[bytes, ...]:
         if _artifact_source_is_foreign_or_refuse(relation, artifact):
             continue
         try:
+            if (
+                str(artifact.source_action_id) in counter_action_ids
+                and counter_replay_history is None
+            ):
+                counter_replay_history = _index_counter_replay_history(
+                    state=relation.state,
+                    plan_ref=relation.run.run_ref.plan_ref,
+                    selected_plan=relation.selected_plan,
+                    lineage_id=lineage,
+                )
             source = _authenticate_artifact_source(
                 relation.state,
                 artifact,
+                counter_replay_history=counter_replay_history,
             )
         except Exception as exc:
             _refuse("relevant artifact provenance could not be authenticated", exc)
@@ -1238,9 +1266,214 @@ def _artifact_records(relation: _Relation) -> tuple[bytes, ...]:
     return tuple(_canonical_runtime_record(record) for _, record in accepted)
 
 
+def _index_counter_replay_history(
+    *,
+    state: RuntimeState,
+    plan_ref: PlanRef,
+    selected_plan: SelectedCompiledPlan,
+    lineage_id: str | None,
+) -> _CounterReplayHistory:
+    event_indices_by_input_id: dict[str, list[int]] = {}
+    event_indices_by_record_id: dict[str, list[int]] = {}
+    for index, event in enumerate(state.governance_events):
+        event_indices_by_input_id.setdefault(event.input_id, []).append(index)
+        event_indices_by_record_id.setdefault(event.record_id, []).append(index)
+    trace_indices_by_input_id: dict[str, list[int]] = {}
+    trace_indices_by_record_id: dict[str, list[int]] = {}
+    for index, trace in enumerate(state.traces):
+        trace_indices_by_input_id.setdefault(trace.input_id, []).append(index)
+        trace_indices_by_record_id.setdefault(trace.record_id, []).append(index)
+    history_sources = {}
+    for observation in state.runner_observations.values():
+        run = state.runs.get(observation.run_id)
+        if run is None or run.run_ref.plan_ref != plan_ref:
+            continue
+        work_item = state.work_items.get(run.work_item_id)
+        if work_item is None or work_item.lineage_id != lineage_id:
+            continue
+        if observation.created_by_input_id in history_sources:
+            _refuse("relevant artifact observation history is invalid")
+        history_sources[observation.created_by_input_id] = (
+            run,
+            work_item,
+        )
+    transition_indices: dict[str, list[int]] = {}
+    action_history: list[tuple[int, str, str]] = []
+    for index, transition in enumerate(state.transitions):
+        if not (
+            transition.accepted
+            and transition.input_kind == RunnerResultObserved.input_kind
+            and transition.input_family == "workflow_observation"
+        ):
+            continue
+        source = history_sources.get(transition.input_id)
+        if source is None:
+            continue
+        run, work_item = source
+        transition_indices.setdefault(transition.input_id, []).append(index)
+        event_indices = set(event_indices_by_input_id.get(transition.input_id, ()))
+        event_indices.update(
+            event_indices_by_record_id.get(
+                f"{transition.record_id}:governance",
+                (),
+            )
+        )
+        events = tuple(
+            state.governance_events[event_index]
+            for event_index in sorted(event_indices)
+        )
+        trace_indices = set(trace_indices_by_input_id.get(transition.input_id, ()))
+        trace_indices.update(
+            trace_indices_by_record_id.get(
+                f"{transition.record_id}:trace",
+                (),
+            )
+        )
+        traces = tuple(
+            state.traces[trace_index]
+            for trace_index in sorted(trace_indices)
+        )
+        expected_without_action = (
+            transition.input_id,
+            RunnerResultObserved.input_kind,
+            "workflow_observation",
+            "accepted",
+            plan_ref.authority_fingerprint,
+            work_item.ref.work_item_id,
+            run.run_ref.run_id,
+            "terminal_action",
+            None,
+        )
+        if len(events) != 1 or len(traces) != 1:
+            _refuse("relevant artifact observation history is invalid")
+        event = events[0]
+        trace = traces[0]
+        if not (
+            event.record_id == f"{transition.record_id}:governance"
+            and trace.record_id == f"{transition.record_id}:trace"
+            and event.action_id is not None
+            and event.action_id == trace.action_id
+            and (
+                *(_audit_fields(event)[:7]),
+                event.authority_source,
+                event.refusal_reason,
+            )
+            == expected_without_action
+            and (
+                *(_audit_fields(trace)[:7]),
+                trace.authority_source,
+                trace.refusal_reason,
+            )
+            == expected_without_action
+        ):
+            _refuse("relevant artifact observation history is invalid")
+        action_history.append(
+            (
+                index,
+                transition.input_id,
+                str(event.action_id),
+            )
+        )
+
+    updates_by_counter_id: dict[str, tuple[tuple[int, str], ...]] = {}
+    for counter in selected_plan.counters:
+        counter_id = str(counter.id)
+        if counter_id in updates_by_counter_id:
+            _refuse("relevant artifact observation counter authority is invalid")
+        action_ids = {
+            str(counter.increment_action_id),
+            str(counter.threshold_action_id),
+        }
+        updates_by_counter_id[counter_id] = tuple(
+            (index, input_id)
+            for index, input_id, action_id in action_history
+            if action_id in action_ids
+        )
+    return _CounterReplayHistory(
+        transition_indices_by_input_id={
+            input_id: tuple(indices)
+            for input_id, indices in transition_indices.items()
+        },
+        updates_by_counter_id=updates_by_counter_id,
+    )
+
+
+def _replay_counter_records(
+    *,
+    state: RuntimeState,
+    input_id: str,
+    plan_ref: PlanRef,
+    selected_plan: SelectedCompiledPlan,
+    lineage_id: str | None,
+    source_action_id: str,
+    replay_history: _CounterReplayHistory | None,
+) -> dict[str, CounterRecord]:
+    counter_declarations = tuple(
+        counter
+        for counter in selected_plan.counters
+        if source_action_id
+        in {
+            str(counter.increment_action_id),
+            str(counter.threshold_action_id),
+        }
+    )
+    if not counter_declarations:
+        return dict(state.counters)
+    if len(counter_declarations) != 1 or replay_history is None:
+        _refuse("relevant artifact observation counter authority is invalid")
+    counter_declaration = counter_declarations[0]
+    counter_records = tuple(
+        (record_id, counter)
+        for record_id, counter in state.counters.items()
+        if counter.selected_plan_ref == plan_ref
+        and counter.lineage_id == lineage_id
+        and str(counter.counter_id) == str(counter_declaration.id)
+    )
+    if len(counter_records) != 1:
+        _refuse("relevant artifact observation counter authority is invalid")
+    target_indices = replay_history.transition_indices_by_input_id.get(input_id, ())
+    if len(target_indices) != 1:
+        _refuse("relevant artifact observation history is invalid")
+    target_index = target_indices[0]
+
+    counter_id, counter = counter_records[0]
+    all_updates = replay_history.updates_by_counter_id.get(
+        str(counter_declaration.id),
+        (),
+    )
+    target_updates = tuple(entry for entry in all_updates if entry[1] == input_id)
+    if len(target_updates) != 1:
+        _refuse("relevant artifact observation counter authority is invalid")
+    if not all_updates or all_updates[-1][1] != counter.updated_by_input_id:
+        _refuse("relevant artifact observation counter authority is invalid")
+    if counter.value != len(all_updates):
+        _refuse("relevant artifact observation counter authority is invalid")
+    replay_counters = dict(state.counters)
+    rewind_updates = sum(entry[0] >= target_index for entry in all_updates)
+    replay_value = counter.value - rewind_updates
+    if replay_value < 0:
+        _refuse("relevant artifact observation counter authority is invalid")
+    if replay_value == 0:
+        del replay_counters[counter_id]
+    else:
+        prior_updates = tuple(
+            entry for entry in all_updates if entry[0] < target_index
+        )
+        if len(prior_updates) != replay_value:
+            _refuse("relevant artifact observation counter authority is invalid")
+        replay_counters[counter_id] = replace(
+            counter,
+            value=replay_value,
+            updated_by_input_id=prior_updates[-1][1],
+        )
+    return replay_counters
+
+
 def _authenticate_artifact_source(
     state: RuntimeState,
     artifact: ArtifactRecord,
+    *,
+    counter_replay_history: _CounterReplayHistory | None,
 ) -> _AuthenticatedArtifactSource:
     observations = tuple(
         observation
@@ -1283,6 +1516,13 @@ def _authenticate_artifact_source(
         observed_input
     ):
         _refuse("relevant artifact observation receipt is invalid")
+    run = state.runs.get(observation.run_id)
+    if run is None:
+        _refuse("relevant artifact source run is missing")
+    work_item = state.work_items.get(run.work_item_id)
+    admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
+    if work_item is None or admitted is None:
+        _refuse("relevant artifact source authority is incomplete")
     replay_state = replace(
         state,
         receipts={
@@ -1295,6 +1535,15 @@ def _authenticate_artifact_source(
             for key, value in state.runner_observations.items()
             if key != observation.observation_id
         },
+        counters=_replay_counter_records(
+            state=state,
+            input_id=input_id,
+            plan_ref=run.run_ref.plan_ref,
+            selected_plan=admitted.selected_plan,
+            lineage_id=work_item.lineage_id,
+            source_action_id=str(artifact.source_action_id),
+            replay_history=counter_replay_history,
+        ),
     )
     context = TransitionContext(
         transition_id=f"context-checkout:{input_id}:transition",
@@ -1328,13 +1577,8 @@ def _authenticate_artifact_source(
         input_id=input_id,
     ):
         _refuse("relevant artifact observation audit is invalid")
-    run = state.runs.get(observation.run_id)
-    if run is None:
-        _refuse("relevant artifact source run is missing")
-    work_item = state.work_items.get(run.work_item_id)
     activation = state.activations.get(run.activation_id)
-    admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
-    if work_item is None or activation is None or admitted is None:
+    if activation is None:
         _refuse("relevant artifact source authority is incomplete")
     source = _AuthenticatedArtifactSource(
         run=run,
