@@ -6,7 +6,11 @@ from typing import cast
 
 import pytest
 
-from millrace.compiler import authority_fingerprint, compile_workflow
+from millrace.compiler import (
+    SelectedRunnerAdapterPolicy,
+    authority_fingerprint,
+    compile_workflow,
+)
 from millrace.compiler.export import compiled_plan_export_bytes
 from millrace.contracts.ids import ActionId, ArtifactSchemaId
 from millrace.workflows import kernel_ping
@@ -95,6 +99,14 @@ def _source_with_context_binding(
         "stage_kind_id": "kernel_ping.taskmaster",
         "router_asset_id": "kernel_ping.context_router",
         "checkout_root": "checkout",
+        "max_hydrated_files": 16,
+        "max_hydrated_bytes": 16_384,
+        "mutation_policy": (
+            "reconcile_selected_writes"
+            if write_enabled
+            else "forbid_selected_roots"
+        ),
+        "materialization_retention": "until_session_durable_terminal",
         "required_sources": [
             {
                 "source_kind": "dispatch_material",
@@ -153,6 +165,34 @@ def _source_with_context_binding(
     return source
 
 
+SUPPORTED_CONTEXT_SOURCE_PAIRS: tuple[tuple[str, str], ...] = (
+    ("dispatch_material", "current"),
+    ("workspace_relative_root", "docs"),
+    ("selected_artifacts", "direct_predecessors"),
+    ("selected_artifacts", "current_lineage"),
+    ("selected_attempts", "since_last_accepted_transition"),
+    ("selected_attempts", "current_lineage"),
+)
+
+_OPAQUE_LOCAL_POLICY = SelectedRunnerAdapterPolicy(
+    default_adapter_kind="opaque_local",
+    supported_adapter_kinds=frozenset({"opaque_local"}),
+    component_bound_adapter_kinds=frozenset(),
+    default_component_selector=None,
+    default_component_required_capability_ids=frozenset(),
+    default_component_requires_complete_mappings=False,
+)
+
+
+def _source_with_opaque_local_context_binding() -> dict[str, object]:
+    source = _source_with_context_binding()
+    for runner in cast(list[dict[str, object]], source["runner_bindings"]):
+        runner["adapter_kind"] = "opaque_local"
+        runner.pop("component_pin", None)
+        runner.pop("terminal_result_mappings", None)
+    return source
+
+
 def _context_binding(source: dict[str, object]) -> dict[str, object]:
     return cast(list[dict[str, object]], source["context_bindings"])[0]
 
@@ -174,7 +214,180 @@ def test_compiles_generic_context_binding() -> None:
     result = compile_workflow(_source_with_context_binding())
 
     assert result.plan is not None
+    assert result.plan.schema_version == 18
     assert len(result.plan.context_bindings) == 1
+    binding = result.plan.context_bindings[0]
+    assert binding.schema_version == 2
+    assert binding.max_hydrated_files == 16
+    assert binding.max_hydrated_bytes == 16_384
+    assert binding.mutation_policy == "forbid_selected_roots"
+    assert binding.materialization_retention == "until_session_durable_terminal"
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "source_ref"),
+    SUPPORTED_CONTEXT_SOURCE_PAIRS,
+)
+def test_compiles_each_supported_context_source_pair(
+    source_kind: str,
+    source_ref: str,
+) -> None:
+    source = _source_with_context_binding()
+    _context_binding(source)["required_sources"] = [
+        {
+            "source_kind": source_kind,
+            "source_ref": source_ref,
+            "max_files": 8,
+            "max_bytes": 4096,
+        }
+    ]
+    _context_binding(source)["discoverable_sources"] = []
+
+    result = compile_workflow(source)
+
+    assert result.plan is not None
+    assert result.plan.context_bindings[0].required_sources[0].source_kind == (
+        source_kind
+    )
+    assert result.plan.context_bindings[0].required_sources[0].source_ref == (
+        source_ref
+    )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "max_hydrated_files",
+        "max_hydrated_bytes",
+        "mutation_policy",
+        "materialization_retention",
+    ),
+)
+def test_refuses_omitted_context_binding_v2_field(field_name: str) -> None:
+    source = _source_with_context_binding()
+    _context_binding(source).pop(field_name)
+
+    _refuses(source, "context_binding_shape")
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("max_hydrated_files", 0),
+        ("max_hydrated_files", -1),
+        ("max_hydrated_files", 2**63),
+        ("max_hydrated_bytes", 0),
+        ("max_hydrated_bytes", -1),
+        ("max_hydrated_bytes", 2**63),
+        ("max_hydrated_files", True),
+        ("max_hydrated_bytes", 1.0),
+    ),
+)
+def test_refuses_invalid_context_hydration_bounds(
+    field_name: str,
+    value: object,
+) -> None:
+    source = _source_with_context_binding()
+    _context_binding(source)[field_name] = value
+
+    _refuses(source, "context_binding_hydration_bounds")
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_code"),
+    (
+        (
+            "mutation_policy",
+            "allow_selected_roots",
+            "context_binding_mutation_policy",
+        ),
+        (
+            "materialization_retention",
+            "until_process_exit",
+            "context_binding_materialization_retention",
+        ),
+        ("mutation_policy", None, "context_binding_mutation_policy"),
+        (
+            "materialization_retention",
+            None,
+            "context_binding_materialization_retention",
+        ),
+    ),
+)
+def test_refuses_invalid_context_mutation_or_retention(
+    field_name: str,
+    value: object,
+    expected_code: str,
+) -> None:
+    source = _source_with_context_binding()
+    _context_binding(source)[field_name] = value
+
+    _refuses(source, expected_code)
+
+
+@pytest.mark.parametrize(
+    ("write_enabled", "mutation_policy"),
+    (
+        (False, "reconcile_selected_writes"),
+        (True, "forbid_selected_roots"),
+    ),
+)
+def test_refuses_illegal_context_mutation_and_write_rule_combination(
+    write_enabled: bool,
+    mutation_policy: str,
+) -> None:
+    source = _source_with_context_binding(write_enabled=write_enabled)
+    _context_binding(source)["mutation_policy"] = mutation_policy
+
+    _refuses(source, "context_binding_mutation_write_rules")
+
+
+def test_context_binding_does_not_leak_unselected_catalog() -> None:
+    source = _source_with_context_binding()
+    source["unselected_catalog"] = [
+        {
+            "id": "secret.unselected.context",
+            "content": "UNSELECTED_CONTEXT_SENTINEL",
+        }
+    ]
+
+    result = compile_workflow(source)
+
+    assert result.plan is not None
+    assert b"unselected_catalog" not in compiled_plan_export_bytes(result.plan)
+    assert b"UNSELECTED_CONTEXT_SENTINEL" not in compiled_plan_export_bytes(
+        result.plan
+    )
+
+
+def test_context_bound_schema17_authority_is_refused_without_migration() -> None:
+    from millrace.contracts.compiled_plan import context_binding_authority_refusal
+
+    legacy_authority = {
+        "record_kind": "selected_compiled_plan",
+        "schema_version": 17,
+        "context_bindings": [{"id": "legacy.context"}],
+    }
+
+    assert (
+        context_binding_authority_refusal(legacy_authority)
+        == "context_binding_schema_version:17"
+    )
+
+
+def test_compiles_synthetic_opaque_local_context_binding_without_special_terms(
+) -> None:
+    source = _source_with_opaque_local_context_binding()
+    result = compile_workflow(source, selected_runner_policy=_OPAQUE_LOCAL_POLICY)
+
+    assert result.plan is not None
+    authority = compiled_plan_export_bytes(result.plan).lower()
+    assert b"lad" not in authority
+    assert b"codex" not in authority
+    assert all(
+        runner.adapter_kind == "opaque_local"
+        for runner in result.plan.runner_bindings
+    )
 
 
 def test_context_declarations_are_public_contracts() -> None:
@@ -390,6 +603,61 @@ def test_refuses_context_binding_with_unsupported_source() -> None:
     } == {"context_binding_source_kind"}
 
 
+@pytest.mark.parametrize(
+    ("source_kind", "source_ref"),
+    (
+        ("accepted_lineage_artifacts", "current_lineage"),
+        ("lineage_attempt_history", "current_lineage"),
+        ("selected_artifacts", "current"),
+        ("selected_attempts", "current"),
+        ("dispatch_material", "current_lineage"),
+    ),
+)
+def test_refuses_unsupported_context_source_pairs(
+    source_kind: str,
+    source_ref: str,
+) -> None:
+    source = _source_with_context_binding()
+    binding = _context_binding(source)
+    binding["required_sources"] = [
+        {
+            "source_kind": source_kind,
+            "source_ref": source_ref,
+            "max_files": 1,
+            "max_bytes": 1,
+        }
+    ]
+    binding["discoverable_sources"] = []
+
+    _refuses(source, "context_binding_source_kind")
+
+
+def test_refuses_context_binding_roots_overlapping_protected_runtime_root() -> None:
+    source = _source_with_context_binding(write_enabled=True)
+    binding = _context_binding(source)
+    cast(list[dict[str, object]], binding["required_sources"])[0][
+        "source_ref"
+    ] = ".millrace"
+
+    _refuses(source, "context_binding_source_path")
+
+
+def test_refuses_context_binding_write_root_overlapping_protected_runtime_root(
+) -> None:
+    source = _source_with_context_binding(write_enabled=True)
+    rule = cast(list[dict[str, object]], _context_binding(source)["write_rules"])[0]
+    rule["relative_root"] = ".millrace"
+
+    _refuses(source, "context_binding_write_root")
+
+
+def test_refuses_context_binding_write_root_overlapping_checkout_root() -> None:
+    source = _source_with_context_binding(write_enabled=True)
+    _context_binding(source)["checkout_root"] = "src"
+
+    _refuses(source, "context_binding_checkout_source_overlap")
+
+
 def test_refuses_router_asset_kind_alias_that_build_would_not_select() -> None:
     source = _source_with_context_binding()
     assets = cast(list[dict[str, object]], source["assets"])
@@ -412,8 +680,21 @@ def test_compiles_write_enabled_context_binding() -> None:
 
     assert result.plan is not None
     binding = result.plan.context_bindings[0]
+    assert binding.mutation_policy == "reconcile_selected_writes"
     assert binding.writeback_terminal_action_id is not None
     assert binding.writeback_artifact_schema_id is not None
+
+
+def test_context_binding_closure_accepts_non_codex_runner() -> None:
+    source = _source_with_context_binding()
+    _non_codex_runner(source)
+
+    result = compile_workflow(source)
+
+    assert result.plan is not None
+    assert str(result.plan.context_bindings[0].stage_kind_id) == (
+        "kernel_ping.taskmaster"
+    )
 
 
 def test_context_policy_changes_fingerprint_but_map_order_does_not() -> None:
@@ -450,7 +731,27 @@ def test_context_binding_codec_round_trip_preserves_authority() -> None:
     plan = compile_workflow(_source_with_context_binding()).plan
     assert plan is not None
 
-    decoded = decode_selected_compiled_plan(encode_selected_compiled_plan(plan))
+    encoded = encode_selected_compiled_plan(plan)
+    encoded_binding = cast(
+        tuple[dict[str, object], ...],
+        encoded.payload["context_bindings"],
+    )[0]
+    assert {
+        field: encoded_binding[field]
+        for field in (
+            "max_hydrated_files",
+            "max_hydrated_bytes",
+            "mutation_policy",
+            "materialization_retention",
+        )
+    } == {
+        "max_hydrated_files": 16,
+        "max_hydrated_bytes": 16_384,
+        "mutation_policy": "forbid_selected_roots",
+        "materialization_retention": "until_session_durable_terminal",
+    }
+
+    decoded = decode_selected_compiled_plan(encoded)
 
     assert decoded == plan
     assert authority_fingerprint(decoded) == authority_fingerprint(plan)
@@ -699,13 +1000,6 @@ def _non_exact_writeback_schema(source: dict[str, object]) -> None:
             False,
             "context_binding_checkout_source_overlap",
             id="checkout-source-overlap",
-        ),
-        pytest.param(
-            "non_codex_runner",
-            _non_codex_runner,
-            False,
-            "context_binding_runner_adapter",
-            id="non-codex-runner",
         ),
         pytest.param(
             "duplicate_workspace_source",

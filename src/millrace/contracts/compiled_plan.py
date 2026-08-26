@@ -240,7 +240,7 @@ class ContextWriteRule:
 @dataclass(frozen=True, slots=True)
 class StageContextBindingDeclaration:
     record_kind: ClassVar[str] = "stage_context_binding_declaration"
-    schema_version: ClassVar[int] = 1
+    schema_version: ClassVar[int] = 2
 
     id: str
     stage_kind_id: StageKindId
@@ -248,6 +248,10 @@ class StageContextBindingDeclaration:
     checkout_root: str
     required_sources: tuple[ContextSourceDeclaration, ...]
     discoverable_sources: tuple[ContextSourceDeclaration, ...]
+    max_hydrated_files: int
+    max_hydrated_bytes: int
+    mutation_policy: str
+    materialization_retention: str
     write_rules: tuple[ContextWriteRule, ...] = ()
     writeback_terminal_action_id: ActionId | None = None
     writeback_artifact_schema_id: ArtifactSchemaId | None = None
@@ -956,7 +960,7 @@ class SelectedWorkflowPackagePin:
 @dataclass(frozen=True, slots=True)
 class SelectedCompiledPlan:
     record_kind: ClassVar[str] = "selected_compiled_plan"
-    schema_version: ClassVar[int] = 17
+    schema_version: ClassVar[int] = 18
 
     workflow: WorkflowIdentity
     compatibility_profile: None
@@ -1111,6 +1115,11 @@ def context_binding_authority_refusal(
         and selected_plan.get("record_kind") == SelectedCompiledPlan.record_kind
         and selected_plan.get("schema_version") == SelectedCompiledPlan.schema_version
     )
+    authority_schema_version = (
+        selected_plan.get("schema_version")
+        if isinstance(selected_plan, Mapping)
+        else getattr(selected_plan, "schema_version", None)
+    )
     bindings = _context_authority_records(
         selected_plan,
         "context_bindings",
@@ -1120,6 +1129,8 @@ def context_binding_authority_refusal(
         return "context_binding_collection"
     if not bindings:
         return None
+    if authority_schema_version == 17:
+        return "context_binding_schema_version:17"
 
     stages = _context_authority_records(
         selected_plan,
@@ -1176,6 +1187,10 @@ def context_binding_authority_refusal(
                 "checkout_root",
                 "required_sources",
                 "discoverable_sources",
+                "max_hydrated_files",
+                "max_hydrated_bytes",
+                "mutation_policy",
+                "materialization_retention",
             },
             optional_fields={
                 "write_rules",
@@ -1186,6 +1201,7 @@ def context_binding_authority_refusal(
                 StageContextBindingDeclaration if typed_authority else None
             ),
             require_record_headers=serialized_authority,
+            expected_schema_version=StageContextBindingDeclaration.schema_version,
         ):
             return f"context_binding_shape:{index}"
         binding_value = _context_authority_field(binding, "id")
@@ -1298,6 +1314,33 @@ def context_binding_authority_refusal(
         assert isinstance(checkout_root_value, str)
         checkout_root = checkout_root_value
 
+        max_hydrated_files = _context_authority_field(
+            binding,
+            "max_hydrated_files",
+        )
+        max_hydrated_bytes = _context_authority_field(
+            binding,
+            "max_hydrated_bytes",
+        )
+        if not _context_bounded_positive_int(
+            max_hydrated_files
+        ) or not _context_bounded_positive_int(max_hydrated_bytes):
+            return f"context_binding_hydration_bounds:{binding_id}"
+
+        mutation_policy = _context_authority_string(
+            _context_authority_field(binding, "mutation_policy")
+        )
+        if mutation_policy not in {
+            "forbid_selected_roots",
+            "reconcile_selected_writes",
+        }:
+            return f"context_binding_mutation_policy:{binding_id}"
+        materialization_retention = _context_authority_string(
+            _context_authority_field(binding, "materialization_retention")
+        )
+        if materialization_retention != "until_session_durable_terminal":
+            return f"context_binding_materialization_retention:{binding_id}"
+
         stage_runner_id = _context_authority_id(
             _context_authority_field(stage, "runner_binding_id")
         )
@@ -1306,10 +1349,6 @@ def context_binding_authority_refusal(
         runner = runner_by_id[stage_runner_id][0]
         if typed_authority and type(runner) is not RunnerBindingDeclaration:
             return f"context_binding_runner_record:{binding_id}"
-        if _context_authority_string(
-            _context_authority_field(runner, "adapter_kind")
-        ) != "codex":
-            return f"context_binding_runner_adapter:{binding_id}"
         runner_stage_ids = _context_authority_collection(
             runner,
             "stage_kind_ids",
@@ -1326,6 +1365,7 @@ def context_binding_authority_refusal(
 
         workspace_source_roots: list[str] = []
         required_workspace_source_roots: list[str] = []
+        seen_source_pairs: set[tuple[str, str]] = set()
         for source_field in ("required_sources", "discoverable_sources"):
             sources = _context_authority_collection(
                 binding,
@@ -1359,10 +1399,21 @@ def context_binding_authority_refusal(
                 )
                 if source_kind is None or source_ref is None:
                     return f"context_binding_source:{binding_id}:{source_index}"
-                if (source_kind, source_ref) not in {
+                source_pair = (source_kind, source_ref)
+                if source_pair in seen_source_pairs:
+                    return (
+                        f"context_binding_source_overlap:{binding_id}:{source_ref}"
+                    )
+                seen_source_pairs.add(source_pair)
+                if source_pair not in {
                     ("dispatch_material", "current"),
-                    ("accepted_lineage_artifacts", "current_lineage"),
-                    ("lineage_attempt_history", "current_lineage"),
+                    ("selected_artifacts", "direct_predecessors"),
+                    ("selected_artifacts", "current_lineage"),
+                    (
+                        "selected_attempts",
+                        "since_last_accepted_transition",
+                    ),
+                    ("selected_attempts", "current_lineage"),
                 } and source_kind != "workspace_relative_root":
                     return f"context_binding_source_kind:{binding_id}:{source_index}"
                 if source_kind == "workspace_relative_root":
@@ -1406,6 +1457,12 @@ def context_binding_authority_refusal(
             )
         if write_rules is None:
             return f"context_binding_write_rules:{binding_id}"
+        if (
+            mutation_policy == "forbid_selected_roots" and write_rules
+        ) or (
+            mutation_policy == "reconcile_selected_writes" and not write_rules
+        ):
+            return f"context_binding_mutation_write_rules:{binding_id}"
         write_rule_roots: list[str] = []
         for rule_index, rule in enumerate(write_rules):
             if not _context_authority_record_shape(
@@ -1459,7 +1516,7 @@ def context_binding_authority_refusal(
             expected_type=ArtifactSchemaId,
             typed_authority=typed_authority,
         )
-        if not write_rules:
+        if mutation_policy == "forbid_selected_roots":
             if action_id_status != "missing" or schema_id_status != "missing":
                 return f"context_binding_read_only_linkage:{binding_id}"
             continue
@@ -1619,9 +1676,13 @@ def _context_authority_record_shape(
     optional_fields: set[str],
     expected_record_type: type[object] | None = None,
     require_record_headers: bool = False,
+    expected_schema_version: int = 1,
 ) -> bool:
     if expected_record_type is not None:
-        return type(record) is expected_record_type
+        return (
+            type(record) is expected_record_type
+            and getattr(record, "schema_version", None) == expected_schema_version
+        )
     if not isinstance(record, Mapping):
         return True
     keys = set(record)
@@ -1634,7 +1695,7 @@ def _context_authority_record_shape(
         if (
             record.get("record_kind") != record_kind
             or type(record.get("schema_version")) is not int
-            or record.get("schema_version") != 1
+            or record.get("schema_version") != expected_schema_version
             or not required_fields.issubset(keys)
             or not optional_fields.issubset(keys)
         ):
@@ -1903,6 +1964,10 @@ def _context_authority_sorted(
 
 def _context_positive_int(value: object) -> bool:
     return type(value) is int and value > 0
+
+
+def _context_bounded_positive_int(value: object) -> bool:
+    return type(value) is int and 0 < value <= 2**63 - 1
 
 
 def _context_safe_workspace_path(value: object) -> bool:

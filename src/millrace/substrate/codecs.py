@@ -489,6 +489,10 @@ _STAGE_CONTEXT_BINDING_KEYS = frozenset(
         "checkout_root",
         "required_sources",
         "discoverable_sources",
+        "max_hydrated_files",
+        "max_hydrated_bytes",
+        "mutation_policy",
+        "materialization_retention",
         "write_rules",
         "writeback_terminal_action_id",
         "writeback_artifact_schema_id",
@@ -892,6 +896,10 @@ def _encode_stage_context_binding(
             _encode_context_source(source)
             for source in binding.discoverable_sources
         ),
+        "max_hydrated_files": binding.max_hydrated_files,
+        "max_hydrated_bytes": binding.max_hydrated_bytes,
+        "mutation_policy": binding.mutation_policy,
+        "materialization_retention": binding.materialization_retention,
         "write_rules": tuple(
             _encode_context_write_rule(rule) for rule in binding.write_rules
         ),
@@ -926,6 +934,10 @@ def _decode_stage_context_binding(
             _decode_context_source(item)
             for item in _expect_record_tuple(record, "discoverable_sources")
         ),
+        max_hydrated_files=_expect_int(record, "max_hydrated_files"),
+        max_hydrated_bytes=_expect_int(record, "max_hydrated_bytes"),
+        mutation_policy=_expect_string(record, "mutation_policy"),
+        materialization_retention=_expect_string(record, "materialization_retention"),
         write_rules=tuple(
             _decode_context_write_rule(item)
             for item in _expect_record_tuple(record, "write_rules")

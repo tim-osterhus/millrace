@@ -23,6 +23,7 @@ from millrace.contracts import CompiledPlanEnvelope, SelectedCompiledPlan
 from millrace.contracts.diagnostics import Diagnostic
 from millrace.workflows import kernel_ping
 from support import generic_operator_wait
+from tests.compiler.test_context_bindings import _source_with_context_binding
 
 Source = dict[str, object]
 Record = dict[str, object]
@@ -302,14 +303,37 @@ def test_kernel_ping_authority_bytes_and_fingerprint_match_golden() -> None:
 
     assert len(authority_bytes) == 13153
     assert sha256(authority_bytes).hexdigest() == (
-        "7945fcd272d2fac07969d811df14b9da169ec808f36bca3e9398db2c29867267"
+        "9eb296f531d547fe6ddb76f178ebd174c459b9c3d024e5fb690fa4a24ebeb977"
     )
     assert authority_fingerprint(plan) == (
-        "sha256:3282a891816a1514bc16cce5e4d0ecc086fb874ad8a95add59cce8d386845e8f"
+        "sha256:88ca236b32308fa47906da4a5aaed3d9b6ca6b95c1a90295482204375eb1d121"
     )
 
 
-def test_unbound_schema17_canonical_authority_omits_empty_context_bindings() -> None:
+def test_context_binding_v2_fields_are_canonical_authority() -> None:
+    source = _source_with_context_binding()
+    plan = _compile_plan(source)
+    authority = json.loads(canonical_authority_bytes(plan).decode("utf-8"))
+
+    assert isinstance(authority, dict)
+    binding = cast(list[dict[str, object]], authority["context_bindings"])[0]
+    assert {
+        field: binding[field]
+        for field in (
+            "max_hydrated_files",
+            "max_hydrated_bytes",
+            "mutation_policy",
+            "materialization_retention",
+        )
+    } == {
+        "max_hydrated_files": 16,
+        "max_hydrated_bytes": 16_384,
+        "mutation_policy": "forbid_selected_roots",
+        "materialization_retention": "until_session_durable_terminal",
+    }
+
+
+def test_unbound_schema18_canonical_authority_omits_empty_context_bindings() -> None:
     plan = _compile_plan(_source())
     authority = json.loads(canonical_authority_bytes(plan).decode("utf-8"))
 
@@ -317,7 +341,7 @@ def test_unbound_schema17_canonical_authority_omits_empty_context_bindings() -> 
     assert "context_bindings" not in authority
 
 
-def test_unbound_schema17_authority_restores_head_v16_bytes_by_schema_only() -> None:
+def test_unbound_schema18_authority_restores_head_v16_bytes_by_schema_only() -> None:
     plan = _compile_plan(_source())
     current_authority = json.loads(canonical_authority_bytes(plan).decode("utf-8"))
     assert isinstance(current_authority, dict)

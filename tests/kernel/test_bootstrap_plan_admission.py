@@ -37,7 +37,11 @@ from millrace.kernel import UnsupportedMutationError, apply, decide, empty_runti
 from millrace.kernel.lookups import operator_wait_for_action, plan_ref_for
 from millrace.testing import deterministic_context
 from support import generic_admission, generic_fanout, generic_lifecycle
-from tests.compiler.test_context_bindings import _source_with_context_binding
+from tests.compiler.test_context_bindings import (
+    _OPAQUE_LOCAL_POLICY,
+    _source_with_context_binding,
+    _source_with_opaque_local_context_binding,
+)
 
 _CODEX_POLICY = SelectedRunnerAdapterPolicy(
     default_adapter_kind="codex",
@@ -1533,8 +1537,32 @@ def _assert_admit_and_select_default_refuse_selected_authority(
     assert after_select_refusal.receipts[f"select-{detail}"].accepted is False
 
 
+def test_admit_plan_refuses_context_bound_schema17_record_without_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, _fingerprint = _compile_source(_source_with_context_binding())
+    monkeypatch.setattr(SelectedCompiledPlan, "schema_version", 17)
+    fingerprint = authority_fingerprint(plan)
+
+    decision = decide(
+        empty_runtime_state(),
+        AdmitPlan(
+            "admit-legacy-context",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(transition_id="transition-admit-legacy-context"),
+    )
+
+    assert decision.accepted is False
+    assert decision.refusal is not None
+    assert decision.refusal.reason == "unsupported_selected_authority"
+    assert decision.refusal.detail == "context_binding_schema_version:17"
+
+
 def test_initialize_admit_and_select_default_plan_use_control_authority() -> None:
     plan, fingerprint = generic_admission.compile_plan()
+    assert plan.schema_version == 18
     state = empty_runtime_state()
 
     initialize = InitializeWorkspace("init")
@@ -1870,6 +1898,45 @@ def test_admit_and_select_default_accept_opaque_runner_adapter_kind() -> None:
     )
     assert select_decision.accepted is True, select_decision.refusal
 
+    selected = apply(admitted, select_decision)
+    assert selected.default_plan_ref == admitted.admitted_plans[fingerprint].plan_ref
+
+
+def test_admit_and_select_synthetic_opaque_local_context_plan() -> None:
+    result = compile_workflow(
+        _source_with_opaque_local_context_binding(),
+        selected_runner_policy=_OPAQUE_LOCAL_POLICY,
+    )
+    assert result.plan is not None
+    plan = result.plan
+    assert plan.schema_version == 18
+    assert all(
+        runner.adapter_kind == "opaque_local" for runner in plan.runner_bindings
+    )
+    fingerprint = authority_fingerprint(plan)
+    state = empty_runtime_state()
+
+    admit_decision = decide(
+        state,
+        AdmitPlan(
+            "admit-opaque-context",
+            selected_plan=plan,
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(transition_id="transition-admit-opaque-context"),
+    )
+    assert admit_decision.accepted is True, admit_decision.refusal
+    admitted = apply(state, admit_decision)
+
+    select_decision = decide(
+        admitted,
+        SelectDefaultPlan(
+            "select-opaque-context",
+            authority_fingerprint=fingerprint,
+        ),
+        deterministic_context(transition_id="transition-select-opaque-context"),
+    )
+    assert select_decision.accepted is True, select_decision.refusal
     selected = apply(admitted, select_decision)
     assert selected.default_plan_ref == admitted.admitted_plans[fingerprint].plan_ref
 

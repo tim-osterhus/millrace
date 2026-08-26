@@ -663,6 +663,10 @@ def _build_context_binding(record: SourceRecord) -> StageContextBindingDeclarati
             )
             for source in records(record, "discoverable_sources")
         ),
+        max_hydrated_files=_required_int(record["max_hydrated_files"]),
+        max_hydrated_bytes=_required_int(record["max_hydrated_bytes"]),
+        mutation_policy=str(record["mutation_policy"]),
+        materialization_retention=str(record["materialization_retention"]),
         write_rules=tuple(
             ContextWriteRule(
                 relative_root=str(rule["relative_root"]),

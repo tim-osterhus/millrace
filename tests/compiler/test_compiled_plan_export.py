@@ -390,11 +390,45 @@ def test_bound_context_bindings_are_preserved_in_canonical_export_and_verificati
     assert isinstance(authority, dict)
     assert authority["context_bindings"]
     assert selected["context_bindings"] == authority["context_bindings"]
+    binding = cast(list[dict[str, object]], selected["context_bindings"])[0]
+    assert {
+        field: binding[field]
+        for field in (
+            "max_hydrated_files",
+            "max_hydrated_bytes",
+            "mutation_policy",
+            "materialization_retention",
+        )
+    } == {
+        "max_hydrated_files": 16,
+        "max_hydrated_bytes": 16_384,
+        "mutation_policy": "forbid_selected_roots",
+        "materialization_retention": "until_session_durable_terminal",
+    }
     assert record["authority_fingerprint"] == authority_fingerprint(plan)
     verified = verify_compiled_plan_export_record(record)
     assert verified.selected_authority["context_bindings"] == selected[
         "context_bindings"
     ]
+
+
+def test_export_verifier_refuses_context_bound_schema17_record() -> None:
+    from millrace.compiler import (
+        CompiledPlanExportError,
+        verify_compiled_plan_export_record,
+    )
+
+    record = _parsed_context_export(write_enabled=False)
+    selected = cast(dict[str, object], record["selected_authority"])
+    selected["schema_version"] = 17
+    record["plan_format_version"] = 17
+    record["authority_fingerprint"] = authority_fingerprint(selected)
+
+    with pytest.raises(
+        CompiledPlanExportError,
+        match="unsupported plan_format_version",
+    ):
+        verify_compiled_plan_export_record(record)
 
 
 @pytest.mark.parametrize(
@@ -851,8 +885,9 @@ def test_valid_export_record_verifies_without_hydrating_runtime_authority() -> N
     assert verified.selected_authority == _parsed_export(plan)["selected_authority"]
 
 
-def test_kernel_ping_export_matches_golden_fixture_exactly() -> None:
+def test_kernel_ping_export_refuses_historical_schema17_fixture() -> None:
     from millrace.compiler import (
+        CompiledPlanExportError,
         compiled_plan_export_bytes,
         verify_compiled_plan_export_bytes,
     )
@@ -866,13 +901,13 @@ def test_kernel_ping_export_matches_golden_fixture_exactly() -> None:
     parsed = json.loads(fixture_bytes.decode("utf-8"))
     assert isinstance(parsed, dict)
     assert _canonical_json_bytes(parsed) == fixture_bytes
+    assert export_bytes != fixture_bytes
 
-    assert export_bytes == fixture_bytes
-
-    verified = verify_compiled_plan_export_bytes(fixture_bytes)
-    assert verified.authority_fingerprint == authority_fingerprint(plan)
-    assert verified.workflow_id == "kernel_ping"
-    assert verified.workflow_version == "0.1"
+    with pytest.raises(
+        CompiledPlanExportError,
+        match="unsupported plan_format_version",
+    ):
+        verify_compiled_plan_export_bytes(fixture_bytes)
 
 
 def test_compiler_provenance_does_not_change_selected_authority() -> None:
@@ -883,10 +918,10 @@ def test_compiler_provenance_does_not_change_selected_authority() -> None:
 
     assert COMPILER_ID == "millrace-ai"
     assert authority_fingerprint(plan) == (
-        "sha256:3282a891816a1514bc16cce5e4d0ecc086fb874ad8a95add59cce8d386845e8f"
+        "sha256:88ca236b32308fa47906da4a5aaed3d9b6ca6b95c1a90295482204375eb1d121"
     )
     assert hashlib.sha256(authority_bytes).hexdigest() == (
-        "7945fcd272d2fac07969d811df14b9da169ec808f36bca3e9398db2c29867267"
+        "9eb296f531d547fe6ddb76f178ebd174c459b9c3d024e5fb690fa4a24ebeb977"
     )
     assert len(authority_bytes) == 13153
 
