@@ -8,12 +8,21 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from tests.substrate.test_runner_session_context_persistence import (
+    _attach_state,
+    _context_manifest,
+    _persist_initial_state,
+)
 
 import millrace.operator as operator_api
 from kernel.kernel_ping_scenarios import bootstrap_to_worker_claim
 from millrace.compiler.canonical import authority_fingerprint
 from millrace.contracts import QueueFamilyId
 from millrace.contracts.compiled_plan import SelectedCompiledPlan
+from millrace.contracts.context_checkout import (
+    ContextCheckoutCatalogEntry,
+    encode_context_checkout_manifest,
+)
 from millrace.contracts.state import (
     DURABLE_INT64_MAX,
     RUNNER_SESSION_TEXT_MAX_BYTES,
@@ -756,6 +765,55 @@ def test_restart_refuses_missing_artifact_payload_cas_object(
         match="artifact payload_digest references missing CAS object",
     ):
         load_runtime_state(db_path, cas_root)
+
+
+def test_restart_refuses_missing_context_catalog_cas_object(
+    tmp_path: Path,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(
+        tmp_path
+    )
+    manifest, _manifest_digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    catalog_bytes = b"Discoverable context.\n"
+    catalog_digest = cas_store.put_bytes(catalog_bytes)
+    manifest = replace(
+        manifest,
+        catalog=(
+            ContextCheckoutCatalogEntry(
+                logical_path="docs/discoverable.md",
+                source_kind="workspace_relative_root",
+                source_ref="docs",
+                content_digest=catalog_digest,
+                byte_length=len(catalog_bytes),
+                provenance_ids=(
+                    "workspace_relative_root:docs",
+                    "path:docs/discoverable.md",
+                ),
+            ),
+        ),
+    )
+    assert manifest.schema_version == 2
+    manifest_digest = cas_store.put_bytes(encode_context_checkout_manifest(manifest))
+    attached = _attach_state(state, digest=manifest_digest)
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        store.persist_runtime_state(attached, cas_store)
+    finally:
+        store.close()
+
+    _delete_cas_object(tmp_path / "cas", catalog_digest)
+
+    with pytest.raises(
+        StorageIntegrityError,
+        match="runner session context catalog CAS reference is unavailable",
+    ):
+        load_runtime_state(db_path, tmp_path / "cas")
 
 
 def test_restart_refuses_wrong_kind_cas_object_reference(tmp_path: Path) -> None:

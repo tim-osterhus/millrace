@@ -522,6 +522,19 @@ def validate_runner_session_context_cas(
                     "runner session context file byte length does not match: "
                     f"{context_file.checkout_path}"
                 )
+        for catalog_entry in manifest.catalog:
+            try:
+                catalog_bytes = cas_store.get_bytes(catalog_entry.content_digest)
+            except SubstrateError as exc:
+                raise StorageIntegrityError(
+                    "runner session context catalog CAS reference is unavailable: "
+                    f"{catalog_entry.content_digest}"
+                ) from exc
+            if len(catalog_bytes) != catalog_entry.byte_length:
+                raise StorageIntegrityError(
+                    "runner session context catalog byte length does not match: "
+                    f"{catalog_entry.logical_path}"
+                )
         _validate_runner_session_context_attach_anchor(
             state,
             run=run,
