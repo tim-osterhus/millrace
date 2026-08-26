@@ -31,6 +31,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Fixed
 
+- Stamped persisted runner-result observations from their durable completion
+  time so cooldown-backed recovery actions can schedule their governed wait
+  instead of refusing with `missing_observed_at`.
 - Reconstructed counter pre-state when authenticating accepted lineage
   artifacts for context checkouts after increment and threshold actions.
 - Reduced active runner-session polling frequency to lower daemon CPU usage.

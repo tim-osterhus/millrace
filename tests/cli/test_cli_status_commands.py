@@ -346,6 +346,7 @@ def test_rejected_result_projection_is_bounded_by_default(tmp_path: Path) -> Non
         diagnostic_digest=diagnostic_digest,
         application_input_id="application-1",
         primary_cancellation_request_id=None,
+        completed_at=1_000_000_000,
     )
     run_ref = SimpleNamespace(
         run_id="run-1",
@@ -398,7 +399,7 @@ def test_rejected_result_projection_is_bounded_by_default(tmp_path: Path) -> Non
                             "application-1",
                             run_id="run-1",
                             payload=evidence.payload(),
-                            observed_at=None,
+                            observed_at=1,
                         )
                     ),
                 ),
@@ -504,7 +505,7 @@ def test_rejected_result_projection_is_bounded_by_default(tmp_path: Path) -> Non
                 "application-1",
                 run_id="run-1",
                 payload=empty_evidence.payload(),
-                observed_at=None,
+                observed_at=1,
             )
         ),
     )
@@ -541,7 +542,7 @@ def test_rejected_result_projection_is_bounded_by_default(tmp_path: Path) -> Non
                 "application-1",
                 run_id="run-1",
                 payload=absent_evidence.payload(),
-                observed_at=None,
+                observed_at=1,
             )
         ),
     )

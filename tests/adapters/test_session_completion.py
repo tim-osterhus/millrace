@@ -627,6 +627,31 @@ def test_crash_after_completion_persistence_replays_without_adapter_invocation(
     assert len(after.runner_observations) == 1
 
 
+def test_persisted_completion_stamps_runner_observation_from_completion_time(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _ready_runtime(tmp_path)
+    original_decide = session_completion.decide
+    observed_at: list[int | None] = []
+
+    def capture_observation(current, transition_input, context):
+        if isinstance(transition_input, RunnerResultObserved):
+            observed_at.append(transition_input.observed_at)
+        return original_decide(current, transition_input, context)
+
+    monkeypatch.setattr(session_completion, "decide", capture_observation)
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(_success_start)),
+    )
+    state = _load(runtime)
+    completion = next(iter(state.runner_session_completions.values()))
+
+    assert result.code == "observation_accepted"
+    assert observed_at == [completion.completed_at // 1_000_000_000]
+
+
 def test_v3_observation_requires_exact_completion_session_and_application_id(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

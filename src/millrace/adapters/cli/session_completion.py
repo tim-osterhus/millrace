@@ -622,7 +622,7 @@ def _apply_persisted_completion(
         completion.application_input_id,
         run_id=completion.run_id,
         payload=evidence.payload(),
-        observed_at=None,
+        observed_at=completion.completed_at // 1_000_000_000,
     )
     decision = decide(
         state,

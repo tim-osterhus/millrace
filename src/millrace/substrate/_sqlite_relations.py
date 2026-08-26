@@ -758,7 +758,7 @@ def runner_result_refusal_chain(
                     application_input_id,
                     run_id=run_id,
                     payload=evidence.payload(),
-                    observed_at=None,
+                    observed_at=completion.completed_at // 1_000_000_000,
                 )
             )
         except (RecursionError, TypeError, ValueError):
