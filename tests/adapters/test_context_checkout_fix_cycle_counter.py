@@ -36,6 +36,8 @@ def _counter_route_source(
     target_graph_node_id: str,
     emitted_queue_family_id: str,
     threshold_count: int,
+    attempt_source_ref: str | None = None,
+    attempt_required: bool = True,
 ) -> dict[str, object]:
     source = deepcopy(generic_admission.source())
     actions = cast(list[dict[str, object]], source["terminal_actions"])
@@ -75,6 +77,25 @@ def _counter_route_source(
             "body": "Route selected context.",
         }
     )
+    required_sources = [
+        {
+            "source_kind": "selected_artifacts",
+            "source_ref": "current_lineage",
+            "max_files": 8,
+            "max_bytes": 4096,
+        }
+    ]
+    discoverable_sources: list[dict[str, object]] = []
+    if attempt_source_ref is not None:
+        attempt_source = {
+            "source_kind": "selected_attempts",
+            "source_ref": attempt_source_ref,
+            "max_files": 8,
+            "max_bytes": 4096,
+        }
+        (required_sources if attempt_required else discoverable_sources).append(
+            attempt_source
+        )
     source["context_bindings"] = [
         {
             "id": "admission.target_context",
@@ -85,15 +106,8 @@ def _counter_route_source(
             "max_hydrated_bytes": 16_384,
             "mutation_policy": "forbid_selected_roots",
             "materialization_retention": "until_session_durable_terminal",
-            "required_sources": [
-                {
-                    "source_kind": "selected_artifacts",
-                    "source_ref": "current_lineage",
-                    "max_files": 8,
-                    "max_bytes": 4096,
-                }
-            ],
-            "discoverable_sources": [],
+            "required_sources": required_sources,
+            "discoverable_sources": discoverable_sources,
         }
     ]
     return source
@@ -123,6 +137,8 @@ def _counter_artifact_state(
     emitted_queue_family_id: str,
     threshold_count: int,
     markers: tuple[str, ...],
+    attempt_source_ref: str | None = None,
+    attempt_required: bool = True,
 ):
     plan, fingerprint = generic_admission.compile_plan(
         _counter_route_source(
@@ -130,6 +146,8 @@ def _counter_artifact_state(
             target_graph_node_id=target_graph_node_id,
             emitted_queue_family_id=emitted_queue_family_id,
             threshold_count=threshold_count,
+            attempt_source_ref=attempt_source_ref,
+            attempt_required=attempt_required,
         )
     )
     state = empty_runtime_state()
@@ -297,6 +315,206 @@ def _prepare_checkout(tmp_path: Path, plan, fingerprint, state):
         cas_store=ContentAddressedByteStore(cas_path.resolve()),
         reuse_existing=False,
     )
+
+@pytest.mark.parametrize("attempt_required", (True, False))
+def test_context_checkout_handles_empty_bounded_attempt_selector(
+    tmp_path: Path,
+    attempt_required: bool,
+) -> None:
+    plan, fingerprint, state = _counter_artifact_state(
+        target_stage_id=generic_admission.CHILD_STAGE_ID,
+        target_graph_node_id=generic_admission.CHILD_NODE_ID,
+        emitted_queue_family_id="child",
+        threshold_count=2,
+        markers=("ADMISSION_RETRY_READY",),
+        attempt_source_ref="since_last_accepted_transition",
+        attempt_required=attempt_required,
+    )
+
+    if attempt_required:
+        with pytest.raises(ValueError, match="required runtime source is empty"):
+            _prepare_checkout(tmp_path, plan, fingerprint, state)
+    else:
+        prepared = _prepare_checkout(tmp_path, plan, fingerprint, state)
+        assert len(prepared.manifest.omissions) == 1
+        assert prepared.manifest.omissions[0].source_kind == "selected_attempts"
+        assert (
+            prepared.manifest.omissions[0].source_ref
+            == "since_last_accepted_transition"
+        )
+        assert prepared.manifest.omissions[0].reason == "source_missing"
+
+
+def _attempt_relation(state):
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    admitted = next(iter(state.admitted_plans.values()))
+    run = state.runs["run-generic-returned-parent"]
+    return checkout_module._Relation(
+        state=state,
+        run=run,
+        work_item=state.work_items[run.work_item_id],
+        activation=state.activations[run.activation_id],
+        admitted=admitted,
+        selected_plan=admitted.selected_plan,
+        envelope=None,
+        router_body="router",
+    )
+
+
+@pytest.mark.parametrize("corruption", ("duplicate", "foreign", "unaccepted"))
+def test_selected_attempts_refuse_invalid_transition_links(corruption: str) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_cooldown_runtime_state,
+    )
+
+    state = _generic_cooldown_runtime_state()
+    active = next(iter(state.recovery_attempts.values()))
+    target_transition = next(
+        transition
+        for transition in state.transitions
+        if transition.input_id == active.updated_by_input_id
+    )
+    if corruption == "duplicate":
+        state = dataclass_replace(
+            state,
+            transitions=(
+                *state.transitions,
+                dataclass_replace(target_transition, record_id="duplicate-transition"),
+            ),
+        )
+    elif corruption == "unaccepted":
+        state = dataclass_replace(
+            state,
+            transitions=tuple(
+                dataclass_replace(transition, accepted=False)
+                if transition.record_id == target_transition.record_id
+                else transition
+                for transition in state.transitions
+            ),
+        )
+    else:
+        foreign_input_id = "foreign-update"
+        foreign_transition = dataclass_replace(
+            target_transition,
+            record_id="foreign-transition",
+            input_id=foreign_input_id,
+        )
+        receipt = state.receipts[target_transition.input_id]
+        foreign_receipt = dataclass_replace(
+            receipt,
+            receipt_ref=dataclass_replace(
+                receipt.receipt_ref,
+                input_id=foreign_input_id,
+            ),
+            transition_id=foreign_transition.record_id,
+        )
+        active = dataclass_replace(
+            active,
+            updated_by_input_id=foreign_input_id,
+        )
+        state = dataclass_replace(
+            state,
+            receipts={**state.receipts, foreign_input_id: foreign_receipt},
+            transitions=(*state.transitions, foreign_transition),
+            recovery_attempts={active.record_id: active},
+        )
+
+    with pytest.raises(ValueError, match="recovery attempt transition link"):
+        checkout_module._attempt_records(
+            _attempt_relation(state),
+            selector="since_last_accepted_transition",
+        )
+
+
+def test_selected_attempts_delta_uses_authenticated_transition_boundary() -> None:
+    import json
+    from dataclasses import replace as dataclass_replace
+
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_cooldown_runtime_state,
+    )
+
+    state = _generic_cooldown_runtime_state()
+    active = next(iter(state.recovery_attempts.values()))
+    pre_boundary = dataclass_replace(
+        active,
+        record_id=(
+            "recovery-attempt:"
+            f"{active.plan_ref.authority_fingerprint}:{active.policy_id}:"
+            f"{active.lineage_id}:generic-claim"
+        ),
+        attempt_count=1,
+        phase="resolved",
+        created_by_input_id="generic-claim",
+        updated_by_input_id="generic-claim",
+    )
+    state = dataclass_replace(
+        state,
+        recovery_attempts={
+            pre_boundary.record_id: pre_boundary,
+            active.record_id: active,
+        },
+    )
+    relation = _attempt_relation(state)
+
+    complete = [
+        json.loads(payload)
+        for payload in checkout_module._attempt_records(
+            relation,
+            selector="current_lineage",
+        )
+    ]
+    delta = [
+        json.loads(payload)
+        for payload in checkout_module._attempt_records(
+            relation,
+            selector="since_last_accepted_transition",
+        )
+    ]
+
+    assert [record["record_id"] for record in complete] == [
+        pre_boundary.record_id,
+        active.record_id,
+    ]
+    assert [record["record_id"] for record in delta] == [active.record_id]
+
+
+@pytest.mark.parametrize("link", ("created", "updated"))
+def test_selected_attempts_refuse_unusable_transition_links(link: str) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_cooldown_runtime_state,
+    )
+
+    state = _generic_cooldown_runtime_state()
+    active = next(iter(state.recovery_attempts.values()))
+    field = f"{link}_by_input_id"
+    replacement = {field: "missing-input"}
+    if link == "created":
+        replacement["record_id"] = (
+            "recovery-attempt:"
+            f"{active.plan_ref.authority_fingerprint}:{active.policy_id}:"
+            f"{active.lineage_id}:missing-input"
+        )
+    corrupted = dataclass_replace(active, **replacement)
+    state = dataclass_replace(
+        state,
+        recovery_attempts={corrupted.record_id: corrupted},
+    )
+
+    with pytest.raises(ValueError, match="recovery attempt transition link"):
+        checkout_module._attempt_records(
+            _attempt_relation(state),
+            selector="since_last_accepted_transition",
+        )
+
 
 
 def test_context_checkout_authenticates_first_counter_increment(

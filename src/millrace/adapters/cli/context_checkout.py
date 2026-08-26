@@ -891,8 +891,14 @@ def _validate_sources(
         if source_kind != "workspace_relative_root":
             expected_refs = {
                 "dispatch_material": {"current"},
-                "selected_artifacts": {"current_lineage"},
-                "selected_attempts": {"current_lineage"},
+                "selected_artifacts": {
+                    "direct_predecessors",
+                    "current_lineage",
+                },
+                "selected_attempts": {
+                    "since_last_accepted_transition",
+                    "current_lineage",
+                },
             }
             if source_ref not in expected_refs[source_kind]:
                 _refuse("runtime context source reference is unsupported")
@@ -1179,9 +1185,15 @@ def _runtime_files(
                 _canonical_runtime_record(relation.envelope.payload()),
             )
         elif source.source_kind == "selected_artifacts":
-            records = _artifact_records(relation)
+            records = _artifact_records(
+                relation,
+                selector=source.source_ref,
+            )
         elif source.source_kind == "selected_attempts":
-            records = _attempt_records(relation)
+            records = _attempt_records(
+                relation,
+                selector=source.source_ref,
+            )
         else:
             _refuse("unsupported runtime context source kind")
         payloads = tuple(records)
@@ -1251,7 +1263,13 @@ def _runtime_bound_result(
     )
 
 
-def _artifact_records(relation: _Relation) -> tuple[bytes, ...]:
+def _artifact_records(
+    relation: _Relation,
+    *,
+    selector: str = "current_lineage",
+) -> tuple[bytes, ...]:
+    if selector not in {"direct_predecessors", "current_lineage"}:
+        _refuse("unsupported selected artifact selector")
     lineage = relation.work_item.lineage_id
     accepted: list[tuple[str, JSONValue]] = []
     counter_action_ids = {
@@ -1295,6 +1313,12 @@ def _artifact_records(relation: _Relation) -> tuple[bytes, ...]:
             or source.activation.lineage_id != lineage
         ):
             _refuse("relevant artifact provenance is outside current lineage")
+        if (
+            selector == "direct_predecessors"
+            and artifact.created_by_input_id
+            != relation.activation.created_by_input_id
+        ):
+            continue
         record: JSONValue = {
             "artifact_id": artifact.artifact_id,
             "payload_digest": artifact.payload_digest,
@@ -1820,8 +1844,19 @@ def _artifact_source_is_foreign_or_refuse(
     return False
 
 
-def _attempt_records(relation: _Relation) -> tuple[bytes, ...]:
+def _attempt_records(
+    relation: _Relation,
+    *,
+    selector: str = "current_lineage",
+) -> tuple[bytes, ...]:
+    if selector not in {
+        "current_lineage",
+        "since_last_accepted_transition",
+    }:
+        _refuse("unsupported selected attempt selector")
+
     records: list[tuple[int, str, JSONValue]] = []
+    attempts: list[tuple[RecoveryAttemptRecord, JSONValue]] = []
     active_keys: set[tuple[str, str, str]] = set()
     for record_key, attempt in relation.state.recovery_attempts.items():
         if not _attempt_is_current_or_foreign(relation, attempt):
@@ -1867,9 +1902,178 @@ def _attempt_records(relation: _Relation) -> tuple[bytes, ...]:
             "source_work_item_id": attempt.source_work_item_id,
             "updated_by_input_id": attempt.updated_by_input_id,
         }
-        records.append((attempt.attempt_count, attempt.record_id, record))
-    records.sort(key=lambda item: (item[0], item[1].encode("utf-8")))
+        attempts.append((attempt, record))
+
+    if selector == "current_lineage":
+        records = [
+            (attempt.attempt_count, attempt.record_id, record)
+            for attempt, record in attempts
+        ]
+        records.sort(key=lambda item: (item[0], item[1].encode("utf-8")))
+    else:
+        active_attempts = tuple(
+            attempt for attempt, _record in attempts if attempt.phase != "resolved"
+        )
+        if not active_attempts:
+            return ()
+        boundaries = tuple(
+            _authenticated_attempt_transition_index(
+                relation,
+                attempt,
+                input_id=attempt.created_by_input_id,
+            )
+            for attempt in active_attempts
+        )
+        boundary = max(boundaries)
+        for attempt, record in attempts:
+            updated_index = _authenticated_attempt_transition_index(
+                relation,
+                attempt,
+                input_id=attempt.updated_by_input_id,
+            )
+            if updated_index >= boundary:
+                records.append((updated_index, attempt.record_id, record))
+        records.sort(key=lambda item: (item[0], item[1].encode("utf-8")))
     return tuple(_canonical_runtime_record(record) for _, _, record in records)
+
+
+def _authenticated_attempt_transition_index(
+    relation: _Relation,
+    attempt: RecoveryAttemptRecord,
+    *,
+    input_id: str,
+) -> int:
+    matches = tuple(
+        (index, transition)
+        for index, transition in enumerate(relation.state.transitions)
+        if transition.input_id == input_id
+    )
+    if len(matches) != 1:
+        _refuse("recovery attempt transition link is missing or duplicated")
+    index, transition = matches[0]
+    receipt = relation.state.receipts.get(input_id)
+    if (
+        receipt is None
+        or receipt.receipt_ref.input_id != input_id
+        or receipt.transition_id != transition.record_id
+        or not receipt.accepted
+        or receipt.refusal_reason is not None
+        or not transition.accepted
+    ):
+        _refuse("recovery attempt transition link is not accepted")
+    current, foreign = _attempt_input_scope(
+        relation,
+        attempt=attempt,
+        input_id=input_id,
+    )
+    if foreign or not current:
+        _refuse("recovery attempt transition link is foreign")
+    return index
+
+
+def _attempt_input_scope(
+    relation: _Relation,
+    *,
+    attempt: RecoveryAttemptRecord,
+    input_id: str,
+) -> tuple[bool, bool]:
+    current = False
+    foreign = False
+
+    def mark(plan_ref: object, lineage_id: object) -> None:
+        nonlocal current, foreign
+        if plan_ref == attempt.plan_ref and lineage_id == attempt.lineage_id:
+            current = True
+        else:
+            foreign = True
+
+    state = relation.state
+    for work_item in state.work_items.values():
+        if work_item.created_by_input_id == input_id:
+            mark(work_item.ref.plan_ref, work_item.lineage_id)
+    for activation in state.activations.values():
+        if activation.created_by_input_id != input_id:
+            continue
+        work_item = state.work_items.get(activation.work_item_id)
+        if work_item is None:
+            foreign = True
+        else:
+            mark(activation.plan_ref, work_item.lineage_id)
+    for run in state.runs.values():
+        if run.created_by_input_id != input_id:
+            continue
+        work_item = state.work_items.get(run.work_item_id)
+        if work_item is None:
+            foreign = True
+        else:
+            mark(run.run_ref.plan_ref, work_item.lineage_id)
+    for observation in state.runner_observations.values():
+        if observation.created_by_input_id != input_id:
+            continue
+        run = state.runs.get(observation.run_id)
+        if run is None:
+            foreign = True
+            continue
+        work_item = state.work_items.get(run.work_item_id)
+        if work_item is None:
+            foreign = True
+        else:
+            mark(run.run_ref.plan_ref, work_item.lineage_id)
+
+    for route in state.activation_routes:
+        if route.created_by_input_id != input_id:
+            continue
+        source_run = state.runs.get(route.source_run_id)
+        if source_run is None:
+            foreign = True
+            continue
+        source_work_item = state.work_items.get(source_run.work_item_id)
+        if source_work_item is None:
+            foreign = True
+        else:
+            mark(source_run.run_ref.plan_ref, source_work_item.lineage_id)
+
+    for wait in state.cooldown_waits.values():
+        if input_id in {wait.created_input_id, wait.consumed_input_id}:
+            mark(wait.plan_ref, wait.lineage_id)
+    for quarantine in state.lineage_quarantines.values():
+        if input_id in {quarantine.created_input_id, quarantine.superseded_input_id}:
+            mark(quarantine.selected_plan_ref, quarantine.lineage_id)
+    for intervention in state.operator_interventions.values():
+        if intervention.created_by_input_id == input_id:
+            mark(intervention.selected_plan_ref, intervention.lineage_id)
+    for wait in state.operator_waits.values():
+        if input_id in {wait.created_input_id, wait.resolved_input_id}:
+            mark(wait.selected_plan_ref, wait.lineage_id)
+    for counter in state.counters.values():
+        if counter.updated_by_input_id == input_id:
+            mark(counter.selected_plan_ref, counter.lineage_id)
+
+    for audit in (*state.governance_events, *state.traces):
+        if audit.input_id != input_id:
+            continue
+        if audit.plan_fingerprint is not None:
+            if audit.plan_fingerprint == attempt.plan_ref.authority_fingerprint:
+                current = True
+            else:
+                foreign = True
+        if audit.work_item_id is not None:
+            work_item = state.work_items.get(audit.work_item_id)
+            if work_item is None:
+                foreign = True
+            else:
+                mark(work_item.ref.plan_ref, work_item.lineage_id)
+        if audit.run_id is not None:
+            run = state.runs.get(audit.run_id)
+            if run is None:
+                foreign = True
+            else:
+                work_item = state.work_items.get(run.work_item_id)
+                if work_item is None:
+                    foreign = True
+                else:
+                    mark(run.run_ref.plan_ref, work_item.lineage_id)
+    return current, foreign
 
 
 def _attempt_is_current_or_foreign(

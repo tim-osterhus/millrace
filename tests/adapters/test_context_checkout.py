@@ -50,6 +50,8 @@ def _plan_with_all_context_sources(
     workspace_max_files: int = 4,
     workspace_max_bytes: int = 100_000,
     include_required_attempts: bool = False,
+    artifact_source_ref: str = "current_lineage",
+    attempt_source_ref: str = "current_lineage",
 ):
     source = deepcopy(kernel_ping.WORKFLOW_SOURCE)
     runners = source["runner_bindings"]
@@ -86,7 +88,7 @@ def _plan_with_all_context_sources(
         required_sources.append(
             {
                 "source_kind": "selected_attempts",
-                "source_ref": "current_lineage",
+                "source_ref": attempt_source_ref,
                 "max_files": 4,
                 "max_bytes": 100_000,
             }
@@ -96,7 +98,7 @@ def _plan_with_all_context_sources(
             1,
             {
                 "source_kind": "selected_artifacts",
-                "source_ref": "current_lineage",
+                "source_ref": artifact_source_ref,
                 "max_files": 4,
                 "max_bytes": 100_000,
             },
@@ -108,7 +110,7 @@ def _plan_with_all_context_sources(
         discoverable_sources.append(
             {
                 "source_kind": "selected_artifacts",
-                "source_ref": "current_lineage",
+                "source_ref": artifact_source_ref,
                 "max_files": 1,
                 "max_bytes": 100_000,
             }
@@ -1617,6 +1619,7 @@ def test_public_kernel_routed_artifact_provenance_accepts_follow_on_checkout(
     plan, fingerprint = _plan_with_all_context_sources(
         stage_kind_id="kernel_ping.taskmaster",
         accepted_discoverable=False,
+        artifact_source_ref="direct_predecessors",
     )
     state = bootstrap_to_worker_claim(
         plan,
@@ -1673,6 +1676,13 @@ def test_public_kernel_routed_artifact_provenance_accepts_follow_on_checkout(
     assert len(route_artifacts) == 1
     routed_artifact = route_artifacts[0]
     assert routed_artifact.work_item_id == "work-review-incident"
+    state = replace(
+        state,
+        artifacts={
+            **state.artifacts,
+            "a-direct": replace(routed_artifact, artifact_id="a-direct"),
+        },
+    )
 
     workspace = tmp_path / "workspace"
     (workspace / "docs").mkdir(parents=True)
@@ -1696,10 +1706,27 @@ def test_public_kernel_routed_artifact_provenance_accepts_follow_on_checkout(
         for item in prepared.manifest.files
         if item.source_kind == "selected_artifacts"
     )
-    assert artifact_files
+    artifact_records = [
+        json.loads(
+            (prepared.materialized_checkout_root / item.checkout_path).read_text(
+                encoding="utf-8"
+            )
+        )
+        for item in artifact_files
+    ]
+    assert [record["artifact_id"] for record in artifact_records] == [
+        "a-direct",
+        routed_artifact.artifact_id,
+    ]
     assert all(
         (prepared.materialized_checkout_root / item.checkout_path).is_file()
         for item in artifact_files
+    )
+    assert all(
+        artifact.created_by_input_id
+        == state.activations["activation-review-taskmaster"].created_by_input_id
+        for artifact in state.artifacts.values()
+        if artifact.artifact_id in {"a-direct", routed_artifact.artifact_id}
     )
 
 
