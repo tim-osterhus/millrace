@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from hashlib import sha256
 from types import MappingProxyType
 from typing import ClassVar, TypeVar, cast
 
@@ -50,6 +52,24 @@ _RUNNER_SESSION_TERMINAL_STATES = frozenset(
 )
 _RUNNER_SESSION_CLEANUP_DISPOSITIONS = frozenset(
     {"pending", "not_required", "complete", "orphan_risk"}
+)
+APPROVED_ATTRIBUTION_METRIC_NAMES = frozenset(
+    {
+        "cached_input_tokens",
+        "reasoning_tokens",
+        "provider_event_count",
+        "provider_event_bytes",
+        "wrapper_input_bytes",
+        "retained_result_bytes",
+        "tool_call_event_count",
+        "runner_wall_milliseconds",
+        "manifest_bytes",
+        "catalog_bytes",
+        "hydrated_bytes",
+        "catalog_file_count",
+        "hydrated_file_count",
+        "distinct_content_digest_count",
+    }
 )
 
 
@@ -939,6 +959,224 @@ class RunnerSessionUsageRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextHydrationReceipt:
+    receipt_id: str
+    session_id: str
+    dispatch_generation: int
+    fencing_token: str = field(repr=False)
+    manifest_digest: str
+    catalog_path: str
+    content_digest: str
+    byte_length: int
+    selected_path: str
+
+    def __post_init__(self) -> None:
+        _validate_non_blank_fields(
+            self,
+            (
+                "receipt_id",
+                "session_id",
+                "fencing_token",
+                "manifest_digest",
+                "catalog_path",
+                "content_digest",
+                "selected_path",
+            ),
+        )
+        _validate_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        _validate_durable_timestamp("byte_length", self.byte_length)
+        _validate_sha256_digest("manifest_digest", self.manifest_digest)
+        _validate_sha256_digest("content_digest", self.content_digest)
+
+    def payload(self) -> Mapping[str, object]:
+        return {
+            "receipt_id": self.receipt_id,
+            "session_id": self.session_id,
+            "dispatch_generation": self.dispatch_generation,
+            "manifest_digest": self.manifest_digest,
+            "catalog_path": self.catalog_path,
+            "content_digest": self.content_digest,
+            "byte_length": self.byte_length,
+            "selected_path": self.selected_path,
+        }
+
+    public_projection = payload
+
+
+@dataclass(frozen=True, slots=True)
+class AttributionMetric:
+    value: int | None
+    source: str
+    availability: str
+
+    def __post_init__(self) -> None:
+        if self.value is not None:
+            _validate_durable_timestamp("value", self.value)
+        for field_name in ("source", "availability"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} must be non-blank")
+            _validate_bounded_runner_session_text(field_name, value)
+
+    def payload(self) -> Mapping[str, object]:
+        return {
+            "value": self.value,
+            "source": self.source,
+            "availability": self.availability,
+        }
+
+    public_projection = payload
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionAttributionRecord:
+    session_id: str
+    dispatch_generation: int
+    fencing_token: str = field(repr=False)
+    final: bool
+    metrics: Mapping[str, AttributionMetric]
+
+    def __post_init__(self) -> None:
+        _validate_non_blank_fields(self, ("session_id", "fencing_token"))
+        _validate_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        if type(self.final) is not bool:
+            raise ValueError("final must be a boolean")
+        if not isinstance(self.metrics, Mapping):
+            raise ValueError("metrics must be a mapping")
+        for metric_name, metric in self.metrics.items():
+            if metric_name not in APPROVED_ATTRIBUTION_METRIC_NAMES:
+                raise ValueError("metrics must use approved metric names")
+            if not isinstance(metric_name, str) or not metric_name.strip():
+                raise ValueError("metric names must be non-blank strings")
+            if not isinstance(metric, AttributionMetric):
+                raise ValueError("metrics must contain AttributionMetric values")
+        object.__setattr__(self, "metrics", _freeze_mapping(self.metrics))
+
+    def payload(self) -> Mapping[str, object]:
+        return {
+            "session_id": self.session_id,
+            "dispatch_generation": self.dispatch_generation,
+            "final": self.final,
+            "metrics": {
+                name: metric.payload() for name, metric in self.metrics.items()
+            },
+        }
+
+    public_projection = payload
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCleanupReceipt:
+    receipt_id: str
+    session_id: str
+    dispatch_generation: int
+    fencing_token: str = field(repr=False)
+    manifest_digest: str
+    removed_path_classes: tuple[str, ...]
+    removed_file_count: int
+    removed_byte_count: int
+    adapter_cleanup_disposition: str
+
+    def __post_init__(self) -> None:
+        _validate_non_blank_fields(
+            self,
+            (
+                "receipt_id",
+                "session_id",
+                "fencing_token",
+                "manifest_digest",
+                "adapter_cleanup_disposition",
+            ),
+        )
+        _validate_positive_integer(
+            "dispatch_generation",
+            self.dispatch_generation,
+        )
+        _validate_sha256_digest("manifest_digest", self.manifest_digest)
+        if not isinstance(self.removed_path_classes, tuple):
+            raise ValueError("removed_path_classes must be a tuple")
+        if self.removed_path_classes != tuple(
+            sorted(set(self.removed_path_classes))
+        ):
+            raise ValueError("removed_path_classes must be sorted and unique")
+        for path_class in self.removed_path_classes:
+            if not isinstance(path_class, str) or not path_class.strip():
+                raise ValueError("removed_path_classes must contain non-blank strings")
+            _validate_bounded_runner_session_text("removed_path_classes", path_class)
+        _validate_durable_timestamp("removed_file_count", self.removed_file_count)
+        _validate_durable_timestamp("removed_byte_count", self.removed_byte_count)
+
+    def payload(self) -> Mapping[str, object]:
+        return {
+            "receipt_id": self.receipt_id,
+            "session_id": self.session_id,
+            "dispatch_generation": self.dispatch_generation,
+            "manifest_digest": self.manifest_digest,
+            "removed_path_classes": self.removed_path_classes,
+            "removed_file_count": self.removed_file_count,
+            "removed_byte_count": self.removed_byte_count,
+            "adapter_cleanup_disposition": self.adapter_cleanup_disposition,
+        }
+
+    public_projection = payload
+
+
+def _deterministic_context_receipt_id(
+    kind: str,
+    identity: Mapping[str, object],
+) -> str:
+    serialized = json.dumps(
+        identity,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    digest = sha256(
+        f"millrace.{kind}.receipt-id.v1\0".encode("ascii") + serialized
+    ).hexdigest()
+    return f"{kind}-receipt:{digest}"
+
+
+def context_hydration_receipt_id(receipt: ContextHydrationReceipt) -> str:
+    return _deterministic_context_receipt_id(
+        "context-hydration",
+        {
+            "catalog_path": receipt.catalog_path,
+            "content_digest": receipt.content_digest,
+            "dispatch_generation": receipt.dispatch_generation,
+            "fencing_token": receipt.fencing_token,
+            "manifest_digest": receipt.manifest_digest,
+            "selected_path": receipt.selected_path,
+            "session_id": receipt.session_id,
+            "byte_length": receipt.byte_length,
+        },
+    )
+
+
+def context_cleanup_receipt_id(receipt: ContextCleanupReceipt) -> str:
+    return _deterministic_context_receipt_id(
+        "context-cleanup",
+        {
+            "adapter_cleanup_disposition": receipt.adapter_cleanup_disposition,
+            "dispatch_generation": receipt.dispatch_generation,
+            "fencing_token": receipt.fencing_token,
+            "manifest_digest": receipt.manifest_digest,
+            "removed_byte_count": receipt.removed_byte_count,
+            "removed_file_count": receipt.removed_file_count,
+            "removed_path_classes": receipt.removed_path_classes,
+            "session_id": receipt.session_id,
+        },
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class QueueClosureRecord:
     record_kind: ClassVar[str] = "queue_closure"
     schema_version: ClassVar[int] = 1
@@ -1425,8 +1663,10 @@ class RuntimeState:
 
 
 __all__ = (
+    "APPROVED_ATTRIBUTION_METRIC_NAMES",
     "Activation",
     "ActivationRouteRecord",
+    "AttributionMetric",
     "AdmittedPlan",
     "ArtifactRecord",
     "ClosureEvaluationRecord",
@@ -1434,6 +1674,10 @@ __all__ = (
     "ClosureTargetRecord",
     "ClosureTerminalRecord",
     "ClosedWorkItemRecord",
+    "ContextCleanupReceipt",
+    "ContextHydrationReceipt",
+    "context_cleanup_receipt_id",
+    "context_hydration_receipt_id",
     "CooldownWaitRecord",
     "DURABLE_INT64_MAX",
     "DispatchSuspensionRecord",
@@ -1457,6 +1701,7 @@ __all__ = (
     "RunRecord",
     "RunRef",
     "RunnerObservationRecord",
+    "RunnerSessionAttributionRecord",
     "RunnerSessionCancellationAttemptRecord",
     "RunnerSessionCancellationRecord",
     "RunnerSessionCompletionRecord",

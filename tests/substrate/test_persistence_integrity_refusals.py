@@ -10,6 +10,9 @@ from typing import Any, cast
 import pytest
 from tests.substrate.test_runner_session_context_persistence import (
     _attach_state,
+    _attribution_record,
+    _context_cleanup_receipt,
+    _context_hydration_receipt,
     _context_manifest,
     _persist_initial_state,
 )
@@ -6186,3 +6189,60 @@ def test_generic_restart_refuses_corrupt_revise_wait_target_route(
         )
     with pytest.raises(StorageIntegrityError):
         load_runtime_state(db_path, cas_root)
+
+
+@pytest.mark.parametrize("record_kind", ("hydration", "attribution", "cleanup"))
+def test_restart_refuses_tampered_context_evidence_rows(
+    tmp_path: Path,
+    record_kind: str,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(
+        tmp_path
+    )
+    _manifest, manifest_digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        if record_kind == "hydration":
+            store.record_context_hydration_receipt(
+                _context_hydration_receipt(manifest_digest=manifest_digest)
+            )
+        elif record_kind == "attribution":
+            store.record_runner_session_attribution(_attribution_record())
+        else:
+            store.record_context_cleanup_receipt(
+                _context_cleanup_receipt(manifest_digest=manifest_digest)
+            )
+    finally:
+        store.close()
+
+    with sqlite3.connect(db_path) as connection:
+        if record_kind == "hydration":
+            connection.execute(
+                "UPDATE context_hydration_receipts "
+                "SET receipt_id = 'tampered-hydration-id'"
+            )
+        elif record_kind == "attribution":
+            connection.execute(
+                "UPDATE runner_session_attribution SET metrics_json = ?",
+                (
+                    '{"provider_secret":{"availability":"observed",'
+                    '"source":"provider","value":1}}',
+                ),
+            )
+        else:
+            connection.execute(
+                "UPDATE context_cleanup_receipts "
+                "SET receipt_id = 'tampered-cleanup-id'"
+            )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(StorageIntegrityError):
+            store.load_runtime_state(cas_store)
+    finally:
+        store.close()

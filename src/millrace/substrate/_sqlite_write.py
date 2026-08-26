@@ -6,7 +6,14 @@ import sqlite3
 from collections.abc import Callable
 
 from millrace.contracts.runner import runner_session_locator_from_bytes
-from millrace.contracts.state import RuntimeState
+from millrace.contracts.state import (
+    ContextCleanupReceipt,
+    ContextHydrationReceipt,
+    RunnerSessionAttributionRecord,
+    RuntimeState,
+    context_cleanup_receipt_id,
+    context_hydration_receipt_id,
+)
 from millrace.substrate._sqlite_relations import (
     runner_session_cas_references,
     validate_audit_transition_rows,
@@ -55,6 +62,9 @@ from millrace.substrate._sqlite_rows import (
     TransitionRow,
     WorkDependencyRow,
     WorkItemRow,
+    decode_context_cleanup_receipt_row,
+    decode_context_hydration_receipt_row,
+    decode_runner_session_attribution_row,
     encode_activation_route_row,
     encode_activation_row,
     encode_admitted_plan_pin_row,
@@ -64,6 +74,8 @@ from millrace.substrate._sqlite_rows import (
     encode_closure_evaluation_row,
     encode_closure_target_row,
     encode_closure_terminal_row,
+    encode_context_cleanup_receipt_row,
+    encode_context_hydration_receipt_row,
     encode_cooldown_wait_row,
     encode_counter_row,
     encode_default_plan_row,
@@ -84,6 +96,7 @@ from millrace.substrate._sqlite_rows import (
     encode_remediation_work_row,
     encode_run_row,
     encode_runner_observation_row,
+    encode_runner_session_attribution_row,
     encode_runner_session_cancellation_attempt_row,
     encode_runner_session_cancellation_row,
     encode_runner_session_completion_row,
@@ -422,6 +435,230 @@ def persist_runtime_state_rows(
         connection.execute("ROLLBACK")
         raise
     connection.execute("COMMIT")
+
+
+def _validate_context_evidence_authority(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    dispatch_generation: int,
+    fencing_token: str,
+) -> None:
+    row = connection.execute(
+        """
+        SELECT dispatch_generation, session_fencing_token
+        FROM runner_sessions
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    if row is None or tuple(row) != (dispatch_generation, fencing_token):
+        raise ValueError("context evidence authority mismatch")
+
+
+def persist_context_hydration_receipt(
+    connection: sqlite3.Connection,
+    receipt: ContextHydrationReceipt,
+) -> ContextHydrationReceipt:
+    row = encode_context_hydration_receipt_row(receipt)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        _validate_context_evidence_authority(
+            connection,
+            session_id=row.session_id,
+            dispatch_generation=row.dispatch_generation,
+            fencing_token=row.fencing_token,
+        )
+        if receipt.receipt_id != context_hydration_receipt_id(receipt):
+            raise ValueError("context hydration receipt_id must be deterministic")
+        existing = connection.execute(
+            """
+            SELECT
+                receipt_id, session_id, dispatch_generation, fencing_token,
+                manifest_digest, catalog_path, content_digest, byte_length,
+                selected_path
+            FROM context_hydration_receipts
+            WHERE session_id = ?
+              AND dispatch_generation = ?
+              AND manifest_digest = ?
+              AND catalog_path = ?
+            """,
+            (
+                row.session_id,
+                row.dispatch_generation,
+                row.manifest_digest,
+                row.catalog_path,
+            ),
+        ).fetchone()
+        if existing is not None:
+            if decode_context_hydration_receipt_row(existing) != row:
+                raise ValueError("context hydration evidence conflict")
+            connection.commit()
+            return receipt
+        receipt_id_row = connection.execute(
+            """
+            SELECT
+                receipt_id, session_id, dispatch_generation, fencing_token,
+                manifest_digest, catalog_path, content_digest, byte_length,
+                selected_path
+            FROM context_hydration_receipts
+            WHERE receipt_id = ?
+            """,
+            (row.receipt_id,),
+        ).fetchone()
+        if receipt_id_row is not None and (
+            decode_context_hydration_receipt_row(receipt_id_row) != row
+        ):
+            raise ValueError("context hydration evidence conflict")
+        connection.execute(
+            """
+            INSERT INTO context_hydration_receipts (
+                receipt_id, session_id, dispatch_generation, fencing_token,
+                manifest_digest, catalog_path, content_digest, byte_length,
+                selected_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.receipt_id,
+                row.session_id,
+                row.dispatch_generation,
+                row.fencing_token,
+                row.manifest_digest,
+                row.catalog_path,
+                row.content_digest,
+                row.byte_length,
+                row.selected_path,
+            ),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return receipt
+
+
+def persist_runner_session_attribution(
+    connection: sqlite3.Connection,
+    record: RunnerSessionAttributionRecord,
+) -> RunnerSessionAttributionRecord:
+    row = encode_runner_session_attribution_row(record)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        _validate_context_evidence_authority(
+            connection,
+            session_id=row.session_id,
+            dispatch_generation=row.dispatch_generation,
+            fencing_token=row.fencing_token,
+        )
+        existing = connection.execute(
+            """
+            SELECT
+                session_id, dispatch_generation, fencing_token, final,
+                metrics_json
+            FROM runner_session_attribution
+            WHERE session_id = ? AND dispatch_generation = ?
+            """,
+            (row.session_id, row.dispatch_generation),
+        ).fetchone()
+        if existing is not None:
+            if decode_runner_session_attribution_row(existing) != row:
+                raise ValueError("attribution evidence conflict")
+            connection.commit()
+            return record
+        connection.execute(
+            """
+            INSERT INTO runner_session_attribution (
+                session_id, dispatch_generation, fencing_token, final, metrics_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                row.session_id,
+                row.dispatch_generation,
+                row.fencing_token,
+                row.final,
+                row.metrics_json,
+            ),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return record
+
+
+def persist_context_cleanup_receipt(
+    connection: sqlite3.Connection,
+    receipt: ContextCleanupReceipt,
+) -> ContextCleanupReceipt:
+    row = encode_context_cleanup_receipt_row(receipt)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        _validate_context_evidence_authority(
+            connection,
+            session_id=row.session_id,
+            dispatch_generation=row.dispatch_generation,
+            fencing_token=row.fencing_token,
+        )
+        if receipt.receipt_id != context_cleanup_receipt_id(receipt):
+            raise ValueError("context cleanup receipt_id must be deterministic")
+        existing = connection.execute(
+            """
+            SELECT
+                receipt_id, session_id, dispatch_generation, fencing_token,
+                manifest_digest, removed_path_classes_json, removed_file_count,
+                removed_byte_count, adapter_cleanup_disposition
+            FROM context_cleanup_receipts
+            WHERE session_id = ?
+              AND dispatch_generation = ?
+              AND manifest_digest = ?
+            """,
+            (row.session_id, row.dispatch_generation, row.manifest_digest),
+        ).fetchone()
+        if existing is not None:
+            if decode_context_cleanup_receipt_row(existing) != row:
+                raise ValueError("context cleanup evidence conflict")
+            connection.commit()
+            return receipt
+        receipt_id_row = connection.execute(
+            """
+            SELECT
+                receipt_id, session_id, dispatch_generation, fencing_token,
+                manifest_digest, removed_path_classes_json, removed_file_count,
+                removed_byte_count, adapter_cleanup_disposition
+            FROM context_cleanup_receipts
+            WHERE receipt_id = ?
+            """,
+            (row.receipt_id,),
+        ).fetchone()
+        if receipt_id_row is not None and (
+            decode_context_cleanup_receipt_row(receipt_id_row) != row
+        ):
+            raise ValueError("context cleanup evidence conflict")
+        connection.execute(
+            """
+            INSERT INTO context_cleanup_receipts (
+                receipt_id, session_id, dispatch_generation, fencing_token,
+                manifest_digest, removed_path_classes_json, removed_file_count,
+                removed_byte_count, adapter_cleanup_disposition
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.receipt_id,
+                row.session_id,
+                row.dispatch_generation,
+                row.fencing_token,
+                row.manifest_digest,
+                row.removed_path_classes_json,
+                row.removed_file_count,
+                row.removed_byte_count,
+                row.adapter_cleanup_disposition,
+            ),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return receipt
 
 
 def _put_selected_plan_objects(

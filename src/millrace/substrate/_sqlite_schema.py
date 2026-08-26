@@ -987,6 +987,120 @@ _RUNTIME_TABLE_SQL = (
     )
     """,
     f"""
+    CREATE TABLE IF NOT EXISTS context_hydration_receipts (
+        receipt_id TEXT PRIMARY KEY CHECK (
+            length(CAST(receipt_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        session_id TEXT NOT NULL CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        dispatch_generation INTEGER NOT NULL CHECK (
+            typeof(dispatch_generation) = 'integer'
+            AND dispatch_generation BETWEEN 1 AND {DURABLE_INT64_MAX}
+        ),
+        fencing_token TEXT NOT NULL CHECK (
+            length(CAST(fencing_token AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        manifest_digest TEXT NOT NULL CHECK (
+            length(CAST(manifest_digest AS BLOB)) = 71
+            AND substr(manifest_digest, 1, 7) = 'sha256:'
+            AND substr(manifest_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        ),
+        catalog_path TEXT NOT NULL CHECK (
+            length(CAST(catalog_path AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        content_digest TEXT NOT NULL CHECK (
+            length(CAST(content_digest AS BLOB)) = 71
+            AND substr(content_digest, 1, 7) = 'sha256:'
+            AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        ),
+        byte_length INTEGER NOT NULL CHECK (
+            typeof(byte_length) = 'integer'
+            AND byte_length BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        selected_path TEXT NOT NULL CHECK (
+            length(CAST(selected_path AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        UNIQUE (
+            session_id,
+            dispatch_generation,
+            manifest_digest,
+            catalog_path
+        ),
+        FOREIGN KEY (session_id) REFERENCES runner_sessions(session_id)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS runner_session_attribution (
+        session_id TEXT NOT NULL CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        dispatch_generation INTEGER NOT NULL CHECK (
+            typeof(dispatch_generation) = 'integer'
+            AND dispatch_generation BETWEEN 1 AND {DURABLE_INT64_MAX}
+        ),
+        fencing_token TEXT NOT NULL CHECK (
+            length(CAST(fencing_token AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        final INTEGER NOT NULL CHECK (final IN (0, 1)),
+        metrics_json TEXT NOT NULL CHECK (
+            length(CAST(metrics_json AS BLOB)) BETWEEN 2 AND 1048576
+        ),
+        PRIMARY KEY (session_id, dispatch_generation),
+        FOREIGN KEY (session_id) REFERENCES runner_sessions(session_id)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS context_cleanup_receipts (
+        receipt_id TEXT PRIMARY KEY CHECK (
+            length(CAST(receipt_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        session_id TEXT NOT NULL CHECK (
+            length(CAST(session_id AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        dispatch_generation INTEGER NOT NULL CHECK (
+            typeof(dispatch_generation) = 'integer'
+            AND dispatch_generation BETWEEN 1 AND {DURABLE_INT64_MAX}
+        ),
+        fencing_token TEXT NOT NULL CHECK (
+            length(CAST(fencing_token AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        manifest_digest TEXT NOT NULL CHECK (
+            length(CAST(manifest_digest AS BLOB)) = 71
+            AND substr(manifest_digest, 1, 7) = 'sha256:'
+            AND substr(manifest_digest, 8) NOT GLOB '*[^0-9a-f]*'
+        ),
+        removed_path_classes_json TEXT NOT NULL CHECK (
+            length(CAST(removed_path_classes_json AS BLOB))
+                BETWEEN 2 AND 1048576
+        ),
+        removed_file_count INTEGER NOT NULL CHECK (
+            typeof(removed_file_count) = 'integer'
+            AND removed_file_count BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        removed_byte_count INTEGER NOT NULL CHECK (
+            typeof(removed_byte_count) = 'integer'
+            AND removed_byte_count BETWEEN 0 AND {DURABLE_INT64_MAX}
+        ),
+        adapter_cleanup_disposition TEXT NOT NULL CHECK (
+            length(CAST(adapter_cleanup_disposition AS BLOB))
+                BETWEEN 1 AND {RUNNER_SESSION_TEXT_MAX_BYTES}
+        ),
+        UNIQUE (session_id, dispatch_generation, manifest_digest),
+        FOREIGN KEY (session_id) REFERENCES runner_sessions(session_id)
+    )
+    """,
+    f"""
     CREATE TABLE IF NOT EXISTS daemon_budget_sessions (
         session_id TEXT PRIMARY KEY CHECK (
             length(CAST(session_id AS BLOB))
@@ -1843,6 +1957,35 @@ EXPECTED_TABLE_COLUMNS = {
         "total_tokens",
         "observed_at",
         "final",
+    ),
+    "context_hydration_receipts": (
+        "receipt_id",
+        "session_id",
+        "dispatch_generation",
+        "fencing_token",
+        "manifest_digest",
+        "catalog_path",
+        "content_digest",
+        "byte_length",
+        "selected_path",
+    ),
+    "runner_session_attribution": (
+        "session_id",
+        "dispatch_generation",
+        "fencing_token",
+        "final",
+        "metrics_json",
+    ),
+    "context_cleanup_receipts": (
+        "receipt_id",
+        "session_id",
+        "dispatch_generation",
+        "fencing_token",
+        "manifest_digest",
+        "removed_path_classes_json",
+        "removed_file_count",
+        "removed_byte_count",
+        "adapter_cleanup_disposition",
     ),
     "daemon_budget_sessions": (
         "session_id",

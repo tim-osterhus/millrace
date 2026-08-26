@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from typing import NoReturn, TypeVar, cast
@@ -18,15 +19,19 @@ from millrace.contracts.ids import (
 )
 from millrace.contracts.runner import runner_session_locator_from_bytes
 from millrace.contracts.state import (
+    APPROVED_ATTRIBUTION_METRIC_NAMES,
     Activation,
     ActivationRouteRecord,
     AdmittedPlan,
     ArtifactRecord,
+    AttributionMetric,
     ClosedWorkItemRecord,
     ClosureBlockedRecord,
     ClosureEvaluationRecord,
     ClosureTargetRecord,
     ClosureTerminalRecord,
+    ContextCleanupReceipt,
+    ContextHydrationReceipt,
     CooldownWaitRecord,
     CounterRecord,
     DispatchSuspensionRecord,
@@ -47,6 +52,7 @@ from millrace.contracts.state import (
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
+    RunnerSessionAttributionRecord,
     RunnerSessionCancellationAttemptRecord,
     RunnerSessionCancellationRecord,
     RunnerSessionCompletionRecord,
@@ -60,6 +66,8 @@ from millrace.contracts.state import (
     WorkDependencyRecord,
     WorkItem,
     WorkItemRef,
+    context_cleanup_receipt_id,
+    context_hydration_receipt_id,
 )
 from millrace.substrate._sqlite_relations import (
     runner_result_refusal_chain,
@@ -95,6 +103,8 @@ from millrace.substrate._sqlite_rows import (
     decode_closure_evaluation_row,
     decode_closure_target_row,
     decode_closure_terminal_row,
+    decode_context_cleanup_receipt_row,
+    decode_context_hydration_receipt_row,
     decode_cooldown_wait_row,
     decode_counter_row,
     decode_default_plan_row,
@@ -115,6 +125,7 @@ from millrace.substrate._sqlite_rows import (
     decode_remediation_work_row,
     decode_run_row,
     decode_runner_observation_row,
+    decode_runner_session_attribution_row,
     decode_runner_session_cancellation_attempt_row,
     decode_runner_session_cancellation_row,
     decode_runner_session_completion_row,
@@ -262,6 +273,7 @@ def _load_runtime_state_rows_in_transaction(
         transitions=_load_transitions(connection),
         refusals=_load_refusals(connection),
     )
+    _validate_persisted_context_evidence_rows(connection)
     if rejected_result_inspection_run_id is None:
         _validate_runner_session_cas_references(state, cas_store)
         validate_loaded_runtime_state(state)
@@ -283,6 +295,526 @@ def _load_runtime_state_rows_in_transaction(
             excluded_completion_session_id=target_session_id,
         )
     return state
+
+
+def _validate_context_evidence_session(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    dispatch_generation: int | None = None,
+    fencing_token: str | None = None,
+) -> tuple[int, str]:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ValueError("context evidence authority mismatch")
+    row = connection.execute(
+        """
+        SELECT dispatch_generation, session_fencing_token
+        FROM runner_sessions
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    if row is None or type(row[0]) is not int or not isinstance(row[1], str):
+        raise ValueError("context evidence authority mismatch")
+    if dispatch_generation is not None and row[0] != dispatch_generation:
+        raise ValueError("context evidence authority mismatch")
+    if fencing_token is not None and row[1] != fencing_token:
+        raise ValueError("context evidence authority mismatch")
+    return row[0], row[1]
+
+
+def _validate_loaded_context_evidence_authority(
+    *,
+    session_id: str,
+    dispatch_generation: int,
+    fencing_token: str,
+    authority: tuple[int, str],
+) -> None:
+    if (dispatch_generation, fencing_token) != authority:
+        raise StorageIntegrityError("context evidence authority mismatch")
+    if not session_id.strip():
+        raise StorageIntegrityError("context evidence authority mismatch")
+
+
+def _context_hydration_receipt_from_row(
+    row: tuple[object, ...],
+) -> ContextHydrationReceipt:
+    decoded = decode_context_hydration_receipt_row(row)
+    try:
+        record = ContextHydrationReceipt(
+            receipt_id=decoded.receipt_id,
+            session_id=decoded.session_id,
+            dispatch_generation=decoded.dispatch_generation,
+            fencing_token=decoded.fencing_token,
+            manifest_digest=decoded.manifest_digest,
+            catalog_path=decoded.catalog_path,
+            content_digest=decoded.content_digest,
+            byte_length=decoded.byte_length,
+            selected_path=decoded.selected_path,
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise StorageIntegrityError(
+            "invalid context hydration receipt row"
+        ) from exc
+    if record.receipt_id != context_hydration_receipt_id(record):
+        raise StorageIntegrityError(
+            "context hydration receipt_id is not deterministic"
+        )
+    return record
+
+
+def _load_context_hydration_receipt_records(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    dispatch_generation: int | None = None,
+    fencing_token: str | None = None,
+) -> tuple[ContextHydrationReceipt, ...]:
+    authority = _validate_context_evidence_session(
+        connection,
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        fencing_token=fencing_token,
+    )
+    query = """
+        SELECT
+            receipt_id, session_id, dispatch_generation, fencing_token,
+            manifest_digest, catalog_path, content_digest, byte_length,
+            selected_path
+        FROM context_hydration_receipts
+        WHERE session_id = ?
+    """
+    params: tuple[object, ...] = (session_id,)
+    if dispatch_generation is not None:
+        query += " AND dispatch_generation = ?"
+        params += (dispatch_generation,)
+    query += " ORDER BY dispatch_generation, catalog_path, receipt_id"
+    records: list[ContextHydrationReceipt] = []
+    for raw_row in connection.execute(query, params).fetchall():
+        record = _context_hydration_receipt_from_row(
+            cast(tuple[object, ...], raw_row)
+        )
+        _validate_loaded_context_evidence_authority(
+            session_id=record.session_id,
+            dispatch_generation=record.dispatch_generation,
+            fencing_token=record.fencing_token,
+            authority=authority,
+        )
+        records.append(record)
+    return tuple(records)
+
+
+def load_context_hydration_receipts(
+    connection: sqlite3.Connection,
+    session_id: str,
+) -> tuple[Mapping[str, object], ...]:
+    return tuple(
+        record.payload()
+        for record in _load_context_hydration_receipt_records(
+            connection,
+            session_id=session_id,
+        )
+    )
+
+
+def load_context_hydration_receipts_authenticated(
+    connection: sqlite3.Connection,
+    session_id: str,
+    dispatch_generation: int,
+    fencing_token: str,
+) -> tuple[ContextHydrationReceipt, ...]:
+    return _load_context_hydration_receipt_records(
+        connection,
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        fencing_token=fencing_token,
+    )
+
+
+def _attribution_metrics_from_json(
+    metrics_json: str,
+) -> Mapping[str, AttributionMetric]:
+    try:
+        parsed = json.loads(metrics_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise StorageIntegrityError(
+            "runner_session_attribution.metrics_json must be canonical JSON"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise StorageIntegrityError(
+            "runner_session_attribution.metrics_json must be an object"
+        )
+    canonical = json.dumps(
+        parsed,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    if canonical != metrics_json:
+        raise StorageIntegrityError(
+            "runner_session_attribution.metrics_json must be canonical JSON"
+        )
+    metrics: dict[str, AttributionMetric] = {}
+    for name, value in parsed.items():
+        if name not in APPROVED_ATTRIBUTION_METRIC_NAMES:
+            raise StorageIntegrityError(
+                "runner_session_attribution has an unknown metric"
+            )
+        if not isinstance(value, dict) or set(value) != {
+            "availability",
+            "source",
+            "value",
+        }:
+            raise StorageIntegrityError(
+                "runner_session_attribution metric payload is invalid"
+            )
+        try:
+            metrics[name] = AttributionMetric(
+                value=value["value"],
+                source=value["source"],
+                availability=value["availability"],
+            )
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise StorageIntegrityError(
+                "runner_session_attribution metric payload is invalid"
+            ) from exc
+    return metrics
+
+
+def _runner_session_attribution_from_row(
+    row: tuple[object, ...],
+) -> RunnerSessionAttributionRecord:
+    decoded = decode_runner_session_attribution_row(row)
+    try:
+        return RunnerSessionAttributionRecord(
+            session_id=decoded.session_id,
+            dispatch_generation=decoded.dispatch_generation,
+            fencing_token=decoded.fencing_token,
+            final=bool(decoded.final),
+            metrics=_attribution_metrics_from_json(decoded.metrics_json),
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise StorageIntegrityError(
+            "invalid runner session attribution row"
+        ) from exc
+
+
+def _load_runner_session_attribution_record(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    dispatch_generation: int,
+    fencing_token: str | None = None,
+) -> RunnerSessionAttributionRecord | None:
+    authority = _validate_context_evidence_session(
+        connection,
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        fencing_token=fencing_token,
+    )
+    raw_row = connection.execute(
+        """
+        SELECT
+            session_id, dispatch_generation, fencing_token, final, metrics_json
+        FROM runner_session_attribution
+        WHERE session_id = ? AND dispatch_generation = ?
+        """,
+        (session_id, dispatch_generation),
+    ).fetchone()
+    if raw_row is None:
+        return None
+    record = _runner_session_attribution_from_row(cast(tuple[object, ...], raw_row))
+    _validate_loaded_context_evidence_authority(
+        session_id=record.session_id,
+        dispatch_generation=record.dispatch_generation,
+        fencing_token=record.fencing_token,
+        authority=authority,
+    )
+    return record
+
+
+def load_runner_session_attribution(
+    connection: sqlite3.Connection,
+    session_id: str,
+    dispatch_generation: int,
+) -> Mapping[str, object] | None:
+    record = _load_runner_session_attribution_record(
+        connection,
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+    )
+    return None if record is None else record.payload()
+
+
+def load_runner_session_attribution_authenticated(
+    connection: sqlite3.Connection,
+    session_id: str,
+    dispatch_generation: int,
+    fencing_token: str,
+) -> RunnerSessionAttributionRecord | None:
+    return _load_runner_session_attribution_record(
+        connection,
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        fencing_token=fencing_token,
+    )
+
+
+def load_runner_session_attributions(
+    connection: sqlite3.Connection,
+    session_id: str,
+) -> tuple[Mapping[str, object], ...]:
+    authority_generation, _authority_fence = _validate_context_evidence_session(
+        connection,
+        session_id=session_id,
+    )
+    record = _load_runner_session_attribution_record(
+        connection,
+        session_id=session_id,
+        dispatch_generation=authority_generation,
+    )
+    return () if record is None else (record.payload(),)
+
+
+def _context_cleanup_receipt_from_row(
+    row: tuple[object, ...],
+) -> ContextCleanupReceipt:
+    decoded = decode_context_cleanup_receipt_row(row)
+    try:
+        path_classes = tuple(json.loads(decoded.removed_path_classes_json))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise StorageIntegrityError(
+            "context_cleanup_receipts.removed_path_classes_json is invalid"
+        ) from exc
+    if _json_string_tuple_for_load(path_classes) != decoded.removed_path_classes_json:
+        raise StorageIntegrityError(
+            "context_cleanup_receipts.removed_path_classes_json must be canonical JSON"
+        )
+    try:
+        record = ContextCleanupReceipt(
+            receipt_id=decoded.receipt_id,
+            session_id=decoded.session_id,
+            dispatch_generation=decoded.dispatch_generation,
+            fencing_token=decoded.fencing_token,
+            manifest_digest=decoded.manifest_digest,
+            removed_path_classes=path_classes,
+            removed_file_count=decoded.removed_file_count,
+            removed_byte_count=decoded.removed_byte_count,
+            adapter_cleanup_disposition=decoded.adapter_cleanup_disposition,
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise StorageIntegrityError("invalid context cleanup receipt row") from exc
+    if record.receipt_id != context_cleanup_receipt_id(record):
+        raise StorageIntegrityError(
+            "context cleanup receipt_id is not deterministic"
+        )
+    return record
+
+
+def _json_string_tuple_for_load(values: tuple[object, ...]) -> str:
+    return json.dumps(values, separators=(",", ":"), sort_keys=True)
+
+
+def _load_context_cleanup_receipt_record(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    dispatch_generation: int,
+    manifest_digest: str,
+    fencing_token: str | None = None,
+) -> ContextCleanupReceipt | None:
+    authority = _validate_context_evidence_session(
+        connection,
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        fencing_token=fencing_token,
+    )
+    raw_row = connection.execute(
+        """
+        SELECT
+            receipt_id, session_id, dispatch_generation, fencing_token,
+            manifest_digest, removed_path_classes_json, removed_file_count,
+            removed_byte_count, adapter_cleanup_disposition
+        FROM context_cleanup_receipts
+        WHERE session_id = ?
+          AND dispatch_generation = ?
+          AND manifest_digest = ?
+        """,
+        (session_id, dispatch_generation, manifest_digest),
+    ).fetchone()
+    if raw_row is None:
+        return None
+    record = _context_cleanup_receipt_from_row(cast(tuple[object, ...], raw_row))
+    _validate_loaded_context_evidence_authority(
+        session_id=record.session_id,
+        dispatch_generation=record.dispatch_generation,
+        fencing_token=record.fencing_token,
+        authority=authority,
+    )
+    return record
+
+
+def load_context_cleanup_receipt(
+    connection: sqlite3.Connection,
+    session_id: str,
+    dispatch_generation: int,
+    manifest_digest: str,
+) -> Mapping[str, object] | None:
+    record = _load_context_cleanup_receipt_record(
+        connection,
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        manifest_digest=manifest_digest,
+    )
+    return None if record is None else record.payload()
+
+
+def load_context_cleanup_receipt_authenticated(
+    connection: sqlite3.Connection,
+    session_id: str,
+    dispatch_generation: int,
+    manifest_digest: str,
+    fencing_token: str,
+) -> ContextCleanupReceipt | None:
+    return _load_context_cleanup_receipt_record(
+        connection,
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        manifest_digest=manifest_digest,
+        fencing_token=fencing_token,
+    )
+
+
+def load_context_cleanup_receipts(
+    connection: sqlite3.Connection,
+    session_id: str,
+) -> tuple[Mapping[str, object], ...]:
+    authority_generation, _authority_fence = _validate_context_evidence_session(
+        connection,
+        session_id=session_id,
+    )
+    rows = connection.execute(
+        """
+        SELECT
+            receipt_id, session_id, dispatch_generation, fencing_token,
+            manifest_digest, removed_path_classes_json, removed_file_count,
+            removed_byte_count, adapter_cleanup_disposition
+        FROM context_cleanup_receipts
+        WHERE session_id = ? AND dispatch_generation = ?
+        ORDER BY manifest_digest, receipt_id
+        """,
+        (session_id, authority_generation),
+    ).fetchall()
+    records = tuple(
+        _context_cleanup_receipt_from_row(cast(tuple[object, ...], raw_row))
+        for raw_row in rows
+    )
+    for record in records:
+        _validate_loaded_context_evidence_authority(
+            session_id=record.session_id,
+            dispatch_generation=record.dispatch_generation,
+            fencing_token=record.fencing_token,
+            authority=(authority_generation, _authority_fence),
+        )
+    return tuple(record.payload() for record in records)
+
+
+def _validate_persisted_context_evidence_rows(
+    connection: sqlite3.Connection,
+) -> None:
+    hydration_rows = connection.execute(
+        """
+        SELECT
+            receipt_id, session_id, dispatch_generation, fencing_token,
+            manifest_digest, catalog_path, content_digest, byte_length,
+            selected_path
+        FROM context_hydration_receipts
+        ORDER BY session_id, dispatch_generation, catalog_path, receipt_id
+        """
+    ).fetchall()
+    for raw_row in hydration_rows:
+        try:
+            record = _context_hydration_receipt_from_row(
+                cast(tuple[object, ...], raw_row)
+            )
+            authority = _validate_context_evidence_session(
+                connection,
+                session_id=record.session_id,
+            )
+            _validate_loaded_context_evidence_authority(
+                session_id=record.session_id,
+                dispatch_generation=record.dispatch_generation,
+                fencing_token=record.fencing_token,
+                authority=authority,
+            )
+        except StorageIntegrityError:
+            raise
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise StorageIntegrityError(
+                f"invalid persisted context hydration receipt row: {exc}"
+            ) from exc
+
+    attribution_rows = connection.execute(
+        """
+        SELECT
+            session_id, dispatch_generation, fencing_token, final, metrics_json
+        FROM runner_session_attribution
+        ORDER BY session_id, dispatch_generation
+        """
+    ).fetchall()
+    for raw_row in attribution_rows:
+        try:
+            record = _runner_session_attribution_from_row(
+                cast(tuple[object, ...], raw_row)
+            )
+            authority = _validate_context_evidence_session(
+                connection,
+                session_id=record.session_id,
+            )
+            _validate_loaded_context_evidence_authority(
+                session_id=record.session_id,
+                dispatch_generation=record.dispatch_generation,
+                fencing_token=record.fencing_token,
+                authority=authority,
+            )
+        except StorageIntegrityError:
+            raise
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise StorageIntegrityError(
+                f"invalid persisted runner session attribution row: {exc}"
+            ) from exc
+
+    cleanup_rows = connection.execute(
+        """
+        SELECT
+            receipt_id, session_id, dispatch_generation, fencing_token,
+            manifest_digest, removed_path_classes_json, removed_file_count,
+            removed_byte_count, adapter_cleanup_disposition
+        FROM context_cleanup_receipts
+        ORDER BY session_id, dispatch_generation, manifest_digest, receipt_id
+        """
+    ).fetchall()
+    for raw_row in cleanup_rows:
+        try:
+            record = _context_cleanup_receipt_from_row(
+                cast(tuple[object, ...], raw_row)
+            )
+            authority = _validate_context_evidence_session(
+                connection,
+                session_id=record.session_id,
+            )
+            _validate_loaded_context_evidence_authority(
+                session_id=record.session_id,
+                dispatch_generation=record.dispatch_generation,
+                fencing_token=record.fencing_token,
+                authority=authority,
+            )
+        except StorageIntegrityError:
+            raise
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise StorageIntegrityError(
+                f"invalid persisted context cleanup receipt row: {exc}"
+            ) from exc
 
 
 def _validate_runner_session_cas_references(

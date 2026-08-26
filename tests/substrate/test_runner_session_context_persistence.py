@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,15 @@ from millrace.contracts import (
     RunnerSessionCompletionRecord,
     context_checkout_manifest_digest,
     encode_context_checkout_manifest,
+)
+from millrace.contracts.state import (
+    DURABLE_INT64_MAX,
+    AttributionMetric,
+    ContextCleanupReceipt,
+    ContextHydrationReceipt,
+    RunnerSessionAttributionRecord,
+    context_cleanup_receipt_id,
+    context_hydration_receipt_id,
 )
 from millrace.kernel import apply, decide
 from millrace.substrate.cas import ContentAddressedByteStore
@@ -552,5 +562,391 @@ def test_bound_starting_row_without_context_is_rejected_on_reload(
     try:
         with pytest.raises(StorageIntegrityError):
             store.load_runtime_state(cas_store)
+    finally:
+        store.close()
+
+
+
+def _context_hydration_receipt(
+    *,
+    manifest_digest: str,
+    catalog_path: str = "catalog/one.md",
+    receipt_id: str | None = None,
+    session_id: str = "session-1",
+    dispatch_generation: int = 1,
+    fencing_token: str = "session-fence-1",
+    content_digest: str = "sha256:" + "a" * 64,
+    byte_length: int = 11,
+    selected_path: str = "selected/catalog/one.md",
+) -> ContextHydrationReceipt:
+    receipt = ContextHydrationReceipt(
+        receipt_id=("fixture-receipt-id" if receipt_id is None else receipt_id),
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        fencing_token=fencing_token,
+        manifest_digest=manifest_digest,
+        catalog_path=catalog_path,
+        content_digest=content_digest,
+        byte_length=byte_length,
+        selected_path=selected_path,
+    )
+    if receipt_id is None:
+        return replace(receipt, receipt_id=context_hydration_receipt_id(receipt))
+    return receipt
+
+
+def _attribution_record(
+    *,
+    session_id: str = "session-1",
+    dispatch_generation: int = 1,
+    fencing_token: str = "session-fence-1",
+    final: bool = True,
+    metrics: dict[str, AttributionMetric] | None = None,
+) -> RunnerSessionAttributionRecord:
+    return RunnerSessionAttributionRecord(
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        fencing_token=fencing_token,
+        final=final,
+        metrics=(
+            metrics
+            if metrics is not None
+            else {
+                "cached_input_tokens": AttributionMetric(
+                    value=None,
+                    source="provider",
+                    availability="provider_did_not_report",
+                ),
+                "wrapper_input_bytes": AttributionMetric(
+                    value=7,
+                    source="wrapper",
+                    availability="observed",
+                ),
+            }
+        ),
+    )
+
+
+def _context_cleanup_receipt(
+    *,
+    manifest_digest: str,
+    receipt_id: str | None = None,
+    session_id: str = "session-1",
+    dispatch_generation: int = 1,
+    fencing_token: str = "session-fence-1",
+    removed_file_count: int = 2,
+    removed_byte_count: int = 33,
+) -> ContextCleanupReceipt:
+    receipt = ContextCleanupReceipt(
+        receipt_id=("fixture-receipt-id" if receipt_id is None else receipt_id),
+        session_id=session_id,
+        dispatch_generation=dispatch_generation,
+        fencing_token=fencing_token,
+        manifest_digest=manifest_digest,
+        removed_path_classes=("checkout", "selected"),
+        removed_file_count=removed_file_count,
+        removed_byte_count=removed_byte_count,
+        adapter_cleanup_disposition="complete",
+    )
+    if receipt_id is None:
+        return replace(receipt, receipt_id=context_cleanup_receipt_id(receipt))
+    return receipt
+
+
+def test_context_hydration_receipts_are_separate_fenced_rows_with_public_projection(
+    tmp_path: Path,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(tmp_path)
+    _manifest, manifest_digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    first = _context_hydration_receipt(manifest_digest=manifest_digest)
+    second = _context_hydration_receipt(
+        manifest_digest=manifest_digest,
+        catalog_path="catalog/two.md",
+        content_digest="sha256:" + "b" * 64,
+        byte_length=22,
+        selected_path="selected/catalog/two.md",
+    )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        assert store.record_context_hydration_receipt(first) == first
+        assert store.record_context_hydration_receipt(second) == second
+        assert store.record_context_hydration_receipt(first) == first
+        authenticated = store.load_context_hydration_receipts_authenticated(
+            "session-1", 1, "session-fence-1"
+        )
+        assert authenticated == (first, second)
+        public = store.load_context_hydration_receipts("session-1")
+    finally:
+        store.close()
+
+    assert tuple(item["catalog_path"] for item in public) == (
+        "catalog/one.md",
+        "catalog/two.md",
+    )
+    assert all("fencing_token" not in item for item in public)
+    assert all("session_fencing_token" not in item for item in public)
+
+    conflicting_hydration = replace(
+        first,
+        selected_path="selected/catalog/changed.md",
+    )
+    conflicting_hydration = replace(
+        conflicting_hydration,
+        receipt_id=context_hydration_receipt_id(conflicting_hydration),
+    )
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(ValueError, match="context hydration evidence conflict"):
+            store.record_context_hydration_receipt(conflicting_hydration)
+        assert store.load_context_hydration_receipts_authenticated(
+            "session-1", 1, "session-fence-1"
+        ) == (first, second)
+        assert store.load_runtime_state(cas_store) == state
+    finally:
+        store.close()
+
+
+def test_context_attribution_is_fixed_key_fenced_and_preserves_unavailable_null(
+    tmp_path: Path,
+) -> None:
+    _state, _plan, _fingerprint, cas_store, db_path = _persist_initial_state(tmp_path)
+    record = _attribution_record()
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        assert store.record_runner_session_attribution(record) == record
+        assert store.record_runner_session_attribution(record) == record
+        assert store.load_runner_session_attribution_authenticated(
+            "session-1", 1, "session-fence-1"
+        ) == record
+        public = store.load_runner_session_attribution("session-1", 1)
+        with pytest.raises(ValueError, match="attribution evidence conflict"):
+            store.record_runner_session_attribution(
+                replace(record, final=False)
+            )
+    finally:
+        store.close()
+
+    assert "fencing_token" not in public
+    assert public["metrics"]["cached_input_tokens"]["value"] is None
+    assert public["metrics"]["wrapper_input_bytes"]["value"] == 7
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        assert store.load_runtime_state(cas_store) == _state
+    finally:
+        store.close()
+
+
+def test_context_cleanup_receipt_is_separate_fenced_row_with_public_projection(
+    tmp_path: Path,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(tmp_path)
+    _manifest, manifest_digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    receipt = _context_cleanup_receipt(manifest_digest=manifest_digest)
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        assert store.record_context_cleanup_receipt(receipt) == receipt
+        assert store.record_context_cleanup_receipt(receipt) == receipt
+        assert store.load_context_cleanup_receipt_authenticated(
+            "session-1", 1, manifest_digest, "session-fence-1"
+        ) == receipt
+        public = store.load_context_cleanup_receipt(
+            "session-1", 1, manifest_digest
+        )
+        conflicting_cleanup = replace(receipt, removed_byte_count=34)
+        conflicting_cleanup = replace(
+            conflicting_cleanup,
+            receipt_id=context_cleanup_receipt_id(conflicting_cleanup),
+        )
+        with pytest.raises(ValueError, match="context cleanup evidence conflict"):
+            store.record_context_cleanup_receipt(conflicting_cleanup)
+        assert store.load_runtime_state(cas_store) == state
+    finally:
+        store.close()
+
+    assert "fencing_token" not in public
+    assert public["removed_byte_count"] == 33
+    assert public["removed_path_classes"] == ("checkout", "selected")
+
+
+
+def test_context_receipt_ids_are_production_derived_not_caller_chosen(
+    tmp_path: Path,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(
+        tmp_path
+    )
+    _manifest, manifest_digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    hydration = _context_hydration_receipt(
+        manifest_digest=manifest_digest,
+        receipt_id="caller-chosen-hydration-id",
+    )
+    cleanup = _context_cleanup_receipt(
+        manifest_digest=manifest_digest,
+        receipt_id="caller-chosen-cleanup-id",
+    )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(ValueError, match="deterministic"):
+            store.record_context_hydration_receipt(hydration)
+        with pytest.raises(ValueError, match="deterministic"):
+            store.record_context_cleanup_receipt(cleanup)
+        assert store.load_context_hydration_receipts("session-1") == ()
+        assert store.load_context_cleanup_receipts("session-1") == ()
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("record_factory", "field_name"),
+    (
+        (
+            lambda digest: _context_hydration_receipt(
+                manifest_digest=digest, byte_length=2**63
+            ),
+            "byte_length",
+        ),
+        (
+            lambda _digest: _attribution_record(
+                metrics={
+                    "wrapper_input_bytes": AttributionMetric(
+                        value=2**63,
+                        source="wrapper",
+                        availability="observed",
+                    )
+                }
+            ),
+            "value",
+        ),
+        (
+            lambda digest: _context_cleanup_receipt(
+                manifest_digest=digest, removed_file_count=2**63
+            ),
+            "removed_file_count",
+        ),
+        (
+            lambda digest: _context_cleanup_receipt(
+                manifest_digest=digest, removed_byte_count=2**63
+            ),
+            "removed_byte_count",
+        ),
+    ),
+)
+def test_context_evidence_refuses_values_above_signed_int64(
+    tmp_path: Path,
+    record_factory,
+    field_name: str,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, _db_path = _persist_initial_state(
+        tmp_path
+    )
+    _manifest, manifest_digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    with pytest.raises(ValueError, match=field_name):
+        record_factory(manifest_digest)
+
+    assert DURABLE_INT64_MAX == 2**63 - 1
+
+
+def test_context_evidence_accepts_signed_int64_max_and_rejects_arbitrary_metric_key(
+    tmp_path: Path,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(tmp_path)
+    _manifest, manifest_digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    hydration = _context_hydration_receipt(
+        manifest_digest=manifest_digest,
+        byte_length=DURABLE_INT64_MAX,
+    )
+    cleanup = _context_cleanup_receipt(
+        manifest_digest=manifest_digest,
+        removed_file_count=DURABLE_INT64_MAX,
+        removed_byte_count=DURABLE_INT64_MAX,
+    )
+    with pytest.raises(ValueError, match="approved metric names"):
+        _attribution_record(
+            metrics={
+                "provider_secret": AttributionMetric(
+                    value=1,
+                    source="provider",
+                    availability="observed",
+                )
+            }
+        )
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        assert store.record_context_hydration_receipt(hydration) == hydration
+        assert store.record_context_cleanup_receipt(cleanup) == cleanup
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("record_kind", ("hydration", "attribution", "cleanup"))
+@pytest.mark.parametrize(
+    ("authority_field", "authority_value"),
+    (
+        ("session_id", "foreign-session"),
+        ("dispatch_generation", 2),
+        ("fencing_token", "wrong-fence"),
+    ),
+)
+def test_context_evidence_refuses_foreign_generation_and_fencing_authority(
+    tmp_path: Path,
+    record_kind: str,
+    authority_field: str,
+    authority_value: object,
+) -> None:
+    state, plan, plan_fingerprint, cas_store, db_path = _persist_initial_state(tmp_path)
+    _manifest, manifest_digest = _context_manifest(
+        state=state,
+        plan=plan,
+        plan_fingerprint=plan_fingerprint,
+        cas_store=cas_store,
+    )
+    if record_kind == "hydration":
+        record = _context_hydration_receipt(manifest_digest=manifest_digest)
+    elif record_kind == "attribution":
+        record = _attribution_record()
+    else:
+        record = _context_cleanup_receipt(manifest_digest=manifest_digest)
+    record = replace(record, **{authority_field: authority_value})
+
+    store = SQLiteRuntimeStore.open(db_path)
+    try:
+        with pytest.raises(ValueError, match="context evidence authority mismatch"):
+            if record_kind == "hydration":
+                store.record_context_hydration_receipt(record)
+            elif record_kind == "attribution":
+                store.record_runner_session_attribution(record)
+            else:
+                store.record_context_cleanup_receipt(record)
     finally:
         store.close()

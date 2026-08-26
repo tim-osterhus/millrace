@@ -3,20 +3,33 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.state import (
     DURABLE_INT64_MAX,
     RUNNER_SESSION_TEXT_MAX_BYTES,
+    ContextCleanupReceipt,
+    ContextHydrationReceipt,
     DaemonBudgetEpochRecord,
     PlanRef,
+    RunnerSessionAttributionRecord,
     RunnerSessionRecord,
     RunnerSessionUsageRecord,
     RuntimeState,
 )
-from millrace.substrate._sqlite_load import load_runtime_state_rows
+from millrace.substrate._sqlite_load import (
+    load_context_cleanup_receipt,
+    load_context_cleanup_receipt_authenticated,
+    load_context_cleanup_receipts,
+    load_context_hydration_receipts,
+    load_context_hydration_receipts_authenticated,
+    load_runner_session_attribution,
+    load_runner_session_attribution_authenticated,
+    load_runner_session_attributions,
+    load_runtime_state_rows,
+)
 from millrace.substrate._sqlite_schema import (
     StoreSchemaMetadata,
     configure_connection,
@@ -26,7 +39,12 @@ from millrace.substrate._sqlite_schema import (
     validate_metadata,
     validate_schema_shape,
 )
-from millrace.substrate._sqlite_write import persist_runtime_state_rows
+from millrace.substrate._sqlite_write import (
+    persist_context_cleanup_receipt,
+    persist_context_hydration_receipt,
+    persist_runner_session_attribution,
+    persist_runtime_state_rows,
+)
 from millrace.substrate._workflow_package_command_audit import (
     append_workflow_package_command_audit_event,
     load_workflow_package_command_audit_events,
@@ -538,6 +556,107 @@ class SQLiteRuntimeStore:
             self._connection.rollback()
             raise
         return self.load_daemon_budget_epoch(budget_id) or epoch
+
+    def record_context_hydration_receipt(
+        self,
+        receipt: ContextHydrationReceipt,
+    ) -> ContextHydrationReceipt:
+        return persist_context_hydration_receipt(self._connection, receipt)
+
+    def load_context_hydration_receipts(
+        self,
+        session_id: str,
+    ) -> tuple[Mapping[str, object], ...]:
+        return load_context_hydration_receipts(self._connection, session_id)
+
+    def load_context_hydration_receipts_authenticated(
+        self,
+        session_id: str,
+        dispatch_generation: int,
+        fencing_token: str,
+    ) -> tuple[ContextHydrationReceipt, ...]:
+        return load_context_hydration_receipts_authenticated(
+            self._connection,
+            session_id,
+            dispatch_generation,
+            fencing_token,
+        )
+
+    def record_runner_session_attribution(
+        self,
+        record: RunnerSessionAttributionRecord,
+    ) -> RunnerSessionAttributionRecord:
+        return persist_runner_session_attribution(self._connection, record)
+
+    def load_runner_session_attribution(
+        self,
+        session_id: str,
+        dispatch_generation: int,
+    ) -> Mapping[str, object] | None:
+        return load_runner_session_attribution(
+            self._connection,
+            session_id,
+            dispatch_generation,
+        )
+
+    def load_runner_session_attribution_authenticated(
+        self,
+        session_id: str,
+        dispatch_generation: int,
+        fencing_token: str,
+    ) -> RunnerSessionAttributionRecord | None:
+        return load_runner_session_attribution_authenticated(
+            self._connection,
+            session_id,
+            dispatch_generation,
+            fencing_token,
+        )
+
+    def load_runner_session_attributions(
+        self,
+        session_id: str,
+    ) -> tuple[Mapping[str, object], ...]:
+        return load_runner_session_attributions(self._connection, session_id)
+
+    def record_context_cleanup_receipt(
+        self,
+        receipt: ContextCleanupReceipt,
+    ) -> ContextCleanupReceipt:
+        return persist_context_cleanup_receipt(self._connection, receipt)
+
+    def load_context_cleanup_receipt(
+        self,
+        session_id: str,
+        dispatch_generation: int,
+        manifest_digest: str,
+    ) -> Mapping[str, object] | None:
+        return load_context_cleanup_receipt(
+            self._connection,
+            session_id,
+            dispatch_generation,
+            manifest_digest,
+        )
+
+    def load_context_cleanup_receipt_authenticated(
+        self,
+        session_id: str,
+        dispatch_generation: int,
+        manifest_digest: str,
+        fencing_token: str,
+    ) -> ContextCleanupReceipt | None:
+        return load_context_cleanup_receipt_authenticated(
+            self._connection,
+            session_id,
+            dispatch_generation,
+            manifest_digest,
+            fencing_token,
+        )
+
+    def load_context_cleanup_receipts(
+        self,
+        session_id: str,
+    ) -> tuple[Mapping[str, object], ...]:
+        return load_context_cleanup_receipts(self._connection, session_id)
 
     def record_runner_session_usage(
         self,

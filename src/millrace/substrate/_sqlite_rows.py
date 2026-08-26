@@ -22,16 +22,20 @@ from millrace.contracts.ids import (
     StageKindId,
 )
 from millrace.contracts.state import (
+    DURABLE_INT64_MAX,
     RUNNER_SESSION_TEXT_MAX_BYTES,
     Activation,
     ActivationRouteRecord,
     AdmittedPlan,
     ArtifactRecord,
+    AttributionMetric,
     ClosedWorkItemRecord,
     ClosureBlockedRecord,
     ClosureEvaluationRecord,
     ClosureTargetRecord,
     ClosureTerminalRecord,
+    ContextCleanupReceipt,
+    ContextHydrationReceipt,
     CooldownWaitRecord,
     CounterRecord,
     DispatchSuspensionRecord,
@@ -50,6 +54,7 @@ from millrace.contracts.state import (
     RecoveryAttemptRecord,
     RemediationWorkRecord,
     RunnerObservationRecord,
+    RunnerSessionAttributionRecord,
     RunnerSessionCancellationAttemptRecord,
     RunnerSessionCancellationRecord,
     RunnerSessionCompletionRecord,
@@ -160,6 +165,41 @@ class RunnerSessionRow:
     durable_locator_digest: str | None
     cleanup_disposition: str
     context_manifest_digest: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextHydrationReceiptRow:
+    receipt_id: str
+    session_id: str
+    dispatch_generation: int
+    fencing_token: str
+    manifest_digest: str
+    catalog_path: str
+    content_digest: str
+    byte_length: int
+    selected_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSessionAttributionRow:
+    session_id: str
+    dispatch_generation: int
+    fencing_token: str
+    final: int
+    metrics_json: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCleanupReceiptRow:
+    receipt_id: str
+    session_id: str
+    dispatch_generation: int
+    fencing_token: str
+    manifest_digest: str
+    removed_path_classes_json: str
+    removed_file_count: int
+    removed_byte_count: int
+    adapter_cleanup_disposition: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -822,6 +862,28 @@ def _expect_nonnegative_int(row: tuple[object, ...], index: int, column: str) ->
     return value
 
 
+def _expect_durable_nonnegative_int(
+    row: tuple[object, ...],
+    index: int,
+    column: str,
+) -> int:
+    value = _expect_nonnegative_int(row, index, column)
+    if value > DURABLE_INT64_MAX:
+        raise StorageIntegrityError(f"{column} is outside signed-int64 range")
+    return value
+
+
+def _expect_durable_positive_int(
+    row: tuple[object, ...],
+    index: int,
+    column: str,
+) -> int:
+    value = _expect_durable_nonnegative_int(row, index, column)
+    if value < 1:
+        raise StorageIntegrityError(f"{column} must be a positive integer")
+    return value
+
+
 def _expect_optional_nonnegative_int(
     row: tuple[object, ...],
     index: int,
@@ -1234,6 +1296,160 @@ def decode_runner_session_row(row: tuple[object, ...]) -> RunnerSessionRow:
             row,
             12,
             "runner_sessions.context_manifest_digest",
+        ),
+    )
+
+
+def _attribution_metrics_json(
+    metrics: Mapping[str, AttributionMetric],
+) -> str:
+    return json.dumps(
+        {
+            name: {
+                "availability": metric.availability,
+                "source": metric.source,
+                "value": metric.value,
+            }
+            for name, metric in sorted(metrics.items())
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def encode_context_hydration_receipt_row(
+    receipt: ContextHydrationReceipt,
+) -> ContextHydrationReceiptRow:
+    return ContextHydrationReceiptRow(
+        receipt_id=receipt.receipt_id,
+        session_id=receipt.session_id,
+        dispatch_generation=receipt.dispatch_generation,
+        fencing_token=receipt.fencing_token,
+        manifest_digest=receipt.manifest_digest,
+        catalog_path=receipt.catalog_path,
+        content_digest=receipt.content_digest,
+        byte_length=receipt.byte_length,
+        selected_path=receipt.selected_path,
+    )
+
+
+def decode_context_hydration_receipt_row(
+    row: tuple[object, ...],
+) -> ContextHydrationReceiptRow:
+    return ContextHydrationReceiptRow(
+        receipt_id=_expect_runner_session_text(
+            row, 0, "context_hydration_receipts.receipt_id"
+        ),
+        session_id=_expect_runner_session_text(
+            row, 1, "context_hydration_receipts.session_id"
+        ),
+        dispatch_generation=_expect_durable_positive_int(
+            row,
+            2,
+            "context_hydration_receipts.dispatch_generation",
+        ),
+        fencing_token=_expect_runner_session_text(
+            row, 3, "context_hydration_receipts.fencing_token"
+        ),
+        manifest_digest=_expect_runner_session_digest(
+            row, 4, "context_hydration_receipts.manifest_digest"
+        ),
+        catalog_path=_expect_runner_session_text(
+            row, 5, "context_hydration_receipts.catalog_path"
+        ),
+        content_digest=_expect_runner_session_digest(
+            row, 6, "context_hydration_receipts.content_digest"
+        ),
+        byte_length=_expect_durable_nonnegative_int(
+            row, 7, "context_hydration_receipts.byte_length"
+        ),
+        selected_path=_expect_runner_session_text(
+            row, 8, "context_hydration_receipts.selected_path"
+        ),
+    )
+
+
+def encode_runner_session_attribution_row(
+    record: RunnerSessionAttributionRecord,
+) -> RunnerSessionAttributionRow:
+    return RunnerSessionAttributionRow(
+        session_id=record.session_id,
+        dispatch_generation=record.dispatch_generation,
+        fencing_token=record.fencing_token,
+        final=int(record.final),
+        metrics_json=_attribution_metrics_json(record.metrics),
+    )
+
+
+def decode_runner_session_attribution_row(
+    row: tuple[object, ...],
+) -> RunnerSessionAttributionRow:
+    return RunnerSessionAttributionRow(
+        session_id=_expect_runner_session_text(
+            row, 0, "runner_session_attribution.session_id"
+        ),
+        dispatch_generation=_expect_durable_positive_int(
+            row,
+            1,
+            "runner_session_attribution.dispatch_generation",
+        ),
+        fencing_token=_expect_runner_session_text(
+            row, 2, "runner_session_attribution.fencing_token"
+        ),
+        final=_expect_bool_int(row, 3, "runner_session_attribution.final"),
+        metrics_json=_expect_text(row, 4, "runner_session_attribution.metrics_json"),
+    )
+
+
+def encode_context_cleanup_receipt_row(
+    receipt: ContextCleanupReceipt,
+) -> ContextCleanupReceiptRow:
+    return ContextCleanupReceiptRow(
+        receipt_id=receipt.receipt_id,
+        session_id=receipt.session_id,
+        dispatch_generation=receipt.dispatch_generation,
+        fencing_token=receipt.fencing_token,
+        manifest_digest=receipt.manifest_digest,
+        removed_path_classes_json=_json_string_tuple(receipt.removed_path_classes),
+        removed_file_count=receipt.removed_file_count,
+        removed_byte_count=receipt.removed_byte_count,
+        adapter_cleanup_disposition=receipt.adapter_cleanup_disposition,
+    )
+
+
+def decode_context_cleanup_receipt_row(
+    row: tuple[object, ...],
+) -> ContextCleanupReceiptRow:
+    return ContextCleanupReceiptRow(
+        receipt_id=_expect_runner_session_text(
+            row, 0, "context_cleanup_receipts.receipt_id"
+        ),
+        session_id=_expect_runner_session_text(
+            row, 1, "context_cleanup_receipts.session_id"
+        ),
+        dispatch_generation=_expect_durable_positive_int(
+            row,
+            2,
+            "context_cleanup_receipts.dispatch_generation",
+        ),
+        fencing_token=_expect_runner_session_text(
+            row, 3, "context_cleanup_receipts.fencing_token"
+        ),
+        manifest_digest=_expect_runner_session_digest(
+            row, 4, "context_cleanup_receipts.manifest_digest"
+        ),
+        removed_path_classes_json=_expect_text(
+            row, 5, "context_cleanup_receipts.removed_path_classes_json"
+        ),
+        removed_file_count=_expect_durable_nonnegative_int(
+            row, 6, "context_cleanup_receipts.removed_file_count"
+        ),
+        removed_byte_count=_expect_durable_nonnegative_int(
+            row, 7, "context_cleanup_receipts.removed_byte_count"
+        ),
+        adapter_cleanup_disposition=_expect_runner_session_text(
+            row, 8, "context_cleanup_receipts.adapter_cleanup_disposition"
         ),
     )
 
