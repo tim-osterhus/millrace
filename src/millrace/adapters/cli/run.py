@@ -403,6 +403,11 @@ def _session_invocation_request(
             manifest_digest=manifest_digest,
             state=state,
             cas_store=runtime.cas_store,
+            hydration_receipts=runtime.store.load_context_hydration_receipts_authenticated(
+                session.session_id,
+                session.dispatch_generation,
+                session.session_fencing_token,
+            ),
         )
     dispatch = build_dispatch_envelope_for_run(
         state=state,
@@ -495,6 +500,11 @@ def _prepare_created_session_callback(
                 manifest_digest=session.context_manifest_digest,
                 state=state,
                 cas_store=runtime.cas_store,
+                hydration_receipts=runtime.store.load_context_hydration_receipts_authenticated(
+                    session.session_id,
+                    session.dispatch_generation,
+                    session.session_fencing_token,
+                ),
             )
         reloaded = _load(runtime)
         durable = reloaded.runner_sessions.get(session.session_id)

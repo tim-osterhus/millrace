@@ -246,6 +246,11 @@ def _authenticate_checkout(
         manifest_digest=digest,
         cas_store=runtime.cas_store,
     )
+    hydration_receipts = runtime.store.load_context_hydration_receipts_authenticated(
+        session.session_id,
+        session.dispatch_generation,
+        session.session_fencing_token,
+    )
     context_checkout._verify_existing_checkout(
         final_root=final_root,
         manifest=manifest,
@@ -253,6 +258,7 @@ def _authenticate_checkout(
         manifest_digest=digest,
         payload_by_path=payloads,
         cas_store=runtime.cas_store,
+        hydration_receipts=hydration_receipts,
     )
     return manifest
 

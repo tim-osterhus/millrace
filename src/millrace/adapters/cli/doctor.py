@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 
 from millrace.adapters.cli.context import CliCommandError, open_runtime_context
 from millrace.adapters.cli.output import (
@@ -17,6 +18,8 @@ from millrace.adapters.cli.session_coordinator import (
 )
 from millrace.adapters.cli.status import (
     _daemon_budget_projections,
+    _hydration_totals_by_session,
+    _hydration_totals_for_run,
     runner_session_projection,
 )
 from millrace.contracts.state import RuntimeState
@@ -48,13 +51,17 @@ def handle_doctor_command(namespace: object) -> CliSuccess:
         registry = runtime.store.load_workflow_package_registry(runtime.cas_store)
         ready = list_ready_dispatch_candidates(state)
         budgets = _daemon_budget_projections(runtime, state)
+        hydration_totals = _hydration_totals_by_session(runtime, state)
     finally:
         runtime.close()
 
     severity_counts = Counter(
         diagnostic.severity for diagnostic in ready.diagnostics
     )
-    session_diagnostics = _runner_session_diagnostics(state)
+    session_diagnostics = _runner_session_diagnostics(
+        state,
+        hydration_totals=hydration_totals,
+    )
     default_plan = (
         None
         if state.default_plan_ref is None
@@ -119,7 +126,11 @@ def handle_doctor_command(namespace: object) -> CliSuccess:
     )
 
 
-def _runner_session_diagnostics(state: RuntimeState) -> dict[str, object]:
+def _runner_session_diagnostics(
+    state: RuntimeState,
+    *,
+    hydration_totals: Mapping[str, Mapping[str, int]] | None = None,
+) -> dict[str, object]:
     items: list[dict[str, object]] = []
     counts: Counter[str] = Counter()
 
@@ -129,7 +140,18 @@ def _runner_session_diagnostics(state: RuntimeState) -> dict[str, object]:
             items.append({"code": code, **base})
 
     for session in state.runner_sessions.values():
-        projection = runner_session_projection(state, session.run_id)
+        if hydration_totals is None:
+            projection = runner_session_projection(state, session.run_id)
+        else:
+            projection = runner_session_projection(
+                state,
+                session.run_id,
+                hydration_totals=_hydration_totals_for_run(
+                    state,
+                    session.run_id,
+                    hydration_totals,
+                ),
+            )
         if projection is None:
             continue
         base = dict(projection)

@@ -415,6 +415,7 @@ def rematerialize_attached_context_checkout(
     manifest_digest: str,
     state: RuntimeState,
     cas_store: ContentAddressedByteStore,
+    hydration_receipts: Sequence[ContextHydrationReceipt] = (),
 ) -> PreparedContextCheckout:
     """Verify or materialize an already-attached checkout from its CAS manifest."""
     try:
@@ -479,6 +480,7 @@ def rematerialize_attached_context_checkout(
                 manifest_digest=manifest_digest,
                 payload_by_path=payload_by_path,
                 cas_store=cas_store,
+                hydration_receipts=hydration_receipts,
             )
         else:
             _publish_checkout(

@@ -4766,6 +4766,37 @@ def test_daemon_summary_keeps_handled_session_after_final_idle_tick(
     assert summary.runner_session["application_status"] == "applied"
 
 
+def test_daemon_summary_projects_authenticated_hydration_totals(
+    tmp_path: Path,
+) -> None:
+    from tests.cli.test_cli_context_commands import _fixture, _select
+
+    from millrace.adapters.cli import daemon
+    from millrace.adapters.cli.context import CliWorkspacePaths
+
+    fixture = _fixture(tmp_path)
+    selected = _select(fixture, fixture.catalog_paths[0])
+    assert selected[0] == 0, selected[2]
+
+    options = _daemon_options(
+        CliWorkspacePaths(fixture.workspace, fixture.db_path, fixture.cas_path),
+        max_ticks=1,
+    )
+    summary = daemon._summary(
+        options,
+        stopped_reason="test",
+        last_handled_run_id="run-taskmaster",
+    )
+
+    projection = summary.data()["runner_session"]
+    assert projection is not None
+    assert projection["hydration_receipt_count"] == 1
+    assert projection["hydrated_file_count"] == 1
+    assert projection["hydrated_bytes"] == 4
+    assert "session_fencing_token" not in projection
+    assert fixture.session_fence not in str(projection)
+
+
 def test_daemon_asset_material_refusal_counters_and_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

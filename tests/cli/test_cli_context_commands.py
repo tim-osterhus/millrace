@@ -225,6 +225,70 @@ def test_context_select_hydrates_declared_paths_and_replays_idempotently(
     assert len(_receipts(fixture)) == 2
 
 
+def test_context_select_receipts_survive_rematerialization_and_writeback_verification(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    selected = _select(fixture, fixture.catalog_paths[0])
+    assert selected[0] == 0, selected[2]
+
+    from millrace.adapters.cli.context import CliWorkspacePaths, OpenRuntimeContext
+    from millrace.adapters.cli.context_checkout import (
+        rematerialize_attached_context_checkout,
+    )
+    from millrace.adapters.cli.context_writeback import validate_context_writeback
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    store = SQLiteRuntimeStore.open(fixture.db_path)
+    runtime = OpenRuntimeContext(
+        paths=CliWorkspacePaths(
+            fixture.workspace,
+            fixture.db_path,
+            fixture.cas_path,
+        ),
+        store=store,
+        cas_store=ContentAddressedByteStore(fixture.cas_path),
+    )
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+        session = state.runner_sessions[fixture.session_id]
+        run = state.runs[session.run_id]
+        fingerprint = run.run_ref.plan_ref.authority_fingerprint
+        binding = next(
+            binding
+            for binding in state.admitted_plans[
+                fingerprint
+            ].selected_plan.context_bindings
+            if str(binding.stage_kind_id) == str(run.stage_kind_id)
+        )
+        receipts = runtime.store.load_context_hydration_receipts_authenticated(
+            session.session_id,
+            session.dispatch_generation,
+            session.session_fencing_token,
+        )
+
+        rematerialized = rematerialize_attached_context_checkout(
+            paths=runtime.paths,
+            session=session,
+            plan_fingerprint=fingerprint,
+            binding=binding,
+            manifest_digest=fixture.manifest_digest,
+            state=state,
+            cas_store=runtime.cas_store,
+            hydration_receipts=receipts,
+        )
+
+        assert rematerialized.materialized_checkout_root == fixture.checkout
+        assert validate_context_writeback(
+            runtime,
+            session=session,
+            evidence=None,
+        ) is None
+    finally:
+        runtime.close()
+
+
 def test_context_select_enforces_cumulative_file_limit(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path, max_hydrated_files=1)
     first = _select(fixture, fixture.catalog_paths[0])

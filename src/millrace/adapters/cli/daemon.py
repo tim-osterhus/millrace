@@ -1505,7 +1505,11 @@ def _summary_runner_session(
     options: DaemonRunOptions,
     last_handled_run_id: str | None,
 ) -> dict[str, object] | None:
-    from millrace.adapters.cli.status import runner_session_projection
+    from millrace.adapters.cli.status import (
+        _hydration_totals_by_session,
+        _hydration_totals_for_run,
+        runner_session_projection,
+    )
 
     if last_handled_run_id is None:
         return None
@@ -1513,11 +1517,20 @@ def _summary_runner_session(
         runtime = open_runtime_context(options.paths, command=_COMMAND)
         try:
             state = runtime.store.load_runtime_state(runtime.cas_store)
+            hydration_totals = _hydration_totals_by_session(runtime, state)
         finally:
             runtime.close()
     except (CliCommandError, OSError, SubstrateError):
         return None
-    projection = runner_session_projection(state, last_handled_run_id)
+    projection = runner_session_projection(
+        state,
+        last_handled_run_id,
+        hydration_totals=_hydration_totals_for_run(
+            state,
+            last_handled_run_id,
+            hydration_totals,
+        ),
+    )
     if projection is None:
         return None
     return projection

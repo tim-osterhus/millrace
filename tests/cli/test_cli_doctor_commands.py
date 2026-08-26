@@ -148,6 +148,50 @@ def test_doctor_is_minimal_generic_read_only_projection(tmp_path: Path) -> None:
     assert _state(workspace) == before
 
 
+def test_doctor_projects_authenticated_hydration_totals(
+    tmp_path: Path,
+) -> None:
+    from tests.cli.test_cli_context_commands import _fixture, _select
+
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    fixture = _fixture(tmp_path)
+    selected = _select(fixture, fixture.catalog_paths[0])
+    assert selected[0] == 0, selected[2]
+
+    store = SQLiteRuntimeStore.open(fixture.db_path)
+    try:
+        store._connection.execute(
+            """
+            UPDATE runner_sessions
+            SET state = 'created', cleanup_disposition = 'orphan_risk'
+            WHERE session_id = ?
+            """,
+            (fixture.session_id,),
+        )
+        store._connection.commit()
+    finally:
+        store.close()
+
+    code, stdout, stderr = _invoke(
+        ["--json", "--workspace", str(fixture.workspace), "doctor"]
+    )
+
+    assert code == 0, stderr
+    assert stderr == ""
+    diagnostics = _json(stdout)["data"]["runner_session_diagnostics"]["diagnostics"]
+    diagnostic = next(
+        item
+        for item in diagnostics
+        if item["code"] == "runner_session_orphan_risk"
+    )
+    assert diagnostic["hydration_receipt_count"] == 1
+    assert diagnostic["hydrated_file_count"] == 1
+    assert diagnostic["hydrated_bytes"] == 4
+    assert "session_fencing_token" not in json.dumps(diagnostic)
+    assert fixture.session_fence not in json.dumps(diagnostic)
+
+
 def test_runner_session_doctor_diagnostics_are_bounded(
     monkeypatch,
 ) -> None:
