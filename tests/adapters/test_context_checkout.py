@@ -81,7 +81,7 @@ def _plan_with_all_context_sources(
             "max_bytes": 100_000,
         },
         {
-            "source_kind": "lineage_attempt_history",
+            "source_kind": "selected_attempts",
             "source_ref": "current_lineage",
             "max_files": 4,
             "max_bytes": 100_000,
@@ -91,7 +91,7 @@ def _plan_with_all_context_sources(
         required_sources.insert(
             1,
             {
-                "source_kind": "accepted_lineage_artifacts",
+                "source_kind": "selected_artifacts",
                 "source_ref": "current_lineage",
                 "max_files": 4,
                 "max_bytes": 100_000,
@@ -103,7 +103,7 @@ def _plan_with_all_context_sources(
     if accepted_discoverable:
         discoverable_sources.append(
             {
-                "source_kind": "accepted_lineage_artifacts",
+                "source_kind": "selected_artifacts",
                 "source_ref": "current_lineage",
                 "max_files": 1,
                 "max_bytes": 100_000,
@@ -117,6 +117,10 @@ def _plan_with_all_context_sources(
             "stage_kind_id": stage_kind_id,
             "router_asset_id": "kernel_ping.context_router",
             "checkout_root": "checkout",
+            "max_hydrated_files": 16,
+            "max_hydrated_bytes": 16_384,
+            "mutation_policy": "forbid_selected_roots",
+            "materialization_retention": "until_session_durable_terminal",
             "required_sources": required_sources,
             "discoverable_sources": discoverable_sources,
         }
@@ -1491,11 +1495,11 @@ def test_discoverable_runtime_and_workspace_omissions_are_deterministic(
         (item.source_kind, item.source_ref, item.reason)
         for item in prepared.manifest.omissions
     ] == [
-        ("accepted_lineage_artifacts", "current_lineage", "file_limit_exceeded"),
+        ("selected_artifacts", "current_lineage", "file_limit_exceeded"),
         ("workspace_relative_root", "docs", "source_missing"),
     ]
     assert not any(
-        item.source_kind == "accepted_lineage_artifacts"
+        item.source_kind == "selected_artifacts"
         for item in prepared.manifest.files
     )
 
@@ -1696,7 +1700,7 @@ def test_public_kernel_routed_artifact_provenance_accepts_follow_on_checkout(
     artifact_files = tuple(
         item
         for item in prepared.manifest.files
-        if item.source_kind == "accepted_lineage_artifacts"
+        if item.source_kind == "selected_artifacts"
     )
     assert artifact_files
     assert all(
@@ -1705,7 +1709,7 @@ def test_public_kernel_routed_artifact_provenance_accepts_follow_on_checkout(
     )
 
 
-def test_lineage_attempt_history_accepts_valid_records_in_attempt_then_id_order(
+def test_selected_attempts_accepts_valid_records_in_attempt_then_id_order(
 ) -> None:
     from millrace.adapters.cli import context_checkout as checkout_module
     from substrate.test_persistence_integrity_refusals import (

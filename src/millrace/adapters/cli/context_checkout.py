@@ -846,18 +846,18 @@ def _validate_sources(
         seen.add(key)
         if source_kind not in {
             "dispatch_material",
-            "accepted_lineage_artifacts",
-            "lineage_attempt_history",
+            "selected_artifacts",
+            "selected_attempts",
             "workspace_relative_root",
         }:
             _refuse("unsupported context source kind")
         if source_kind != "workspace_relative_root":
-            expected_ref = (
-                "current"
-                if source_kind == "dispatch_material"
-                else "current_lineage"
-            )
-            if source_ref != expected_ref:
+            expected_refs = {
+                "dispatch_material": {"current"},
+                "selected_artifacts": {"current_lineage"},
+                "selected_attempts": {"current_lineage"},
+            }
+            if source_ref not in expected_refs[source_kind]:
                 _refuse("runtime context source reference is unsupported")
             continue
         relative = _safe_relative_path(source_ref, "workspace source_ref")
@@ -1136,9 +1136,9 @@ def _runtime_files(
             records = (
                 _canonical_runtime_record(relation.envelope.payload()),
             )
-        elif source.source_kind == "accepted_lineage_artifacts":
+        elif source.source_kind == "selected_artifacts":
             records = _artifact_records(relation)
-        elif source.source_kind == "lineage_attempt_history":
+        elif source.source_kind == "selected_attempts":
             records = _attempt_records(relation)
         else:
             _refuse("unsupported runtime context source kind")

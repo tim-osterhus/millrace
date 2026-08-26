@@ -81,9 +81,13 @@ def _counter_route_source(
             "stage_kind_id": target_stage_id,
             "router_asset_id": "admission.context_router",
             "checkout_root": "checkout",
+            "max_hydrated_files": 16,
+            "max_hydrated_bytes": 16_384,
+            "mutation_policy": "forbid_selected_roots",
+            "materialization_retention": "until_session_durable_terminal",
             "required_sources": [
                 {
-                    "source_kind": "accepted_lineage_artifacts",
+                    "source_kind": "selected_artifacts",
                     "source_ref": "current_lineage",
                     "max_files": 8,
                     "max_bytes": 4096,
@@ -309,7 +313,7 @@ def test_context_checkout_authenticates_first_counter_increment(
     prepared = _prepare_checkout(tmp_path, plan, fingerprint, state)
 
     assert sum(
-        item.source_kind == "accepted_lineage_artifacts"
+        item.source_kind == "selected_artifacts"
         for item in prepared.manifest.files
     ) == 1
 
@@ -369,7 +373,7 @@ def test_context_checkout_authenticates_untrimmed_counter_artifacts(
     prepared = _prepare_checkout(tmp_path, plan, fingerprint, state)
 
     assert sum(
-        item.source_kind == "accepted_lineage_artifacts"
+        item.source_kind == "selected_artifacts"
         for item in prepared.manifest.files
     ) == 2
 
@@ -422,7 +426,7 @@ def test_context_checkout_replays_threshold_action_from_pre_value(
     prepared = _prepare_checkout(tmp_path, plan, fingerprint, state)
 
     assert sum(
-        item.source_kind == "accepted_lineage_artifacts"
+        item.source_kind == "selected_artifacts"
         for item in prepared.manifest.files
     ) == 1
 
@@ -504,7 +508,7 @@ def test_context_checkout_ignores_foreign_observation_history(
     prepared = _prepare_checkout(tmp_path, plan, fingerprint, state)
 
     assert sum(
-        item.source_kind == "accepted_lineage_artifacts"
+        item.source_kind == "selected_artifacts"
         for item in prepared.manifest.files
     ) == 1
 
@@ -553,7 +557,7 @@ def test_context_checkout_ignores_malformed_unrelated_counter(
     prepared = _prepare_checkout(tmp_path, plan, fingerprint, state)
 
     assert sum(
-        item.source_kind == "accepted_lineage_artifacts"
+        item.source_kind == "selected_artifacts"
         for item in prepared.manifest.files
     ) == 1
     assert replayed_unrelated == [unrelated_counter, unrelated_counter]
