@@ -16,6 +16,7 @@ from millrace.contracts import (
     decode_context_checkout_manifest,
     encode_context_checkout_manifest,
 )
+from millrace.contracts.context_checkout import ContextCheckoutCatalogEntry
 
 
 def _manifest() -> ContextCheckoutManifest:
@@ -27,20 +28,22 @@ def _manifest() -> ContextCheckoutManifest:
         router_asset_id="router-1",
         files=(
             ContextCheckoutFile(
-                checkout_path="b.txt",
-                source_kind="workspace_relative_root",
-                source_ref="docs",
-                content_digest="sha256:" + "b" * 64,
-                byte_length=2,
-                required=False,
-            ),
-            ContextCheckoutFile(
                 checkout_path="a.txt",
                 source_kind="selected_router",
                 source_ref="router-1",
                 content_digest="sha256:" + "c" * 64,
                 byte_length=3,
                 required=True,
+            ),
+        ),
+        catalog=(
+            ContextCheckoutCatalogEntry(
+                logical_path="b.txt",
+                source_kind="workspace_relative_root",
+                source_ref="docs",
+                content_digest="sha256:" + "b" * 64,
+                byte_length=2,
+                provenance_ids=("workspace:docs/b.txt",),
             ),
         ),
         omissions=(
@@ -57,6 +60,7 @@ def test_context_checkout_contracts_are_frozen_slotted_and_public() -> None:
     for record in (
         ContextCheckoutFile,
         ContextCheckoutOmission,
+        ContextCheckoutCatalogEntry,
         ContextCheckoutManifest,
         PreparedContextCheckout,
     ):
@@ -103,21 +107,22 @@ def test_context_checkout_manifest_uses_canonical_bytes_and_raw_digest() -> None
             binding_id=manifest.binding_id,
             router_asset_id=manifest.router_asset_id,
             files=tuple(reversed(manifest.files)),
+            catalog=tuple(reversed(manifest.catalog)),
             omissions=manifest.omissions,
         )
     )
     assert raw == (
-        b'{"binding_id":"binding-1","dispatch_generation":1,'
-        b'"files":[{"byte_length":3,"checkout_path":"a.txt",'
-        b'"content_digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",'
-        b'"required":true,"source_kind":"selected_router","source_ref":"router-1"},'
-        b'{"byte_length":2,"checkout_path":"b.txt",'
+        b'{"binding_id":"binding-1","catalog":[{"byte_length":2,'
         b'"content_digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",'
-        b'"required":false,"source_kind":"workspace_relative_root","source_ref":"docs"}],'
+        b'"logical_path":"b.txt","provenance_ids":["workspace:docs/b.txt"],'
+        b'"source_kind":"workspace_relative_root","source_ref":"docs"}],"'
+        b'dispatch_generation":1,"files":[{"byte_length":3,"checkout_path":"a.txt",'
+        b'"content_digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",'
+        b'"required":true,"source_kind":"selected_router","source_ref":"router-1"}],'
         b'"omissions":[{"reason":"source_missing","source_kind":"workspace_relative_root",'
         b'"source_ref":"missing"}],"plan_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
         b'"record_kind":"millrace.context_checkout_manifest","router_asset_id":"router-1",'
-        b'"schema_version":1,"session_id":"session-1"}'
+        b'"schema_version":2,"session_id":"session-1"}'
     )
     assert decode_context_checkout_manifest(raw) == ContextCheckoutManifest(
         session_id="session-1",
@@ -126,6 +131,7 @@ def test_context_checkout_manifest_uses_canonical_bytes_and_raw_digest() -> None
         binding_id="binding-1",
         router_asset_id="router-1",
         files=tuple(sorted(manifest.files, key=lambda item: item.checkout_path)),
+        catalog=manifest.catalog,
         omissions=manifest.omissions,
     )
     assert context_checkout_manifest_digest(manifest) == (
@@ -179,6 +185,7 @@ def test_decode_context_checkout_manifest_refuses_noncanonical_bytes() -> None:
         binding_id="binding-1",
         router_asset_id="router-1",
         files=(),
+        catalog=(),
         omissions=(),
     )
     canonical = encode_context_checkout_manifest(manifest)
@@ -244,6 +251,7 @@ def test_manifest_rejects_invalid_identity_and_integer_fields(
         "binding_id": "binding-1",
         "router_asset_id": "router-1",
         "files": (),
+        "catalog": (),
         "omissions": (),
     }
     values[field_name] = value
@@ -295,3 +303,100 @@ def test_nested_contracts_reject_digest_bounds_reasons_and_duplicate_paths() -> 
             files=(file_record, file_record),
             omissions=(),
         )
+
+
+def test_manifest_schema_two_catalog_is_canonical_and_payload_free() -> None:
+    record = {
+        "record_kind": "millrace.context_checkout_manifest",
+        "schema_version": 2,
+        "session_id": "session-1",
+        "dispatch_generation": 1,
+        "plan_fingerprint": "sha256:" + "a" * 64,
+        "binding_id": "binding-1",
+        "router_asset_id": "router-1",
+        "files": [],
+        "catalog": [
+            {
+                "logical_path": "discoverable/z.txt",
+                "source_kind": "workspace_relative_root",
+                "source_ref": "docs",
+                "content_digest": "sha256:" + "b" * 64,
+                "byte_length": 2,
+                "provenance_ids": ["workspace:docs/z.txt"],
+            },
+            {
+                "logical_path": "discoverable/a.txt",
+                "source_kind": "workspace_relative_root",
+                "source_ref": "docs",
+                "content_digest": "sha256:" + "a" * 64,
+                "byte_length": 1,
+                "provenance_ids": ["workspace:docs/a.txt"],
+            },
+        ],
+        "omissions": [],
+    }
+
+    manifest = decode_context_checkout_manifest(
+        encode_context_checkout_manifest(record)
+    )
+    raw = encode_context_checkout_manifest(manifest)
+    encoded = json.loads(raw)
+    assert encoded["schema_version"] == 2
+    assert [entry["logical_path"] for entry in encoded["catalog"]] == [
+        "discoverable/a.txt",
+        "discoverable/z.txt",
+    ]
+    assert all("payload" not in entry for entry in encoded["catalog"])
+
+
+def test_manifest_schema_one_is_refused() -> None:
+    raw = (
+        b'{"binding_id":"binding-1","dispatch_generation":1,'
+        b'"files":[],"omissions":[],"plan_fingerprint":"sha256:'
+        b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+        b'"record_kind":"millrace.context_checkout_manifest",'
+        b'"router_asset_id":"router-1","schema_version":1,'
+        b'"session_id":"session-1"}'
+    )
+
+    with pytest.raises(ValueError, match="schema_version"):
+        decode_context_checkout_manifest(raw)
+
+
+def test_catalog_rejects_duplicate_paths_and_conflicting_digest_sizes() -> None:
+    def catalog_entry(
+        logical_path: str, content_digest: str, byte_length: int, provenance: str
+    ) -> dict[str, object]:
+        return {
+            "logical_path": logical_path,
+            "source_kind": "workspace_relative_root",
+            "source_ref": "docs",
+            "content_digest": content_digest,
+            "byte_length": byte_length,
+            "provenance_ids": [provenance],
+        }
+
+    values = {
+        "record_kind": "millrace.context_checkout_manifest",
+        "schema_version": 2,
+        "session_id": "session-1",
+        "dispatch_generation": 1,
+        "plan_fingerprint": "sha256:" + "a" * 64,
+        "binding_id": "binding-1",
+        "router_asset_id": "router-1",
+        "files": [],
+        "omissions": [],
+    }
+    duplicate = dict(values, catalog=[
+        catalog_entry("discoverable/a.txt", "sha256:" + "a" * 64, 1, "a"),
+        catalog_entry("discoverable/a.txt", "sha256:" + "b" * 64, 2, "b"),
+    ])
+    with pytest.raises(ValueError, match="duplicate"):
+        encode_context_checkout_manifest(duplicate)
+
+    conflicting_size = dict(values, catalog=[
+        catalog_entry("discoverable/a.txt", "sha256:" + "a" * 64, 1, "a"),
+        catalog_entry("discoverable/b.txt", "sha256:" + "a" * 64, 2, "b"),
+    ])
+    with pytest.raises(ValueError, match="size"):
+        encode_context_checkout_manifest(conflicting_size)

@@ -26,6 +26,7 @@ _MANIFEST_KEYS = frozenset(
         "binding_id",
         "router_asset_id",
         "files",
+        "catalog",
         "omissions",
     }
 )
@@ -37,6 +38,16 @@ _FILE_KEYS = frozenset(
         "content_digest",
         "byte_length",
         "required",
+    }
+)
+_CATALOG_KEYS = frozenset(
+    {
+        "logical_path",
+        "source_kind",
+        "source_ref",
+        "content_digest",
+        "byte_length",
+        "provenance_ids",
     }
 )
 _OMISSION_KEYS = frozenset({"source_kind", "source_ref", "reason"})
@@ -121,6 +132,33 @@ def _canonical_files(value: object) -> tuple[ContextCheckoutFile, ...]:
         _refuse("files cannot be canonically ordered", exc)
 
 
+def _canonical_catalog(
+    value: object,
+) -> tuple[ContextCheckoutCatalogEntry, ...]:
+    if isinstance(value, (str, bytes, bytearray, Mapping)) or not isinstance(
+        value, Sequence
+    ):
+        _refuse("catalog must be a sequence")
+    try:
+        catalog = tuple(cast(Sequence[object], value))
+    except Exception as exc:
+        _refuse("catalog must be a finite sequence", exc)
+    if any(not isinstance(item, ContextCheckoutCatalogEntry) for item in catalog):
+        _refuse("catalog must contain ContextCheckoutCatalogEntry records")
+    typed_catalog = cast(tuple[ContextCheckoutCatalogEntry, ...], catalog)
+    try:
+        paths = [item.logical_path for item in typed_catalog]
+        if len(paths) != len(set(paths)):
+            _refuse("catalog must not contain duplicate logical_path values")
+        return tuple(
+            sorted(typed_catalog, key=lambda item: item.logical_path.encode("utf-8"))
+        )
+    except ContextCheckoutContractError:
+        raise
+    except Exception as exc:
+        _refuse("catalog cannot be canonically ordered", exc)
+
+
 def _canonical_omissions(value: object) -> tuple[ContextCheckoutOmission, ...]:
     if isinstance(value, (str, bytes, bytearray, Mapping)) or not isinstance(
         value, Sequence
@@ -180,10 +218,61 @@ class ContextCheckoutOmission:
             _refuse("unsupported context checkout omission reason")
 
 
+def _logical_path(value: object) -> str:
+    path = _text(value, "logical_path")
+    if (
+        path.startswith("/")
+        or "\\" in path
+        or ":" in path.split("/", 1)[0]
+        or any(part in {"", ".", "..", ".millrace"} for part in path.split("/"))
+    ):
+        _refuse("logical_path must be a safe relative POSIX path")
+    return path
+
+
+def _canonical_provenance_ids(value: object) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes, bytearray, Mapping)) or not isinstance(
+        value, Sequence
+    ):
+        _refuse("provenance_ids must be a sequence")
+    try:
+        provenance_ids = tuple(cast(Sequence[object], value))
+    except Exception as exc:
+        _refuse("provenance_ids must be a finite sequence", exc)
+    if not provenance_ids:
+        _refuse("provenance_ids must not be empty")
+    identifiers = tuple(
+        _text(item, "provenance_id") for item in provenance_ids
+    )
+    if len(identifiers) != len(set(identifiers)):
+        _refuse("provenance_ids must not contain duplicates")
+    return tuple(sorted(identifiers, key=lambda item: item.encode("utf-8")))
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCheckoutCatalogEntry:
+    logical_path: str
+    source_kind: str
+    source_ref: str
+    content_digest: str
+    byte_length: int
+    provenance_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _logical_path(self.logical_path)
+        _text(self.source_kind, "source_kind")
+        _text(self.source_ref, "source_ref")
+        _digest(self.content_digest, "content_digest")
+        _int(self.byte_length, "byte_length", minimum=0)
+        object.__setattr__(
+            self, "provenance_ids", _canonical_provenance_ids(self.provenance_ids)
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ContextCheckoutManifest:
     record_kind: ClassVar[str] = "millrace.context_checkout_manifest"
-    schema_version: ClassVar[int] = 1
+    schema_version: ClassVar[int] = 2
 
     session_id: str
     dispatch_generation: int
@@ -191,7 +280,8 @@ class ContextCheckoutManifest:
     binding_id: str
     router_asset_id: str
     files: tuple[ContextCheckoutFile, ...]
-    omissions: tuple[ContextCheckoutOmission, ...]
+    catalog: tuple[ContextCheckoutCatalogEntry, ...] = ()
+    omissions: tuple[ContextCheckoutOmission, ...] = ()
 
     def __post_init__(self) -> None:
         _text(self.session_id, "session_id")
@@ -199,7 +289,15 @@ class ContextCheckoutManifest:
         _digest(self.plan_fingerprint, "plan_fingerprint")
         _text(self.binding_id, "binding_id")
         _text(self.router_asset_id, "router_asset_id")
-        object.__setattr__(self, "files", _canonical_files(self.files))
+        files = _canonical_files(self.files)
+        catalog = _canonical_catalog(self.catalog)
+        declared_sizes: dict[str, int] = {}
+        for item in (*files, *catalog):
+            previous = declared_sizes.setdefault(item.content_digest, item.byte_length)
+            if previous != item.byte_length:
+                _refuse("content digest has conflicting declared sizes")
+        object.__setattr__(self, "files", files)
+        object.__setattr__(self, "catalog", catalog)
         object.__setattr__(self, "omissions", _canonical_omissions(self.omissions))
 
 
@@ -227,6 +325,17 @@ def encode_context_checkout_manifest(
                     "required": item.required,
                 }
                 for item in manifest.files
+            ],
+            "catalog": [
+                {
+                    "logical_path": item.logical_path,
+                    "source_kind": item.source_kind,
+                    "source_ref": item.source_ref,
+                    "content_digest": item.content_digest,
+                    "byte_length": item.byte_length,
+                    "provenance_ids": list(item.provenance_ids),
+                }
+                for item in manifest.catalog
             ],
             "omissions": [
                 {
@@ -332,6 +441,17 @@ def _coerce_manifest(
                 )
                 for item in value.files
             ),
+            catalog=tuple(
+                ContextCheckoutCatalogEntry(
+                    logical_path=item.logical_path,
+                    source_kind=item.source_kind,
+                    source_ref=item.source_ref,
+                    content_digest=item.content_digest,
+                    byte_length=item.byte_length,
+                    provenance_ids=tuple(item.provenance_ids),
+                )
+                for item in value.catalog
+            ),
             omissions=tuple(
                 ContextCheckoutOmission(
                     source_kind=item.source_kind,
@@ -347,20 +467,28 @@ def _coerce_manifest(
 
 
 def _manifest_from_mapping(value: Mapping[object, object]) -> ContextCheckoutManifest:
+    if "schema_version" in value and (
+        type(value["schema_version"]) is not int
+        or value["schema_version"] != ContextCheckoutManifest.schema_version
+    ):
+        _refuse("manifest schema_version is unsupported")
     _exact_keys(value, _MANIFEST_KEYS, "manifest")
     if value["record_kind"] != ContextCheckoutManifest.record_kind:
         _refuse("manifest record_kind is unsupported")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
         _refuse("manifest schema_version is unsupported")
     files = value["files"]
+    catalog = value["catalog"]
     omissions = value["omissions"]
     if (
         isinstance(files, (str, bytes, bytearray, Mapping))
         or not isinstance(files, Sequence)
+        or isinstance(catalog, (str, bytes, bytearray, Mapping))
+        or not isinstance(catalog, Sequence)
         or isinstance(omissions, (str, bytes, bytearray, Mapping))
         or not isinstance(omissions, Sequence)
     ):
-        _refuse("manifest files and omissions must be arrays")
+        _refuse("manifest files, catalog, and omissions must be arrays")
     return ContextCheckoutManifest(
         session_id=cast(str, value["session_id"]),
         dispatch_generation=cast(int, value["dispatch_generation"]),
@@ -370,6 +498,10 @@ def _manifest_from_mapping(value: Mapping[object, object]) -> ContextCheckoutMan
         files=tuple(
             _decode_file(item, index)
             for index, item in enumerate(cast(Sequence[object], files))
+        ),
+        catalog=tuple(
+            _decode_catalog_entry(item, index)
+            for index, item in enumerate(cast(Sequence[object], catalog))
         ),
         omissions=tuple(
             _decode_omission(item, index)
@@ -421,6 +553,29 @@ def _decode_file(value: object, index: int) -> ContextCheckoutFile:
     )
 
 
+def _decode_catalog_entry(
+    value: object, index: int
+) -> ContextCheckoutCatalogEntry:
+    if not isinstance(value, Mapping):
+        _refuse(f"catalog[{index}] must be an object")
+    record = cast(Mapping[object, object], value)
+    _exact_keys(record, _CATALOG_KEYS, f"catalog[{index}]")
+    provenance_ids = record["provenance_ids"]
+    if (
+        isinstance(provenance_ids, (str, bytes, bytearray, Mapping))
+        or not isinstance(provenance_ids, Sequence)
+    ):
+        _refuse(f"catalog[{index}].provenance_ids must be an array")
+    return ContextCheckoutCatalogEntry(
+        logical_path=cast(str, record["logical_path"]),
+        source_kind=cast(str, record["source_kind"]),
+        source_ref=cast(str, record["source_ref"]),
+        content_digest=cast(str, record["content_digest"]),
+        byte_length=cast(int, record["byte_length"]),
+        provenance_ids=tuple(cast(Sequence[object], provenance_ids)),
+    )
+
+
 def _decode_omission(value: object, index: int) -> ContextCheckoutOmission:
     if not isinstance(value, Mapping):
         _refuse(f"omissions[{index}] must be an object")
@@ -434,6 +589,7 @@ def _decode_omission(value: object, index: int) -> ContextCheckoutOmission:
 
 
 __all__ = (
+    "ContextCheckoutCatalogEntry",
     "ContextCheckoutContractError",
     "ContextCheckoutFile",
     "ContextCheckoutManifest",

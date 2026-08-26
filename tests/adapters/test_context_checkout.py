@@ -45,10 +45,11 @@ def _plan_with_all_context_sources(
     *,
     stage_kind_id: str = "kernel_ping.taskmaster",
     router_body: str = "Router body.",
-    accepted_discoverable: bool = False,
+    accepted_discoverable: bool = True,
     workspace_discoverable: bool = False,
     workspace_max_files: int = 4,
     workspace_max_bytes: int = 100_000,
+    include_required_attempts: bool = False,
 ):
     source = deepcopy(kernel_ping.WORKFLOW_SOURCE)
     runners = source["runner_bindings"]
@@ -80,13 +81,16 @@ def _plan_with_all_context_sources(
             "max_files": 4,
             "max_bytes": 100_000,
         },
-        {
-            "source_kind": "selected_attempts",
-            "source_ref": "current_lineage",
-            "max_files": 4,
-            "max_bytes": 100_000,
-        },
     ]
+    if include_required_attempts:
+        required_sources.append(
+            {
+                "source_kind": "selected_attempts",
+                "source_ref": "current_lineage",
+                "max_files": 4,
+                "max_bytes": 100_000,
+            }
+        )
     if not accepted_discoverable:
         required_sources.insert(
             1,
@@ -326,7 +330,7 @@ def test_prepare_context_checkout_materializes_canonical_sources(
         / "guide.txt"
     ).read_text(encoding="utf-8") == "Guide\n"
     assert prepared.manifest.files[-1].checkout_path != "checkout.manifest.json"
-    assert "manifest_digest" not in (
+    assert "manifest_digest: <digest>" in (
         prepared.materialized_checkout_root / "CONTEXT.md"
     ).read_text(encoding="utf-8")
     assert str(workspace) not in (
@@ -598,33 +602,20 @@ def test_existing_checkout_rejects_missing_discoverable_source(
     final_root = prepared.materialized_checkout_root
     removed = tuple(
         item
-        for item in prepared.manifest.files
+        for item in prepared.manifest.catalog
         if item.source_kind == "workspace_relative_root"
     )
     assert removed
     tampered_manifest = replace(
         prepared.manifest,
-        files=tuple(
+        catalog=tuple(
             item
-            for item in prepared.manifest.files
+            for item in prepared.manifest.catalog
             if item.source_kind != "workspace_relative_root"
         ),
     )
     for item in (final_root, *final_root.rglob("*")):
         item.chmod(0o755 if item.is_dir() else 0o644)
-    for item in removed:
-        (final_root / item.checkout_path).unlink()
-    expected_directories = checkout_module._expected_directories(
-        {item.checkout_path for item in tampered_manifest.files}
-        | {"checkout.manifest.json"}
-    )
-    for directory in sorted(
-        (item for item in final_root.rglob("*") if item.is_dir()),
-        key=lambda item: len(item.parts),
-        reverse=True,
-    ):
-        if directory.relative_to(final_root).as_posix() not in expected_directories:
-            directory.rmdir()
     manifest_bytes = encode_context_checkout_manifest(tampered_manifest)
     (final_root / "checkout.manifest.json").write_bytes(manifest_bytes)
     cas_store.put_bytes(manifest_bytes)
@@ -833,10 +824,12 @@ def test_generated_context_index_has_exact_relative_sections_and_metadata(
     )
     sections = (
         "Authority boundary:",
-        "Required reads:",
-        "Discoverable sources:",
+        "Required paths:",
+        "Catalog paths:",
+        "Capture limits:",
+        "Cumulative hydration limits:",
+        "Select evidence as needed with:",
         "Omissions:",
-        "Live project root: .",
         "Selected write rules:",
         "Legal output channel:",
     )
@@ -1623,6 +1616,7 @@ def test_public_kernel_routed_artifact_provenance_accepts_follow_on_checkout(
 
     plan, fingerprint = _plan_with_all_context_sources(
         stage_kind_id="kernel_ping.taskmaster",
+        accepted_discoverable=False,
     )
     state = bootstrap_to_worker_claim(
         plan,
@@ -1854,13 +1848,25 @@ def test_workspace_source_accepts_exact_file_and_byte_boundaries(
         cas_store=ContentAddressedByteStore(cas_path),
     )
 
-    workspace_files = tuple(
-        item
-        for item in prepared.manifest.files
-        if item.source_kind == "workspace_relative_root"
-    )
-    assert len(workspace_files) == 1
-    assert workspace_files[0].byte_length == len(b"Guide\n")
+    if discoverable:
+        workspace_catalog = tuple(
+            item
+            for item in prepared.manifest.catalog
+            if item.source_kind == "workspace_relative_root"
+        )
+        assert len(workspace_catalog) == 1
+        assert workspace_catalog[0].byte_length == len(b"Guide\n")
+        assert not (
+            prepared.materialized_checkout_root / workspace_catalog[0].logical_path
+        ).exists()
+    else:
+        workspace_files = tuple(
+            item
+            for item in prepared.manifest.files
+            if item.source_kind == "workspace_relative_root"
+        )
+        assert len(workspace_files) == 1
+        assert workspace_files[0].byte_length == len(b"Guide\n")
 
 
 @pytest.mark.parametrize("case", ("missing", "over_bound"))
@@ -1898,14 +1904,18 @@ def test_discoverable_workspace_source_omits_whole_source(
         cas_store=ContentAddressedByteStore(cas_path),
     )
 
-    assert len(prepared.manifest.omissions) == 1
-    assert prepared.manifest.omissions[0].source_kind == "workspace_relative_root"
-    assert prepared.manifest.omissions[0].reason == (
+    workspace_omissions = tuple(
+        item
+        for item in prepared.manifest.omissions
+        if item.source_kind == "workspace_relative_root"
+    )
+    assert len(workspace_omissions) == 1
+    assert workspace_omissions[0].reason == (
         "source_missing" if case == "missing" else "file_limit_exceeded"
     )
     assert not any(
         item.source_kind == "workspace_relative_root"
-        for item in prepared.manifest.files
+        for item in prepared.manifest.catalog
     )
 
 
@@ -2486,3 +2496,99 @@ def test_complete_selected_snapshot_refuses_repeated_runtime_mutation(
 
     assert calls >= 4
     assert cas_store.put_calls == 0
+
+
+def test_discoverable_capture_is_catalog_only_and_cas_authenticated(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli.context_checkout import prepare_context_checkout
+
+    plan, fingerprint = _plan_with_all_context_sources(
+        accepted_discoverable=True,
+        workspace_discoverable=True,
+        include_required_attempts=False,
+    )
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    session = state.runner_sessions["test-session:run-taskmaster"]
+    workspace = tmp_path / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    source_payload = b"discoverable context\n"
+    (workspace / "docs" / "guide.txt").write_bytes(source_payload)
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    cas_path = workspace / ".millrace" / "cas"
+    db_path.parent.mkdir()
+    db_path.touch()
+    cas_path.mkdir()
+    cas_store = _CountingCas(cas_path)
+
+    prepared = prepare_context_checkout(
+        paths=CliWorkspacePaths(workspace, db_path, cas_path),
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=plan.context_bindings[0],
+        state=state,
+        cas_store=cas_store,
+    )
+
+    assert prepared.manifest.catalog
+    entry = next(
+        item
+        for item in prepared.manifest.catalog
+        if item.source_kind == "workspace_relative_root"
+    )
+    assert entry.logical_path == "discoverable/workspace/docs/guide.txt"
+    assert not hasattr(entry, "payload")
+    assert not (prepared.materialized_checkout_root / entry.logical_path).exists()
+    assert not (prepared.materialized_checkout_root / "discoverable").exists()
+    assert cas_store.get_bytes(entry.content_digest) == source_payload
+    assert all(
+        item.required
+        and (prepared.materialized_checkout_root / item.checkout_path).is_file()
+        for item in prepared.manifest.files
+    )
+
+
+def test_context_index_presents_catalog_selection_without_broad_read_instruction(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli.context_checkout import prepare_context_checkout
+
+    plan, fingerprint = _plan_with_all_context_sources(
+        accepted_discoverable=True,
+        workspace_discoverable=True,
+        include_required_attempts=False,
+    )
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    session = state.runner_sessions["test-session:run-taskmaster"]
+    workspace = tmp_path / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    (workspace / "docs" / "guide.txt").write_text("guide\n", encoding="utf-8")
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    cas_path = workspace / ".millrace" / "cas"
+    db_path.parent.mkdir()
+    db_path.touch()
+    cas_path.mkdir()
+
+    prepared = prepare_context_checkout(
+        paths=CliWorkspacePaths(workspace, db_path, cas_path),
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=plan.context_bindings[0],
+        state=state,
+        cas_store=ContentAddressedByteStore(cas_path),
+    )
+    context = (prepared.materialized_checkout_root / "CONTEXT.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Catalog paths:" in context
+    assert "Cumulative hydration limits:" in context
+    assert "manifest_digest" in context
+    assert (
+        "millrace context select --session-id <session-id> "
+        "--manifest-digest <digest> --path <catalog-path>"
+    ) in context
+    assert "select evidence as needed" in context.lower()
+    assert "read every" not in context.lower()
+    assert "read all" not in context.lower()

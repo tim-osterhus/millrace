@@ -722,7 +722,8 @@ def test_checkout_mutation_for_non_writeback_read_only_bound_stage(
         / str(session.dispatch_generation)
     )
     guide = checkout / "discoverable" / "workspace" / "docs" / "guide.txt"
-    guide.chmod(0o644)
+    checkout.chmod(0o755)
+    guide.parent.mkdir(parents=True)
     guide.write_text(
         "tampered\n",
         encoding="utf-8",

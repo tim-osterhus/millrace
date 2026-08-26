@@ -27,6 +27,7 @@ from millrace.contracts.compiled_plan import (
     context_binding_authority_refusal,
 )
 from millrace.contracts.context_checkout import (
+    ContextCheckoutCatalogEntry,
     ContextCheckoutContractError,
     ContextCheckoutFile,
     ContextCheckoutManifest,
@@ -106,6 +107,15 @@ class _CaptureInstability(Exception):
     pass
 
 
+def _capture_provenance_ids(
+    *, source_kind: str, source_ref: str, logical_path: str
+) -> tuple[str, ...]:
+    return (
+        f"{source_kind}:{source_ref}",
+        f"path:{logical_path}",
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _SourceSelection:
     required: bool
@@ -119,6 +129,7 @@ class _CapturedFile:
     source_ref: str
     required: bool
     payload: bytes
+    provenance_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +179,7 @@ class _Attempt:
     runtime_files: tuple[_CapturedFile, ...]
     runtime_omissions: tuple[ContextCheckoutOmission, ...]
     files: tuple[_CapturedFile, ...]
+    catalog_files: tuple[_CapturedFile, ...]
     omissions: tuple[ContextCheckoutOmission, ...]
     manifest: ContextCheckoutManifest
     manifest_bytes: bytes
@@ -277,15 +289,27 @@ def prepare_context_checkout(
                         ),
                     )
                 )
+                discoverable_files = tuple(
+                    file_record
+                    for file_record in captured_files
+                    if not file_record.required
+                )
+                required_files = tuple(
+                    file_record
+                    for file_record in captured_files
+                    if file_record.required
+                )
+                catalog = _catalog_for_files(discoverable_files)
                 index = _render_context_index(
                     session=session,
                     plan_fingerprint=plan_fingerprint,
                     binding=binding,
                     selections=selections,
                     omissions=omissions,
-                    payload_files=captured_files,
+                    payload_files=required_files,
+                    catalog=catalog,
                 )
-                files = captured_files + (
+                files = required_files + (
                     _CapturedFile(
                         checkout_path="CONTEXT.md",
                         source_kind="selected_router",
@@ -296,12 +320,15 @@ def prepare_context_checkout(
                         ),
                     ),
                 )
-                _validate_captured_paths(files)
+                _validate_captured_paths(
+                    required_files + discoverable_files + files[-1:]
+                )
                 manifest = _manifest_for_files(
                     session=session,
                     plan_fingerprint=plan_fingerprint,
                     binding=binding,
                     files=files,
+                    catalog=catalog,
                     omissions=omissions,
                 )
                 manifest_bytes = encode_context_checkout_manifest(manifest)
@@ -315,13 +342,19 @@ def prepare_context_checkout(
                     file_record.checkout_path: file_record.payload
                     for file_record in files
                 }
+                catalog_payload_by_path = {
+                    file_record.checkout_path: file_record.payload
+                    for file_record in discoverable_files
+                }
                 _validate_manifest_payloads(manifest, payload_by_path)
+                _validate_catalog_payloads(manifest.catalog, catalog_payload_by_path)
                 attempt_result = _Attempt(
                     relation_snapshot=_relation_snapshot(relation, binding),
                     captures=captures,
                     runtime_files=tuple(runtime_files),
                     runtime_omissions=tuple(runtime_omissions),
                     files=files,
+                    catalog_files=discoverable_files,
                     omissions=omissions,
                     manifest=manifest,
                     manifest_bytes=manifest_bytes,
@@ -352,7 +385,7 @@ def prepare_context_checkout(
         )
         _put_cas_bytes(
             cas_store=cas_store,
-            payloads=attempt_result.files,
+            payloads=attempt_result.files + attempt_result.catalog_files,
             manifest_bytes=attempt_result.manifest_bytes,
             manifest_digest=attempt_result.manifest_digest,
         )
@@ -972,6 +1005,11 @@ def _capture_workspace_source(
                 source_ref=source.source_ref,
                 required=selection.required,
                 payload=payload,
+                provenance_ids=_capture_provenance_ids(
+                    source_kind=source.source_kind,
+                    source_ref=source.source_ref,
+                    logical_path=checkout_path,
+                ),
             )
         )
     after = _snapshot_tree(source_path)
@@ -1158,7 +1196,9 @@ def _runtime_files(
                 omissions=omissions,
             )
             continue
-        if not payloads and not selection.required:
+        if not payloads:
+            if selection.required:
+                _refuse("required runtime source is empty and cannot be represented")
             omissions.append(
                 ContextCheckoutOmission(
                     source_kind=source.source_kind,
@@ -1178,6 +1218,13 @@ def _runtime_files(
                     source_ref=source.source_ref,
                     required=selection.required,
                     payload=payload,
+                    provenance_ids=_capture_provenance_ids(
+                        source_kind=source.source_kind,
+                        source_ref=source.source_ref,
+                        logical_path=(
+                            f"{bucket}/runtime/{source.source_kind}/{index:06d}.json"
+                        ),
+                    ),
                 )
             )
     return files, omissions
@@ -2090,9 +2137,8 @@ def _render_context_index(
     selections: Sequence[_SourceSelection],
     omissions: Sequence[ContextCheckoutOmission],
     payload_files: Sequence[_CapturedFile],
+    catalog: Sequence[ContextCheckoutCatalogEntry],
 ) -> str:
-    required = tuple(item for item in selections if item.required)
-    discoverable = tuple(item for item in selections if not item.required)
     lines = [
         "# Millrace Context Index",
         "",
@@ -2101,28 +2147,54 @@ def _render_context_index(
         f"- binding_id: {binding.id}",
         f"- session_id: {session.session_id}",
         f"- dispatch_generation: {session.dispatch_generation}",
+        "- manifest_digest: <digest>",
         "",
-        "Required reads:",
+        "Required paths:",
+        "- CONTEXT.md",
     ]
-    lines.extend(_source_lines(required))
-    lines.extend(("", "Discoverable sources:"))
-    lines.extend(_source_lines(discoverable))
-    lines.extend(("", "Omissions:"))
+    lines.extend(
+        f"- {item.checkout_path}: {storage_digest_for_bytes(item.payload)} "
+        f"({len(item.payload)} bytes)"
+        for item in sorted(
+            payload_files,
+            key=lambda item: item.checkout_path.encode("utf-8"),
+        )
+    )
+    lines.extend(("", "Catalog paths:"))
+    lines.extend(
+        f"- {item.logical_path}: {item.content_digest} "
+        f"({item.byte_length} bytes)"
+        for item in catalog
+    )
+    if not catalog:
+        lines.append("- none")
+    lines.extend(("", "Capture limits:"))
+    lines.extend(
+        f"- {item.declaration.source_kind}/{item.declaration.source_ref}: "
+        f"max_files={item.declaration.max_files}, "
+        f"max_bytes={item.declaration.max_bytes}"
+        for item in selections
+    )
+    lines.extend(
+        (
+            "",
+            "Cumulative hydration limits:",
+            f"- max_hydrated_files: {binding.max_hydrated_files}",
+            f"- max_hydrated_bytes: {binding.max_hydrated_bytes}",
+            "",
+            "Select evidence as needed with:",
+            "millrace context select --session-id <session-id> "
+            "--manifest-digest <digest> --path <catalog-path>",
+            "",
+            "Omissions:",
+        )
+    )
     lines.extend(
         f"- {item.source_kind}/{item.source_ref}: {item.reason}"
         for item in omissions
     )
     if not omissions:
         lines.append("- none")
-    lines.extend(("", "Live project root: .", "", "Files:"))
-    lines.append("- CONTEXT.md: selected_router")
-    lines.extend(
-        f"- {item.checkout_path}: {item.source_kind}/{item.source_ref}"
-        for item in sorted(
-            payload_files,
-            key=lambda item: item.checkout_path.encode("utf-8"),
-        )
-    )
     lines.extend(("", "Selected write rules:"))
     lines.extend(
         f"- {rule.relative_root}: {rule.disposition}"
@@ -2143,13 +2215,29 @@ def _render_context_index(
     return "\n".join(lines)
 
 
-def _source_lines(selections: Sequence[_SourceSelection]) -> list[str]:
-    if not selections:
-        return ["- none"]
-    return [
-        f"- {item.declaration.source_kind}/{item.declaration.source_ref}"
-        for item in selections
-    ]
+
+def _catalog_for_files(
+    files: Sequence[_CapturedFile],
+) -> tuple[ContextCheckoutCatalogEntry, ...]:
+    entries = tuple(
+        ContextCheckoutCatalogEntry(
+            logical_path=file_record.checkout_path,
+            source_kind=file_record.source_kind,
+            source_ref=file_record.source_ref,
+            content_digest=storage_digest_for_bytes(file_record.payload),
+            byte_length=len(file_record.payload),
+            provenance_ids=file_record.provenance_ids
+            or _capture_provenance_ids(
+                source_kind=file_record.source_kind,
+                source_ref=file_record.source_ref,
+                logical_path=file_record.checkout_path,
+            ),
+        )
+        for file_record in files
+    )
+    return tuple(
+        sorted(entries, key=lambda item: item.logical_path.encode("utf-8"))
+    )
 
 
 def _manifest_for_files(
@@ -2158,6 +2246,7 @@ def _manifest_for_files(
     plan_fingerprint: str,
     binding: StageContextBindingDeclaration,
     files: tuple[_CapturedFile, ...],
+    catalog: tuple[ContextCheckoutCatalogEntry, ...],
     omissions: tuple[ContextCheckoutOmission, ...],
 ) -> ContextCheckoutManifest:
     return ContextCheckoutManifest(
@@ -2173,10 +2262,11 @@ def _manifest_for_files(
                 source_ref=file_record.source_ref,
                 content_digest=storage_digest_for_bytes(file_record.payload),
                 byte_length=len(file_record.payload),
-                required=file_record.required,
+                required=True,
             )
             for file_record in files
         ),
+        catalog=catalog,
         omissions=omissions,
     )
 
@@ -2205,6 +2295,20 @@ def _validate_manifest_payloads(
             _refuse("manifest byte length does not match payload")
         if storage_digest_for_bytes(payload) != item.content_digest:
             _refuse("manifest content digest does not match payload")
+
+
+def _validate_catalog_payloads(
+    catalog: Sequence[ContextCheckoutCatalogEntry],
+    payload_by_path: Mapping[str, bytes],
+) -> None:
+    if set(payload_by_path) != {item.logical_path for item in catalog}:
+        _refuse("manifest catalog set does not match captured payloads")
+    for item in catalog:
+        payload = payload_by_path[item.logical_path]
+        if len(payload) != item.byte_length:
+            _refuse("catalog byte length does not match payload")
+        if storage_digest_for_bytes(payload) != item.content_digest:
+            _refuse("catalog content digest does not match payload")
 
 
 def _put_cas_bytes(
@@ -2323,7 +2427,9 @@ def _validate_checkout_manifest_shape(
         for selection in selections
     }
     files_by_source: dict[tuple[str, str], list[ContextCheckoutFile]] = {}
-    runtime_indices: dict[tuple[str, str], list[int]] = {}
+    catalog_by_source: dict[tuple[str, str], list[ContextCheckoutCatalogEntry]] = {}
+    runtime_file_indices: dict[tuple[str, str], list[int]] = {}
+    runtime_catalog_indices: dict[tuple[str, str], list[int]] = {}
     router_files = tuple(
         item for item in manifest.files if item.source_kind == "selected_router"
     )
@@ -2338,16 +2444,17 @@ def _validate_checkout_manifest_shape(
         _refuse("existing checkout manifest selected router is invalid")
     if any(item.checkout_path == "checkout.manifest.json" for item in manifest.files):
         _refuse("existing checkout manifest cannot list its own manifest file")
+
     for item in manifest.files:
         if item.source_kind == "selected_router":
             continue
+        if not item.required:
+            _refuse("existing checkout manifest files must be required")
         source_key = (item.source_kind, item.source_ref)
         selection = selected_sources.get(source_key)
-        if selection is None:
+        if selection is None or not selection.required:
             _refuse("existing checkout manifest contains an unselected source")
-        if item.required != selection.required:
-            _refuse("existing checkout manifest source requirement is invalid")
-        bucket = "required" if selection.required else "discoverable"
+        bucket = "required"
         if item.source_kind == "workspace_relative_root":
             prefix = f"{bucket}/workspace/{item.source_ref}"
             if item.checkout_path != prefix and not item.checkout_path.startswith(
@@ -2364,33 +2471,71 @@ def _validate_checkout_manifest_shape(
                 or not suffix[:6].isdigit()
             ):
                 _refuse("existing checkout manifest runtime layout is invalid")
-            runtime_indices.setdefault(source_key, []).append(int(suffix[:6]))
+            runtime_file_indices.setdefault(source_key, []).append(int(suffix[:6]))
         files_by_source.setdefault(source_key, []).append(item)
-    for source_key, indices in runtime_indices.items():
+
+    for source_key, indices in runtime_file_indices.items():
         if sorted(indices) != list(range(len(indices))):
             _refuse("existing checkout manifest runtime ordering is invalid")
+
+    file_paths = {item.checkout_path for item in manifest.files}
+    for item in manifest.catalog:
+        if (
+            item.logical_path == "checkout.manifest.json"
+            or item.logical_path in file_paths
+        ):
+            _refuse("existing checkout catalog path collides with checkout files")
+        source_key = (item.source_kind, item.source_ref)
+        selection = selected_sources.get(source_key)
+        if selection is None or selection.required:
+            _refuse("existing checkout catalog contains an unselected source")
+        if item.source_kind == "workspace_relative_root":
+            prefix = f"discoverable/workspace/{item.source_ref}"
+            if item.logical_path != prefix and not item.logical_path.startswith(
+                f"{prefix}/"
+            ):
+                _refuse("existing checkout catalog workspace layout is invalid")
+        else:
+            prefix = f"discoverable/runtime/{item.source_kind}/"
+            suffix = item.logical_path.removeprefix(prefix)
+            if (
+                not item.logical_path.startswith(prefix)
+                or len(suffix) != 11
+                or suffix[6:] != ".json"
+                or not suffix[:6].isdigit()
+            ):
+                _refuse("existing checkout catalog runtime layout is invalid")
+            runtime_catalog_indices.setdefault(source_key, []).append(int(suffix[:6]))
+        catalog_by_source.setdefault(source_key, []).append(item)
+
+    for source_key, indices in runtime_catalog_indices.items():
+        if sorted(indices) != list(range(len(indices))):
+            _refuse("existing checkout catalog runtime ordering is invalid")
+
     omissions_by_source: set[tuple[str, str]] = set()
     for omission in manifest.omissions:
         source_key = (omission.source_kind, omission.source_ref)
         selection = selected_sources.get(source_key)
         if selection is None or selection.required:
             _refuse("existing checkout manifest omission is not discoverable")
-        if source_key in omissions_by_source or source_key in files_by_source:
+        if (
+            source_key in omissions_by_source
+            or source_key in catalog_by_source
+        ):
             _refuse("existing checkout manifest omission is not closed")
         omissions_by_source.add(source_key)
+
     for selection in selections:
         source_key = (
             selection.declaration.source_kind,
             selection.declaration.source_ref,
         )
         has_files = bool(files_by_source.get(source_key))
+        has_catalog = bool(catalog_by_source.get(source_key))
         if selection.required:
-            if selection.declaration.source_kind in {
-                "dispatch_material",
-                "workspace_relative_root",
-            } and not has_files:
+            if not has_files:
                 _refuse("existing checkout required source is not represented")
-        elif not has_files and source_key not in omissions_by_source:
+        elif not has_catalog and source_key not in omissions_by_source:
             _refuse("existing checkout discoverable source is not closed")
 
 
@@ -2412,6 +2557,14 @@ def _load_existing_checkout_payloads(
             ):
                 _refuse("existing checkout CAS file object is not authentic")
             payload_by_path[item.checkout_path] = payload
+        for item in manifest.catalog:
+            payload = cas_store.get_bytes(item.content_digest)
+            if (
+                type(payload) is not bytes
+                or len(payload) != item.byte_length
+                or storage_digest_for_bytes(payload) != item.content_digest
+            ):
+                _refuse("existing checkout CAS catalog object is not authentic")
         cas_manifest = cas_store.get_bytes(manifest_digest)
         if cas_manifest != manifest_bytes:
             _refuse("existing checkout CAS manifest is not canonical")
@@ -2450,8 +2603,7 @@ def _publish_checkout(
     try:
         files = dict(payload_by_path)
         files["checkout.manifest.json"] = manifest_bytes
-        for bucket in ("required", "discoverable"):
-            (temporary_root / bucket).mkdir(parents=True, exist_ok=True)
+        (temporary_root / "required").mkdir(parents=True, exist_ok=True)
         for checkout_path, payload in files.items():
             destination = temporary_root / checkout_path
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -2693,6 +2845,14 @@ def _verify_existing_checkout(
                 or cas_payload != payload_by_path[item.checkout_path]
             ):
                 _refuse("CAS file bytes do not match manifest payload")
+        for item in manifest.catalog:
+            cas_payload = cas_store.get_bytes(item.content_digest)
+            if (
+                type(cas_payload) is not bytes
+                or len(cas_payload) != item.byte_length
+                or storage_digest_for_bytes(cas_payload) != item.content_digest
+            ):
+                _refuse("CAS catalog bytes do not match manifest catalog")
         cas_manifest = cas_store.get_bytes(manifest_digest)
     except ContextCheckoutPreparationError:
         raise
@@ -2738,7 +2898,7 @@ def _read_regular_file_without_following(path: Path) -> bytes:
 
 
 def _expected_directories(files: set[str]) -> set[str]:
-    directories = {"", "required", "discoverable"}
+    directories = {"", "required"}
     for file_name in files:
         path = Path(file_name)
         for parent in path.parents:
