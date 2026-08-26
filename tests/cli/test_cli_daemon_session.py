@@ -735,7 +735,7 @@ def test_runner_session_projection_reports_application_receipt_truth(
     projected = status.runner_session_projection(state, "run-1")
 
     assert projected is not None
-    assert projected["session_fencing_token"] == "session-fence-1"
+    assert "session_fencing_token" not in projected
     assert projected["application_persisted"] is (receipt is not None)
     assert projected["application_status"] == expected
 

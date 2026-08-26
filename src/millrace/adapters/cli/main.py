@@ -65,6 +65,7 @@ LOCKED_GROUPS = (
     "package",
     "plan",
     "queue",
+    "context",
     "status",
     "runs",
     "trace",
@@ -79,6 +80,7 @@ GROUP_HELP = {
     "package": "Import, inspect, verify, and manage workflow packages.",
     "plan": "Admit, select, and inspect compiled plans.",
     "queue": "Enqueue work and inspect selected queue families.",
+    "context": "Select bounded session context.",
     "status": "Project current workspace status.",
     "runs": "Inspect runtime runs.",
     "trace": "Inspect governance and execution traces.",
@@ -165,6 +167,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _dispatch_plan(namespace)
     if command.startswith("queue."):
         return _dispatch_queue(namespace)
+    if command.startswith("context."):
+        return _dispatch_context(namespace)
     if command in {"status", "waits.list", "interventions.list"} or command.startswith(
         ("runs.", "trace.")
     ):
@@ -215,6 +219,8 @@ def _build_parser() -> tuple[
             _add_plan_commands(group_parser, help_parsers)
         elif group == "queue":
             _add_queue_commands(group_parser, help_parsers)
+        elif group == "context":
+            _add_context_commands(group_parser, help_parsers)
         elif group == "status":
             _add_status_options(group_parser)
         elif group == "runs":
@@ -578,6 +584,29 @@ def _add_queue_commands(
     help_parsers["queue.list"] = list_parser
 
 
+def _add_context_commands(
+    group_parser: argparse.ArgumentParser,
+    help_parsers: dict[str, argparse.ArgumentParser],
+) -> None:
+    subparsers = group_parser.add_subparsers(dest="context_command", metavar="command")
+    select = subparsers.add_parser(
+        "select",
+        help="Select declared catalog paths for an active runner session.",
+    )
+    select.add_argument("--session-id", required=True, metavar="ID")
+    select.add_argument("--manifest-digest", required=True, metavar="DIGEST")
+    select.add_argument(
+        "--path",
+        dest="paths",
+        action="append",
+        required=True,
+        metavar="CATALOG_PATH",
+        help="Declared catalog logical path; repeat to select multiple paths.",
+    )
+    select.set_defaults(command="context.select")
+    help_parsers["context.select"] = select
+
+
 def _add_status_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--plan-fingerprint",
@@ -922,6 +951,7 @@ def _help_command_from_args(args: Sequence[str]) -> str:
             "package",
             "plan",
             "queue",
+            "context",
             "runs",
             "trace",
             "waits",
@@ -942,6 +972,7 @@ def _help_command_from_args(args: Sequence[str]) -> str:
             "package",
             "plan",
             "queue",
+            "context",
             "runs",
             "trace",
             "waits",
@@ -1029,6 +1060,20 @@ def _dispatch_queue(namespace: argparse.Namespace) -> int:
         from millrace.adapters.cli.queue import handle_queue_command
 
         result = handle_queue_command(namespace)
+    except Exception as exc:
+        return _render_command_exception(
+            exc,
+            command=_command_from_namespace(namespace),
+            json_mode=namespace.json,
+        )
+    return render_success(result, json_mode=namespace.json)
+
+
+def _dispatch_context(namespace: argparse.Namespace) -> int:
+    try:
+        from millrace.adapters.cli.context_selection import handle_context_command
+
+        result = handle_context_command(namespace)
     except Exception as exc:
         return _render_command_exception(
             exc,

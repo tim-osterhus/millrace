@@ -2592,3 +2592,85 @@ def test_context_index_presents_catalog_selection_without_broad_read_instruction
     assert "select evidence as needed" in context.lower()
     assert "read every" not in context.lower()
     assert "read all" not in context.lower()
+
+
+def test_checkout_verifier_requires_receipt_for_selected_file(tmp_path: Path) -> None:
+    from millrace.adapters.cli import context_checkout
+    from millrace.contracts.state import (
+        ContextHydrationReceipt,
+        context_hydration_receipt_id,
+    )
+
+    plan, fingerprint = _plan_with_all_context_sources(
+        accepted_discoverable=True,
+        workspace_discoverable=True,
+    )
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    session = state.runner_sessions["test-session:run-taskmaster"]
+    workspace = tmp_path / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    (workspace / "docs" / "guide.txt").write_text("guide\n", encoding="utf-8")
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    cas_path = workspace / ".millrace" / "cas"
+    db_path.parent.mkdir(parents=True)
+    db_path.touch()
+    cas_path.mkdir(parents=True)
+    cas_store = ContentAddressedByteStore(cas_path)
+    prepared = context_checkout.prepare_context_checkout(
+        paths=CliWorkspacePaths(workspace, db_path, cas_path),
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=plan.context_bindings[0],
+        state=state,
+        cas_store=cas_store,
+    )
+    entry = next(
+        item
+        for item in prepared.manifest.catalog
+        if item.logical_path.endswith("/guide.txt")
+    )
+    selected_path = f"selected/{entry.logical_path}"
+    checkout = prepared.materialized_checkout_root
+    checkout.chmod(0o755)
+    target = checkout / selected_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(cas_store.get_bytes(entry.content_digest))
+    context_checkout._set_checkout_modes(checkout, root_mode=0o555)
+    payloads = context_checkout._load_existing_checkout_payloads(
+        manifest=prepared.manifest,
+        manifest_bytes=(checkout / "checkout.manifest.json").read_bytes(),
+        manifest_digest=prepared.manifest_digest,
+        cas_store=cas_store,
+    )
+    verify_kwargs = {
+        "final_root": checkout,
+        "manifest": prepared.manifest,
+        "manifest_bytes": (checkout / "checkout.manifest.json").read_bytes(),
+        "manifest_digest": prepared.manifest_digest,
+        "payload_by_path": payloads,
+        "cas_store": cas_store,
+    }
+
+    with pytest.raises(ValueError, match="path set drifted"):
+        context_checkout._verify_existing_checkout(
+            **verify_kwargs,
+            hydration_receipts=(),
+        )
+
+    receipt = ContextHydrationReceipt(
+        receipt_id="pending",
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        fencing_token=session.session_fencing_token,
+        manifest_digest=prepared.manifest_digest,
+        catalog_path=entry.logical_path,
+        content_digest=entry.content_digest,
+        byte_length=entry.byte_length,
+        selected_path=selected_path,
+    )
+    receipt = replace(receipt, receipt_id=context_hydration_receipt_id(receipt))
+    context_checkout._verify_existing_checkout(
+        **verify_kwargs,
+        hydration_receipts=(receipt,),
+    )

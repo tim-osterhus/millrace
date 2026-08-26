@@ -1057,7 +1057,7 @@ def test_budget_stop_preserves_bound_session_identity_counters_and_usage(
     assert projected_session["session_id"] == session.session_id
     assert projected_session["run_id"] == session.run_id
     assert projected_session["dispatch_generation"] == session.dispatch_generation
-    assert projected_session["session_fencing_token"] == session.session_fencing_token
+    assert "session_fencing_token" not in projected_session
     assert projected_session["usage_evidence"]["final"] is True
 
 

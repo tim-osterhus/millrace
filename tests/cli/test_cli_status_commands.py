@@ -277,6 +277,41 @@ def test_rejected_evidence_flag_is_only_available_on_runs_show() -> None:
     assert "--include-rejected-evidence" not in trace_help
 
 
+def test_runner_session_projection_omits_private_fencing_authority(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from millrace.adapters.cli import status
+
+    state = SimpleNamespace(
+        runs={"run-1": SimpleNamespace(current_session_id="session-1")},
+        runner_sessions={
+            "session-1": SimpleNamespace(
+                session_id="session-1",
+                run_id="run-1",
+                dispatch_generation=1,
+                session_fencing_token="private-fence",
+                state="created",
+                cleanup_disposition="pending",
+            )
+        },
+        runner_session_completions={},
+        runner_session_cancellation_requests={},
+        runner_session_cancellation_attempts={},
+        receipts={},
+    )
+    monkeypatch.setattr(
+        status,
+        "_selected_adapter_kind",
+        lambda _state, _run_id: "codex",
+    )
+    projected = status.runner_session_projection(state, "run-1")
+
+    assert projected is not None
+    assert "session_fencing_token" not in projected
+
+
 def test_rejected_result_projection_is_bounded_by_default(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
@@ -1435,14 +1470,7 @@ def test_populated_daemon_budget_projects_across_every_bounded_surface(
         assert len(projected["runner_sessions"]) == 1
         assert projected["omitted_runner_session_count"] == 1
         retained_session = projected["runner_sessions"][0]
-        retained = next(
-            session
-            for session in sessions
-            if session.session_id == retained_session["session_id"]
-        )
-        assert retained_session["session_fencing_token"] == (
-            retained.session_fencing_token
-        )
+        assert "session_fencing_token" not in retained_session
         assert projected["runner_sessions"][0]["usage_evidence"]["status"] in {
             "contradictory",
             "missing",
@@ -1453,12 +1481,7 @@ def test_populated_daemon_budget_projects_across_every_bounded_surface(
         sessions[1].session_id,
     }
     for session_id, projected_session in session_projections.items():
-        expected_session = next(
-            session for session in sessions if session.session_id == session_id
-        )
-        assert projected_session["session_fencing_token"] == (
-            expected_session.session_fencing_token
-        )
+        assert "session_fencing_token" not in projected_session
         projected_budget = projected_session["budget"]
         assert_core_budget(projected_budget)
         expected_status = (

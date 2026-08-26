@@ -41,6 +41,7 @@ from millrace.contracts.state import (
     Activation,
     AdmittedPlan,
     ArtifactRecord,
+    ContextHydrationReceipt,
     CounterRecord,
     GovernanceEventRecord,
     PlanRef,
@@ -51,6 +52,7 @@ from millrace.contracts.state import (
     TraceRecord,
     TransitionRecord,
     WorkItem,
+    context_hydration_receipt_id,
 )
 from millrace.contracts.transition import (
     RecordArtifact,
@@ -2776,6 +2778,53 @@ def _raise_atomic_rename_result(
     raise OSError(error_number, os.strerror(error_number), source, destination)
 
 
+def _hydration_receipts_for_verification(
+    *,
+    manifest: ContextCheckoutManifest,
+    manifest_digest: str,
+    hydration_receipts: Sequence[ContextHydrationReceipt],
+) -> dict[str, ContextHydrationReceipt]:
+    catalog_by_path = {item.logical_path: item for item in manifest.catalog}
+    receipts_by_path: dict[str, ContextHydrationReceipt] = {}
+    for receipt in hydration_receipts:
+        if not isinstance(receipt, ContextHydrationReceipt):
+            _refuse("hydration receipt is not a ContextHydrationReceipt")
+        try:
+            expected_receipt_id = context_hydration_receipt_id(receipt)
+        except Exception as exc:
+            _refuse("hydration receipt identity is not canonical", exc)
+        if receipt.receipt_id != expected_receipt_id:
+            _refuse("hydration receipt identity is not canonical")
+        if (
+            receipt.session_id != manifest.session_id
+            or receipt.dispatch_generation != manifest.dispatch_generation
+            or receipt.manifest_digest != manifest_digest
+        ):
+            _refuse("hydration receipt authority does not match checkout")
+        catalog_path = _safe_relative_path(
+            receipt.catalog_path,
+            "hydration receipt catalog_path",
+        )
+        selected_path = _safe_relative_path(
+            receipt.selected_path,
+            "hydration receipt selected_path",
+        )
+        if selected_path != f"selected/{catalog_path}":
+            _refuse("hydration receipt selected path is not canonical")
+        catalog_entry = catalog_by_path.get(catalog_path)
+        if catalog_entry is None:
+            _refuse("hydration receipt does not reference the checkout catalog")
+        if (
+            receipt.content_digest != catalog_entry.content_digest
+            or receipt.byte_length != catalog_entry.byte_length
+        ):
+            _refuse("hydration receipt content does not match the checkout catalog")
+        if selected_path in receipts_by_path:
+            _refuse("hydration receipts contain a duplicate selected path")
+        receipts_by_path[selected_path] = receipt
+    return receipts_by_path
+
+
 def _verify_existing_checkout(
     *,
     final_root: Path,
@@ -2784,6 +2833,7 @@ def _verify_existing_checkout(
     manifest_digest: str,
     payload_by_path: Mapping[str, bytes],
     cas_store: ContentAddressedByteStore,
+    hydration_receipts: Sequence[ContextHydrationReceipt] = (),
 ) -> None:
     try:
         root_stat = final_root.lstat()
@@ -2791,7 +2841,16 @@ def _verify_existing_checkout(
         _refuse("existing checkout root cannot be inspected", exc)
     if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
         _refuse("existing checkout root is not a regular directory")
-    expected_files = set(payload_by_path) | {"checkout.manifest.json"}
+    selected_receipts = _hydration_receipts_for_verification(
+        manifest=manifest,
+        manifest_digest=manifest_digest,
+        hydration_receipts=hydration_receipts,
+    )
+    expected_files = (
+        set(payload_by_path)
+        | {"checkout.manifest.json"}
+        | set(selected_receipts)
+    )
     expected_dirs = _expected_directories(expected_files)
     actual_files: set[str] = set()
     actual_dirs: set[str] = {""}
@@ -2853,6 +2912,14 @@ def _verify_existing_checkout(
                 or storage_digest_for_bytes(cas_payload) != item.content_digest
             ):
                 _refuse("CAS catalog bytes do not match manifest catalog")
+        for receipt in selected_receipts.values():
+            cas_payload = cas_store.get_bytes(receipt.content_digest)
+            if (
+                type(cas_payload) is not bytes
+                or len(cas_payload) != receipt.byte_length
+                or storage_digest_for_bytes(cas_payload) != receipt.content_digest
+            ):
+                _refuse("CAS selected bytes do not match hydration receipt")
         cas_manifest = cas_store.get_bytes(manifest_digest)
     except ContextCheckoutPreparationError:
         raise
@@ -2864,6 +2931,10 @@ def _verify_existing_checkout(
         actual = _read_regular_file_without_identity(final_root / checkout_path)
         if actual != payload:
             _refuse("existing checkout payload drifted")
+    for selected_path, receipt in selected_receipts.items():
+        actual = _read_regular_file_without_identity(final_root / selected_path)
+        if actual != cas_store.get_bytes(receipt.content_digest):
+            _refuse("existing selected checkout payload drifted")
     actual_manifest = _read_regular_file_without_identity(
         final_root / "checkout.manifest.json"
     )
