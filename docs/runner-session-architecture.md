@@ -13,39 +13,50 @@ the selected binding or add workflow meaning.
 
 ## Selected Context Checkouts
 
-A selected plan may also bind a stage to a generic context checkout. The
-binding is selected authority: it names one UTF-8 `template` router asset, a
+A selected plan may also bind a stage to a generic context checkout. Binding
+schema 2 is selected authority: it names one UTF-8 `template` router asset, a
 workspace-relative checkout root, bounded required and discoverable sources,
-and optional `direct_write` or `protected_proposal` rules. The compiler checks
-the complete binding closure, including stage, runner, asset, source, path,
-and writeback linkage. It does not recognize a workflow name, stage nickname,
-or implicit workspace directory.
+maximum hydration files and bytes, a mutation policy, and
+`materialization_retention=until_session_durable_terminal`. The compiler checks
+the complete binding closure, including stage, runner, asset, source, path, and
+writeback linkage. It does not recognize a workflow name, stage nickname, or
+implicit workspace directory.
 
-The supported source declarations are `dispatch_material:current`,
-`accepted_lineage_artifacts:current_lineage`,
-`lineage_attempt_history:current_lineage`, and selected
-`workspace_relative_root` paths. Required sources fail closed when unavailable
-or over bounds. Discoverable sources are either captured completely or appear
-as a deterministic omission in the manifest. Selected roots cannot overlap
-`.millrace`, the configured SQLite database, the CAS root, or one another.
+The supported source-kind/source-reference pairs are
+`dispatch_material/current`, `workspace_relative_root/<safe-relative-root>`,
+`selected_artifacts/direct_predecessors`,
+`selected_artifacts/current_lineage`,
+`selected_attempts/since_last_accepted_transition`, and
+`selected_attempts/current_lineage`. Required sources fail closed when
+unavailable or over bounds. Discoverable sources are captured in CAS and
+represented by catalog entries without payload bytes. Selected roots cannot
+overlap `.millrace`, the configured SQLite database, the CAS root, or one
+another.
 
-For a bound session, Millrace first captures stable UTF-8 regular-file bytes,
-stores the canonical schema-1 `millrace.context_checkout_manifest` and each
-selected file in the existing byte CAS, then publishes a read-only checkout
-under:
+For a bound session, Millrace captures stable UTF-8 regular-file bytes, stores
+the canonical schema-2 `millrace.context_checkout_manifest` and selected file
+bytes in the existing CAS, then publishes a read-only checkout under:
 
 ```text
 <checkout_root>/<session-id>/<dispatch-generation>/
 ├── CONTEXT.md
 ├── checkout.manifest.json
 ├── required/
-└── discoverable/
+└── selected/                  # created only for receipt-backed selections
 ```
 
-`CONTEXT.md` contains the selected router body and a generated index of the
-authority boundary, required reads, discoverable sources, live project root,
-write rules, and legal output channel. It contains navigation and policy, not
-an absolute operator path or a copy of canonical runtime state.
+`CONTEXT.md` contains the selected router body, required reads, catalog paths,
+cumulative limits, manifest digest, and this exact selection command:
+
+```text
+millrace context select --session-id <session-id> --manifest-digest <digest> --path <catalog-path>
+```
+
+It contains navigation and policy, not an absolute operator path, auth value,
+or a copy of canonical runtime state. Catalog entries become model-visible only
+after an authenticated, cumulative, read-only selection. Each selection is
+bound to the initial manifest, catalog digest and size, CAS object, and
+session-fenced hydration receipt.
 
 The session lifecycle is explicit:
 
@@ -57,10 +68,10 @@ created without context
   -> running or a legal terminal aftermath
 ```
 
-`RunnerSessionRecord.context_manifest_digest` is optional only for an
-unbound session or a bound session still in `created`. `AttachRunnerSessionContext`
-is replay-safe for the exact identity and digest; a different digest or a
-late attach is a reconciliation contradiction. Once attached, every session
+`RunnerSessionRecord.context_manifest_digest` is optional only for an unbound
+session or a bound session still in `created`. `AttachRunnerSessionContext` is
+replay-safe for the exact identity and digest; a different digest or a late
+attach is a reconciliation contradiction. Once attached, every session
 transition preserves the digest. If CAS prewrites occur before the attach
 transaction commits, they remain unreferenced and a later created session may
 capture afresh. After a committed attach, restart may only verify or
@@ -69,9 +80,11 @@ rematerialize the attached manifest and its exact CAS bytes.
 Before dispatch and before result acceptance, the local checkout is checked
 against the attached manifest: path set, regular-file kinds, bytes, manifest
 digest, session, generation, plan fingerprint, binding, router, and CAS
-references must all agree. A missing, added, substituted, or drifted checkout
-refuses the result. Read-only modes are defense in depth; this is integrity
-validation, not a filesystem sandbox.
+references must all agree. After selection, only files authenticated by the
+initial manifest, catalog entry, CAS digest, and hydration receipt may exist
+under `selected/`. A missing, added, substituted, or drifted checkout refuses
+the result. Read-only modes are defense in depth; this is integrity validation,
+not a filesystem sandbox.
 
 ## Coordinator Ownership
 
@@ -138,7 +151,16 @@ with truthful create/modify/delete digests under direct-write roots. Protected
 proposals carry content and a digest but do not mutate the protected path. A
 no-op requires a nonblank reason. Unreported, forbidden, protected, symlinked,
 or digest-inconsistent changes refuse the result; the runtime does not roll
-back a detected filesystem mutation.
+back a detected filesystem mutation. A forbidden mutation retains reviewed
+usage and bounded diagnostics but records `context_mutation_refused` and does
+not apply runner-result evidence.
+
+At the durable terminal boundary, the runtime persists session-fenced
+source-backed attribution and a cleanup receipt. Attribution distinguishes
+observed values from unavailable values and does not change token-budget
+arithmetic. Cleanup removes only the exact session/generation checkout,
+receipt-backed selections, and adapter-classified derived material; manifests,
+CAS objects, receipts, results, usage, attribution, and events remain.
 
 ## Cancellation
 
@@ -172,10 +194,13 @@ to each listed active run. `runs show RUN_ID` and `trace show RUN_ID` expose
 the current session for that run. `status` exposes current sessions across its
 runtime scope. The projection can include:
 
-- session ID, dispatch generation, session fencing token, state, and selected
-  adapter kind;
+- session ID, dispatch generation, state, and selected adapter kind; the
+  private durable authority retains `session_fencing_token`, but public JSON
+  omits it;
+- context manifest identity and cumulative hydrated file/byte totals;
+- source-backed attribution values with their source and availability;
 - primary cancellation reason and current phase;
-- cleanup disposition and orphan-risk state;
+- cleanup disposition, removed file/byte totals, and orphan-risk state;
 - completion persistence and deterministic application-receipt status;
 - the effective mechanical grace constants.
 
@@ -229,15 +254,16 @@ and non-authoritative; they never enter `RuntimeState.runner_observations`.
 
 ## Persistence Compatibility
 
-Runner sessions use store schema 9 and CAS-backed bounded evidence. Selected
-plans use schema 17, runner dispatch envelopes use schema 7, runner-session
-records use schema 2, and context manifests use schema 1. There is
-no automatic migration from schema 6 or schema 7. An exact schema-version-6 or
-schema-version-7 workspace is refused as `workspace_upgrade_required` with
-the database, CAS, and runner-event sidecar byte-for-byte unchanged; see
-[v0.22 compatibility](v0.22-compatibility.md). Schema 8 and unknown store
-versions retain unsupported-schema refusal without mutation. No context
-manifest is inferred for a pre-session run.
+Runner sessions use store schema 10 and CAS-backed bounded evidence. Selected
+plans use schema 18, runner dispatch envelopes use schema 7, runner-session
+records use schema 2, and context manifests use schema 2. There is no
+automatic migration from an earlier workspace schema. An exact unsupported
+workspace is refused as `workspace_upgrade_required` with the database, CAS,
+and runner-event sidecar byte-for-byte unchanged; see
+[v0.22 compatibility](v0.22-compatibility.md). Context-bound records using the
+unreleased schema-17 shape are historical evidence, not compatible plans; the
+runtime requires an explicitly imported and selected schema-18 plan. No
+context manifest is inferred for a pre-session run.
 
 See [Daemon lifecycle](daemon-lifecycle.md) for startup, restart, signal, and
 shutdown behavior and [Errors and refusals](errors.md) for stable public

@@ -29,37 +29,51 @@ unsupported actions, and incomplete routes before runtime admission.
 ## Context Bindings
 
 Context bindings are selected workflow authority, not ambient workspace
-discovery. A binding selects one `template` router asset and a normalized
-workspace-relative checkout root. Its sources are limited to
-`dispatch_material:current`, `accepted_lineage_artifacts:current_lineage`,
-`lineage_attempt_history:current_lineage`, and explicitly selected
-`workspace_relative_root` paths, each with file and byte bounds. Required
-sources fail closed; discoverable sources may be recorded as whole-source
-omissions with a deterministic reason.
+discovery. In v0.22.3, binding schema 2 selects one `template` router asset, a
+normalized workspace-relative checkout root, bounded required and discoverable
+sources, hydration limits, a mutation policy, and
+`materialization_retention=until_session_durable_terminal`. The complete
+binding and its fields are compiled into the selected plan; the runtime does
+not inject hidden context or policy defaults.
 
-The compiler validates the binding against the selected stage, runner, router,
-source roots, and optional writeback action/schema. `direct_write` and
-`protected_proposal` are the only write dispositions. A write-enabled binding
-must select both sides of its writeback linkage; a read-only binding selects
-neither. The selected plan fingerprint therefore covers context policy just
-as it covers graph, asset, and runner authority.
+The closed source pairs are `dispatch_material/current`,
+`workspace_relative_root/<safe-relative-root>`,
+`selected_artifacts/direct_predecessors`,
+`selected_artifacts/current_lineage`,
+`selected_attempts/since_last_accepted_transition`, and
+`selected_attempts/current_lineage`. Required sources fail closed when missing
+or over bounds. Discoverable sources are captured into CAS and authenticated by
+the immutable schema-2 manifest, but are represented only by catalog entries
+until selected.
 
-At runtime, a bound session captures a schema-1 manifest and its selected file
-bytes into the existing CAS before external start. The runner receives a
-compact, authenticated descriptor for the materialized checkout; it does not
-receive an ambient file search or an inline copy of the checkout. A bound
-Codex session uses wrapper protocol 4 and the initialized Millrace workspace
-as its `cwd`. An unbound workflow keeps the existing dispatch behavior and
-does not create a checkout.
+A bound session materializes required files and the router before runner start.
+The catalog has no payload bytes. An exact request can hydrate one or more
+catalog paths under the read-only `selected/` subtree:
+
+```text
+millrace context select --session-id <session-id> --manifest-digest <digest> --path <catalog-path>
+```
+
+Hydration is cumulative and bounded by the compiled file and byte limits. Each
+selection is authenticated against the session, selected plan, binding,
+manifest, catalog entry, and CAS object, then recorded by an idempotent receipt.
+Unknown, stale, foreign, symlinked, missing, or digest-drifted selections fail
+closed.
+
+The runtime enforces `forbid_selected_roots` or
+`reconcile_selected_writes` from compiled authority before applying runner
+results. Selected-root mutations are refused or reconciled against exact
+writeback evidence; protected runtime roots remain unwritable. Source-backed
+attribution is diagnostic evidence, with unavailable values kept distinct from
+observed zeroes. After durable terminal completion, cleanup removes only the
+session-owned derived checkout and selected materializations and records a
+bounded receipt; CAS, manifests, receipts, results, usage, and events remain.
 
 The base package remains the diagnostic `kernel_ping` surface and carries no
 hosted workflow checkout policy. A custom or Plus package may select its own
-generic bindings and relative roots, including workflow-specific assets, but
-the runtime never branches on those names. Before a bound result is accepted,
-Millrace verifies the materialized checkout and, for write-enabled bindings,
-validates the linked direct/protected/no-op report against the selected live
-roots. Refusal prevents the result from becoming a workflow artifact or route;
-protected proposals are not promoted automatically.
+generic bindings and relative roots, including workflow-specific assets, but the
+runtime never branches on those names. An unbound workflow keeps the existing
+dispatch behavior and does not create a checkout.
 
 ## Assets
 

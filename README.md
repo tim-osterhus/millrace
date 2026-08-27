@@ -62,7 +62,7 @@ Millrace is **agent-first**. Give this repository to a capable local agent:
 
 > Install Millrace for me in this workspace using
 > https://github.com/tim-osterhus/millrace. Read its README and
-> [instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.2/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
+> [instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.3/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
 > first. Check the CLI, workspace, workflows, and runners. Report what you
 > installed and what you need next. Do not store credentials in workflow
 > assets or start unattended work.
@@ -88,6 +88,23 @@ Manual setup is documented in
 - Queue cancellation closes eligible workflow work through the normal audited
   close-work transition. It never deletes queue state or signals a runner.
 - Supported commands change state; direct file edits do not.
+
+## Governed Context
+
+Millrace v0.22.3 is a general public governed-context/runtime-integrity
+release, not a campaign-specific product release. Compiled bindings distinguish
+required files from catalog-only discoverable material. Catalog content stays in
+CAS until an exact, bounded `millrace context select` request hydrates a
+read-only selection.
+
+The runtime enforces selected-root mutation policy before applying runner
+results, records source-backed attribution without turning unavailable values
+into zeros, and removes only derived session material after durable completion.
+Compiled plans advance to schema 18. Context-bound plans using the unreleased
+schema-17 shape are historical evidence, not compatible plans; import and
+select a schema-18 plan before running it.
+
+See the [v0.22.3 release notes](https://github.com/tim-osterhus/millrace/blob/main/docs/releases/v0.22.3.md).
 
 ## Workflows
 

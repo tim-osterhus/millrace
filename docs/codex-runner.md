@@ -140,6 +140,18 @@ from the selected `cwd` to read the selected `router_relative_path` (the
 materialized `CONTEXT.md`). It must not discover ambient context or replace
 the authenticated descriptor with another path.
 
+In v0.22.3, the authenticated checkout uses a schema-2 manifest. Required
+material is present at start; discoverable material is catalog-only until an
+exact bounded command selects it:
+
+```text
+millrace context select --session-id <session-id> --manifest-digest <digest> --path <catalog-path>
+```
+
+The router does not instruct the stage to read every catalog entry. Hydrated
+files are read-only and receipt-backed. Selected-root mutation is reconciled by
+the runtime before any runner result is applied.
+
 Each `selected_artifact_schemas` record contains `record_kind`,
 `schema_version`, `id`, and the exact JSON `schema` from the authenticated
 selected declaration. Presentation metadata is not part of the canonical
@@ -209,7 +221,9 @@ is present. A success with null usage, missing or extra usage fields, duplicate
 JSON keys, booleans, negatives, values above the durable int64 bound, or a
 contradictory total is `result_parse_failed`. Cached-input and reasoning-output
 subdivisions may remain bounded diagnostics, but they never change the three
-durable totals.
+durable totals. Separate attribution evidence records only adapter- and
+runtime-observed values; unavailable metrics remain unavailable and never
+become zero.
 
 The object must contain exactly these keys, and every dispatch-echo field is
 authenticated against the expected dispatch. Missing or extra keys, malformed
@@ -313,7 +327,11 @@ mapping marker. Valid usage is persisted for any budget-bound protocol-4
 session. When a token budget is selected, daemon startup refuses a protocol-3
 Codex configuration before creating the budget epoch; a started protocol-4
 session whose authenticated result lacks usage refuses the budget evidence and
-suspends the dispatch rather than completing silently.
+suspends the dispatch rather than completing silently. At a durable terminal
+boundary, the runtime records attribution and removes only session-owned
+derived checkout material after its cleanup evidence is durable. Manifests, CAS
+objects, receipts, results, usage, attribution, and events remain available for
+inspection.
 
 `millrace runs cancel RUN_ID --input-id ID` records a durable operator request.
 The coordinator signals only the exact owned subprocess session, then records

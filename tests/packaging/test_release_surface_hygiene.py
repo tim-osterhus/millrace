@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DIST_INFO = "millrace_ai-0.22.2.dist-info"
-SDIST_ROOT = "millrace_ai-0.22.2"
+DIST_INFO = "millrace_ai-0.22.3.dist-info"
+SDIST_ROOT = "millrace_ai-0.22.3"
 DONOR_WORKFLOWS = {
     "lad_execution.py",
     "lad_learning.py",
@@ -171,7 +171,7 @@ def _metadata_contract(raw: bytes) -> None:
     headers, body = raw.split(b"\n\n", 1)
     message = BytesParser(policy=default).parsebytes(headers + b"\n\n")
     assert message["Name"] == "millrace-ai"
-    assert message["Version"] == "0.22.2"
+    assert message["Version"] == "0.22.3"
     assert message["Requires-Python"] == ">=3.11"
     assert message["License-Expression"] == "Apache-2.0"
     assert message.get_all("License-File") == ["LICENSE"]
@@ -224,7 +224,7 @@ def test_release_metadata_is_final_and_complete() -> None:
 
     assert project == {
         "name": "millrace-ai",
-        "version": "0.22.2",
+        "version": "0.22.3",
         "description": (
             "A governed runtime for compiler-validated, durable agent workflows."
         ),
@@ -460,8 +460,8 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         ],
         cwd=PROJECT_ROOT,
     )
-    wheel = build_dir / "millrace_ai-0.22.2-py3-none-any.whl"
-    sdist = build_dir / "millrace_ai-0.22.2.tar.gz"
+    wheel = build_dir / "millrace_ai-0.22.3-py3-none-any.whl"
+    sdist = build_dir / "millrace_ai-0.22.3.tar.gz"
     assert wheel.is_file()
     assert sdist.is_file()
     _assert_wheel_contract(wheel)
@@ -499,7 +499,7 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         ],
         cwd=tmp_path,
     )
-    rebuilt_wheel = rebuilt_dir / "millrace_ai-0.22.2-py3-none-any.whl"
+    rebuilt_wheel = rebuilt_dir / "millrace_ai-0.22.3-py3-none-any.whl"
     assert rebuilt_wheel.is_file()
     _assert_wheel_contract(rebuilt_wheel)
 
@@ -529,7 +529,7 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
                 (
                     "from importlib.metadata import version;"
                     "import importlib, millrace;"
-                    "assert version('millrace-ai') == '0.22.2';"
+                    "assert version('millrace-ai') == '0.22.3';"
                     "\ntry: importlib.import_module('millrace.testing')\n"
                     "except ModuleNotFoundError: pass\n"
                     "else: raise AssertionError('millrace.testing shipped')"
@@ -539,4 +539,4 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         )
         assert smoke.stdout == ""
         version_result = _run([str(millrace), "--version"], cwd=tmp_path)
-        assert version_result.stdout == "millrace 0.22.2\n"
+        assert version_result.stdout == "millrace 0.22.3\n"
