@@ -143,6 +143,7 @@ _RUNNER_SESSION_SIGNAL_REFUSAL_REASONS = frozenset(
     {
         "runner_session_authority_mismatch",
         "runner_session_reconciliation_contradiction",
+        "context_mutation_refused",
     }
 )
 

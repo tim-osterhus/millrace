@@ -736,7 +736,7 @@ def test_checkout_mutation_for_non_writeback_read_only_bound_stage(
     )
 
 
-def test_read_only_bound_stage_accepts_live_source_drift_with_authentic_checkout(
+def test_read_only_bound_stage_refuses_live_source_drift_with_authentic_checkout(
     tmp_path: Path,
 ) -> None:
     runtime, state, session, _binding = _bound_fixture(
@@ -749,7 +749,7 @@ def test_read_only_bound_stage_accepts_live_source_drift_with_authentic_checkout
 
     assert (
         validate_context_writeback(runtime, session=session, evidence=evidence)
-        is None
+        == "selected live context root changed type"
     )
 
 
@@ -830,3 +830,154 @@ def test_missing_checkout_is_not_rematerialized_during_validation(
         is not None
     )
     assert not checkout.exists()
+
+
+def test_empty_write_rules_still_compares_every_selected_workspace_root(
+    tmp_path: Path,
+) -> None:
+    """An empty write_rules binding still compares selected workspace roots."""
+    source = _source_with_context_binding(write_enabled=False)
+    binding_source = cast(list[dict[str, object]], source["context_bindings"])[0]
+    binding_source["required_sources"] = [
+        {
+            "source_kind": "workspace_relative_root",
+            "source_ref": "src",
+            "max_files": 8,
+            "max_bytes": 4096,
+        }
+    ]
+    binding_source["discoverable_sources"] = []
+    binding_source["write_rules"] = []
+    binding_source["mutation_policy"] = "forbid_selected_roots"
+
+    result = compile_workflow(source)
+    assert result.plan is not None, result.diagnostics
+    fingerprint = authority_fingerprint(result.plan)
+    state = bootstrap_to_taskmaster_claim(result.plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    runtime = cast(OpenRuntimeContext, _runtime(tmp_path, state))
+    workspace = runtime.paths.workspace_path
+    (workspace / "src").mkdir(parents=True)
+    (workspace / "src" / "existing.txt").write_text(
+        "before\n",
+        encoding="utf-8",
+    )
+    state = _load(runtime)
+    run = state.runs["run-taskmaster"]
+    session = state.runner_sessions["test-session:run-taskmaster"]
+    binding_decl = next(
+        declaration
+        for declaration in state.admitted_plans[
+            fingerprint
+        ].selected_plan.context_bindings
+        if str(declaration.stage_kind_id) == str(run.stage_kind_id)
+    )
+    prepared = prepare_context_checkout(
+        paths=runtime.paths,
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=binding_decl,
+        state=state,
+        cas_store=runtime.cas_store,
+    )
+    attachment = AttachRunnerSessionContext(
+        f"cli:run.session-context-attach:{session.session_id}",
+        run_ref=run.run_ref,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        context_manifest_digest=prepared.manifest_digest,
+        selected_binding_id=str(binding_decl.id),
+    )
+    persisted = session_completion._persist_transition(
+        runtime,
+        replace(attachment, input_id=contextual_input_id(attachment)),
+    )
+    assert persisted is not None
+    state = _load(runtime)
+    attached = state.runner_sessions[session.session_id]
+    (workspace / "src" / "existing.txt").write_text(
+        "mutated\n",
+        encoding="utf-8",
+    )
+    evidence = _evidence(
+        state,
+        attached,
+        artifact=_writeback_report(no_op_reason="No update."),
+        marker="TASK_COMPLETE",
+    )
+    refusal = validate_context_writeback(
+        runtime,
+        session=attached,
+        evidence=evidence,
+    )
+    assert refusal is not None
+    assert "selected" in refusal.lower() or "changed" in refusal.lower()
+    runtime.close()
+
+
+def test_legal_reconcile_still_requires_exact_report_filesystem_agreement(
+    tmp_path: Path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    path = runtime.paths.workspace_path / "src" / "new.txt"
+    path.write_text("new\n", encoding="utf-8")
+    correct_change = {
+        "path": "src/new.txt",
+        "change_kind": "create",
+        "after_sha256": _digest(path),
+        "evidence_refs": ("runner:1",),
+        "classification": "direct_write",
+    }
+    correct = _evidence(
+        state,
+        session,
+        artifact=_writeback_report(changes=(correct_change,)),
+    )
+    assert validate_context_writeback(
+        runtime,
+        session=session,
+        evidence=correct,
+    ) is None
+    wrong_change = {
+        "path": "src/new.txt",
+        "change_kind": "create",
+        "after_sha256": "sha256:" + "0" * 64,
+        "evidence_refs": ("runner:1",),
+        "classification": "direct_write",
+    }
+    wrong = _evidence(
+        state,
+        session,
+        artifact=_writeback_report(changes=(wrong_change,)),
+    )
+    refusal = validate_context_writeback(
+        runtime,
+        session=session,
+        evidence=wrong,
+    )
+    assert refusal is not None
+    assert "digest" in refusal.lower()
+    runtime.close()
+
+
+def test_protected_roots_are_never_writable(tmp_path: Path) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    protected_change = {
+        "path": ".millrace/evil.txt",
+        "change_kind": "create",
+        "after_sha256": "sha256:" + "a" * 64,
+        "evidence_refs": ("runner:1",),
+        "classification": "direct_write",
+    }
+    evidence = _evidence(
+        state,
+        session,
+        artifact=_writeback_report(changes=(protected_change,)),
+    )
+    assert validate_context_writeback(
+        runtime,
+        session=session,
+        evidence=evidence,
+    ) is not None
+    runtime.close()

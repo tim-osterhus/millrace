@@ -4998,3 +4998,124 @@ def test_daemon_does_not_start_watcher_mailbox_or_source_intake(
     assert sorted(path.name for path in inbox.iterdir()) == []
     assert sorted(path.name for path in mailbox.iterdir()) == []
     assert source_callback.read_text(encoding="utf-8") == '{"new_work": true}'
+
+
+def test_simple_loop_bound_session_mutation_refused_but_usage_durable(
+    tmp_path,
+) -> None:
+    """A bound session refuses selected-root mutation without applying evidence."""
+    from tests.adapters.test_context_writeback import (
+        _writeback_report,
+        _writeback_success_start,
+    )
+    from tests.cli.test_cli_bounded_execution_unit import _load as _ld
+    from tests.cli.test_cli_bounded_execution_unit import _runtime as _rt
+    from tests.compiler.test_context_bindings import _source_with_context_binding
+    from tests.kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
+
+    from millrace.adapters.cli import session_completion
+    from millrace.adapters.cli.context import contextual_input_id
+    from millrace.adapters.cli.context_checkout import prepare_context_checkout
+    from millrace.adapters.cli.run import run_bounded_execution_unit
+    from millrace.compiler import authority_fingerprint, compile_workflow
+    from millrace.contracts.transition import AttachRunnerSessionContext
+    from millrace.testing import fake_runner_session_state
+    from support.runner_sessions import _config, _RecordingAdapter
+
+    source = _source_with_context_binding(write_enabled=False)
+    binding = source["context_bindings"][0]
+    binding["id"] = "simple_loop.worker_context"
+    binding["stage_kind_id"] = "simple_loop.worker"
+    binding["required_sources"] = [
+        {
+            "source_kind": "workspace_relative_root",
+            "source_ref": "src",
+            "max_files": 8,
+            "max_bytes": 4096,
+        }
+    ]
+    binding["discoverable_sources"] = []
+    binding["write_rules"] = []
+    binding["mutation_policy"] = "forbid_selected_roots"
+    binding["stage_kind_id"] = "kernel_ping.taskmaster"
+    result = compile_workflow(source)
+    assert result.plan is not None, result.diagnostics
+    fingerprint = authority_fingerprint(result.plan)
+    state = bootstrap_to_taskmaster_claim(result.plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    runtime = _rt(tmp_path, state)
+    workspace = runtime.paths.workspace_path
+    (workspace / "src").mkdir(parents=True)
+    (workspace / "src" / "existing.txt").write_text(
+        "before\n",
+        encoding="utf-8",
+    )
+    state = _ld(runtime)
+    run = state.runs["run-taskmaster"]
+    session = state.runner_sessions["test-session:run-taskmaster"]
+    binding_decl = next(
+        declaration
+        for declaration in state.admitted_plans[
+            fingerprint
+        ].selected_plan.context_bindings
+        if str(declaration.stage_kind_id) == str(run.stage_kind_id)
+    )
+    prepared = prepare_context_checkout(
+        paths=runtime.paths,
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=binding_decl,
+        state=state,
+        cas_store=runtime.cas_store,
+    )
+    attachment = AttachRunnerSessionContext(
+        f"cli:run.session-context-attach:{session.session_id}",
+        run_ref=run.run_ref,
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        context_manifest_digest=prepared.manifest_digest,
+        selected_binding_id=str(binding_decl.id),
+    )
+    persisted = session_completion._persist_transition(
+        runtime,
+        replace(attachment, input_id=contextual_input_id(attachment)),
+    )
+    assert persisted is not None
+    state = _ld(runtime)
+    mutated = workspace / "src" / "mutated.txt"
+
+    def start(request):
+        mutated.write_text("mutated\n", encoding="utf-8")
+        return _writeback_success_start(
+            request,
+            artifact=_writeback_report(no_op_reason="No update."),
+            marker="TASK_COMPLETE",
+        )
+
+    adapter = _RecordingAdapter(start)
+    adapter.config = SimpleNamespace(cwd=workspace, wrapper_protocol_version=4)
+    before = _ld(runtime)
+    result2 = run_bounded_execution_unit(
+        runtime,
+        activation_id=state.runs[session.run_id].activation_id,
+        local_config=_config(adapter),
+    )
+    after = _ld(runtime)
+    assert result2.code in {
+        "completion_refused",
+        "session_reconciliation_required",
+        "observation_refused",
+    }
+    assert after.runner_observations == before.runner_observations
+    before_refusal_ids = {refusal.record_id for refusal in before.refusals}
+    new_refusals = [
+        refusal
+        for refusal in after.refusals
+        if refusal.record_id not in before_refusal_ids
+    ]
+    assert any(
+        refusal.reason == "context_mutation_refused" for refusal in new_refusals
+    )
+    assert mutated.exists()
+    runtime.close()

@@ -149,7 +149,7 @@ def _persist_completion(
     primary: RunnerSessionCancellationRecord | None = None,
     adapter_error_terminal_state: str = "failed",
 ) -> SessionExecutionResult:
-    refusal = _completion_refusal(
+    refusal = _authenticate_completion(
         runtime,
         run_ref=run_ref,
         session=session,
@@ -158,6 +158,25 @@ def _persist_completion(
     )
     if refusal is not None:
         return refusal
+    if not persistence._persist_governed_runner_usage(runtime, session, outcome):
+        return _persist_orphan_risk(
+            runtime,
+            run_ref=run_ref,
+            session=session,
+            request=request,
+            primary=primary,
+            outcome=outcome,
+            persistence_failure_code="runner_usage_evidence_refused",
+        )
+    evidence = _evidence_for_outcome(outcome, request)
+    mutation_refusal = _context_writeback_refusal(
+        runtime,
+        run_ref=run_ref,
+        session=session,
+        evidence=evidence,
+    )
+    if mutation_refusal is not None:
+        return mutation_refusal
     if isinstance(outcome, AdapterErrorResult):
         result = _persist_error_completion(
             runtime,
@@ -181,12 +200,23 @@ def _persist_completion(
         )
     if result.code in {"completion_refused", "session_reconciliation_required"}:
         return result
-    if not persistence._persist_governed_runner_usage(runtime, session, outcome):
-        return SessionExecutionResult("runner_usage_evidence_refused")
     return result
 
 
 def _completion_refusal(
+    runtime: OpenRuntimeContext,
+    *,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    request: AdapterInvocationRequest,
+    outcome: AdapterInvocationOutcome,
+) -> SessionExecutionResult | None:
+    return _authenticate_completion(
+        runtime, run_ref=run_ref, session=session, request=request, outcome=outcome
+    )
+
+
+def _authenticate_completion(
     runtime: OpenRuntimeContext,
     *,
     run_ref: RunRef,
@@ -226,12 +256,7 @@ def _completion_refusal(
                 signal_digest=_signal_digest(outcome),
             )
             return SessionExecutionResult("session_reconciliation_required")
-        return _context_writeback_refusal(
-            runtime,
-            run_ref=run_ref,
-            session=session,
-            evidence=None,
-        )
+        return None
     try:
         evidence = runner_evidence_from_adapter_outcome(outcome, request)
     except (TypeError, ValueError):
@@ -258,12 +283,19 @@ def _completion_refusal(
             signal_digest=_signal_digest(evidence.payload()),
         )
         return SessionExecutionResult("completion_refused")
-    return _context_writeback_refusal(
-        runtime,
-        run_ref=run_ref,
-        session=session,
-        evidence=evidence,
-    )
+    return None
+
+
+def _evidence_for_outcome(
+    outcome: AdapterInvocationOutcome,
+    request: AdapterInvocationRequest,
+) -> RunnerResultEvidence | None:
+    if isinstance(outcome, AdapterErrorResult):
+        return None
+    try:
+        return runner_evidence_from_adapter_outcome(outcome, request)
+    except (TypeError, ValueError):
+        return None
 
 
 def _context_writeback_refusal(
@@ -284,7 +316,7 @@ def _context_writeback_refusal(
         runtime,
         run_ref=run_ref,
         session=session,
-        reason="runner_session_reconciliation_contradiction",
+        reason="context_mutation_refused",
         signal_kind=(
             "runner_completion_outcome"
             if evidence is None

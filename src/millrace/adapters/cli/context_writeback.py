@@ -98,34 +98,33 @@ def _validate_context_writeback(
     if isinstance(snapshots, str):
         return snapshots
 
-    linkage = _selected_writeback_linkage(selected_plan, binding, evidence)
-    if isinstance(linkage, str):
-        return linkage
-    if linkage is None:
-        return _require_unchanged_for_write_enabled_binding(
-            binding,
-            baselines,
-            snapshots,
+    if binding.mutation_policy == "forbid_selected_roots":
+        return _require_unchanged(baselines, snapshots)
+    if binding.mutation_policy == "reconcile_selected_writes":
+        linkage = _selected_writeback_linkage(selected_plan, binding, evidence)
+        if isinstance(linkage, str):
+            return linkage
+        if linkage is None:
+            return _require_unchanged(baselines, snapshots)
+        schema_id, artifact_payload = linkage
+        schema = next(
+            (
+                declaration.schema
+                for declaration in selected_plan.artifact_schemas
+                if str(declaration.id) == schema_id
+            ),
+            None,
         )
-
-    schema_id, artifact_payload = linkage
-    schema = next(
-        (
-            declaration.schema
-            for declaration in selected_plan.artifact_schemas
-            if str(declaration.id) == schema_id
-        ),
-        None,
-    )
-    if schema is None:
-        return "selected writeback artifact schema is missing"
-    return _validate_writeback_report(
-        artifact_payload,
-        schema=cast(Mapping[str, object], schema),
-        binding=binding,
-        baselines=baselines,
-        snapshots=snapshots,
-    )
+        if schema is None:
+            return "selected writeback artifact schema is missing"
+        return _validate_writeback_report(
+            artifact_payload,
+            schema=cast(Mapping[str, object], schema),
+            binding=binding,
+            baselines=baselines,
+            snapshots=snapshots,
+        )
+    raise AssertionError("admitted binding has unsupported mutation policy")
 
 
 def _writeback_authority(
@@ -546,9 +545,13 @@ def _require_unchanged_for_write_enabled_binding(
     baselines: Sequence[_RootBaseline],
     snapshots: Sequence[_LiveSnapshot],
 ) -> str | None:
-    if not binding.write_rules:
-        return None
-    return _require_unchanged(baselines, snapshots)
+    if binding.mutation_policy == "forbid_selected_roots":
+        return _require_unchanged(baselines, snapshots)
+    if binding.mutation_policy == "reconcile_selected_writes":
+        if not binding.write_rules:
+            raise AssertionError("admitted binding has unsupported mutation policy")
+        return _require_unchanged(baselines, snapshots)
+    raise AssertionError("admitted binding has unsupported mutation policy")
 
 
 def _require_structure(
