@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from uuid import uuid4
 
+from millrace.adapters.cli import (
+    context_retention,
+    session_attribution,
+    session_records,
+)
 from millrace.adapters.cli import session_persistence as persistence
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
@@ -32,7 +35,6 @@ from millrace.adapters.runner_contract import (
 from millrace.adapters.runner_contract import (
     runner_evidence_from_adapter_outcome as runner_evidence_from_adapter_outcome,
 )
-from millrace.contracts.context_checkout import decode_context_checkout_manifest
 from millrace.contracts.runner import (
     RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES,
     RunnerDispatchEnvelope,
@@ -41,8 +43,6 @@ from millrace.contracts.runner import (
     runner_result_evidence_digest,
 )
 from millrace.contracts.state import (
-    AttributionMetric,
-    RunnerSessionAttributionRecord,
     RunnerSessionCancellationRecord,
     RunnerSessionCompletionRecord,
     RunnerSessionRecord,
@@ -71,26 +71,6 @@ __all__ = (
     "build_dispatch_envelope_for_run",
 )
 _RUNTIME_SESSION_EVENT_POLICY = RedactionPolicy(policy_id="runtime-session-events")
-_ADAPTER_ATTRIBUTION_FIELDS = (
-    "cached_input_tokens",
-    "reasoning_tokens",
-    "provider_event_count",
-    "provider_event_bytes",
-    "wrapper_input_bytes",
-    "retained_result_bytes",
-    "tool_call_event_count",
-    "runner_wall_milliseconds",
-)
-_CONTEXT_ATTRIBUTION_FIELDS = (
-    "manifest_bytes",
-    "catalog_bytes",
-    "hydrated_bytes",
-    "catalog_file_count",
-    "hydrated_file_count",
-    "distinct_content_digest_count",
-)
-
-
 @dataclass(frozen=True, slots=True)
 class SessionExecutionResult:
     code: str
@@ -119,7 +99,7 @@ def _persist_orphan_risk(
             {"reconciliation": "unsupported"} if diagnostic is None else diagnostic,
         )
     )
-    completion = _completion_record(
+    completion = session_records.completion_record(
         session=session,
         terminal_state="lost",
         exit_kind="lost",
@@ -198,10 +178,10 @@ def _persist_completion(
     )
     if mutation_refusal is not None:
         return mutation_refusal
-    if not _persist_runner_session_attribution(
+    if not session_attribution.persist_runner_session_attribution(
         runtime,
         session=session,
-        outcome=outcome,
+        attribution=outcome.attribution,
     ):
         return SessionExecutionResult("completion_refused")
     if isinstance(outcome, AdapterErrorResult):
@@ -227,105 +207,16 @@ def _persist_completion(
         )
     if result.code in {"completion_refused", "session_reconciliation_required"}:
         return result
-    return result
-
-
-def _persist_runner_session_attribution(
-    runtime: OpenRuntimeContext,
-    *,
-    session: RunnerSessionRecord,
-    outcome: AdapterInvocationOutcome,
-) -> bool:
-    metrics = _adapter_attribution_metrics(outcome)
-    try:
-        metrics.update(_context_attribution_metrics(runtime, session=session))
-        record = RunnerSessionAttributionRecord(
-            session_id=session.session_id,
-            dispatch_generation=session.dispatch_generation,
-            fencing_token=session.session_fencing_token,
-            final=True,
-            metrics=metrics,
-        )
-        return runtime.store.record_runner_session_attribution(record) == record
-    except (OSError, SubstrateError, TypeError, ValueError):
-        return False
-
-
-def _adapter_attribution_metrics(
-    outcome: AdapterInvocationOutcome,
-) -> dict[str, AttributionMetric]:
-    attribution = outcome.attribution
-    return {
-        field_name: AttributionMetric(
-            value=(
-                None if attribution is None else getattr(attribution, field_name)
-            ),
-            source="adapter.direct",
-            availability=(
-                "unavailable"
-                if attribution is None or getattr(attribution, field_name) is None
-                else "observed"
-            ),
-        )
-        for field_name in _ADAPTER_ATTRIBUTION_FIELDS
-    }
-
-
-def _context_attribution_metrics(
-    runtime: OpenRuntimeContext,
-    *,
-    session: RunnerSessionRecord,
-) -> dict[str, AttributionMetric]:
-    digest = session.context_manifest_digest
-    if digest is None:
-        return {
-            field_name: AttributionMetric(
-                value=None,
-                source="runtime.context",
-                availability="unavailable",
-            )
-            for field_name in _CONTEXT_ATTRIBUTION_FIELDS
-        }
-
-    manifest_bytes = runtime.cas_store.get_bytes(digest)
-    manifest = decode_context_checkout_manifest(manifest_bytes)
-    if (
-        manifest.session_id != session.session_id
-        or manifest.dispatch_generation != session.dispatch_generation
-    ):
-        raise ValueError("context manifest authority drifted")
-    receipts = runtime.store.load_context_hydration_receipts_authenticated(
-        session.session_id,
-        session.dispatch_generation,
-        session.session_fencing_token,
+    context_retention.cleanup_completed_session_context(
+        runtime,
+        session=session,
+        adapter_cleanup_disposition=cleanup.disposition,
+        adapter_removed_path_classes=cleanup.removed_path_classes,
+        adapter_removed_file_count=cleanup.removed_file_count,
+        adapter_removed_byte_count=cleanup.removed_byte_count,
+        event_redaction_policy=_RUNTIME_SESSION_EVENT_POLICY,
     )
-    if any(receipt.manifest_digest != digest for receipt in receipts):
-        raise ValueError("context hydration receipt authority drifted")
-    values = {
-        "manifest_bytes": len(manifest_bytes),
-        "catalog_bytes": sum(item.byte_length for item in manifest.catalog),
-        "hydrated_bytes": sum(receipt.byte_length for receipt in receipts),
-        "catalog_file_count": len(manifest.catalog),
-        "hydrated_file_count": len(receipts),
-        "distinct_content_digest_count": len(
-            {receipt.content_digest for receipt in receipts}
-        ),
-    }
-    return {
-        field_name: AttributionMetric(
-            value=value,
-            source=(
-                "runtime.context_manifest"
-                if field_name
-                in {"manifest_bytes", "catalog_bytes", "catalog_file_count"}
-                else "runtime.hydration_receipts"
-            ),
-            availability=(
-                "observed" if field_name == "manifest_bytes" else "derived"
-            ),
-        )
-        for field_name, value in values.items()
-    }
+    return result
 
 
 def _completion_refusal(
@@ -528,7 +419,7 @@ def _persist_success_completion(
             outcome.evidence_construction_diagnostics,
         )
     )
-    completion = _completion_record(
+    completion = session_records.completion_record(
         session=session,
         terminal_state="completed",
         exit_kind="success",
@@ -615,7 +506,7 @@ def _persist_adapter_error(
         )
     except (OSError, SubstrateError, TypeError, ValueError):
         return SessionExecutionResult("completion_refused")
-    completion = _completion_record(
+    completion = session_records.completion_record(
         session=session,
         terminal_state=terminal_state,
         exit_kind="cancelled" if terminal_state == "interrupted" else "error",
@@ -641,46 +532,6 @@ def _persist_adapter_error(
     return SessionExecutionResult(
         "adapter_failure",
         adapter_error_kind=outcome.error_kind,
-    )
-
-
-def _completion_record(
-    *,
-    session: RunnerSessionRecord,
-    terminal_state: str,
-    exit_kind: str,
-    adapter_outcome_kind: str,
-    adapter_error_kind: str | None,
-    evidence_digest: str | None,
-    diagnostic_digest: str,
-    cleanup_disposition: str,
-    redaction_policy_id: str,
-    primary: RunnerSessionCancellationRecord | None = None,
-) -> RunnerSessionCompletionRecord:
-    completion_id = f"completion-{uuid4().hex}"
-    return RunnerSessionCompletionRecord(
-        completion_id=completion_id,
-        session_id=session.session_id,
-        run_id=session.run_id,
-        dispatch_generation=session.dispatch_generation,
-        session_fencing_token=session.session_fencing_token,
-        terminal_state=terminal_state,
-        exit_kind=exit_kind,
-        adapter_outcome_kind=adapter_outcome_kind,
-        adapter_error_kind=adapter_error_kind,
-        runner_result_evidence_digest=evidence_digest,
-        primary_cancellation_request_id=(
-            None if primary is None else primary.request_id
-        ),
-        cleanup_disposition=cleanup_disposition,
-        started_at=session.started_at,
-        cancel_requested_at=(None if primary is None else primary.requested_at),
-        completed_at=max(time.time_ns(), session.started_at or session.created_at),
-        bounds_summary="bounded",
-        truncation_metadata="none",
-        redaction_policy_id=redaction_policy_id,
-        diagnostic_digest=diagnostic_digest,
-        application_input_id=f"cli:run.session-completion:{completion_id}",
     )
 
 
@@ -831,27 +682,6 @@ def _persist_transition(
     if not decision.accepted:
         return None
     return next_state
-
-
-def _record_session_event(
-    runtime: OpenRuntimeContext,
-    *,
-    session: RunnerSessionRecord,
-    kind: str,
-    observed_at: int,
-    payload: Mapping[str, object],
-    replay_key: str,
-    redaction_policy: RedactionPolicy,
-) -> None:
-    persistence._record_session_event(
-        runtime,
-        session=session,
-        kind=kind,
-        observed_at=observed_at,
-        payload=payload,
-        replay_key=replay_key,
-        redaction_policy=redaction_policy,
-    )
 
 
 def _audit_session_refusal(

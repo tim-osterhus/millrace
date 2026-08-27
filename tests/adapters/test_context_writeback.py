@@ -749,7 +749,7 @@ def test_read_only_bound_stage_refuses_live_source_drift_with_authentic_checkout
 
     assert (
         validate_context_writeback(runtime, session=session, evidence=evidence)
-        == "selected live context root changed type"
+        == "selected live context files changed"
     )
 
 

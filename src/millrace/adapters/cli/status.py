@@ -149,6 +149,57 @@ def _attribution_projection(
     }
 
 
+def _cleanup_by_session(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+) -> dict[str, dict[str, object]]:
+    return {
+        session_id: _cleanup_projection(runtime, session)
+        for session_id, session in state.runner_sessions.items()
+    }
+
+
+def _cleanup_for_run(
+    state: RuntimeState,
+    run_id: str,
+    cleanup_by_session: Mapping[str, Mapping[str, object]],
+) -> Mapping[str, object] | None:
+    run = state.runs.get(run_id)
+    if run is None or run.current_session_id is None:
+        return None
+    return cleanup_by_session.get(str(run.current_session_id))
+
+
+def _cleanup_projection(
+    runtime: OpenRuntimeContext,
+    session: object,
+) -> dict[str, object]:
+    manifest_digest = getattr(session, "context_manifest_digest", None)
+    if manifest_digest is None:
+        return {"status": "not_applicable"}
+    try:
+        receipt = runtime.store.load_context_cleanup_receipt_authenticated(
+            str(getattr(session, "session_id")),
+            int(getattr(session, "dispatch_generation")),
+            str(manifest_digest),
+            str(getattr(session, "session_fencing_token")),
+        )
+    except (SubstrateError, TypeError, ValueError):
+        return {
+            "status": "contradictory",
+            "reason": "context_cleanup_evidence_refused",
+        }
+    if receipt is None:
+        return {"status": "missing"}
+    return {
+        "status": "available",
+        "removed_path_classes": receipt.removed_path_classes,
+        "removed_file_count": receipt.removed_file_count,
+        "removed_byte_count": receipt.removed_byte_count,
+        "adapter_cleanup_disposition": receipt.adapter_cleanup_disposition,
+    }
+
+
 def handle_status_command(namespace: object) -> CliSuccess:
     command = str(getattr(namespace, "command", "status"))
     if command == "status":
@@ -191,6 +242,7 @@ def _status(namespace: object) -> CliSuccess:
             budgets = _daemon_budget_projections(runtime, state)
             hydration_totals = _hydration_totals_by_session(runtime, state)
             attribution_by_session = _attribution_by_session(runtime, state)
+            cleanup_by_session = _cleanup_by_session(runtime, state)
             ready_dispatch = list_ready_dispatch_candidates(state)
         except OperatorInputError as exc:
             raise _operator_error(command, exc) from exc
@@ -207,6 +259,7 @@ def _status(namespace: object) -> CliSuccess:
             ready_dispatch=ready_dispatch,
             hydration_totals=hydration_totals,
             attribution_by_session=attribution_by_session,
+            cleanup_by_session=cleanup_by_session,
         ),
     )
 
@@ -220,6 +273,7 @@ def _runs_list(namespace: object) -> CliSuccess:
         budget_by_session = _budget_projection_by_session(runtime, state)
         hydration_totals = _hydration_totals_by_session(runtime, state)
         attribution_by_session = _attribution_by_session(runtime, state)
+        cleanup_by_session = _cleanup_by_session(runtime, state)
     finally:
         runtime.close()
     runs: list[dict[str, object]] = []
@@ -239,6 +293,7 @@ def _runs_list(namespace: object) -> CliSuccess:
                 run_id,
                 attribution_by_session,
             ),
+            cleanup=_cleanup_for_run(state, run_id, cleanup_by_session),
         )
         projected["may_start_while_dispatch_suspended"] = (
             run_may_start_while_dispatch_suspended(state, state.runs[run_id])
@@ -269,6 +324,7 @@ def _runs_show(namespace: object) -> CliSuccess:
         budget_by_session = _budget_projection_by_session(runtime, state)
         hydration_totals = _hydration_totals_by_session(runtime, state)
         attribution_by_session = _attribution_by_session(runtime, state)
+        cleanup_by_session = _cleanup_by_session(runtime, state)
         run = state.runs.get(run_id)
         if run is None:
             raise CliCommandError(
@@ -326,6 +382,7 @@ def _runs_show(namespace: object) -> CliSuccess:
                 run_id,
                 attribution_by_session,
             ),
+            cleanup=_cleanup_for_run(state, run_id, cleanup_by_session),
         ),
     }
     if rejected_result is not None:
@@ -422,6 +479,7 @@ def _runs_follow(namespace: object) -> CliSuccess:
         budget_by_session = _budget_projection_by_session(runtime, state)
         hydration_totals = _hydration_totals_by_session(runtime, state)
         attribution_by_session = _attribution_by_session(runtime, state)
+        cleanup_by_session = _cleanup_by_session(runtime, state)
         run = state.runs.get(run_id)
         if run is None:
             raise CliCommandError(
@@ -529,6 +587,7 @@ def _runs_follow(namespace: object) -> CliSuccess:
                     run_id,
                     attribution_by_session,
                 ),
+                cleanup=_cleanup_for_run(state, run_id, cleanup_by_session),
             ),
         },
     )
@@ -583,6 +642,7 @@ def _trace_show(namespace: object) -> CliSuccess:
             budget_by_session = _budget_projection_by_session(runtime, state)
             hydration_totals = _hydration_totals_by_session(runtime, state)
             attribution_by_session = _attribution_by_session(runtime, state)
+            cleanup_by_session = _cleanup_by_session(runtime, state)
         except OperatorInputError as exc:
             raise _operator_error(command, exc) from exc
     finally:
@@ -641,6 +701,11 @@ def _trace_show(namespace: object) -> CliSuccess:
                         str(run_id),
                         attribution_by_session,
                     ),
+                    cleanup=_cleanup_for_run(
+                        state,
+                        str(run_id),
+                        cleanup_by_session,
+                    ),
                 )
             ),
         },
@@ -662,6 +727,7 @@ def _status_projection(
     ready_dispatch: object | None = None,
     hydration_totals: Mapping[str, Mapping[str, int]] | None = None,
     attribution_by_session: Mapping[str, Mapping[str, object]] | None = None,
+    cleanup_by_session: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     runner_sessions = (
         []
@@ -689,6 +755,15 @@ def _status_projection(
                             state,
                             run_id,
                             attribution_by_session,
+                        )
+                    ),
+                    cleanup=(
+                        None
+                        if cleanup_by_session is None
+                        else _cleanup_for_run(
+                            state,
+                            run_id,
+                            cleanup_by_session,
                         )
                     ),
                 )
@@ -845,6 +920,7 @@ def _daemon_budget_projection(
                 "dispatch_generation": session.dispatch_generation,
                 **_hydration_totals(runtime, session),
                 "attribution": _attribution_projection(runtime, session),
+                "context_cleanup": _cleanup_projection(runtime, session),
                 "usage_evidence": usage_evidence,
             }
         )
@@ -1098,12 +1174,14 @@ def _runner_session_with_budget(
     *,
     hydration_totals: Mapping[str, int] | None = None,
     attribution: Mapping[str, object] | None = None,
+    cleanup: Mapping[str, object] | None = None,
 ) -> dict[str, object] | None:
     projection = runner_session_projection(
         state,
         run_id,
         hydration_totals=hydration_totals,
         attribution=attribution,
+        cleanup=cleanup,
     )
     if projection is None:
         return None
@@ -1119,6 +1197,7 @@ def runner_session_projection(
     *,
     hydration_totals: Mapping[str, int] | None = None,
     attribution: Mapping[str, object] | None = None,
+    cleanup: Mapping[str, object] | None = None,
 ) -> dict[str, object] | None:
     run = state.runs.get(run_id)
     if run is None or run.current_session_id is None:
@@ -1171,6 +1250,9 @@ def runner_session_projection(
         **totals,
         "attribution": (
             {"status": "missing"} if attribution is None else dict(attribution)
+        ),
+        "context_cleanup": (
+            {"status": "missing"} if cleanup is None else dict(cleanup)
         ),
         "state": session.state,
         "adapter_kind": _selected_adapter_kind(state, run_id),

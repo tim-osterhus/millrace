@@ -1285,3 +1285,66 @@ def test_adapter_outcomes_carry_attribution_separately_from_token_usage() -> Non
     assert success.attribution == attribution
     assert error.token_usage == token_usage
     assert error.attribution == attribution
+
+
+def test_runner_cleanup_result_records_bounded_removed_material() -> None:
+    from millrace.adapters.runner_contract import (
+        RunnerCleanupResult,
+        runner_cancellation_diagnostic_digest,
+    )
+
+    diagnostic = {"disposition": "complete"}
+    result = RunnerCleanupResult(
+        disposition="complete",
+        started_at=1,
+        completed_at=2,
+        diagnostic=diagnostic,
+        diagnostic_digest=runner_cancellation_diagnostic_digest(diagnostic),
+        removed_path_classes=("context_checkout", "selected_materialization"),
+        removed_file_count=3,
+        removed_byte_count=42,
+    )
+
+    assert result.removed_path_classes == (
+        "context_checkout",
+        "selected_materialization",
+    )
+    assert result.removed_file_count == 3
+    assert result.removed_byte_count == 42
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("removed_path_classes", ["context_checkout"]),
+        ("removed_path_classes", ("selected_materialization", "context_checkout")),
+        ("removed_path_classes", ("context_checkout", "context_checkout")),
+        ("removed_file_count", True),
+        ("removed_file_count", -1),
+        ("removed_byte_count", 2**63),
+    ),
+)
+def test_runner_cleanup_result_rejects_unbounded_removed_material(
+    field_name: str,
+    value: object,
+) -> None:
+    from millrace.adapters.runner_contract import (
+        RunnerCleanupResult,
+        runner_cancellation_diagnostic_digest,
+    )
+
+    diagnostic = {"disposition": "complete"}
+    values: dict[str, object] = {
+        "disposition": "complete",
+        "started_at": 1,
+        "completed_at": 2,
+        "diagnostic": diagnostic,
+        "diagnostic_digest": runner_cancellation_diagnostic_digest(diagnostic),
+        "removed_path_classes": (),
+        "removed_file_count": 0,
+        "removed_byte_count": 0,
+    }
+    values[field_name] = value
+
+    with pytest.raises((TypeError, ValueError)):
+        RunnerCleanupResult(**values)  # type: ignore[arg-type]

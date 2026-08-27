@@ -125,7 +125,7 @@ def test_created_attached_restart_rematerializes_cas_without_recapture(
         local_config=_bound_config(runtime, adapter),
     )
 
-    assert resumed.code == "observation_accepted"
+    assert resumed.code == "session_reconciliation_required"
     assert (
         checkout / "required" / "workspace" / "docs" / "guide.txt"
     ).read_bytes() == original_bytes

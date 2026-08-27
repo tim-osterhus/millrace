@@ -946,11 +946,29 @@ class RunnerCleanupResult:
     completed_at: int
     diagnostic: Mapping[str, AuthorityValue]
     diagnostic_digest: str
+    removed_path_classes: tuple[str, ...] = ()
+    removed_file_count: int = 0
+    removed_byte_count: int = 0
 
     def __post_init__(self) -> None:
         if self.disposition not in {"not_required", "complete", "orphan_risk"}:
             raise ValueError("unsupported cleanup disposition")
         _validate_cancellation_result(self)
+        path_classes = _coerce_string_tuple(
+            self.removed_path_classes,
+            "removed_path_classes",
+        )
+        if len(path_classes) > 16:
+            raise ValueError("removed_path_classes exceeds bounded count")
+        if path_classes != tuple(sorted(set(path_classes))):
+            raise ValueError("removed_path_classes must be sorted and unique")
+        object.__setattr__(self, "removed_path_classes", path_classes)
+        for field_name in ("removed_file_count", "removed_byte_count"):
+            value = _require_int(getattr(self, field_name), field_name)
+            if value < 0 or value > 2**63 - 1:
+                raise ValueError(
+                    f"{field_name} must be a non-negative durable integer"
+                )
 
 
 def _validate_cancellation_result(

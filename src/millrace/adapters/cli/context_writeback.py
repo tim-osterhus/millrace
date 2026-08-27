@@ -369,6 +369,24 @@ def _workspace_files_for_source(
             return "context manifest workspace paths are duplicated"
         seen_files.add(workspace_path)
         files[workspace_path] = item.content_digest
+    if not required:
+        for item in manifest.catalog:
+            if (
+                item.source_kind != _WORKSPACE_SOURCE
+                or item.source_ref != declaration.source_ref
+            ):
+                continue
+            workspace_path = _workspace_path_for_source_path(
+                item.logical_path,
+                prefix,
+                root,
+            )
+            if workspace_path is None:
+                return "context manifest workspace source layout drifted"
+            if workspace_path in seen_files:
+                return "context manifest workspace paths are duplicated"
+            seen_files.add(workspace_path)
+            files[workspace_path] = item.content_digest
     return files
 
 
@@ -377,10 +395,18 @@ def _workspace_path_for_manifest_item(
     prefix: str,
     root: str,
 ) -> str | None:
-    if item.checkout_path == prefix:
+    return _workspace_path_for_source_path(item.checkout_path, prefix, root)
+
+
+def _workspace_path_for_source_path(
+    source_path: str,
+    prefix: str,
+    root: str,
+) -> str | None:
+    if source_path == prefix:
         return root
-    if item.checkout_path.startswith(f"{prefix}/"):
-        suffix = item.checkout_path.removeprefix(f"{prefix}/")
+    if source_path.startswith(f"{prefix}/"):
+        suffix = source_path.removeprefix(f"{prefix}/")
         return f"{root}/{suffix}"
     return None
 

@@ -7,7 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from millrace.adapters.cli import session_completion as complete
-from millrace.adapters.cli import session_diagnostics
+from millrace.adapters.cli import session_diagnostics, session_records
+from millrace.adapters.cli import session_persistence as persistence
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
 )
@@ -205,7 +206,7 @@ def _request_cancellation_once(
     )
     persisted = complete._persist_transition(runtime, transition)
     if persisted is not None:
-        complete._record_session_event(
+        persistence._record_session_event(
             runtime,
             session=persisted.runner_sessions[session.session_id],
             kind="cancellation_progress",
@@ -467,7 +468,7 @@ def _persist_cancelled_without_outcome(
     terminal_state = (
         "interrupted" if cleanup_disposition in {"not_required", "complete"} else "lost"
     )
-    record = complete._completion_record(
+    record = session_records.completion_record(
         session=session,
         terminal_state=terminal_state,
         exit_kind="cancelled" if terminal_state == "interrupted" else "lost",

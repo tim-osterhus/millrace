@@ -1194,7 +1194,14 @@ def test_unrelated_authority_refusal_does_not_gain_usage_writes(tmp_path) -> Non
 def test_authenticated_completion_persists_source_backed_attribution(
     tmp_path,
 ) -> None:
-    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    runtime, state, session, binding = _bound_fixture(tmp_path)
+    checkout = (
+        runtime.paths.workspace_path
+        / str(binding.checkout_root)
+        / session.session_id
+        / str(session.dispatch_generation)
+    )
+    assert checkout.is_dir()
 
     def start(request: AdapterInvocationRequest) -> object:
         outcome = AdapterSuccessResult.from_unredacted(
@@ -1269,6 +1276,28 @@ def test_authenticated_completion_persists_source_backed_attribution(
     assert record.metrics["distinct_content_digest_count"].value == len(
         {receipt.content_digest for receipt in receipts}
     )
+    cleanup = runtime.store.load_context_cleanup_receipt_authenticated(
+        session.session_id,
+        session.dispatch_generation,
+        manifest_digest,
+        session.session_fencing_token,
+    )
+    assert cleanup is not None
+    assert cleanup.adapter_cleanup_disposition == "not_required"
+    assert cleanup.removed_path_classes == ("context_checkout",)
+    assert cleanup.removed_file_count == len(manifest.files) + 1
+    assert cleanup.removed_byte_count == len(manifest_bytes) + sum(
+        item.byte_length for item in manifest.files
+    )
+    assert not checkout.exists()
+    assert runtime.cas_store.get_bytes(manifest_digest) == manifest_bytes
+    after = _load(runtime)
+    assert after.runner_session_completions[session.session_id].terminal_state == (
+        "completed"
+    )
+    assert after.runner_session_completions[
+        session.session_id
+    ].application_input_id in after.receipts
 
 
 def test_authenticated_adapter_error_persists_final_attribution(tmp_path) -> None:

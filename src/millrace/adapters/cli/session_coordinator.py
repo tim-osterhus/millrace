@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from millrace.adapters.cli import session_cancellation as cancel
 from millrace.adapters.cli import session_completion as complete
+from millrace.adapters.cli import session_persistence as persistence
 from millrace.adapters.cli import session_reconciliation as reconcile
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
@@ -636,7 +637,7 @@ def _persist_started_session(
             handle=outcome.handle,
         )
     running_session = running_state.runner_sessions[session.session_id]
-    complete._record_session_event(
+    persistence._record_session_event(
         runtime,
         session=running_session,
         kind="session_started",

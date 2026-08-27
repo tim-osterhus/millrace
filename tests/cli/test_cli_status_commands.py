@@ -45,6 +45,40 @@ def _state(workspace: Path):
     return store.load_runtime_state(cas_store)
 
 
+def _projection_runtime(tmp_path: Path):
+    from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
+    from millrace.adapters.cli.context import CliWorkspacePaths, OpenRuntimeContext
+    from millrace.compiler import authority_fingerprint, compile_workflow
+    from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+    from millrace.testing import fake_runner_session_state
+    from millrace.workflows import kernel_ping
+
+    result = compile_workflow(kernel_ping.workflow_source())
+    assert result.plan is not None, result.diagnostics
+    fingerprint = authority_fingerprint(result.plan)
+    state = bootstrap_to_taskmaster_claim(result.plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    session = state.runner_sessions["test-session:run-taskmaster"]
+
+    workspace = tmp_path / "workspace"
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    cas_path = workspace / ".millrace" / "cas"
+    db_path.parent.mkdir(parents=True)
+    cas_path.mkdir(parents=True)
+    store = SQLiteRuntimeStore.initialize(db_path)
+    cas_store = ContentAddressedByteStore(cas_path)
+    store.persist_runtime_state(state, cas_store)
+    return (
+        OpenRuntimeContext(
+            paths=CliWorkspacePaths(workspace, db_path, cas_path),
+            store=store,
+            cas_store=cas_store,
+        ),
+        session,
+    )
+
+
 def _complete_claimed_runner_sessions(workspace: Path) -> tuple[str, ...]:
     from millrace.adapters.cli.context import transition_context
     from millrace.contracts.runner import (
@@ -337,13 +371,12 @@ def test_runner_session_projection_omits_private_fencing_authority(
 def test_runner_session_attribution_projection_is_source_backed_and_bounded(
     tmp_path: Path,
 ) -> None:
-    from adapters.test_context_writeback import _bound_fixture
     from millrace.adapters.cli import status
     from millrace.contracts.state import (
         AttributionMetric,
         RunnerSessionAttributionRecord,
     )
-    runtime, _state, session, _binding = _bound_fixture(tmp_path)
+    runtime, session = _projection_runtime(tmp_path)
     runtime.store.record_runner_session_attribution(
         RunnerSessionAttributionRecord(
             session_id=session.session_id,
@@ -382,6 +415,55 @@ def test_runner_session_attribution_projection_is_source_backed_and_bounded(
                 "availability": "unavailable",
             },
         },
+    }
+    serialized = json.dumps(projected)
+    assert session.session_fencing_token not in serialized
+    assert str(runtime.paths.workspace_path) not in serialized
+
+
+def test_runner_session_cleanup_projection_is_source_backed_and_bounded(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    from millrace.adapters.cli import status
+    from millrace.contracts.state import (
+        ContextCleanupReceipt,
+        context_cleanup_receipt_id,
+    )
+
+    runtime, session = _projection_runtime(tmp_path)
+    session = replace(
+        session,
+        context_manifest_digest="sha256:" + "a" * 64,
+    )
+    assert session.context_manifest_digest is not None
+    receipt = ContextCleanupReceipt(
+        receipt_id="context-cleanup:pending",
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        fencing_token=session.session_fencing_token,
+        manifest_digest=session.context_manifest_digest,
+        removed_path_classes=("context_checkout", "runner_session_home"),
+        removed_file_count=7,
+        removed_byte_count=211,
+        adapter_cleanup_disposition="complete",
+    )
+    runtime.store.record_context_cleanup_receipt(
+        replace(receipt, receipt_id=context_cleanup_receipt_id(receipt))
+    )
+
+    projected = status._cleanup_projection(runtime, session)
+
+    assert projected == {
+        "status": "available",
+        "removed_path_classes": (
+            "context_checkout",
+            "runner_session_home",
+        ),
+        "removed_file_count": 7,
+        "removed_byte_count": 211,
+        "adapter_cleanup_disposition": "complete",
     }
     serialized = json.dumps(projected)
     assert session.session_fencing_token not in serialized
