@@ -81,6 +81,16 @@ def test_terminal_action_conditions_are_compiled_and_exported() -> None:
     )
 
 
+def test_empty_terminal_action_conditions_preserve_legacy_export() -> None:
+    result = compile_workflow(kernel_ping.workflow_source())
+
+    assert result.plan is not None
+    exported = compiled_plan_export_record(result.plan)
+    selected_authority = cast(dict[str, object], exported["selected_authority"])
+    actions = cast(list[dict[str, object]], selected_authority["terminal_actions"])
+    assert all("artifact_field_conditions" not in action for action in actions)
+
+
 @pytest.mark.parametrize(
     "conditions",
     (

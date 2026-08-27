@@ -786,6 +786,13 @@ def test_context_source_empty_policy_changes_fingerprint_and_export() -> None:
     )
 
 
+def test_default_context_source_empty_policy_preserves_legacy_export() -> None:
+    plan = compile_workflow(_source_with_context_binding()).plan
+
+    assert plan is not None
+    assert b'"empty_policy"' not in compiled_plan_export_bytes(plan)
+
+
 def test_context_policy_changes_fingerprint_but_map_order_does_not() -> None:
     first_source = _source_with_context_binding()
     assets = cast(list[dict[str, object]], first_source["assets"])

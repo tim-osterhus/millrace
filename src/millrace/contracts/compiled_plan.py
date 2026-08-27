@@ -2421,6 +2421,18 @@ def _canonical_record(value: object) -> dict[str, CanonicalValue]:
         if field.name == "presentation":
             continue
         if (
+            isinstance(value, ContextSourceDeclaration)
+            and field.name == "empty_policy"
+            and value.empty_policy == "require_nonempty"
+        ):
+            continue
+        if (
+            isinstance(value, TerminalActionDeclaration)
+            and field.name == "artifact_field_conditions"
+            and not value.artifact_field_conditions
+        ):
+            continue
+        if (
             field.name == "context_bindings"
             and isinstance(value, SelectedCompiledPlan)
             and not value.context_bindings
