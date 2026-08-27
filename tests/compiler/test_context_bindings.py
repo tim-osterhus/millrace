@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -220,8 +221,73 @@ def test_compiles_generic_context_binding() -> None:
     assert binding.schema_version == 2
     assert binding.max_hydrated_files == 16
     assert binding.max_hydrated_bytes == 16_384
+    assert binding.required_sources[0].empty_policy == "require_nonempty"
     assert binding.mutation_policy == "forbid_selected_roots"
     assert binding.materialization_retention == "until_session_durable_terminal"
+
+
+def test_compiles_omit_if_absent_for_required_direct_predecessors() -> None:
+    source = _source_with_context_binding()
+    _context_binding(source)["required_sources"] = [
+        {
+            "source_kind": "selected_artifacts",
+            "source_ref": "direct_predecessors",
+            "empty_policy": "omit_if_absent",
+            "max_files": 8,
+            "max_bytes": 4096,
+        }
+    ]
+    _context_binding(source)["discoverable_sources"] = []
+
+    result = compile_workflow(source)
+
+    assert result.plan is not None
+    assert result.plan.context_bindings[0].required_sources[0].empty_policy == (
+        "omit_if_absent"
+    )
+
+
+@pytest.mark.parametrize(
+    ("required", "source_kind", "source_ref"),
+    (
+        (True, "dispatch_material", "current"),
+        (True, "selected_artifacts", "current_lineage"),
+        (True, "selected_attempts", "current_lineage"),
+        (True, "workspace_relative_root", "docs"),
+        (False, "selected_artifacts", "direct_predecessors"),
+    ),
+)
+def test_rejects_omit_if_absent_for_unsupported_context_sources(
+    required: bool,
+    source_kind: str,
+    source_ref: str,
+) -> None:
+    source = _source_with_context_binding()
+    declaration = {
+        "source_kind": source_kind,
+        "source_ref": source_ref,
+        "empty_policy": "omit_if_absent",
+        "max_files": 8,
+        "max_bytes": 4096,
+    }
+    _context_binding(source)["required_sources"] = [declaration] if required else []
+    _context_binding(source)["discoverable_sources"] = (
+        [] if required else [declaration]
+    )
+
+    _refuses(source, "context_binding_source_empty_policy")
+
+
+@pytest.mark.parametrize("empty_policy", ("", "invalid"))
+def test_rejects_invalid_context_source_empty_policy(empty_policy: str) -> None:
+    source = _source_with_context_binding()
+    required = cast(
+        list[dict[str, object]],
+        _context_binding(source)["required_sources"],
+    )
+    required[0]["empty_policy"] = empty_policy
+
+    _refuses(source, "context_binding_source_empty_policy")
 
 
 @pytest.mark.parametrize(
@@ -697,6 +763,29 @@ def test_context_binding_closure_accepts_non_codex_runner() -> None:
     )
 
 
+def test_context_source_empty_policy_changes_fingerprint_and_export() -> None:
+    default_plan = compile_workflow(_source_with_context_binding()).plan
+    omit_source = _source_with_context_binding()
+    _context_binding(omit_source)["required_sources"] = [
+        {
+            "source_kind": "selected_artifacts",
+            "source_ref": "direct_predecessors",
+            "empty_policy": "omit_if_absent",
+            "max_files": 8,
+            "max_bytes": 4096,
+        }
+    ]
+    _context_binding(omit_source)["discoverable_sources"] = []
+    omit_plan = compile_workflow(omit_source).plan
+
+    assert default_plan is not None
+    assert omit_plan is not None
+    assert authority_fingerprint(default_plan) != authority_fingerprint(omit_plan)
+    assert b'"empty_policy":"omit_if_absent"' in compiled_plan_export_bytes(
+        omit_plan
+    )
+
+
 def test_context_policy_changes_fingerprint_but_map_order_does_not() -> None:
     first_source = _source_with_context_binding()
     assets = cast(list[dict[str, object]], first_source["assets"])
@@ -750,11 +839,50 @@ def test_context_binding_codec_round_trip_preserves_authority() -> None:
         "mutation_policy": "forbid_selected_roots",
         "materialization_retention": "until_session_durable_terminal",
     }
+    encoded_source = cast(
+        tuple[dict[str, object], ...],
+        encoded_binding["required_sources"],
+    )[0]
+    assert encoded_source["empty_policy"] == "require_nonempty"
 
     decoded = decode_selected_compiled_plan(encoded)
 
     assert decoded == plan
     assert authority_fingerprint(decoded) == authority_fingerprint(plan)
+
+
+def test_context_binding_codec_defaults_legacy_empty_policy() -> None:
+    from millrace.substrate.codecs import (
+        decode_selected_compiled_plan,
+        encode_selected_compiled_plan,
+    )
+
+    plan = compile_workflow(_source_with_context_binding()).plan
+    assert plan is not None
+
+    encoded = encode_selected_compiled_plan(plan)
+    payload = dict(encoded.payload)
+    bindings = [
+        dict(binding)
+        for binding in cast(tuple[dict[str, object], ...], payload["context_bindings"])
+    ]
+    required_sources = [
+        dict(source)
+        for source in cast(
+            tuple[dict[str, object], ...],
+            bindings[0]["required_sources"],
+        )
+    ]
+    required_sources[0].pop("empty_policy")
+    bindings[0]["required_sources"] = tuple(required_sources)
+    payload["context_bindings"] = tuple(bindings)
+
+    decoded = decode_selected_compiled_plan(replace(encoded, payload=payload))
+
+    assert decoded == plan
+    assert decoded.context_bindings[0].required_sources[0].empty_policy == (
+        "require_nonempty"
+    )
 
 
 def _duplicate_stage_binding(source: dict[str, object]) -> None:

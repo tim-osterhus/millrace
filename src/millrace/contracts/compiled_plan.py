@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import field as dataclass_field
 from hashlib import sha256
 from pathlib import PurePosixPath
 from types import MappingProxyType
@@ -226,6 +227,7 @@ class ContextSourceDeclaration:
     source_ref: str
     max_files: int
     max_bytes: int
+    empty_policy: str = "require_nonempty"
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +370,9 @@ class TerminalActionDeclaration:
     payload_projection: AuthorityValue | None
     presentation: Mapping[str, AuthorityValue]
     dynamic_target_selector: AuthorityValue | None = None
+    artifact_field_conditions: Mapping[str, AuthorityValue] = dataclass_field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "asset_ids", _freeze_sequence(self.asset_ids))
@@ -380,6 +385,13 @@ class TerminalActionDeclaration:
             self,
             "dynamic_target_selector",
             freeze_authority_value(self.dynamic_target_selector),
+        )
+        object.__setattr__(
+            self,
+            "artifact_field_conditions",
+            freeze_authority_mapping(
+                cast(Mapping[str, object], self.artifact_field_conditions)
+            ),
         )
         object.__setattr__(
             self,
@@ -1375,7 +1387,7 @@ def context_binding_authority_refusal(
             if sources is None:
                 return f"context_binding_sources:{binding_id}"
             for source_index, source in enumerate(sources):
-                if not _context_authority_record_shape(
+                source_shape = _context_authority_record_shape(
                     source,
                     record_kind=ContextSourceDeclaration.record_kind,
                     required_fields={
@@ -1384,12 +1396,33 @@ def context_binding_authority_refusal(
                         "max_files",
                         "max_bytes",
                     },
-                    optional_fields=set(),
+                    optional_fields={"empty_policy"},
                     expected_record_type=(
                         ContextSourceDeclaration if typed_authority else None
                     ),
                     require_record_headers=serialized_authority,
+                )
+                if (
+                    not source_shape
+                    and isinstance(source, Mapping)
+                    and "empty_policy" not in source
                 ):
+                    source_shape = _context_authority_record_shape(
+                        source,
+                        record_kind=ContextSourceDeclaration.record_kind,
+                        required_fields={
+                            "source_kind",
+                            "source_ref",
+                            "max_files",
+                            "max_bytes",
+                        },
+                        optional_fields=set(),
+                        expected_record_type=(
+                            ContextSourceDeclaration if typed_authority else None
+                        ),
+                        require_record_headers=serialized_authority,
+                    )
+                if not source_shape:
                     return f"context_binding_source_shape:{binding_id}:{source_index}"
                 source_kind = _context_authority_string(
                     _context_authority_field(source, "source_kind")
@@ -1399,6 +1432,27 @@ def context_binding_authority_refusal(
                 )
                 if source_kind is None or source_ref is None:
                     return f"context_binding_source:{binding_id}:{source_index}"
+                empty_policy: str | None
+                if isinstance(source, Mapping) and "empty_policy" not in source:
+                    empty_policy = "require_nonempty"
+                else:
+                    empty_policy = _context_authority_string(
+                        _context_authority_field(source, "empty_policy")
+                    )
+                if empty_policy not in {"require_nonempty", "omit_if_absent"}:
+                    return (
+                        f"context_binding_source_empty_policy:{binding_id}:"
+                        f"{source_index}"
+                    )
+                if empty_policy == "omit_if_absent" and (
+                    source_field != "required_sources"
+                    or source_kind != "selected_artifacts"
+                    or source_ref != "direct_predecessors"
+                ):
+                    return (
+                        f"context_binding_source_empty_policy:{binding_id}:"
+                        f"{source_index}"
+                    )
                 source_pair = (source_kind, source_ref)
                 if source_pair in seen_source_pairs:
                     return (

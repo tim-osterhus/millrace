@@ -499,6 +499,11 @@ def _resolve_route_action(
             reason="invalid_artifact_payload",
             action=action,
         )
+    if not _artifact_field_conditions_match(action, raw_artifact_payload):
+        return TerminalActionRefusal(
+            reason="invalid_artifact_payload",
+            action=action,
+        )
 
     projected = evaluate_projection(
         payload_projection,
@@ -631,6 +636,11 @@ def _resolve_projected_route_action(
 
     validation = validate_schema(artifact_schema.schema, routed_payload)
     if not validation.accepted:
+        return TerminalActionRefusal(
+            reason="invalid_artifact_payload",
+            action=action,
+        )
+    if not _artifact_field_conditions_match(action, routed_payload):
         return TerminalActionRefusal(
             reason="invalid_artifact_payload",
             action=action,
@@ -932,6 +942,11 @@ def _declared_artifact_mutations_or_refusal(
             reason="invalid_artifact_payload",
             action=action,
         )
+    if not _artifact_field_conditions_match(action, raw_artifact_payload):
+        return TerminalActionRefusal(
+            reason="invalid_artifact_payload",
+            action=action,
+        )
     if not _artifact_payload_matches_plan_ref(
         raw_artifact_payload,
         run.run_ref.plan_ref,
@@ -960,6 +975,21 @@ def _declared_artifact_mutations_or_refusal(
             artifact=artifact_record,
         ),
     )
+
+
+def _artifact_field_conditions_match(
+    action: TerminalActionDeclaration,
+    artifact_payload: Mapping[str, object],
+) -> bool:
+    for field_name, expected_value in action.artifact_field_conditions.items():
+        if field_name not in artifact_payload:
+            return False
+        actual_value = artifact_payload[field_name]
+        if type(actual_value) is not type(expected_value):
+            return False
+        if actual_value != expected_value:
+            return False
+    return True
 
 
 def _artifact_payload_matches_plan_ref(

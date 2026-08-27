@@ -214,8 +214,12 @@ _TERMINAL_ACTION_KEYS = frozenset(
         "payload_projection",
         "presentation",
         "dynamic_target_selector",
+        "artifact_field_conditions",
     }
 )
+_TERMINAL_ACTION_LEGACY_KEYS = _TERMINAL_ACTION_KEYS - {
+    "artifact_field_conditions"
+}
 _EFFECT_DECLARATION_KEYS = frozenset(
     {
         "record_kind",
@@ -474,8 +478,10 @@ _CONTEXT_SOURCE_KEYS = frozenset(
         "source_ref",
         "max_files",
         "max_bytes",
+        "empty_policy",
     }
 )
+_CONTEXT_SOURCE_LEGACY_KEYS = _CONTEXT_SOURCE_KEYS - {"empty_policy"}
 _CONTEXT_WRITE_RULE_KEYS = frozenset(
     {"record_kind", "schema_version", "relative_root", "disposition"}
 )
@@ -837,6 +843,7 @@ def _encode_context_source(
         "source_ref": source.source_ref,
         "max_files": source.max_files,
         "max_bytes": source.max_bytes,
+        "empty_policy": source.empty_policy,
     }
 
 
@@ -845,13 +852,22 @@ def _decode_context_source(record: Record) -> ContextSourceDeclaration:
         record,
         ContextSourceDeclaration.record_kind,
         ContextSourceDeclaration.schema_version,
-        _CONTEXT_SOURCE_KEYS,
+        (
+            _CONTEXT_SOURCE_KEYS
+            if "empty_policy" in record
+            else _CONTEXT_SOURCE_LEGACY_KEYS
+        ),
     )
     return ContextSourceDeclaration(
         source_kind=_expect_string(record, "source_kind"),
         source_ref=_expect_string(record, "source_ref"),
         max_files=_expect_int(record, "max_files"),
         max_bytes=_expect_int(record, "max_bytes"),
+        empty_policy=(
+            _expect_string(record, "empty_policy")
+            if "empty_policy" in record
+            else "require_nonempty"
+        ),
     )
 
 
@@ -1392,6 +1408,9 @@ def _encode_terminal_action(
         "dynamic_target_selector": _encode_authority_value(
             action.dynamic_target_selector
         ),
+        "artifact_field_conditions": _encode_authority_mapping(
+            action.artifact_field_conditions
+        ),
     }
 
 
@@ -1400,7 +1419,11 @@ def _decode_terminal_action(record: Record) -> TerminalActionDeclaration:
         record,
         TerminalActionDeclaration.record_kind,
         TerminalActionDeclaration.schema_version,
-        _TERMINAL_ACTION_KEYS,
+        (
+            _TERMINAL_ACTION_KEYS
+            if "artifact_field_conditions" in record
+            else _TERMINAL_ACTION_LEGACY_KEYS
+        ),
     )
     return TerminalActionDeclaration(
         id=ActionId(_expect_string(record, "id")),
@@ -1423,6 +1446,11 @@ def _decode_terminal_action(record: Record) -> TerminalActionDeclaration:
         dynamic_target_selector=_expect_authority_value(
             record,
             "dynamic_target_selector",
+        ),
+        artifact_field_conditions=(
+            _expect_authority_mapping(record, "artifact_field_conditions")
+            if "artifact_field_conditions" in record
+            else {}
         ),
     )
 

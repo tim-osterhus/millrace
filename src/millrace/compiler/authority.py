@@ -31,6 +31,7 @@ AUTHORITY_VALUE_FIELDS: Mapping[str, tuple[str, ...]] = {
         "payload_projection",
         "presentation",
         "dynamic_target_selector",
+        "artifact_field_conditions",
     ),
     "effect_declarations": ("presentation",),
     "completion_behaviors": ("evidence_window_policy", "presentation"),

@@ -18,7 +18,7 @@ from millrace.compiler.source import (
     text_tuple,
 )
 from millrace.contracts import Diagnostic
-from millrace.contracts.schema import validate_projection_declaration
+from millrace.contracts.schema import validate_projection_declaration, validate_schema
 
 EXECUTABLE_ROUTE_ACTION_KINDS = frozenset(("route", "create_incident_route"))
 _RECOVERY_ROUTE_PROMPT_ASSET_KINDS = frozenset(("prompt", "entrypoint_prompt"))
@@ -155,6 +155,7 @@ def validate_route_action_contracts(
     source: Mapping[str, object],
     diagnostics: list[Diagnostic],
 ) -> None:
+    _validate_artifact_field_conditions(source, diagnostics)
     stage_contracts = _stage_action_contracts(source)
     runner_stage_ids = _runner_stage_ids(source)
     graph_node_stage_owner = _known_graph_node_stage_owner(source)
@@ -725,6 +726,177 @@ def _validate_artifact_action_contracts(
                 ),
             )
         )
+
+
+def _validate_artifact_field_conditions(
+    source: Mapping[str, object],
+    diagnostics: list[Diagnostic],
+) -> None:
+    schemas_by_id = {
+        str(record.get("id")): record
+        for record in records(source, "artifact_schemas")
+        if is_non_empty_text(record.get("id"))
+    }
+    for index, record in enumerate(records(source, "terminal_actions")):
+        if "artifact_field_conditions" not in record:
+            continue
+
+        referrer_path = f"terminal_actions[{index}]"
+        conditions_path = f"{referrer_path}.artifact_field_conditions"
+        conditions = record.get("artifact_field_conditions")
+        if not isinstance(conditions, Mapping):
+            _append_artifact_field_condition_diagnostic(
+                diagnostics=diagnostics,
+                declaration_path=conditions_path,
+                referrer_path=referrer_path,
+                action_id=str(record.get("id", "")),
+                reason="expected_mapping",
+                detail=type(conditions).__name__,
+            )
+            continue
+        if not conditions:
+            continue
+
+        artifact_schema_id = record.get("artifact_schema_id")
+        schema_record = (
+            schemas_by_id.get(str(artifact_schema_id))
+            if is_non_empty_text(artifact_schema_id)
+            else None
+        )
+        schema = (
+            schema_record.get("schema")
+            if isinstance(schema_record, Mapping)
+            else None
+        )
+        if not isinstance(schema, Mapping):
+            _append_artifact_field_condition_diagnostic(
+                diagnostics=diagnostics,
+                declaration_path=conditions_path,
+                referrer_path=referrer_path,
+                action_id=str(record.get("id", "")),
+                reason="artifact_schema_unavailable",
+                detail=str(artifact_schema_id),
+            )
+            continue
+
+        properties = schema.get("properties")
+        required = schema.get("required")
+        if not isinstance(properties, Mapping) or not is_sequence(required):
+            _append_artifact_field_condition_diagnostic(
+                diagnostics=diagnostics,
+                declaration_path=conditions_path,
+                referrer_path=referrer_path,
+                action_id=str(record.get("id", "")),
+                reason="artifact_schema_not_object",
+                detail=str(artifact_schema_id),
+            )
+            continue
+        required_fields = frozenset(
+            field_name for field_name in required if isinstance(field_name, str)
+        )
+
+        for field_name, expected_value in sorted(
+            conditions.items(), key=lambda item: str(item[0])
+        ):
+            declaration_path = (
+                f"{conditions_path}.{field_name}"
+                if isinstance(field_name, str)
+                else conditions_path
+            )
+            if not isinstance(field_name, str) or not field_name:
+                _append_artifact_field_condition_diagnostic(
+                    diagnostics=diagnostics,
+                    declaration_path=declaration_path,
+                    referrer_path=referrer_path,
+                    action_id=str(record.get("id", "")),
+                    reason="invalid_field_name",
+                    detail=type(field_name).__name__,
+                )
+                continue
+            if field_name not in properties:
+                _append_artifact_field_condition_diagnostic(
+                    diagnostics=diagnostics,
+                    declaration_path=declaration_path,
+                    referrer_path=referrer_path,
+                    action_id=str(record.get("id", "")),
+                    reason="unknown_field",
+                    detail=field_name,
+                )
+                continue
+            if field_name not in required_fields:
+                _append_artifact_field_condition_diagnostic(
+                    diagnostics=diagnostics,
+                    declaration_path=declaration_path,
+                    referrer_path=referrer_path,
+                    action_id=str(record.get("id", "")),
+                    reason="optional_field",
+                    detail=field_name,
+                )
+                continue
+            if not _artifact_field_condition_scalar(expected_value):
+                _append_artifact_field_condition_diagnostic(
+                    diagnostics=diagnostics,
+                    declaration_path=declaration_path,
+                    referrer_path=referrer_path,
+                    action_id=str(record.get("id", "")),
+                    reason="invalid_scalar",
+                    detail=type(expected_value).__name__,
+                )
+                continue
+            property_schema = properties[field_name]
+            if not isinstance(property_schema, Mapping):
+                _append_artifact_field_condition_diagnostic(
+                    diagnostics=diagnostics,
+                    declaration_path=declaration_path,
+                    referrer_path=referrer_path,
+                    action_id=str(record.get("id", "")),
+                    reason="invalid_property_schema",
+                    detail=field_name,
+                )
+                continue
+            validation = validate_schema(property_schema, expected_value)
+            if not validation.accepted:
+                issue = validation.issues[0]
+                _append_artifact_field_condition_diagnostic(
+                    diagnostics=diagnostics,
+                    declaration_path=declaration_path,
+                    referrer_path=referrer_path,
+                    action_id=str(record.get("id", "")),
+                    reason="schema_mismatch",
+                    detail=issue.reason,
+                )
+
+
+def _artifact_field_condition_scalar(value: object) -> bool:
+    return value is None or type(value) in (str, bool, int)
+
+
+def _append_artifact_field_condition_diagnostic(
+    *,
+    diagnostics: list[Diagnostic],
+    declaration_path: str,
+    referrer_path: str,
+    action_id: str,
+    reason: str,
+    detail: str,
+) -> None:
+    diagnostics.append(
+        _terminal_route_contract_diagnostic(
+            code="invalid_terminal_action_artifact_field_condition",
+            declaration_path=declaration_path,
+            referrer_path=referrer_path,
+            action_id=action_id,
+            message=(
+                "Terminal action artifact field conditions must reference "
+                "required top-level artifact schema properties."
+            ),
+            context={"reason": reason, "detail": detail},
+            hint=(
+                "Use a string, boolean, integer, or null value for each required "
+                "top-level property declared by the action artifact schema."
+            ),
+        )
+    )
 
 
 def _validate_recovery_route_action_contracts(

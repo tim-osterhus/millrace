@@ -877,6 +877,17 @@ def _validate_sources(
             _refuse("context source max_files must be positive")
         if type(source.max_bytes) is not int or source.max_bytes < 1:
             _refuse("context source max_bytes must be positive")
+        if not isinstance(source.empty_policy, str) or source.empty_policy not in {
+            "require_nonempty",
+            "omit_if_absent",
+        }:
+            _refuse("unsupported context source empty policy")
+        if source.empty_policy == "omit_if_absent" and (
+            not selection.required
+            or source_kind != "selected_artifacts"
+            or source_ref != "direct_predecessors"
+        ):
+            _refuse("context source empty policy is unsupported for this source")
         key = (source_kind, source_ref)
         if key in seen:
             _refuse("context sources must be unique")
@@ -1213,7 +1224,7 @@ def _runtime_files(
             )
             continue
         if not payloads:
-            if selection.required:
+            if selection.required and source.empty_policy != "omit_if_absent":
                 _refuse("required runtime source is empty and cannot be represented")
             omissions.append(
                 ContextCheckoutOmission(
@@ -2724,12 +2735,17 @@ def _validate_checkout_manifest_shape(
     for omission in manifest.omissions:
         source_key = (omission.source_kind, omission.source_ref)
         selection = selected_sources.get(source_key)
-        if selection is None or selection.required:
-            _refuse("existing checkout manifest omission is not discoverable")
-        if (
-            source_key in omissions_by_source
-            or source_key in catalog_by_source
-        ):
+        if selection is None:
+            _refuse("existing checkout manifest omission is not selected")
+        if selection.required:
+            if (
+                selection.declaration.empty_policy != "omit_if_absent"
+                or omission.reason != "source_missing"
+            ):
+                _refuse("existing checkout manifest required omission is invalid")
+        elif source_key in catalog_by_source:
+            _refuse("existing checkout manifest omission is not closed")
+        if source_key in omissions_by_source:
             _refuse("existing checkout manifest omission is not closed")
         omissions_by_source.add(source_key)
 
@@ -2741,7 +2757,13 @@ def _validate_checkout_manifest_shape(
         has_files = bool(files_by_source.get(source_key))
         has_catalog = bool(catalog_by_source.get(source_key))
         if selection.required:
-            if not has_files:
+            if has_files:
+                if source_key in omissions_by_source:
+                    _refuse("existing checkout required source is not closed")
+            elif (
+                selection.declaration.empty_policy != "omit_if_absent"
+                or source_key not in omissions_by_source
+            ):
                 _refuse("existing checkout required source is not represented")
         elif not has_catalog and source_key not in omissions_by_source:
             _refuse("existing checkout discoverable source is not closed")

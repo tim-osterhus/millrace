@@ -228,6 +228,9 @@ def build_selected_plan(
                 dynamic_target_selector=_optional_authority_value(
                     record.get("dynamic_target_selector")
                 ),
+                artifact_field_conditions=authority_mapping(
+                    record.get("artifact_field_conditions")
+                ),
             )
             for record in _records_by_id(source, "terminal_actions")
         ),
@@ -651,6 +654,7 @@ def _build_context_binding(record: SourceRecord) -> StageContextBindingDeclarati
                 source_ref=str(source["source_ref"]),
                 max_files=_required_int(source["max_files"]),
                 max_bytes=_required_int(source["max_bytes"]),
+                empty_policy=str(source.get("empty_policy", "require_nonempty")),
             )
             for source in records(record, "required_sources")
         ),
@@ -660,6 +664,7 @@ def _build_context_binding(record: SourceRecord) -> StageContextBindingDeclarati
                 source_ref=str(source["source_ref"]),
                 max_files=_required_int(source["max_files"]),
                 max_bytes=_required_int(source["max_bytes"]),
+                empty_policy=str(source.get("empty_policy", "require_nonempty")),
             )
             for source in records(record, "discoverable_sources")
         ),

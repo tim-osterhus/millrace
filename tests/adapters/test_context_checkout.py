@@ -51,6 +51,7 @@ def _plan_with_all_context_sources(
     workspace_max_bytes: int = 100_000,
     include_required_attempts: bool = False,
     artifact_source_ref: str = "current_lineage",
+    artifact_empty_policy: str = "require_nonempty",
     attempt_source_ref: str = "current_lineage",
 ):
     source = deepcopy(kernel_ping.WORKFLOW_SOURCE)
@@ -99,6 +100,7 @@ def _plan_with_all_context_sources(
             {
                 "source_kind": "selected_artifacts",
                 "source_ref": artifact_source_ref,
+                "empty_policy": artifact_empty_policy,
                 "max_files": 4,
                 "max_bytes": 100_000,
             },
@@ -1445,6 +1447,55 @@ def test_checkout_ancestor_file_collision_refuses_before_cas(tmp_path: Path) -> 
     assert cas_store.put_calls == 0
 
 
+def test_required_empty_direct_predecessor_is_omitted(tmp_path: Path) -> None:
+    from millrace.adapters.cli.context_checkout import prepare_context_checkout
+
+    plan, fingerprint = _plan_with_all_context_sources(
+        accepted_discoverable=False,
+        artifact_source_ref="direct_predecessors",
+        artifact_empty_policy="omit_if_absent",
+        workspace_discoverable=False,
+    )
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    session = state.runner_sessions["test-session:run-taskmaster"]
+    workspace = tmp_path / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    (workspace / "docs" / "guide.txt").write_text("Guide\n", encoding="utf-8")
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    cas_path = workspace / ".millrace" / "cas"
+    db_path.parent.mkdir()
+    db_path.touch()
+    cas_path.mkdir()
+
+    prepared = prepare_context_checkout(
+        paths=CliWorkspacePaths(workspace, db_path, cas_path),
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=plan.context_bindings[0],
+        state=state,
+        cas_store=ContentAddressedByteStore(cas_path),
+    )
+
+    assert [
+        (item.source_kind, item.source_ref, item.reason)
+        for item in prepared.manifest.omissions
+    ] == [("selected_artifacts", "direct_predecessors", "source_missing")]
+    assert not any(
+        item.source_kind == "selected_artifacts" for item in prepared.manifest.files
+    )
+
+    repeated = prepare_context_checkout(
+        paths=CliWorkspacePaths(workspace, db_path, cas_path),
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=plan.context_bindings[0],
+        state=state,
+        cas_store=ContentAddressedByteStore(cas_path),
+    )
+    assert repeated == prepared
+
+
 def test_discoverable_runtime_and_workspace_omissions_are_deterministic(
     tmp_path: Path,
 ) -> None:
@@ -1499,16 +1550,27 @@ def test_discoverable_runtime_and_workspace_omissions_are_deterministic(
     )
 
 
-@pytest.mark.parametrize("discoverable", (False, True))
+@pytest.mark.parametrize(
+    ("discoverable", "artifact_source_ref", "artifact_empty_policy"),
+    (
+        (False, "current_lineage", "require_nonempty"),
+        (True, "current_lineage", "require_nonempty"),
+        (False, "direct_predecessors", "omit_if_absent"),
+    ),
+)
 def test_corrupt_relevant_artifact_refuses_even_when_discoverable(
     tmp_path: Path,
     discoverable: bool,
+    artifact_source_ref: str,
+    artifact_empty_policy: str,
 ) -> None:
     from millrace.adapters.cli.context_checkout import prepare_context_checkout
 
     plan, fingerprint = _plan_with_all_context_sources(
         stage_kind_id="kernel_ping.worker",
         accepted_discoverable=discoverable,
+        artifact_source_ref=artifact_source_ref,
+        artifact_empty_policy=artifact_empty_policy,
     )
     state = bootstrap_to_worker_claim(plan, fingerprint)
     artifact = next(iter(state.artifacts.values()))
