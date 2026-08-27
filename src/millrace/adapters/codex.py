@@ -17,6 +17,7 @@ from typing import TypeAlias, cast
 
 from millrace.adapters.runner_contract import (
     REVIEWED_TOKEN_USAGE_MAPPING,
+    AdapterAttribution,
     AdapterErrorResult,
     AdapterEvidenceConversionError,
     AdapterInvocationOutcome,
@@ -95,6 +96,23 @@ _TOKEN_USAGE_KEYS = frozenset(
         "output_tokens",
         "total_tokens",
     }
+)
+_CODEX_ATTRIBUTION_FIELDS = (
+    "cached_input_tokens",
+    "reasoning_tokens",
+    "provider_event_count",
+    "provider_event_bytes",
+    "wrapper_input_bytes",
+    "retained_result_bytes",
+    "tool_call_event_count",
+    "runner_wall_milliseconds",
+)
+_DIRECT_WRAPPER_ATTRIBUTION_FIELDS = (
+    ("cached_input_tokens", "cached_input_tokens"),
+    ("reasoning_output_tokens", "reasoning_tokens"),
+    ("provider_event_count", "provider_event_count"),
+    ("provider_event_bytes", "provider_event_bytes"),
+    ("tool_call_event_count", "tool_call_event_count"),
 )
 _DISPATCH_ECHO_KEYS = frozenset(
     {
@@ -414,6 +432,9 @@ class CodexAdapter:
                 "input_too_large",
                 dispatch_echo=dispatch_echo,
                 diagnostics={"input_bytes": len(stdin_bytes)},
+                attribution=AdapterAttribution(
+                    wrapper_input_bytes=len(stdin_bytes),
+                ),
             )
 
         return SubprocessTransportRequest(
@@ -452,6 +473,7 @@ class CodexAdapter:
                     self._config.redaction_policy.policy_id,
                     redaction_policy=self._config.redaction_policy,
                     dispatch_echo=expected_echo,
+                    attribution=transport_outcome.attribution,
                 )
             wrapper_result = _parse_wrapper_result_object(
                 transport_outcome.stdout,
@@ -469,6 +491,7 @@ class CodexAdapter:
                     self._config.redaction_policy.policy_id,
                     redaction_policy=self._config.redaction_policy,
                     dispatch_echo=expected_echo,
+                    attribution=transport_outcome.attribution,
                 )
             if wrapper_result.get("outcome_kind") == "error":
                 _validate_result_envelope(
@@ -517,6 +540,11 @@ class CodexAdapter:
                     "diagnostics",
                 )
                 _validate_authority_mapping(diagnostics, "diagnostics")
+                attribution = _wrapper_attribution(
+                    transport_outcome.attribution,
+                    diagnostics,
+                    protocol_version=self._config.wrapper_protocol_version,
+                )
                 try:
                     return AdapterErrorResult.from_unredacted(
                         adapter_id=adapter_id,
@@ -525,6 +553,7 @@ class CodexAdapter:
                         dispatch_echo=dispatch_echo,
                         diagnostics=diagnostics,
                         token_usage=token_usage,
+                        attribution=attribution,
                     )
                 except Exception:
                     return _safe_redaction_refused_error(
@@ -613,6 +642,11 @@ class CodexAdapter:
                 merged_diagnostics,
                 "evidence_construction_diagnostics",
             )
+            attribution = _wrapper_attribution(
+                transport_outcome.attribution,
+                diagnostics,
+                protocol_version=self._config.wrapper_protocol_version,
+            )
             try:
                 return AdapterSuccessResult.from_unredacted(
                     adapter_id=self._config.adapter_id,
@@ -626,6 +660,7 @@ class CodexAdapter:
                     evidence_construction_diagnostics=merged_diagnostics,
                     redaction_policy=self._config.redaction_policy,
                     token_usage=token_usage,
+                    attribution=attribution,
                 )
             except Exception:
                 safe_adapter_id = _repr_redact(
@@ -637,6 +672,7 @@ class CodexAdapter:
                     self._config.redaction_policy.policy_id,
                     redaction_policy=self._config.redaction_policy,
                     dispatch_echo=expected_echo,
+                    attribution=transport_outcome.attribution,
                 )
         except AdapterEvidenceConversionError:
             return self._adapter_error(
@@ -644,6 +680,7 @@ class CodexAdapter:
                 "result_parse_failed",
                 dispatch_echo=expected_echo,
                 diagnostics={"reason": "dispatch echo mismatch"},
+                attribution=transport_outcome.attribution,
             )
         except Exception as exc:
             return self._adapter_error(
@@ -655,6 +692,7 @@ class CodexAdapter:
                     "stdout": transport_outcome.stdout,
                     "stderr": transport_outcome.stderr,
                 },
+                attribution=transport_outcome.attribution,
             )
 
     def _transport_error(
@@ -679,6 +717,7 @@ class CodexAdapter:
                 "exit_code": transport_error.exit_code,
                 "stderr_truncated": transport_error.stderr_truncated,
             },
+            attribution=transport_error.attribution,
         )
 
     def _adapter_error(
@@ -688,6 +727,7 @@ class CodexAdapter:
         *,
         dispatch_echo: DispatchEcho | None = None,
         diagnostics: Mapping[str, object] | None = None,
+        attribution: AdapterAttribution | None = None,
     ) -> AdapterErrorResult:
         try:
             return AdapterErrorResult.from_unredacted(
@@ -696,6 +736,7 @@ class CodexAdapter:
                 redaction_policy=self._config.redaction_policy,
                 dispatch_echo=dispatch_echo,
                 diagnostics=diagnostics,
+                attribution=attribution,
             )
         except Exception:
             return _safe_redaction_refused_error(
@@ -1167,6 +1208,34 @@ def _result_token_usage(
     )
 
 
+def _wrapper_attribution(
+    transport_attribution: AdapterAttribution | None,
+    diagnostics: Mapping[str, object],
+    *,
+    protocol_version: int,
+) -> AdapterAttribution | None:
+    if protocol_version != 4:
+        return transport_attribution
+
+    values: dict[str, object] = {}
+    if transport_attribution is not None:
+        values.update(
+            {
+                field_name: getattr(transport_attribution, field_name)
+                for field_name in _CODEX_ATTRIBUTION_FIELDS
+            }
+        )
+    for diagnostic_name, attribution_name in _DIRECT_WRAPPER_ATTRIBUTION_FIELDS:
+        if diagnostic_name in diagnostics:
+            values[attribution_name] = _require_nonnegative_int(
+                diagnostics[diagnostic_name],
+                f"diagnostics.{diagnostic_name}",
+            )
+    if not values:
+        return None
+    return AdapterAttribution(**values)
+
+
 def _validate_result_envelope(
     value: Mapping[str, object],
     *,
@@ -1304,6 +1373,7 @@ def _safe_redaction_refused_error(
     *,
     redaction_policy: RedactionPolicy,
     dispatch_echo: DispatchEcho | None,
+    attribution: AdapterAttribution | None = None,
 ) -> AdapterErrorResult:
     return AdapterErrorResult(
         adapter_id=adapter_id,
@@ -1311,6 +1381,7 @@ def _safe_redaction_refused_error(
         redaction_policy_id=_repr_redact(redaction_policy_id, redaction_policy),
         dispatch_echo=dispatch_echo,
         diagnostics=MappingProxyType({"message": "redaction failed"}),
+        attribution=attribution,
     )
 
 

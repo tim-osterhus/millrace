@@ -3234,3 +3234,76 @@ def test_python_311_import_without_millforge_preserves_codex(
     assert isinstance(result, AdapterErrorResult)
     assert result.error_kind == "missing_opt_in_config"
     assert calls == {}
+
+
+
+def test_millforge_attribution_uses_direct_provider_measurements_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    def add_measurements(
+        result: _PublicRecord,
+        _intent: _PublicRecord,
+        _request: _PublicRecord,
+    ) -> None:
+        result.provider_event_count = 2
+        result.provider_event_bytes = 30
+        result.tool_call_event_count = 1
+        result.events = (_record(kind="tool_call"), _record(kind="output"))
+
+    facade = _FakeFacade(
+        selected_output=_SelectedOutputPresent({"status": "ok"}),
+        usage=_record(
+            token_usage=_record(
+                input_tokens=13,
+                output_tokens=5,
+                total_tokens=18,
+                cached_input_tokens=4,
+                reasoning_tokens=6,
+            )
+        ),
+        result_mutator=add_measurements,
+    )
+
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
+
+    assert isinstance(result, AdapterSuccessResult)
+    assert result.attribution is not None
+    assert result.attribution.cached_input_tokens == 4
+    assert result.attribution.reasoning_tokens == 6
+    assert result.attribution.provider_event_count == 2
+    assert result.attribution.provider_event_bytes == 30
+    assert result.attribution.tool_call_event_count == 1
+    assert result.attribution.wrapper_input_bytes is None
+    assert result.attribution.retained_result_bytes is None
+    assert result.attribution.runner_wall_milliseconds is not None
+    assert result.attribution.runner_wall_milliseconds >= 0
+
+
+def test_millforge_attribution_does_not_count_unparsed_provider_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    def add_unaggregated_events(
+        result: _PublicRecord,
+        _intent: _PublicRecord,
+        _request: _PublicRecord,
+    ) -> None:
+        result.events = (_record(kind="tool_call"), _record(kind="output"))
+
+    facade = _FakeFacade(
+        selected_output=_SelectedOutputPresent({"status": "ok"}),
+        result_mutator=add_unaggregated_events,
+    )
+
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
+
+    assert isinstance(result, AdapterSuccessResult)
+    assert result.attribution is not None
+    assert result.attribution.provider_event_count is None
+    assert result.attribution.provider_event_bytes is None
+    assert result.attribution.tool_call_event_count is None

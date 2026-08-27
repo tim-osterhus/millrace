@@ -18,6 +18,7 @@ from typing import Any, Protocol, cast
 
 from millrace.adapters.runner_contract import (
     REVIEWED_TOKEN_USAGE_MAPPING,
+    AdapterAttribution,
     AdapterErrorResult,
     AdapterInvocationOutcome,
     AdapterInvocationRequest,
@@ -348,6 +349,7 @@ class MillforgeAdapter:
         facade: MillforgeFacade,
         cleanup_state: _ExecutionCleanupState,
     ) -> AdapterInvocationOutcome:
+        started_at = time.monotonic()
         try:
             result = await asyncio.wait_for(
                 facade.execute(prepared.provider_request),
@@ -355,18 +357,34 @@ class MillforgeAdapter:
             )
         except TimeoutError:
             cleanup_state.mark_orphan_risk()
-            return self._error(request, "timeout", "provider_timeout")
+            return self._error(
+                request,
+                "timeout",
+                "provider_timeout",
+                attribution=_elapsed_attribution(started_at),
+            )
         except asyncio.CancelledError:
             cleanup_state.mark_orphan_risk()
-            return self._error(request, "cancelled", "provider_cancelled")
+            return self._error(
+                request,
+                "cancelled",
+                "provider_cancelled",
+                attribution=_elapsed_attribution(started_at),
+            )
         except Exception:
             cleanup_state.mark_orphan_risk()
-            return self._error(request, "invocation_failed", "provider_execution")
+            return self._error(
+                request,
+                "invocation_failed",
+                "provider_execution",
+                attribution=_elapsed_attribution(started_at),
+            )
         return _translate_result(
             request,
             prepared,
             result,
             adapter_provenance,
+            runner_wall_milliseconds=_elapsed_milliseconds(started_at),
         )
 
     def _prepare_live_config(
@@ -455,18 +473,42 @@ class MillforgeAdapter:
                     prepared,
                     invocation_evidence_sha256,
                 )
-                result = await asyncio.wait_for(
-                    facade.execute(prepared.provider_request),
-                    timeout=min(
-                        request.timeout_seconds,
-                        self._config.timeout_seconds,
-                    ),
-                )
+                started_at = time.monotonic()
+                try:
+                    result = await asyncio.wait_for(
+                        facade.execute(prepared.provider_request),
+                        timeout=min(
+                            request.timeout_seconds,
+                            self._config.timeout_seconds,
+                        ),
+                    )
+                except TimeoutError:
+                    return self._error(
+                        request,
+                        "timeout",
+                        "provider_timeout",
+                        attribution=_elapsed_attribution(started_at),
+                    )
+                except asyncio.CancelledError:
+                    return self._error(
+                        request,
+                        "cancelled",
+                        "provider_cancelled",
+                        attribution=_elapsed_attribution(started_at),
+                    )
+                except Exception:
+                    return self._error(
+                        request,
+                        "invocation_failed",
+                        "provider_execution",
+                        attribution=_elapsed_attribution(started_at),
+                    )
                 return _translate_result(
                     request,
                     prepared,
                     result,
                     adapter_provenance,
+                    runner_wall_milliseconds=_elapsed_milliseconds(started_at),
                 )
             finally:
                 try:
@@ -510,6 +552,8 @@ class MillforgeAdapter:
         request: AdapterInvocationRequest,
         error_kind: str,
         reason: str,
+        *,
+        attribution: AdapterAttribution | None = None,
     ) -> AdapterErrorResult:
         return AdapterErrorResult.from_unredacted(
             adapter_id=self._config.adapter_id,
@@ -521,6 +565,7 @@ class MillforgeAdapter:
                 selected_adapter_kind=request.selected_adapter_kind,
             ),
             diagnostics={"reason": reason},
+            attribution=attribution,
         )
 
 
@@ -1507,16 +1552,36 @@ def _translate_result(
     prepared: _PreparedInvocation,
     result: object,
     adapter_provenance: RunnerAdapterProvenance,
+    *,
+    runner_wall_milliseconds: int | None = None,
 ) -> AdapterInvocationOutcome:
     try:
         token_usage = _millforge_token_usage(result)
+        attribution = _millforge_attribution(
+            result,
+            runner_wall_milliseconds=runner_wall_milliseconds,
+        )
     except (TypeError, ValueError):
-        return _result_error(request, "result_parse_failed")
+        return _result_error(
+            request,
+            "result_parse_failed",
+            attribution=_elapsed_attribution_value(runner_wall_milliseconds),
+        )
     result_class = _enum_value(getattr(result, "result_class", None))
     if result_class == "timed_out":
-        return _result_error(request, "timeout", token_usage=token_usage)
+        return _result_error(
+            request,
+            "timeout",
+            token_usage=token_usage,
+            attribution=attribution,
+        )
     if result_class == "cancelled":
-        return _result_error(request, "cancelled", token_usage=token_usage)
+        return _result_error(
+            request,
+            "cancelled",
+            token_usage=token_usage,
+            attribution=attribution,
+        )
     if _enum_value(
         getattr(result, "status", None)
     ) != "completed" or result_class not in {"domain_terminal", "domain_rejected"}:
@@ -1524,6 +1589,7 @@ def _translate_result(
             request,
             "invocation_failed",
             token_usage=token_usage,
+            attribution=attribution,
         )
     intent = getattr(result, "terminal_intent", None)
     if not _result_identity_matches(result, intent, prepared.provider_request):
@@ -1531,6 +1597,7 @@ def _translate_result(
             request,
             "result_parse_failed",
             token_usage=token_usage,
+            attribution=attribution,
         )
     result_id = getattr(intent, "terminal_result", None)
     if not isinstance(result_id, str):
@@ -1538,6 +1605,7 @@ def _translate_result(
             request,
             "result_parse_failed",
             token_usage=token_usage,
+            attribution=attribution,
         )
     mapping = prepared.mappings.get(result_id)
     if mapping is None:
@@ -1545,6 +1613,7 @@ def _translate_result(
             request,
             "result_parse_failed",
             token_usage=token_usage,
+            attribution=attribution,
         )
     option = prepared.options.get(str(mapping.outcome_id))
     if option is None:
@@ -1552,6 +1621,7 @@ def _translate_result(
             request,
             "result_parse_failed",
             token_usage=token_usage,
+            attribution=attribution,
         )
     artifact_payload = _artifact_payload(prepared, result, intent, option)
     if artifact_payload is _INVALID_PAYLOAD:
@@ -1559,6 +1629,7 @@ def _translate_result(
             request,
             "result_parse_failed",
             token_usage=token_usage,
+            attribution=attribution,
         )
     return AdapterSuccessResult.from_unredacted(
         adapter_id=request.adapter_id,
@@ -1576,10 +1647,29 @@ def _translate_result(
         },
         artifact_payload_candidate=cast(Mapping[str, object] | None, artifact_payload),
         token_usage=token_usage,
+        attribution=attribution,
     )
 
 
 _INVALID_PAYLOAD = object()
+
+
+def _elapsed_milliseconds(started_at: float) -> int:
+    return int(max(0.0, time.monotonic() - started_at) * 1000)
+
+
+def _elapsed_attribution(started_at: float) -> AdapterAttribution:
+    return AdapterAttribution(
+        runner_wall_milliseconds=_elapsed_milliseconds(started_at),
+    )
+
+
+def _elapsed_attribution_value(
+    milliseconds: int | None,
+) -> AdapterAttribution | None:
+    if milliseconds is None:
+        return None
+    return AdapterAttribution(runner_wall_milliseconds=milliseconds)
 
 
 def _result_error(
@@ -1587,6 +1677,7 @@ def _result_error(
     error_kind: str,
     *,
     token_usage: AdapterTokenUsage | None = None,
+    attribution: AdapterAttribution | None = None,
 ) -> AdapterErrorResult:
     return AdapterErrorResult.from_unredacted(
         adapter_id=request.adapter_id,
@@ -1599,6 +1690,7 @@ def _result_error(
         ),
         diagnostics={"reason": "provider_result"},
         token_usage=token_usage,
+        attribution=attribution,
     )
 
 
@@ -1629,6 +1721,77 @@ def _strict_nonnegative_int(value: object, field_name: str) -> int:
     if type(value) is not int or value < 0 or value > 2**63 - 1:
         raise ValueError(f"{field_name} must be a non-negative durable integer")
     return value
+
+
+_ATTRIBUTION_FIELDS = (
+    "cached_input_tokens",
+    "reasoning_tokens",
+    "provider_event_count",
+    "provider_event_bytes",
+    "wrapper_input_bytes",
+    "retained_result_bytes",
+    "tool_call_event_count",
+    "runner_wall_milliseconds",
+)
+_PROVIDER_ATTRIBUTION_FIELDS = (
+    "cached_input_tokens",
+    "reasoning_tokens",
+    "provider_event_count",
+    "provider_event_bytes",
+    "tool_call_event_count",
+)
+
+
+def _millforge_attribution(
+    result: object,
+    *,
+    runner_wall_milliseconds: int | None,
+) -> AdapterAttribution | None:
+    values: dict[str, object] = {}
+    explicit = getattr(result, "attribution", None)
+    if explicit is not None:
+        if isinstance(explicit, AdapterAttribution):
+            values.update(
+                {
+                    field_name: getattr(explicit, field_name)
+                    for field_name in _ATTRIBUTION_FIELDS
+                }
+            )
+        elif isinstance(explicit, Mapping):
+            if set(explicit).difference(_ATTRIBUTION_FIELDS):
+                raise ValueError("provider attribution has unsupported keys")
+            values.update(explicit)
+        else:
+            found = False
+            for field_name in _ATTRIBUTION_FIELDS:
+                if hasattr(explicit, field_name):
+                    values[field_name] = getattr(explicit, field_name)
+                    found = True
+            if not found:
+                raise TypeError("provider attribution is malformed")
+
+    usage = getattr(result, "usage", None)
+    token_usage = getattr(usage, "token_usage", None)
+    for field_name in _PROVIDER_ATTRIBUTION_FIELDS:
+        if values.get(field_name) is not None:
+            continue
+        for source in (result, usage, token_usage):
+            if source is not None and hasattr(source, field_name):
+                value = getattr(source, field_name)
+                if value is not None:
+                    values[field_name] = value
+                    break
+
+    if runner_wall_milliseconds is not None:
+        values["runner_wall_milliseconds"] = runner_wall_milliseconds
+    if not values:
+        return None
+    return AdapterAttribution(
+        **{
+            field_name: values.get(field_name)
+            for field_name in _ATTRIBUTION_FIELDS
+        }
+    )
 
 
 def _result_identity_matches(result: object, intent: object, request: object) -> bool:

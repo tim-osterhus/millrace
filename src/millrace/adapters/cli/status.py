@@ -101,6 +101,54 @@ def _hydration_totals_for_run(
     return totals_by_session.get(str(run.current_session_id))
 
 
+def _attribution_by_session(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+) -> dict[str, dict[str, object]]:
+    return {
+        session_id: _attribution_projection(runtime, session)
+        for session_id, session in state.runner_sessions.items()
+    }
+
+
+def _attribution_for_run(
+    state: RuntimeState,
+    run_id: str,
+    attribution_by_session: Mapping[str, Mapping[str, object]],
+) -> Mapping[str, object] | None:
+    run = state.runs.get(run_id)
+    if run is None or run.current_session_id is None:
+        return None
+    return attribution_by_session.get(str(run.current_session_id))
+
+
+def _attribution_projection(
+    runtime: OpenRuntimeContext,
+    session: object,
+) -> dict[str, object]:
+    try:
+        record = runtime.store.load_runner_session_attribution_authenticated(
+            str(getattr(session, "session_id")),
+            int(getattr(session, "dispatch_generation")),
+            str(getattr(session, "session_fencing_token")),
+        )
+    except (SubstrateError, TypeError, ValueError):
+        return {
+            "status": "contradictory",
+            "reason": "runner_attribution_evidence_refused",
+        }
+    if record is None:
+        return {"status": "missing"}
+    return {
+        "status": "available",
+        "final": record.final,
+        "metrics": {
+            name: metric.public_projection()
+            for name, metric in record.metrics.items()
+        },
+    }
+
+
 def handle_status_command(namespace: object) -> CliSuccess:
     command = str(getattr(namespace, "command", "status"))
     if command == "status":
@@ -142,6 +190,7 @@ def _status(namespace: object) -> CliSuccess:
             )
             budgets = _daemon_budget_projections(runtime, state)
             hydration_totals = _hydration_totals_by_session(runtime, state)
+            attribution_by_session = _attribution_by_session(runtime, state)
             ready_dispatch = list_ready_dispatch_candidates(state)
         except OperatorInputError as exc:
             raise _operator_error(command, exc) from exc
@@ -157,6 +206,7 @@ def _status(namespace: object) -> CliSuccess:
             budgets=budgets,
             ready_dispatch=ready_dispatch,
             hydration_totals=hydration_totals,
+            attribution_by_session=attribution_by_session,
         ),
     )
 
@@ -169,6 +219,7 @@ def _runs_list(namespace: object) -> CliSuccess:
         status = operator_status(state)
         budget_by_session = _budget_projection_by_session(runtime, state)
         hydration_totals = _hydration_totals_by_session(runtime, state)
+        attribution_by_session = _attribution_by_session(runtime, state)
     finally:
         runtime.close()
     runs: list[dict[str, object]] = []
@@ -182,6 +233,11 @@ def _runs_list(namespace: object) -> CliSuccess:
                 state,
                 run_id,
                 hydration_totals,
+            ),
+            attribution=_attribution_for_run(
+                state,
+                run_id,
+                attribution_by_session,
             ),
         )
         projected["may_start_while_dispatch_suspended"] = (
@@ -212,6 +268,7 @@ def _runs_show(namespace: object) -> CliSuccess:
         )
         budget_by_session = _budget_projection_by_session(runtime, state)
         hydration_totals = _hydration_totals_by_session(runtime, state)
+        attribution_by_session = _attribution_by_session(runtime, state)
         run = state.runs.get(run_id)
         if run is None:
             raise CliCommandError(
@@ -263,6 +320,11 @@ def _runs_show(namespace: object) -> CliSuccess:
                 state,
                 run_id,
                 hydration_totals,
+            ),
+            attribution=_attribution_for_run(
+                state,
+                run_id,
+                attribution_by_session,
             ),
         ),
     }
@@ -359,6 +421,7 @@ def _runs_follow(namespace: object) -> CliSuccess:
         state = runtime.store.load_runtime_state(runtime.cas_store)
         budget_by_session = _budget_projection_by_session(runtime, state)
         hydration_totals = _hydration_totals_by_session(runtime, state)
+        attribution_by_session = _attribution_by_session(runtime, state)
         run = state.runs.get(run_id)
         if run is None:
             raise CliCommandError(
@@ -461,6 +524,11 @@ def _runs_follow(namespace: object) -> CliSuccess:
                     run_id,
                     hydration_totals,
                 ),
+                attribution=_attribution_for_run(
+                    state,
+                    run_id,
+                    attribution_by_session,
+                ),
             ),
         },
     )
@@ -514,6 +582,7 @@ def _trace_show(namespace: object) -> CliSuccess:
             status = operator_status(state, max_events=max_events)
             budget_by_session = _budget_projection_by_session(runtime, state)
             hydration_totals = _hydration_totals_by_session(runtime, state)
+            attribution_by_session = _attribution_by_session(runtime, state)
         except OperatorInputError as exc:
             raise _operator_error(command, exc) from exc
     finally:
@@ -567,6 +636,11 @@ def _trace_show(namespace: object) -> CliSuccess:
                         str(run_id),
                         hydration_totals,
                     ),
+                    attribution=_attribution_for_run(
+                        state,
+                        str(run_id),
+                        attribution_by_session,
+                    ),
                 )
             ),
         },
@@ -587,6 +661,7 @@ def _status_projection(
     budgets: list[dict[str, object]] | None = None,
     ready_dispatch: object | None = None,
     hydration_totals: Mapping[str, Mapping[str, int]] | None = None,
+    attribution_by_session: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     runner_sessions = (
         []
@@ -605,6 +680,15 @@ def _status_projection(
                             state,
                             run_id,
                             hydration_totals,
+                        )
+                    ),
+                    attribution=(
+                        None
+                        if attribution_by_session is None
+                        else _attribution_for_run(
+                            state,
+                            run_id,
+                            attribution_by_session,
                         )
                     ),
                 )
@@ -760,6 +844,7 @@ def _daemon_budget_projection(
                 "run_id": session.run_id,
                 "dispatch_generation": session.dispatch_generation,
                 **_hydration_totals(runtime, session),
+                "attribution": _attribution_projection(runtime, session),
                 "usage_evidence": usage_evidence,
             }
         )
@@ -1012,11 +1097,13 @@ def _runner_session_with_budget(
     budget_by_session: dict[str, dict[str, object]],
     *,
     hydration_totals: Mapping[str, int] | None = None,
+    attribution: Mapping[str, object] | None = None,
 ) -> dict[str, object] | None:
     projection = runner_session_projection(
         state,
         run_id,
         hydration_totals=hydration_totals,
+        attribution=attribution,
     )
     if projection is None:
         return None
@@ -1031,6 +1118,7 @@ def runner_session_projection(
     run_id: str,
     *,
     hydration_totals: Mapping[str, int] | None = None,
+    attribution: Mapping[str, object] | None = None,
 ) -> dict[str, object] | None:
     run = state.runs.get(run_id)
     if run is None or run.current_session_id is None:
@@ -1081,6 +1169,9 @@ def runner_session_projection(
         "run_id": session.run_id,
         "dispatch_generation": session.dispatch_generation,
         **totals,
+        "attribution": (
+            {"status": "missing"} if attribution is None else dict(attribution)
+        ),
         "state": session.state,
         "adapter_kind": _selected_adapter_kind(state, run_id),
         "primary_cancellation_reason": (

@@ -306,10 +306,86 @@ def test_runner_session_projection_omits_private_fencing_authority(
         "_selected_adapter_kind",
         lambda _state, _run_id: "codex",
     )
-    projected = status.runner_session_projection(state, "run-1")
+    attribution = {
+        "status": "available",
+        "final": True,
+        "metrics": {
+            "wrapper_input_bytes": {
+                "value": 23,
+                "source": "adapter.direct",
+                "availability": "observed",
+            },
+            "reasoning_tokens": {
+                "value": None,
+                "source": "adapter.direct",
+                "availability": "unavailable",
+            },
+        },
+    }
+    projected = status.runner_session_projection(
+        state,
+        "run-1",
+        attribution=attribution,
+    )
 
     assert projected is not None
     assert "session_fencing_token" not in projected
+    assert projected["attribution"] == attribution
+    assert "private-fence" not in json.dumps(projected)
+
+
+def test_runner_session_attribution_projection_is_source_backed_and_bounded(
+    tmp_path: Path,
+) -> None:
+    from adapters.test_context_writeback import _bound_fixture
+    from millrace.adapters.cli import status
+    from millrace.contracts.state import (
+        AttributionMetric,
+        RunnerSessionAttributionRecord,
+    )
+    runtime, _state, session, _binding = _bound_fixture(tmp_path)
+    runtime.store.record_runner_session_attribution(
+        RunnerSessionAttributionRecord(
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+            fencing_token=session.session_fencing_token,
+            final=True,
+            metrics={
+                "wrapper_input_bytes": AttributionMetric(
+                    value=23,
+                    source="adapter.direct",
+                    availability="observed",
+                ),
+                "reasoning_tokens": AttributionMetric(
+                    value=None,
+                    source="adapter.direct",
+                    availability="unavailable",
+                ),
+            },
+        )
+    )
+
+    projected = status._attribution_projection(runtime, session)
+
+    assert projected == {
+        "status": "available",
+        "final": True,
+        "metrics": {
+            "wrapper_input_bytes": {
+                "value": 23,
+                "source": "adapter.direct",
+                "availability": "observed",
+            },
+            "reasoning_tokens": {
+                "value": None,
+                "source": "adapter.direct",
+                "availability": "unavailable",
+            },
+        },
+    }
+    serialized = json.dumps(projected)
+    assert session.session_fencing_token not in serialized
+    assert str(runtime.paths.workspace_path) not in serialized
 
 
 def test_rejected_result_projection_is_bounded_by_default(tmp_path: Path) -> None:

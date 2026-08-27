@@ -33,6 +33,7 @@ from millrace.adapters.cli.run import (
 )
 from millrace.adapters.runner_contract import (
     START_REFUSAL_DIAGNOSTIC_MAX_BYTES,
+    AdapterAttribution,
     AdapterErrorResult,
     AdapterInvocationOutcome,
     AdapterInvocationRequest,
@@ -46,6 +47,7 @@ from millrace.adapters.runner_contract import (
     VerifiedLive,
     start_refusal_diagnostic_digest,
 )
+from millrace.contracts.context_checkout import decode_context_checkout_manifest
 from millrace.contracts.runner import (
     runner_result_evidence_from_payload,
     runner_session_completion_diagnostic_from_payload,
@@ -1186,4 +1188,149 @@ def test_unrelated_authority_refusal_does_not_gain_usage_writes(tmp_path) -> Non
     assert after.runner_observations == before_signal.runner_observations
     assert len(after.runner_session_completions) == len(
         before_signal.runner_session_completions
+    )
+
+
+def test_authenticated_completion_persists_source_backed_attribution(
+    tmp_path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+
+    def start(request: AdapterInvocationRequest) -> object:
+        outcome = AdapterSuccessResult.from_unredacted(
+            adapter_id=request.adapter_id,
+            dispatch_echo=_dispatch_echo(request),
+            redaction_policy=request.redaction_policy,
+            marker="WORK_COMPLETE",
+            observation_payload_candidate={"summary": "ok"},
+            artifact_payload_candidate=_writeback_report(
+                no_op_reason="No update required."
+            ),
+            attribution=AdapterAttribution(
+                cached_input_tokens=11,
+                wrapper_input_bytes=23,
+                retained_result_bytes=31,
+                runner_wall_milliseconds=47,
+            ),
+        )
+        return replace(
+            _success_start(request),
+            handle=_ImmediateHandle(outcome),
+        )
+
+    adapter = _RecordingAdapter(start)
+    adapter.config = SimpleNamespace(
+        cwd=runtime.paths.workspace_path,
+        wrapper_protocol_version=4,
+    )
+    result = run_bounded_execution_unit(
+        runtime,
+        activation_id=state.runs[session.run_id].activation_id,
+        local_config=_config(adapter),
+    )
+
+    assert result.code == "observation_accepted"
+    record = runtime.store.load_runner_session_attribution_authenticated(
+        session.session_id,
+        session.dispatch_generation,
+        session.session_fencing_token,
+    )
+    assert record is not None
+    assert record.final is True
+    assert record.metrics["cached_input_tokens"].payload() == {
+        "value": 11,
+        "source": "adapter.direct",
+        "availability": "observed",
+    }
+    assert record.metrics["wrapper_input_bytes"].value == 23
+    assert record.metrics["retained_result_bytes"].value == 31
+    assert record.metrics["runner_wall_milliseconds"].value == 47
+    assert record.metrics["reasoning_tokens"].value is None
+    assert record.metrics["reasoning_tokens"].availability == "unavailable"
+
+    manifest_digest = session.context_manifest_digest
+    assert manifest_digest is not None
+    manifest_bytes = runtime.cas_store.get_bytes(manifest_digest)
+    manifest = decode_context_checkout_manifest(manifest_bytes)
+    receipts = runtime.store.load_context_hydration_receipts_authenticated(
+        session.session_id,
+        session.dispatch_generation,
+        session.session_fencing_token,
+    )
+    assert record.metrics["manifest_bytes"].value == len(manifest_bytes)
+    assert record.metrics["catalog_bytes"].value == sum(
+        item.byte_length for item in manifest.catalog
+    )
+    assert record.metrics["hydrated_bytes"].value == sum(
+        receipt.byte_length for receipt in receipts
+    )
+    assert record.metrics["catalog_file_count"].value == len(manifest.catalog)
+    assert record.metrics["hydrated_file_count"].value == len(receipts)
+    assert record.metrics["distinct_content_digest_count"].value == len(
+        {receipt.content_digest for receipt in receipts}
+    )
+
+
+def test_authenticated_adapter_error_persists_final_attribution(tmp_path) -> None:
+    runtime = _ready_runtime(tmp_path)
+
+    def start(request: AdapterInvocationRequest) -> object:
+        outcome = replace(
+            _error_outcome(request, dispatch_echo=_dispatch_echo(request)),
+            attribution=AdapterAttribution(provider_event_count=3),
+        )
+        return replace(
+            _success_start(request),
+            handle=_ImmediateHandle(outcome),
+        )
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+    state = _load(runtime)
+    session = next(iter(state.runner_sessions.values()))
+
+    assert result.code == "adapter_failure"
+    record = runtime.store.load_runner_session_attribution_authenticated(
+        session.session_id,
+        session.dispatch_generation,
+        session.session_fencing_token,
+    )
+    assert record is not None
+    assert record.final is True
+    assert record.metrics["provider_event_count"].value == 3
+    assert record.metrics["provider_event_count"].source == "adapter.direct"
+
+
+def test_unrelated_authority_refusal_does_not_persist_attribution(tmp_path) -> None:
+    runtime = _ready_runtime(tmp_path)
+
+    def start(request: AdapterInvocationRequest) -> object:
+        outcome = replace(
+            _success_outcome(
+                request,
+                dispatch_echo=_mismatched_echo(request),
+            ),
+            attribution=AdapterAttribution(wrapper_input_bytes=99),
+        )
+        return replace(
+            _success_start(request),
+            handle=_ImmediateHandle(outcome),
+        )
+
+    result = run_bounded_execution_unit(
+        runtime,
+        local_config=_config(_RecordingAdapter(start)),
+    )
+    state = _load(runtime)
+    session = next(iter(state.runner_sessions.values()))
+
+    assert result.code == "session_reconciliation_required"
+    assert (
+        runtime.store.load_runner_session_attribution(
+            session.session_id,
+            session.dispatch_generation,
+        )
+        is None
     )

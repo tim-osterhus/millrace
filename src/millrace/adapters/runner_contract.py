@@ -56,6 +56,34 @@ class AdapterEvidenceConversionError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class AdapterAttribution:
+    cached_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    provider_event_count: int | None = None
+    provider_event_bytes: int | None = None
+    wrapper_input_bytes: int | None = None
+    retained_result_bytes: int | None = None
+    tool_call_event_count: int | None = None
+    runner_wall_milliseconds: int | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "cached_input_tokens",
+            "reasoning_tokens",
+            "provider_event_count",
+            "provider_event_bytes",
+            "wrapper_input_bytes",
+            "retained_result_bytes",
+            "tool_call_event_count",
+            "runner_wall_milliseconds",
+        ):
+            _require_optional_nonnegative_int(
+                getattr(self, field_name),
+                field_name,
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AdapterTokenUsage:
     input_tokens: int
     output_tokens: int
@@ -471,6 +499,7 @@ class AdapterSuccessResult:
         default_factory=dict,
     )
     token_usage: AdapterTokenUsage | None = None
+    attribution: AdapterAttribution | None = None
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.adapter_id, "adapter_id")
@@ -524,6 +553,11 @@ class AdapterSuccessResult:
             AdapterTokenUsage,
         ):
             raise TypeError("token_usage must be AdapterTokenUsage or None")
+        if self.attribution is not None and not isinstance(
+            self.attribution,
+            AdapterAttribution,
+        ):
+            raise TypeError("attribution must be AdapterAttribution or None")
 
     def __repr__(self) -> str:
         provider_count = len(self.structured_provider_response)
@@ -564,6 +598,7 @@ class AdapterSuccessResult:
         observation_payload_candidate: Mapping[str, object] | None = None,
         evidence_construction_diagnostics: Mapping[str, object] | None = None,
         token_usage: AdapterTokenUsage | None = None,
+        attribution: AdapterAttribution | None = None,
     ) -> AdapterSuccessResult:
         effective_policy = canonicalize_redaction_policy(redaction_policy)
         return cls(
@@ -604,6 +639,7 @@ class AdapterSuccessResult:
                 effective_policy,
             ),
             token_usage=token_usage,
+            attribution=attribution,
         )
 
 
@@ -617,6 +653,7 @@ class AdapterErrorResult:
     dispatch_echo: DispatchEcho | None = None
     diagnostics: Mapping[str, AuthorityValue] = field(default_factory=dict)
     token_usage: AdapterTokenUsage | None = None
+    attribution: AdapterAttribution | None = None
 
     def __post_init__(self) -> None:
         _require_nonblank_string(self.adapter_id, "adapter_id")
@@ -638,6 +675,11 @@ class AdapterErrorResult:
             AdapterTokenUsage,
         ):
             raise TypeError("token_usage must be AdapterTokenUsage or None")
+        if self.attribution is not None and not isinstance(
+            self.attribution,
+            AdapterAttribution,
+        ):
+            raise TypeError("attribution must be AdapterAttribution or None")
 
     def __repr__(self) -> str:
         return (
@@ -662,6 +704,7 @@ class AdapterErrorResult:
         dispatch_echo: DispatchEcho | None = None,
         diagnostics: Mapping[str, object] | None = None,
         token_usage: AdapterTokenUsage | None = None,
+        attribution: AdapterAttribution | None = None,
     ) -> AdapterErrorResult:
         effective_policy = canonicalize_redaction_policy(redaction_policy)
         return cls(
@@ -674,6 +717,7 @@ class AdapterErrorResult:
                 effective_policy,
             ),
             token_usage=token_usage,
+            attribution=attribution,
         )
 
 
@@ -1208,6 +1252,18 @@ def _require_int(value: object, field_name: str) -> int:
     return value
 
 
+def _require_optional_nonnegative_int(
+    value: object,
+    field_name: str,
+) -> int | None:
+    if value is None:
+        return None
+    value_as_int = _require_int(value, field_name)
+    if value_as_int < 0:
+        raise ValueError(f"{field_name} must be non-negative")
+    return value_as_int
+
+
 def _require_dispatch_echo(value: object) -> DispatchEcho:
     if not isinstance(value, DispatchEcho):
         raise TypeError("dispatch_echo must be DispatchEcho")
@@ -1282,6 +1338,7 @@ def _require_positive_number(value: object, field_name: str) -> float:
 __all__ = (
     "START_REFUSAL_DIAGNOSTIC_MAX_BYTES",
     "RUNNER_CANCELLATION_DIAGNOSTIC_MAX_BYTES",
+    "AdapterAttribution",
     "AdapterEvidenceConversionError",
     "AdapterErrorResult",
     "AdapterInvocationOutcome",

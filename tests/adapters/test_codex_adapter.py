@@ -2797,3 +2797,91 @@ def test_codex_adapter_imports_stay_below_runtime_authority() -> None:
         imported for imported in imports if imported.startswith(forbidden_prefixes)
     ]
     assert not (set(calls) & forbidden_calls)
+
+
+
+def test_codex_attribution_reports_transport_observations_only(tmp_path: Path) -> None:
+    from millrace.adapters.codex import (
+        CodexAdapter,
+        CodexAdapterConfig,
+        _bundle_stdin_bytes,
+    )
+    from millrace.adapters.runner_contract import (
+        AdapterInvocationRequest,
+        AdapterSuccessResult,
+        DispatchEcho,
+    )
+
+    request = cast(AdapterInvocationRequest, _request())
+    config = cast(CodexAdapterConfig, _config(tmp_path))
+    echo = DispatchEcho.from_dispatch_envelope(
+        request.dispatch_envelope,
+        correlation_id=request.correlation_id,
+        selected_adapter_kind=request.selected_adapter_kind,
+    )
+    expected_wrapper_input_bytes = len(
+        _bundle_stdin_bytes(request, config=config, dispatch_echo=echo)
+    )
+
+    result = CodexAdapter(config).invoke(request)
+
+    assert isinstance(result, AdapterSuccessResult)
+    assert result.attribution is not None
+    assert result.attribution.wrapper_input_bytes == expected_wrapper_input_bytes
+    assert result.attribution.retained_result_bytes is not None
+    assert result.attribution.retained_result_bytes > 0
+    assert result.attribution.runner_wall_milliseconds is not None
+    assert result.attribution.runner_wall_milliseconds >= 0
+    assert result.attribution.cached_input_tokens is None
+    assert result.attribution.reasoning_tokens is None
+    assert result.attribution.provider_event_count is None
+    assert result.attribution.provider_event_bytes is None
+    assert result.attribution.tool_call_event_count is None
+
+
+def test_codex_preflight_error_keeps_unavailable_attribution_as_none(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterErrorResult
+
+    result = CodexAdapter(_config(tmp_path)).invoke(_request(adapter_id="other"))
+
+    assert isinstance(result, AdapterErrorResult)
+    assert result.error_kind == "missing_opt_in_config"
+    assert result.attribution is None
+
+
+
+def test_codex_protocol4_maps_direct_wrapper_attribution_separately_from_usage(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.codex import CodexAdapter
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    result = CodexAdapter(
+        _config(
+            tmp_path,
+            wrapper_code=_protocol4_success_wrapper_code(
+                diagnostics=(
+                    "{'cached_input_tokens': 11, "
+                    "'reasoning_output_tokens': 7, "
+                    "'provider_event_count': 3, "
+                    "'provider_event_bytes': 42, "
+                    "'tool_call_event_count': 1}"
+                ),
+            ),
+            wrapper_protocol_version=4,
+        ),
+    ).invoke(_request())
+
+    assert isinstance(result, AdapterSuccessResult)
+    assert result.attribution is not None
+    assert result.attribution.cached_input_tokens == 11
+    assert result.attribution.reasoning_tokens == 7
+    assert result.attribution.provider_event_count == 3
+    assert result.attribution.provider_event_bytes == 42
+    assert result.attribution.tool_call_event_count == 1
+    assert result.attribution.wrapper_input_bytes is not None
+    assert result.attribution.retained_result_bytes is not None
+    assert result.attribution.runner_wall_milliseconds is not None

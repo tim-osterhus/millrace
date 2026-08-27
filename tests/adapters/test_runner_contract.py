@@ -1193,3 +1193,95 @@ def test_adapter_contract_imports_only_allowed_contract_modules() -> None:
     assert not [
         imported for imported in imports if imported.startswith(forbidden_prefixes)
     ]
+
+
+
+def test_adapter_attribution_is_frozen_optional_and_nonnegative() -> None:
+    from dataclasses import FrozenInstanceError
+
+    from millrace.adapters.runner_contract import AdapterAttribution
+
+    empty = AdapterAttribution()
+    assert empty.cached_input_tokens is None
+    assert empty.reasoning_tokens is None
+    assert empty.provider_event_count is None
+    assert empty.provider_event_bytes is None
+    assert empty.wrapper_input_bytes is None
+    assert empty.retained_result_bytes is None
+    assert empty.tool_call_event_count is None
+    assert empty.runner_wall_milliseconds is None
+
+    populated = AdapterAttribution(
+        cached_input_tokens=0,
+        reasoning_tokens=1,
+        provider_event_count=2,
+        provider_event_bytes=3,
+        wrapper_input_bytes=4,
+        retained_result_bytes=5,
+        tool_call_event_count=6,
+        runner_wall_milliseconds=7,
+    )
+    assert populated.wrapper_input_bytes == 4
+    with pytest.raises(FrozenInstanceError):
+        populated.wrapper_input_bytes = 8  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("value", (True, -1, 1.5, "1"))
+def test_adapter_attribution_rejects_non_nonnegative_integer_values(
+    value: object,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterAttribution
+
+    with pytest.raises((TypeError, ValueError)):
+        AdapterAttribution(provider_event_count=value)  # type: ignore[arg-type]
+
+
+def test_adapter_outcomes_carry_attribution_separately_from_token_usage() -> None:
+    from millrace.adapters.runner_contract import (
+        AdapterAttribution,
+        AdapterErrorResult,
+        AdapterSuccessResult,
+        AdapterTokenUsage,
+        DispatchEcho,
+        RedactionPolicy,
+    )
+
+    dispatch = _valid_dispatch_envelope()
+    echo = DispatchEcho.from_dispatch_envelope(
+        dispatch,
+        correlation_id="corr-1",
+        selected_adapter_kind="fake_local",
+    )
+    attribution = AdapterAttribution(
+        cached_input_tokens=11,
+        reasoning_tokens=12,
+        provider_event_count=13,
+        provider_event_bytes=14,
+        wrapper_input_bytes=15,
+        retained_result_bytes=16,
+        tool_call_event_count=17,
+        runner_wall_milliseconds=18,
+    )
+    token_usage = AdapterTokenUsage(input_tokens=2, output_tokens=3, total_tokens=5)
+
+    success = AdapterSuccessResult.from_unredacted(
+        adapter_id="adapter-1",
+        dispatch_echo=echo,
+        marker="TASK_COMPLETE",
+        redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        token_usage=token_usage,
+        attribution=attribution,
+    )
+    error = AdapterErrorResult.from_unredacted(
+        adapter_id="adapter-1",
+        error_kind="invocation_failed",
+        dispatch_echo=echo,
+        redaction_policy=RedactionPolicy(policy_id="redact-default"),
+        token_usage=token_usage,
+        attribution=attribution,
+    )
+
+    assert success.token_usage == token_usage
+    assert success.attribution == attribution
+    assert error.token_usage == token_usage
+    assert error.attribution == attribution

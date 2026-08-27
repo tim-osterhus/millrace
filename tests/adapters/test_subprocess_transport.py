@@ -1049,3 +1049,42 @@ def _snapshot_tree(root: Path) -> tuple[str, ...]:
             if item.exists()
         ),
     )
+
+
+
+def test_subprocess_transport_attribution_reports_retained_bytes_and_wall_time(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.subprocess_transport import (
+        SubprocessTransport,
+        SubprocessTransportRequest,
+        SubprocessTransportSuccess,
+    )
+
+    request = SubprocessTransportRequest(
+        argv=(sys.executable, "-c", "print('transport result')"),
+        stdin_bytes=b"wrapper input",
+        cwd=tmp_path,
+        env_allowlist={},
+        timeout_seconds=5,
+        max_stdin_bytes=64,
+        max_stdout_bytes=128,
+        max_stderr_bytes=128,
+        redaction_policy=RedactionPolicy(policy_id="redact-default"),
+    )
+
+    result = SubprocessTransport().invoke(request)
+
+    assert isinstance(result, SubprocessTransportSuccess)
+    assert result.attribution is not None
+    assert result.attribution.wrapper_input_bytes == len(request.stdin_bytes)
+    assert result.attribution.retained_result_bytes == len(
+        result.stdout.encode("utf-8")
+    )
+    assert result.attribution.runner_wall_milliseconds is not None
+    assert result.attribution.runner_wall_milliseconds >= 0
+    assert result.attribution.cached_input_tokens is None
+    assert result.attribution.reasoning_tokens is None
+    assert result.attribution.provider_event_count is None
+    assert result.attribution.provider_event_bytes is None
+    assert result.attribution.tool_call_event_count is None

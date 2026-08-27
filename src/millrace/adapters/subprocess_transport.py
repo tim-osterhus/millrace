@@ -12,13 +12,14 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
 from typing import IO, ClassVar, TypeAlias, cast
 
 from millrace.adapters.runner_contract import (
+    AdapterAttribution,
     RedactionPolicy,
     RunnerCancellationOperationResult,
     RunnerCleanupResult,
@@ -110,6 +111,7 @@ class SubprocessTransportSuccess:
     stdout: str
     stderr: str
     stderr_truncated: bool = False
+    attribution: AdapterAttribution | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         _require_int(self.exit_code, "exit_code")
@@ -117,6 +119,11 @@ class SubprocessTransportSuccess:
         _require_string(self.stderr, "stderr")
         if type(self.stderr_truncated) is not bool:
             raise TypeError("stderr_truncated must be a bool")
+        if self.attribution is not None and not isinstance(
+            self.attribution,
+            AdapterAttribution,
+        ):
+            raise TypeError("attribution must be AdapterAttribution or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +136,7 @@ class SubprocessTransportError:
     diagnostics: str = ""
     exit_code: int | None = None
     stderr_truncated: bool = False
+    attribution: AdapterAttribution | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.error_kind not in _ERROR_KINDS:
@@ -142,6 +150,11 @@ class SubprocessTransportError:
             _require_int(self.exit_code, "exit_code")
         if type(self.stderr_truncated) is not bool:
             raise TypeError("stderr_truncated must be a bool")
+        if self.attribution is not None and not isinstance(
+            self.attribution,
+            AdapterAttribution,
+        ):
+            raise TypeError("attribution must be AdapterAttribution or None")
 
 
 SubprocessTransportOutcome: TypeAlias = (
@@ -166,7 +179,10 @@ class SubprocessTransport:
         except subprocess.TimeoutExpired:
             started.kill()
             started.cleanup()
-            return SubprocessTransportError(error_kind="timeout")
+            return SubprocessTransportError(
+                error_kind="timeout",
+                attribution=started._attribution(),
+            )
         outcome = started.poll_completion()
         if outcome is None:
             started.kill()
@@ -193,16 +209,26 @@ class SubprocessTransport:
         if not isinstance(request, SubprocessTransportRequest):
             raise TypeError("request must be SubprocessTransportRequest")
         if request.pre_cancelled:
-            return SubprocessTransportError(error_kind="cancelled")
+            return _transport_error(
+                "cancelled",
+                request=request,
+            )
         if not _supports_process_group_ownership():
-            return SubprocessTransportError(
-                error_kind="invocation_failed",
+            return _transport_error(
+                "invocation_failed",
+                request=request,
                 diagnostics="process-group ownership is unavailable",
             )
         if len(request.stdin_bytes) > request.max_stdin_bytes:
-            return SubprocessTransportError(error_kind="input_too_large")
+            return _transport_error(
+                "input_too_large",
+                request=request,
+            )
         if not request.cwd.is_absolute() or not request.cwd.is_dir():
-            return SubprocessTransportError(error_kind="invalid_cwd")
+            return _transport_error(
+                "invalid_cwd",
+                request=request,
+            )
 
         env = _build_environment(request.env_allowlist)
         try:
@@ -222,12 +248,14 @@ class SubprocessTransport:
                 redaction_policy=request.redaction_policy,
             )
             if redaction_failed:
-                return SubprocessTransportError(
-                    error_kind="redaction_refused",
+                return _transport_error(
+                    "redaction_refused",
+                    request=request,
                     diagnostics=diagnostics,
                 )
-            return SubprocessTransportError(
-                error_kind="invocation_failed",
+            return _transport_error(
+                "invocation_failed",
+                request=request,
                 diagnostics=diagnostics,
             )
 
@@ -240,8 +268,9 @@ class SubprocessTransport:
 
         if process.stdin is None or process.stdout is None or process.stderr is None:
             _terminate_process(process)
-            return SubprocessTransportError(
-                error_kind="invocation_failed",
+            return _transport_error(
+                "invocation_failed",
+                request=request,
                 diagnostics="subprocess pipes were unavailable",
             )
 
@@ -266,6 +295,7 @@ class SubprocessTransport:
             process=process,
             process_group_id=process_group_id,
             process_start_marker=_process_start_marker(process.pid),
+            started_monotonic_ns=time.monotonic_ns(),
             request=request,
             stdout_capture=stdout_capture,
             stderr_capture=stderr_capture,
@@ -283,6 +313,7 @@ class SubprocessTransportHandle:
         process: subprocess.Popen[bytes],
         process_group_id: int | None,
         process_start_marker: str | None,
+        started_monotonic_ns: int,
         request: SubprocessTransportRequest,
         stdout_capture: _BoundedPipeCapture,
         stderr_capture: _BoundedPipeCapture,
@@ -292,6 +323,7 @@ class SubprocessTransportHandle:
         self.process = process
         self._process_group_id = process_group_id
         self._process_start_marker = process_start_marker
+        self._started_monotonic_ns = started_monotonic_ns
         self._request = request
         self._stdout_capture = stdout_capture
         self._stderr_capture = stderr_capture
@@ -435,6 +467,18 @@ class SubprocessTransportHandle:
         self._stderr_capture.join()
         self._stdin_writer.join()
 
+    def _attribution(
+        self,
+        *,
+        retained_result_bytes: int | None = None,
+    ) -> AdapterAttribution:
+        elapsed_ns = max(0, time.monotonic_ns() - self._started_monotonic_ns)
+        return AdapterAttribution(
+            wrapper_input_bytes=len(self._request.stdin_bytes),
+            retained_result_bytes=retained_result_bytes,
+            runner_wall_milliseconds=elapsed_ns // 1_000_000,
+        )
+
     def _completed_outcome(self) -> SubprocessTransportOutcome:
         request = self._request
         if (
@@ -445,16 +489,27 @@ class SubprocessTransportHandle:
             return SubprocessTransportError(
                 error_kind="invocation_failed",
                 diagnostics="subprocess output capture failed",
+                attribution=self._attribution(),
             )
         if self._stdout_capture.exceeded:
-            return SubprocessTransportError(error_kind="output_too_large")
+            return SubprocessTransportError(
+                error_kind="output_too_large",
+                attribution=self._attribution(
+                    retained_result_bytes=len(self._stdout_capture.data),
+                ),
+            )
         try:
             stdout = _redact_text(
                 self._stdout_capture.data.decode("utf-8"),
                 request.redaction_policy,
             )
             if len(stdout.encode("utf-8")) > request.max_stdout_bytes:
-                return SubprocessTransportError(error_kind="output_too_large")
+                return SubprocessTransportError(
+                    error_kind="output_too_large",
+                    attribution=self._attribution(
+                        retained_result_bytes=len(stdout.encode("utf-8")),
+                    ),
+                )
             if self._stderr_capture.exceeded:
                 stderr = ""
                 stderr_truncated = True
@@ -468,11 +523,17 @@ class SubprocessTransportHandle:
             return SubprocessTransportError(
                 error_kind="invocation_failed",
                 diagnostics="subprocess stdout was not valid utf-8",
+                attribution=self._attribution(
+                    retained_result_bytes=len(self._stdout_capture.data),
+                ),
             )
         except Exception:
             return SubprocessTransportError(
                 error_kind="redaction_refused",
                 diagnostics=_REDACTION_REFUSED_DIAGNOSTIC,
+                attribution=self._attribution(
+                    retained_result_bytes=len(self._stdout_capture.data),
+                ),
             )
         returncode = self.process.returncode
         if returncode != 0:
@@ -486,12 +547,18 @@ class SubprocessTransportHandle:
                 stdout=stdout,
                 stderr=stderr,
                 stderr_truncated=stderr_truncated,
+                attribution=self._attribution(
+                    retained_result_bytes=len(stdout.encode("utf-8")),
+                ),
             )
         return SubprocessTransportSuccess(
             exit_code=cast(int, returncode),
             stdout=stdout,
             stderr=stderr,
             stderr_truncated=stderr_truncated,
+            attribution=self._attribution(
+                retained_result_bytes=len(stdout.encode("utf-8")),
+            ),
         )
 
 
@@ -567,6 +634,21 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
             process.wait(timeout=1)
         except Exception:
             pass
+
+
+def _transport_error(
+    error_kind: str,
+    *,
+    request: SubprocessTransportRequest,
+    diagnostics: str = "",
+) -> SubprocessTransportError:
+    return SubprocessTransportError(
+        error_kind=error_kind,
+        diagnostics=diagnostics,
+        attribution=AdapterAttribution(
+            wrapper_input_bytes=len(request.stdin_bytes),
+        ),
+    )
 
 
 def _operation_result(
