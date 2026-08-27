@@ -21,6 +21,7 @@ SUPPORTED_SCHEMA_KEYS = frozenset(
         "enum",
         "const",
         "min_items",
+        "max_items",
         "min_length",
         "unique_by",
     )
@@ -422,6 +423,12 @@ def _validate_schema_declaration(
             SchemaValidationIssue(path, "unsupported_schema_value", "min_items")
         )
 
+    max_items = schema.get("max_items")
+    if "max_items" in schema and type(max_items) is not int:
+        issues.append(
+            SchemaValidationIssue(path, "unsupported_schema_value", "max_items")
+        )
+
     min_length = schema.get("min_length")
     if "min_length" in schema and type(min_length) is not int:
         issues.append(
@@ -576,6 +583,10 @@ def _validate_schema_array(
     min_items = schema.get("min_items")
     if type(min_items) is int and len(value) < min_items:
         issues.append(SchemaValidationIssue(path, "array_too_short"))
+
+    max_items = schema.get("max_items")
+    if type(max_items) is int and len(value) > max_items:
+        issues.append(SchemaValidationIssue(path, "array_too_long"))
 
     item_schema = schema.get("items")
     if isinstance(item_schema, Mapping):

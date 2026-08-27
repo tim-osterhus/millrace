@@ -64,6 +64,7 @@ _SCHEMA_KEYS = frozenset(
         "enum",
         "const",
         "min_items",
+        "max_items",
         "min_length",
         "unique_by",
     }
@@ -1264,7 +1265,12 @@ def _project_schema_node(
     if schema_type == "object":
         if constraints:
             raise _AuthorityRefusal("artifact_schema")
-        if "items" in schema or "min_items" in schema or "min_length" in schema:
+        if (
+            "items" in schema
+            or "min_items" in schema
+            or "max_items" in schema
+            or "min_length" in schema
+        ):
             raise _AuthorityRefusal("artifact_schema")
         raw_properties = schema.get("properties", {})
         raw_required = schema.get("required", ())
@@ -1301,9 +1307,16 @@ def _project_schema_node(
             raise _AuthorityRefusal("artifact_schema")
         items = schema.get("items")
         minimum = schema.get("min_items", 0)
-        if not isinstance(items, Mapping) or type(minimum) is not int or minimum < 0:
+        maximum = schema.get("max_items", _MAX_ARRAY_ITEMS)
+        if (
+            not isinstance(items, Mapping)
+            or type(minimum) is not int
+            or minimum < 0
+            or type(maximum) is not int
+            or maximum < 0
+        ):
             raise _AuthorityRefusal("artifact_schema")
-        if minimum > _MAX_ARRAY_ITEMS:
+        if minimum > _MAX_ARRAY_ITEMS or maximum > _MAX_ARRAY_ITEMS:
             raise _AuthorityRefusal("artifact_schema_ceiling")
         projected: dict[str, object] = {
             "type": "array",
@@ -1314,8 +1327,13 @@ def _project_schema_node(
         }
         if "min_items" in schema:
             projected["minItems"] = minimum
+        if "max_items" in schema:
+            projected["maxItems"] = maximum
         return projected
-    if any(key in schema for key in ("properties", "required", "items", "min_items")):
+    if any(
+        key in schema
+        for key in ("properties", "required", "items", "min_items", "max_items")
+    ):
         raise _AuthorityRefusal("artifact_schema")
     if schema_type == "string":
         minimum = schema.get("min_length", 0)

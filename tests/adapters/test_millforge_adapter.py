@@ -1598,6 +1598,54 @@ def test_millforge_adapter_projects_schema_deterministically_and_retains_residua
     }
 
 
+def test_millforge_adapter_projects_max_items_for_selected_array_schema(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    schema = _schema(
+        {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "max_items": 2,
+                }
+            },
+            "required": ("items",),
+        }
+    )
+    facade = _FakeFacade(
+        selected_output=_SelectedOutputPresent({"items": ["one"]}),
+    )
+
+    result = _drive_session(
+        _adapter(monkeypatch, tmp_path, facade),
+        _request(schemas=(schema,)),
+    )
+
+    assert isinstance(result, AdapterSuccessResult)
+    projected = (
+        facade.requests[0]
+        .selected_output_requirements[0]
+        .selected_output.json_schema
+    )
+    assert projected == {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 2,
+            }
+        },
+        "required": ["items"],
+    }
+
+
 def test_millforge_adapter_projects_distinct_requirements_for_selected_results(  # noqa: E501
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

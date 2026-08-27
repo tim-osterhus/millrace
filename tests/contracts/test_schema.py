@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from millrace.contracts.schema import (
+    SchemaValidationIssue,
     validate_closure_verdict_schema_declaration,
     validate_schema,
     validate_schema_declaration,
@@ -22,6 +23,51 @@ def _unique_item_schema() -> dict[str, object]:
             },
         },
     }
+
+
+def _max_item_schema(max_items: object = 2) -> dict[str, object]:
+    return {
+        "type": "array",
+        "items": {"type": "string"},
+        "max_items": max_items,
+    }
+
+
+def test_schema_declaration_accepts_max_items() -> None:
+    result = validate_schema_declaration(_max_item_schema())
+
+    assert result.accepted is True
+    assert result.issues == ()
+
+
+@pytest.mark.parametrize("max_items", (True, "2", 2.0, None))
+def test_schema_declaration_rejects_non_integer_max_items(
+    max_items: object,
+) -> None:
+    result = validate_schema_declaration(_max_item_schema(max_items))
+
+    assert result.accepted is False
+    assert any(
+        issue.reason == "unsupported_schema_value" and issue.detail == "max_items"
+        for issue in result.issues
+    )
+
+
+@pytest.mark.parametrize("payload", ((), ("one",), ("one", "two")))
+def test_schema_validation_accepts_arrays_at_or_below_max_items(
+    payload: tuple[str, ...],
+) -> None:
+    result = validate_schema(_max_item_schema(), payload)
+
+    assert result.accepted is True
+    assert result.issues == ()
+
+
+def test_schema_validation_rejects_arrays_above_max_items() -> None:
+    result = validate_schema(_max_item_schema(), ("one", "two", "three"))
+
+    assert result.accepted is False
+    assert result.issues == (SchemaValidationIssue("$", "array_too_long"),)
 
 
 def test_schema_declaration_accepts_unique_by() -> None:
