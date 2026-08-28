@@ -1,156 +1,72 @@
-# Maintainer Live Workflow Testing
+# Maintainer Live Workflow Qualification
 
-Millrace v0.22 supports the `codex` and `millforge` runner kinds. Their current
-test evidence has two different scopes:
+Source release readiness, publication, and provider-backed live workflow
+evidence are separate claims. Offline tests can support source readiness only.
+They do not publish artifacts, invoke a provider, or prove workflow closure.
 
-| Runner branch | Current evidence |
-| --- | --- |
-| Codex | Base `kernel_ping` harness coverage and bounded opt-in/configuration preflight in `tests/e2e/test_actual_model_workflow_smoke.py` |
-| Millforge | Current official Plus `0.22.0` live proof for `simple_loop` and `vendor_selection` |
+## Maintained Checkout Evidence
 
-The Codex branch is not a completed current official-Plus Codex live proof.
-Preflight or offline success must not be reported as completed live workflow
-evidence.
-
-Source release readiness, publication, and a credentialed live run are three
-separate claims. Offline checks can support the first claim only. They neither
-publish artifacts nor authorize model execution.
-
-## Offline Checks
-
-Run the maintained modules without the live marker first:
+The maintained live-related module is
+`tests/e2e/test_actual_model_workflow_smoke.py`. Its unmarked tests validate
+bounded configuration, selected runner identity, redaction, artifact roots,
+and failure classification without calling a model:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 uv run --frozen pytest -q \
-  tests/e2e/test_actual_model_workflow_smoke.py \
-  tests/e2e/test_simple_loop_millforge_live_proof.py \
-  tests/e2e/test_vendor_selection_millforge_live_proof.py \
-  -m "not live_model"
+  tests/e2e/test_actual_model_workflow_smoke.py -m "not live_model"
 ```
 
-These checks validate package selection, runner preflight, selected dispatch
-identity, redaction, finite limits, routes, and failure classification without
-calling a model.
+Its `live_model` row accepts bounded Codex preflight and then skips. It is not
+a completed provider-backed workflow proof. The checkout does not currently
+ship separate `simple_loop` or `vendor_selection` live-proof modules, so do
+not cite those historical paths or treat their absence as a passing live row.
 
-## Workspace Boundary
+## Exact-Candidate Procedure
 
-Live runtime and artifact state must stay outside the source repository. The
-harness requires explicit roots and never infers a writable location from the
-source checkout:
+A release-candidate live qualification must:
+
+1. build the candidate distributions deterministically and record their
+   digests;
+2. install the exact built wheels in a fresh environment;
+3. import the workflow package from the installed distribution bytes;
+4. use a fresh workspace outside the source repository;
+5. select a workflow whose declared runner binding matches the configured
+   adapter;
+6. enqueue through the public CLI and use finite daemon ticks;
+7. inspect status, runs, traces, waits, interventions, and doctor output; and
+8. retain sanitized evidence without retaining credentials or derived
+   session-local material.
+
+`simple_loop` selects Millforge runner bindings. The governed semantic LAD
+workflow selects Codex runner bindings. Do not override a selected adapter
+kind merely to make local credentials fit a workflow. Configure the selected
+adapter through [Codex runner setup](../codex-runner.md) or
+[Millforge runner setup](../millforge-runner.md), as applicable.
+
+For cautious execution, use the supported bounded form:
 
 ```bash
-export MILLRACE_RUNTIME_REPO="$(git rev-parse --show-toplevel)"
-export MILLRACE_E2E_WORKSPACES_ROOT="$(cd "$MILLRACE_RUNTIME_REPO/../../.." && pwd)/workspaces"
-mkdir -p "$MILLRACE_E2E_WORKSPACES_ROOT"
+millrace --workspace /absolute/path/to/workspace run daemon \
+  --max-ticks 1 \
+  --adapter-kind <selected-kind> \
+  --adapter-config-json /absolute/path/to/local-adapter.json
 ```
 
-Each live row uses a fresh direct child of that root. The adapter's working
-root must be inside the row's artifact root. Workspace output is retained test
-evidence, not source.
+A recovery qualification must enter recovery through a declared graph-visible
+outcome and then execute the graph-selected recovery stage. Do not hand-edit
+runtime state, synthesize a recovery projection, or relabel an offline fake as
+provider-backed evidence. Use [Errors and refusals](../errors.md) to classify a
+row that does not reach its declared barrier.
 
-## Codex Preflight
+## Authentication And Evidence Boundary
 
-The generic Codex harness covers the base `kernel_ping` workflow and bounded
-preflight behavior. Configure the wrapper described in
-[Codex runner setup](../codex-runner.md), then set:
+Adapter configuration and credentials are local operator inputs, not workflow
+package authority. Do not write API keys, OAuth tokens, credential paths, or
+secret-bearing config snapshots into retained evidence. Temporary auth or
+adapter material must be absent at the durable boundary.
 
-```bash
-export MILLRACE_E2E_ACTUAL_MODEL=1
-export MILLRACE_E2E_RUNNER=codex
-export MILLRACE_E2E_ADAPTER_CONFIG=/absolute/path/to/codex-adapter.json
-export MILLRACE_E2E_SECRET_CANARY='<unique test canary>'
-export MILLRACE_E2E_ARTIFACT_ROOT="$MILLRACE_E2E_WORKSPACES_ROOT/e2e-codex-preflight-$(date -u +%Y%m%dT%H%M%SZ)"
-
-export MILLRACE_E2E_MAX_TICKS_PER_WORKFLOW=8
-export MILLRACE_E2E_MAX_ADAPTER_TIMEOUT_SECONDS=120
-export MILLRACE_E2E_MAX_INPUT_BUNDLE_BYTES=65536
-export MILLRACE_E2E_MAX_STDOUT_BYTES=65536
-export MILLRACE_E2E_MAX_STDERR_DIAGNOSTIC_BYTES=4096
-export MILLRACE_E2E_MAX_WORKFLOW_SECONDS=600
-export MILLRACE_E2E_MAX_TOTAL_SECONDS=1800
-export MILLRACE_E2E_MAX_RETRIES=0
-
-PYTHONDONTWRITEBYTECODE=1 uv run --frozen pytest -q \
-  tests/e2e/test_actual_model_workflow_smoke.py -m live_model
-```
-
-The Codex adapter config must include `MILLRACE_E2E_ACTUAL_MODEL` in its live
-opt-in flags, include the exact canary in its redaction policy, and use an
-absolute `cwd` inside `MILLRACE_E2E_ARTIFACT_ROOT`. The live-marked test stops
-after accepted bounded preflight. It does not invoke a completed workflow and
-does not establish official Plus live proof.
-
-## Official Plus Millforge Proof
-
-The maintained official Plus live rows are:
-
-- `tests/e2e/test_simple_loop_millforge_live_proof.py`, which must reach
-  `closed_successfully`;
-- `tests/e2e/test_vendor_selection_millforge_live_proof.py`, which must reach
-  the selected durable operator wait without approving a purchase.
-
-These tests call a real model, use the credential named by the adapter config,
-and can consume substantial time and tokens. They remain disabled without the
-explicit runner, config, package, workspace, and finite limits below.
-
-Install `millforge==0.1.0`, select the Plus `0.22.0` package root, and use a
-separate adapter file for each row based on
-[Millforge runner setup](../millforge-runner.md). In each file,
-`workspace_root` must equal that row's fresh artifact root. The referenced
-credential environment variable must already be populated.
-
-Set the common live bounds:
-
-```bash
-export MILLRACE_E2E_ACTUAL_MODEL=1
-export MILLRACE_E2E_RUNNER=millforge
-export MILLRACE_E2E_PACKAGE_ROOT=/absolute/path/to/millrace_workflow_package
-export MILLRACE_E2E_MAX_ADAPTER_TIMEOUT_SECONDS=3600
-export MILLRACE_E2E_MAX_INPUT_BUNDLE_BYTES=65536
-export MILLRACE_E2E_MAX_STDOUT_BYTES=131072
-export MILLRACE_E2E_MAX_STDERR_DIAGNOSTIC_BYTES=16384
-export MILLRACE_E2E_MAX_WORKFLOW_SECONDS=7200
-export MILLRACE_E2E_MAX_TOTAL_SECONDS=14400
-export MILLRACE_E2E_MAX_RETRIES=0
-```
-
-Run `simple_loop` with its exact artifact-root prefix:
-
-```bash
-export MILLRACE_E2E_ARTIFACT_ROOT="$MILLRACE_E2E_WORKSPACES_ROOT/e2e-mf-simple-loop-$(date -u +%Y%m%dT%H%M%SZ)"
-export MILLRACE_E2E_ADAPTER_CONFIG=/absolute/path/to/simple-loop-millforge-adapter.json
-export MILLRACE_E2E_WORKFLOW_FILTER=simple_loop
-export MILLRACE_E2E_MAX_TICKS_PER_WORKFLOW=8
-
-PYTHONDONTWRITEBYTECODE=1 uv run --frozen --with millforge==0.1.0 \
-  pytest -q tests/e2e/test_simple_loop_millforge_live_proof.py -m live_model
-```
-
-Run `vendor_selection` with its exact artifact-root prefix and exact 16-tick
-requirement:
-
-```bash
-export MILLRACE_E2E_ARTIFACT_ROOT="$MILLRACE_E2E_WORKSPACES_ROOT/e2e-mf-vendor-selection-$(date -u +%Y%m%dT%H%M%SZ)"
-export MILLRACE_E2E_ADAPTER_CONFIG=/absolute/path/to/vendor-selection-millforge-adapter.json
-export MILLRACE_E2E_WORKFLOW_FILTER=vendor_selection
-export MILLRACE_E2E_MAX_TICKS_PER_WORKFLOW=16
-
-PYTHONDONTWRITEBYTECODE=1 uv run --frozen --with millforge==0.1.0 \
-  pytest -q tests/e2e/test_vendor_selection_millforge_live_proof.py -m live_model
-```
-
-Both modules require literal selected Millforge authority and reject Codex or
-fake evidence for these rows. The profile, selected workflow timeout, local
-adapter timeout, and E2E ceilings remain separate; execution uses the lower
-applicable limit.
-
-## Reading Results
-
-A live result distinguishes provider transport failure, adapter protocol
-failure, runtime refusal, a legal durable operator wait, and completed workflow
-state. Millforge returns candidate execution evidence. Millrace validates that
-evidence and remains responsible for accepted routing, waits, and completion.
-
-Keep each generated workspace and inspect its status, runs, traces, waits, and
-artifacts before deleting it. See [Errors and refusals](../errors.md) when a row
-does not reach its declared outcome.
+A clean live-success claim requires durable runtime evidence: no active runs,
+open waits, closure blocks, quarantines, or interventions, plus the expected
+results and artifacts. A deliberately selected recovery transition may stop
+at its declared recovery barrier, but must be reported as recovery evidence,
+not completed workflow closure.
