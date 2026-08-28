@@ -10,7 +10,12 @@ from millrace.adapters.cli.context import (
     OpenRuntimeContext,
     terminalize_daemon_budget_with_suspension,
 )
-from millrace.adapters.runner_contract import AdapterInvocationOutcome, RedactionPolicy
+from millrace.adapters.runner_contract import (
+    AdapterInvocationOutcome,
+)
+from millrace.adapters.runner_contract import (
+    RedactionPolicy as RedactionPolicy,
+)
 from millrace.contracts.runner import (
     RunnerResultEvidence,
     runner_result_evidence_from_payload,

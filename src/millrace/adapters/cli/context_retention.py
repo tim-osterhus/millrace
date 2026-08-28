@@ -43,7 +43,7 @@ def cleanup_completed_session_context(
     adapter_removed_path_classes: tuple[str, ...],
     adapter_removed_file_count: int,
     adapter_removed_byte_count: int,
-    event_redaction_policy: object,
+    event_redaction_policy: session_persistence.RedactionPolicy,
 ) -> ContextCleanupReceipt | None:
     """Remove one authenticated session checkout after all durable gates pass."""
 
@@ -408,7 +408,7 @@ def _record_cleanup_refusal(
     *,
     session: RunnerSessionRecord,
     error: Exception,
-    event_redaction_policy: object,
+    event_redaction_policy: session_persistence.RedactionPolicy,
 ) -> None:
     reason = (
         str(error)

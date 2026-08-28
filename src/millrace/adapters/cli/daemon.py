@@ -50,6 +50,7 @@ from millrace.contracts.state import (
     RUNNER_SESSION_TEXT_MAX_BYTES,
     DaemonBudgetEpochRecord,
     RunnerSessionRecord,
+    RuntimeState,
 )
 from millrace.substrate.errors import SubstrateError
 
@@ -550,7 +551,7 @@ def _validate_budget_stop_preconditions(
 
 def _budget_stop_projection(
     runtime: OpenRuntimeContext,
-    state: object,
+    state: RuntimeState,
     epoch: DaemonBudgetEpochRecord,
 ) -> dict[str, object]:
     from millrace.adapters.cli.status import _daemon_budget_projection

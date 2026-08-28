@@ -1805,10 +1805,20 @@ def _millforge_attribution(
     if not values:
         return None
     return AdapterAttribution(
-        **{
-            field_name: values.get(field_name)
-            for field_name in _ATTRIBUTION_FIELDS
-        }
+        cached_input_tokens=cast(int | None, values.get("cached_input_tokens")),
+        reasoning_tokens=cast(int | None, values.get("reasoning_tokens")),
+        provider_event_count=cast(int | None, values.get("provider_event_count")),
+        provider_event_bytes=cast(int | None, values.get("provider_event_bytes")),
+        wrapper_input_bytes=cast(int | None, values.get("wrapper_input_bytes")),
+        retained_result_bytes=cast(
+            int | None, values.get("retained_result_bytes")
+        ),
+        tool_call_event_count=cast(
+            int | None, values.get("tool_call_event_count")
+        ),
+        runner_wall_milliseconds=cast(
+            int | None, values.get("runner_wall_milliseconds")
+        ),
     )
 
 

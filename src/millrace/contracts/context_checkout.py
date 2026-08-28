@@ -292,7 +292,10 @@ class ContextCheckoutManifest:
         files = _canonical_files(self.files)
         catalog = _canonical_catalog(self.catalog)
         declared_sizes: dict[str, int] = {}
-        for item in (*files, *catalog):
+        declared_items: tuple[
+            ContextCheckoutFile | ContextCheckoutCatalogEntry, ...
+        ] = (*files, *catalog)
+        for item in declared_items:
             previous = declared_sizes.setdefault(item.content_digest, item.byte_length)
             if previous != item.byte_length:
                 _refuse("content digest has conflicting declared sizes")
@@ -572,7 +575,9 @@ def _decode_catalog_entry(
         source_ref=cast(str, record["source_ref"]),
         content_digest=cast(str, record["content_digest"]),
         byte_length=cast(int, record["byte_length"]),
-        provenance_ids=tuple(cast(Sequence[object], provenance_ids)),
+        provenance_ids=cast(
+            tuple[str, ...], tuple(cast(Sequence[object], provenance_ids))
+        ),
     )
 
 

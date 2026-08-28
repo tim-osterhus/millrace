@@ -11,12 +11,14 @@ from millrace.contracts.compiled_plan import (
     CompletionBehaviorDeclaration,
     verify_authority_fingerprint,
 )
+from millrace.contracts.ids import ActionId, ArtifactSchemaId
 from millrace.contracts.state import (
     Activation,
     ArtifactRecord,
     ClosureEvaluationRecord,
     ClosureTargetRecord,
     PlanRef,
+    RemediationWorkRecord,
     RunRecord,
     RuntimeState,
     WorkItem,
@@ -25,6 +27,7 @@ from millrace.contracts.transition import (
     EnqueueWork,
     OpenClosureTarget,
     TransitionContext,
+    TransitionInput,
     artifact_payload_digest,
     canonical_authority_mapping_bytes,
     input_family,
@@ -153,7 +156,9 @@ def closure_root_source_matches(
     ) == (root_source_kind, root_source_id)
 
 
-def closure_creator_refusal(state: RuntimeState, expected_input: object) -> str | None:
+def closure_creator_refusal(
+    state: RuntimeState, expected_input: TransitionInput
+) -> str | None:
     input_id = expected_input.input_id
     receipt = state.receipts.get(input_id)
     if receipt is None:
@@ -191,9 +196,15 @@ def closure_enqueue_creator_refusal(
         )
     if closure_creator_refusal(state, command) is not None:
         return "invalid_closure_creator"
-    work_items, activations = (
-        tuple(item for item in values if item.created_by_input_id == command.input_id)
-        for values in (state.work_items.values(), state.activations.values())
+    work_items = tuple(
+        item
+        for item in state.work_items.values()
+        if item.created_by_input_id == command.input_id
+    )
+    activations = tuple(
+        item
+        for item in state.activations.values()
+        if item.created_by_input_id == command.input_id
     )
     if len(work_items) != 1 or len(activations) != 1:
         return (
@@ -748,7 +759,12 @@ def _evaluation_parts(
 
 
 def _verdict_artifact(
-    state, *, work_item_id: str, schema_id, activation_id: str, action_ids
+    state: RuntimeState,
+    *,
+    work_item_id: str,
+    schema_id: ArtifactSchemaId,
+    activation_id: str,
+    action_ids: tuple[ActionId, ...],
 ) -> tuple[ArtifactRecord | None, str | None]:
     artifacts = tuple(
         item
@@ -772,7 +788,7 @@ def closure_remediation_refusal(
     *,
     target: ClosureTargetRecord,
     behavior: CompletionBehaviorDeclaration,
-    record,
+    record: RemediationWorkRecord,
     source_artifact: ArtifactRecord,
 ) -> str | None:
     plan_ref = target.selected_plan_ref
@@ -897,14 +913,18 @@ def closure_target_progress(
         work, _activation, refusal = _evaluation_parts(
             state, evaluation, target, behavior
         )
-        artifact, artifact_error = _verdict_artifact(
+        terminal_artifact, artifact_error = _verdict_artifact(
             state,
             work_item_id=evaluation.target_work_item_id,
             schema_id=behavior.verdict_artifact_schema_id,
             activation_id=evaluation.target_activation_id,
             action_ids=(behavior.pass_action_id,),
         )
-        if refusal is not None or artifact_error is not None:
+        if (
+            refusal is not None
+            or terminal_artifact is None
+            or artifact_error is not None
+        ):
             return _bad("closure_terminal_relation_invalid")
         if (
             terminal.record_id != target.closed_by_record_id
@@ -912,11 +932,11 @@ def closure_target_progress(
             != (behavior.id, "passed")
             or terminal.selected_plan_ref != target.selected_plan_ref
             or terminal.lineage_id != target.lineage_id
-            or artifact.artifact_id != terminal.source_artifact_id
+            or terminal_artifact.artifact_id != terminal.source_artifact_id
             or (
-                artifact.created_by_input_id,
-                artifact.source_run_id,
-                artifact.source_action_id,
+                terminal_artifact.created_by_input_id,
+                terminal_artifact.source_run_id,
+                terminal_artifact.source_action_id,
             )
             != (
                 terminal.created_by_input_id,
@@ -948,13 +968,16 @@ def closure_target_progress(
         work, _activation, refusal = _evaluation_parts(
             state, evaluation, target, behavior
         )
-        if refusal is not None:
-            return _bad(refusal)
+        if refusal is not None or work is None:
+            return _bad(refusal or "closure_evaluation_relation_missing")
         snapshot = work.payload.get("closure_evidence_snapshot")
         prior = snapshot.get("prior_verdict") if isinstance(snapshot, Mapping) else None
+        prior_artifact_id = (
+            prior.get("artifact_id") if isinstance(prior, Mapping) else None
+        )
         prior_artifact = (
-            state.artifacts.get(prior.get("artifact_id"))
-            if isinstance(prior, Mapping)
+            state.artifacts.get(prior_artifact_id)
+            if isinstance(prior_artifact_id, str)
             else None
         )
         if isinstance(prior, Mapping) and prior_artifact is None:
@@ -988,6 +1011,8 @@ def closure_target_progress(
             ),
         )
         if artifact_error == "relation":
+            return _bad("closure_verdict_artifact_relation_invalid")
+        if verdict is None:
             return _bad("closure_verdict_artifact_relation_invalid")
         if artifact_error is not None:
             return _bad("closure_verdict_provenance_invalid", verdict.artifact_id)
@@ -1126,7 +1151,7 @@ def closure_block_overlay_error(
             activation_id=activation.activation_id,
             action_ids=(block.source_action_id,),
         )
-        if artifact_error:
+        if artifact is None or artifact_error:
             return invalid
         if (
             artifact.source_action_id != block.source_action_id

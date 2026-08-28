@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from millrace.contracts.compiled_plan import verify_authority_fingerprint
+from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.state import (
     AdmittedPlan,
     GovernanceEventRecord,
@@ -980,7 +981,10 @@ def _recheck_expectations(
         lineage_id,
         expected_work_item_ids,
     ) in decision.expected_lineage_work_item_ids.items():
-        plan_ref = state.admitted_plans[decision.expected_plan_fingerprint].plan_ref
+        plan_fingerprint = cast(
+            AuthorityFingerprint, decision.expected_plan_fingerprint
+        )
+        plan_ref = state.admitted_plans[plan_fingerprint].plan_ref
         actual_work_item_ids = tuple(
             sorted(
                 work_item.ref.work_item_id
@@ -1058,9 +1062,13 @@ def _recheck_closure_readiness_identity(
             "open", key, readiness.anchor_digest
         )
     else:
-        admitted = state.admitted_plans[decision.expected_plan_fingerprint]
+        admitted = state.admitted_plans[
+            cast(AuthorityFingerprint, decision.expected_plan_fingerprint)
+        ]
         if (
-            any(value is None for value in (work_item, activation, evaluation))
+            work_item is None
+            or activation is None
+            or evaluation is None
             or (
                 work_item.ref.plan_ref,
                 activation.plan_ref,

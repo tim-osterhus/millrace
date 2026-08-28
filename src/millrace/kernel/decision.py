@@ -11,7 +11,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass, replace
 from hashlib import sha256
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 import millrace.kernel._closure_lifecycle as _closure
 from millrace.contracts.compiled_plan import (
@@ -235,6 +235,8 @@ from millrace.kernel.terminal_actions import (
     TerminalActionResolution,
     resolve_terminal_action,
 )
+
+_T = TypeVar("_T")
 
 EMPTY_OPERATOR_PAYLOAD_DIGEST = operator_payload_digest({})
 
@@ -1052,7 +1054,7 @@ def _closure_replay_invalid_detail(
         return "target_relation_missing"
     _selected_plan, behavior = resolved
 
-    def without(values: Mapping[str, object], excluded: str) -> dict[str, object]:
+    def without(values: Mapping[str, _T], excluded: str) -> dict[str, _T]:
         return {key: value for key, value in values.items() if key != excluded}
 
     if isinstance(transition_input, OpenClosureTarget):
@@ -1064,18 +1066,21 @@ def _closure_replay_invalid_detail(
         )
         if len(matches) != 1:
             return "target_relation_missing_or_ambiguous"
-        target = matches[0]
+        open_target = matches[0]
         if (
             transition_input.closure_target_id != _closure.closure_target_id(key)
-            or target.opened_by_input_id != transition_input.input_id
-            or target.request_kind != transition_input.request_kind
-            or target.target_graph_node_id != transition_input.target_graph_node_id
-            or target.evidence_window != transition_input.evidence_window
+            or open_target.opened_by_input_id != transition_input.input_id
+            or open_target.request_kind != transition_input.request_kind
+            or open_target.target_graph_node_id
+            != transition_input.target_graph_node_id
+            or open_target.evidence_window != transition_input.evidence_window
         ):
             return "closure_identity_noncanonical"
         replay_state = replace(
             state,
-            closure_targets=without(state.closure_targets, target.closure_target_id),
+            closure_targets=without(
+                state.closure_targets, open_target.closure_target_id
+            ),
         )
         readiness = _closure.assess_closure_readiness(
             replay_state,
@@ -1113,7 +1118,11 @@ def _closure_replay_invalid_detail(
         return "evaluation_relation_missing_or_ambiguous"
     evaluation = records[0]
     work = state.work_items.get(evaluation.target_work_item_id)
-    if _closure._evaluation_parts(state, evaluation, target, behavior)[2] is not None:
+    if (
+        work is None
+        or _closure._evaluation_parts(state, evaluation, target, behavior)[2]
+        is not None
+    ):
         return "evaluation_relation_missing_or_ambiguous"
     snapshot = work.payload.get("closure_evidence_snapshot")
     evidence_anchor = _closure.closure_evidence_anchor(snapshot, target=target)
@@ -5011,12 +5020,12 @@ def _build_closure_evidence_snapshot(
             continue
         if artifact.schema_id not in behavior.evidence_artifact_schema_ids:
             continue
-        position = transition_positions.get(artifact.transition_id)
-        if position is None:
+        evidence_position = transition_positions.get(artifact.transition_id)
+        if evidence_position is None:
             return None, "closure_evidence_transition_missing"
         if not transitions_by_id[artifact.transition_id].accepted:
             return None, "closure_evidence_transition_not_accepted"
-        if prior_position is not None and position <= prior_position:
+        if prior_position is not None and evidence_position <= prior_position:
             continue
         source_run = state.runs.get(artifact.source_run_id)
         source_work_item = state.work_items.get(artifact.work_item_id)
@@ -5041,6 +5050,9 @@ def _build_closure_evidence_snapshot(
     if len(evidence) > behavior.evidence_item_limit:
         return None, "closure_evidence_item_limit_exceeded"
 
+    root_payload = root_contract["payload"]
+    if not isinstance(root_payload, Mapping):
+        return None, "missing_closure_root_source"
     snapshot: Mapping[str, AuthorityValue] = {
         "record_kind": "closure_evidence_snapshot",
         "schema_version": 1,
@@ -5050,7 +5062,7 @@ def _build_closure_evidence_snapshot(
         "root_contract": root_contract,
         "prior_verdict": prior_verdict,
         "freshness_anchor_digest": (
-            artifact_payload_digest(root_contract["payload"])
+            artifact_payload_digest(root_payload)
             if prior_verdict is None
             else str(prior_verdict["payload_digest"])
         ),
@@ -6747,7 +6759,14 @@ def _runner_session_accepted_decision(
 
 
 def _runner_session_refused_decision(
-    transition_input: TransitionInput,
+    transition_input: (
+        AttachRunnerSessionContext
+        | AdvanceRunnerSession
+        | RefuseRunnerSessionSignal
+        | RequestRunnerSessionCancellation
+        | RecordRunnerSessionCancellationAttempt
+        | RecordRunnerSessionCompletion
+    ),
     context: TransitionContext,
     digest: str,
     reason: str,

@@ -370,14 +370,14 @@ def _workspace_files_for_source(
         seen_files.add(workspace_path)
         files[workspace_path] = item.content_digest
     if not required:
-        for item in manifest.catalog:
+        for catalog_item in manifest.catalog:
             if (
-                item.source_kind != _WORKSPACE_SOURCE
-                or item.source_ref != declaration.source_ref
+                catalog_item.source_kind != _WORKSPACE_SOURCE
+                or catalog_item.source_ref != declaration.source_ref
             ):
                 continue
             workspace_path = _workspace_path_for_source_path(
-                item.logical_path,
+                catalog_item.logical_path,
                 prefix,
                 root,
             )
@@ -386,7 +386,7 @@ def _workspace_files_for_source(
             if workspace_path in seen_files:
                 return "context manifest workspace paths are duplicated"
             seen_files.add(workspace_path)
-            files[workspace_path] = item.content_digest
+            files[workspace_path] = catalog_item.content_digest
     return files
 
 

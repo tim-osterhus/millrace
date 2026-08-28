@@ -1999,37 +1999,37 @@ def _attempt_input_scope(
             foreign = True
 
     state = relation.state
-    for work_item in state.work_items.values():
-        if work_item.created_by_input_id == input_id:
-            mark(work_item.ref.plan_ref, work_item.lineage_id)
+    for created_work_item in state.work_items.values():
+        if created_work_item.created_by_input_id == input_id:
+            mark(created_work_item.ref.plan_ref, created_work_item.lineage_id)
     for activation in state.activations.values():
         if activation.created_by_input_id != input_id:
             continue
-        work_item = state.work_items.get(activation.work_item_id)
-        if work_item is None:
+        activation_work_item = state.work_items.get(activation.work_item_id)
+        if activation_work_item is None:
             foreign = True
         else:
-            mark(activation.plan_ref, work_item.lineage_id)
-    for run in state.runs.values():
-        if run.created_by_input_id != input_id:
+            mark(activation.plan_ref, activation_work_item.lineage_id)
+    for created_run in state.runs.values():
+        if created_run.created_by_input_id != input_id:
             continue
-        work_item = state.work_items.get(run.work_item_id)
-        if work_item is None:
+        run_work_item = state.work_items.get(created_run.work_item_id)
+        if run_work_item is None:
             foreign = True
         else:
-            mark(run.run_ref.plan_ref, work_item.lineage_id)
+            mark(created_run.run_ref.plan_ref, run_work_item.lineage_id)
     for observation in state.runner_observations.values():
         if observation.created_by_input_id != input_id:
             continue
-        run = state.runs.get(observation.run_id)
-        if run is None:
+        observation_run = state.runs.get(observation.run_id)
+        if observation_run is None:
             foreign = True
             continue
-        work_item = state.work_items.get(run.work_item_id)
-        if work_item is None:
+        observation_work_item = state.work_items.get(observation_run.work_item_id)
+        if observation_work_item is None:
             foreign = True
         else:
-            mark(run.run_ref.plan_ref, work_item.lineage_id)
+            mark(observation_run.run_ref.plan_ref, observation_work_item.lineage_id)
 
     for route in state.activation_routes:
         if route.created_by_input_id != input_id:
@@ -2044,23 +2044,33 @@ def _attempt_input_scope(
         else:
             mark(source_run.run_ref.plan_ref, source_work_item.lineage_id)
 
-    for wait in state.cooldown_waits.values():
-        if input_id in {wait.created_input_id, wait.consumed_input_id}:
-            mark(wait.plan_ref, wait.lineage_id)
+    for cooldown_wait in state.cooldown_waits.values():
+        if input_id in {
+            cooldown_wait.created_input_id,
+            cooldown_wait.consumed_input_id,
+        }:
+            mark(cooldown_wait.plan_ref, cooldown_wait.lineage_id)
     for quarantine in state.lineage_quarantines.values():
         if input_id in {quarantine.created_input_id, quarantine.superseded_input_id}:
             mark(quarantine.selected_plan_ref, quarantine.lineage_id)
     for intervention in state.operator_interventions.values():
         if intervention.created_by_input_id == input_id:
             mark(intervention.selected_plan_ref, intervention.lineage_id)
-    for wait in state.operator_waits.values():
-        if input_id in {wait.created_input_id, wait.resolved_input_id}:
-            mark(wait.selected_plan_ref, wait.lineage_id)
+    for operator_wait in state.operator_waits.values():
+        if input_id in {
+            operator_wait.created_input_id,
+            operator_wait.resolved_input_id,
+        }:
+            mark(operator_wait.selected_plan_ref, operator_wait.lineage_id)
     for counter in state.counters.values():
         if counter.updated_by_input_id == input_id:
             mark(counter.selected_plan_ref, counter.lineage_id)
 
-    for audit in (*state.governance_events, *state.traces):
+    audits: tuple[GovernanceEventRecord | TraceRecord, ...] = (
+        *state.governance_events,
+        *state.traces,
+    )
+    for audit in audits:
         if audit.input_id != input_id:
             continue
         if audit.plan_fingerprint is not None:
@@ -2069,21 +2079,24 @@ def _attempt_input_scope(
             else:
                 foreign = True
         if audit.work_item_id is not None:
-            work_item = state.work_items.get(audit.work_item_id)
-            if work_item is None:
+            audit_work_item = state.work_items.get(audit.work_item_id)
+            if audit_work_item is None:
                 foreign = True
             else:
-                mark(work_item.ref.plan_ref, work_item.lineage_id)
+                mark(audit_work_item.ref.plan_ref, audit_work_item.lineage_id)
         if audit.run_id is not None:
-            run = state.runs.get(audit.run_id)
-            if run is None:
+            audit_run = state.runs.get(audit.run_id)
+            if audit_run is None:
                 foreign = True
             else:
-                work_item = state.work_items.get(run.work_item_id)
-                if work_item is None:
+                audit_run_work_item = state.work_items.get(audit_run.work_item_id)
+                if audit_run_work_item is None:
                     foreign = True
                 else:
-                    mark(run.run_ref.plan_ref, work_item.lineage_id)
+                    mark(
+                        audit_run.run_ref.plan_ref,
+                        audit_run_work_item.lineage_id,
+                    )
     return current, foreign
 
 
@@ -2698,34 +2711,35 @@ def _validate_checkout_manifest_shape(
             _refuse("existing checkout manifest runtime ordering is invalid")
 
     file_paths = {item.checkout_path for item in manifest.files}
-    for item in manifest.catalog:
+    for catalog_item in manifest.catalog:
         if (
-            item.logical_path == "checkout.manifest.json"
-            or item.logical_path in file_paths
+            catalog_item.logical_path == "checkout.manifest.json"
+            or catalog_item.logical_path in file_paths
         ):
             _refuse("existing checkout catalog path collides with checkout files")
-        source_key = (item.source_kind, item.source_ref)
+        source_key = (catalog_item.source_kind, catalog_item.source_ref)
         selection = selected_sources.get(source_key)
         if selection is None or selection.required:
             _refuse("existing checkout catalog contains an unselected source")
-        if item.source_kind == "workspace_relative_root":
-            prefix = f"discoverable/workspace/{item.source_ref}"
-            if item.logical_path != prefix and not item.logical_path.startswith(
-                f"{prefix}/"
+        if catalog_item.source_kind == "workspace_relative_root":
+            prefix = f"discoverable/workspace/{catalog_item.source_ref}"
+            if (
+                catalog_item.logical_path != prefix
+                and not catalog_item.logical_path.startswith(f"{prefix}/")
             ):
                 _refuse("existing checkout catalog workspace layout is invalid")
         else:
-            prefix = f"discoverable/runtime/{item.source_kind}/"
-            suffix = item.logical_path.removeprefix(prefix)
+            prefix = f"discoverable/runtime/{catalog_item.source_kind}/"
+            suffix = catalog_item.logical_path.removeprefix(prefix)
             if (
-                not item.logical_path.startswith(prefix)
+                not catalog_item.logical_path.startswith(prefix)
                 or len(suffix) != 11
                 or suffix[6:] != ".json"
                 or not suffix[:6].isdigit()
             ):
                 _refuse("existing checkout catalog runtime layout is invalid")
             runtime_catalog_indices.setdefault(source_key, []).append(int(suffix[:6]))
-        catalog_by_source.setdefault(source_key, []).append(item)
+        catalog_by_source.setdefault(source_key, []).append(catalog_item)
 
     for source_key, indices in runtime_catalog_indices.items():
         if sorted(indices) != list(range(len(indices))):
@@ -2787,12 +2801,12 @@ def _load_existing_checkout_payloads(
             ):
                 _refuse("existing checkout CAS file object is not authentic")
             payload_by_path[item.checkout_path] = payload
-        for item in manifest.catalog:
-            payload = cas_store.get_bytes(item.content_digest)
+        for catalog_item in manifest.catalog:
+            payload = cas_store.get_bytes(catalog_item.content_digest)
             if (
                 type(payload) is not bytes
-                or len(payload) != item.byte_length
-                or storage_digest_for_bytes(payload) != item.content_digest
+                or len(payload) != catalog_item.byte_length
+                or storage_digest_for_bytes(payload) != catalog_item.content_digest
             ):
                 _refuse("existing checkout CAS catalog object is not authentic")
         cas_manifest = cas_store.get_bytes(manifest_digest)
@@ -3132,12 +3146,13 @@ def _verify_existing_checkout(
                 or cas_payload != payload_by_path[item.checkout_path]
             ):
                 _refuse("CAS file bytes do not match manifest payload")
-        for item in manifest.catalog:
-            cas_payload = cas_store.get_bytes(item.content_digest)
+        for catalog_item in manifest.catalog:
+            cas_payload = cas_store.get_bytes(catalog_item.content_digest)
             if (
                 type(cas_payload) is not bytes
-                or len(cas_payload) != item.byte_length
-                or storage_digest_for_bytes(cas_payload) != item.content_digest
+                or len(cas_payload) != catalog_item.byte_length
+                or storage_digest_for_bytes(cas_payload)
+                != catalog_item.content_digest
             ):
                 _refuse("CAS catalog bytes do not match manifest catalog")
         for receipt in selected_receipts.values():

@@ -734,17 +734,17 @@ def _validate_persisted_context_evidence_rows(
     ).fetchall()
     for raw_row in hydration_rows:
         try:
-            record = _context_hydration_receipt_from_row(
+            hydration_receipt = _context_hydration_receipt_from_row(
                 cast(tuple[object, ...], raw_row)
             )
             authority = _validate_context_evidence_session(
                 connection,
-                session_id=record.session_id,
+                session_id=hydration_receipt.session_id,
             )
             _validate_loaded_context_evidence_authority(
-                session_id=record.session_id,
-                dispatch_generation=record.dispatch_generation,
-                fencing_token=record.fencing_token,
+                session_id=hydration_receipt.session_id,
+                dispatch_generation=hydration_receipt.dispatch_generation,
+                fencing_token=hydration_receipt.fencing_token,
                 authority=authority,
             )
         except StorageIntegrityError:
@@ -764,17 +764,17 @@ def _validate_persisted_context_evidence_rows(
     ).fetchall()
     for raw_row in attribution_rows:
         try:
-            record = _runner_session_attribution_from_row(
+            attribution_record = _runner_session_attribution_from_row(
                 cast(tuple[object, ...], raw_row)
             )
             authority = _validate_context_evidence_session(
                 connection,
-                session_id=record.session_id,
+                session_id=attribution_record.session_id,
             )
             _validate_loaded_context_evidence_authority(
-                session_id=record.session_id,
-                dispatch_generation=record.dispatch_generation,
-                fencing_token=record.fencing_token,
+                session_id=attribution_record.session_id,
+                dispatch_generation=attribution_record.dispatch_generation,
+                fencing_token=attribution_record.fencing_token,
                 authority=authority,
             )
         except StorageIntegrityError:
@@ -796,17 +796,17 @@ def _validate_persisted_context_evidence_rows(
     ).fetchall()
     for raw_row in cleanup_rows:
         try:
-            record = _context_cleanup_receipt_from_row(
+            cleanup_receipt = _context_cleanup_receipt_from_row(
                 cast(tuple[object, ...], raw_row)
             )
             authority = _validate_context_evidence_session(
                 connection,
-                session_id=record.session_id,
+                session_id=cleanup_receipt.session_id,
             )
             _validate_loaded_context_evidence_authority(
-                session_id=record.session_id,
-                dispatch_generation=record.dispatch_generation,
-                fencing_token=record.fencing_token,
+                session_id=cleanup_receipt.session_id,
+                dispatch_generation=cleanup_receipt.dispatch_generation,
+                fencing_token=cleanup_receipt.fencing_token,
                 authority=authority,
             )
         except StorageIntegrityError:
