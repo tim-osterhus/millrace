@@ -704,6 +704,8 @@ class _RecordingMillforgeFacade:
         descriptor = SimpleNamespace(
             runner_id="millforge-base",
             runner_version=2,
+            harness_id="millforge.base.unrestricted_agent.v1",
+            harness_version=1,
             package_name="millforge",
             package_version="0.1.0",
             descriptor_sha256=descriptor_sha256,
@@ -719,8 +721,8 @@ class _RecordingMillforgeFacade:
             options=SimpleNamespace(load_context_files=False),
             metadata=SimpleNamespace(context_file_count=0),
             compiled_plan=SimpleNamespace(
-                harness_id="millforge-base",
-                harness_version=2,
+                harness_id="millforge.base.unrestricted_agent.v1",
+                harness_version=1,
                 compiled_sha256="b" * 64,
             ),
             capability_envelope=SimpleNamespace(
