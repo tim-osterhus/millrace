@@ -35,6 +35,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Fixed
 
+- Validated Millforge runner pins and compiled-harness identities against their
+  distinct descriptor fields, allowing a version-2 runner to execute its
+  version-1 compiled harness without weakening selected-authority checks.
 - Stamped persisted runner-result observations from their durable completion
   time so cooldown-backed recovery actions can schedule their governed wait
   instead of refusing with `missing_observed_at`.

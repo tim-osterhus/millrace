@@ -11,10 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = "0.22.3"
 WHEEL_SHA256 = (
-    "4498c9d1fbd64305a549d6729494965e5e5a6a8b5ffac7a2a2212c37b1b1acd0"
+    "1eceeda0367668e694ef32d59502f37c4a2934c518fa3e84286e32a51d6d585f"
 )
 SDIST_SHA256 = (
-    "24204bc478396aa1eeb3aa2b5d47db08668e1780b683122e786e64141f703a96"
+    "d45d6fbc811c6b7f5c93786c936813286e058680582d77211a3274eff49349af"
 )
 EXPECTED_ARTIFACTS = {
     "millrace_ai-0.22.3-py3-none-any.whl": WHEEL_SHA256,
