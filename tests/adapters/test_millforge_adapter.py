@@ -403,6 +403,8 @@ class _FakeFacade:
         self._descriptor = _record(
             runner_id="millforge-base",
             runner_version=2,
+            harness_id="millforge-base",
+            harness_version=2,
             package_name="millforge",
             package_version="0.1.0",
             descriptor_sha256=_DESCRIPTOR_SHA256,
@@ -743,6 +745,28 @@ def test_millforge_starts_live_handle_and_polls_terminal_once(
         time.sleep(0.001)
     assert isinstance(outcome, AdapterSuccessResult)
     assert started.handle.poll_completion() is None
+
+
+def test_millforge_accepts_distinct_runner_and_compiled_harness_identities(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.runner_contract import AdapterSuccessResult
+
+    facade = _FakeFacade(
+        selected_output=_SelectedOutputPresent({"status": "ok"}),
+    )
+    facade._descriptor.harness_id = "millforge.base.unrestricted_agent.v1"
+    facade._descriptor.harness_version = 1
+    facade.components.compiled_plan.harness_id = (
+        "millforge.base.unrestricted_agent.v1"
+    )
+    facade.components.compiled_plan.harness_version = 1
+
+    result = _drive_session(_adapter(monkeypatch, tmp_path, facade), _request())
+
+    assert isinstance(result, AdapterSuccessResult)
+    assert facade.calls == 1
 
 
 def test_live_millforge_cancel_signals_public_token_and_is_idempotent(
@@ -1821,6 +1845,8 @@ def test_kernel_ping_default_bindings_prepare_selected_outputs_offline(
         facade._descriptor = _record(  # noqa: SLF001 - selected fake preflight data
             runner_id=pin.component_id,
             runner_version=int(pin.component_version),
+            harness_id=facade.components.compiled_plan.harness_id,
+            harness_version=facade.components.compiled_plan.harness_version,
             package_name=pin.provider_distribution,
             package_version=pin.provider_version,
             descriptor_sha256=pin.descriptor_sha256,

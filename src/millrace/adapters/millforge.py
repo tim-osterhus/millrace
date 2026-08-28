@@ -982,11 +982,12 @@ def _prepare_invocation(
     pin = request.selected_component_pin
     if pin is None:
         raise _AuthorityRefusal("component_pin")
-    _verify_descriptor(pin, facade)
+    descriptor = _verify_descriptor(pin, facade)
     _verify_components(
         pin,
         facade,
         request,
+        descriptor=descriptor,
         expected_profile_id=expected_profile_id,
     )
     selected_output_present_type, selected_output_absent_type = _selected_output_types(
@@ -1022,7 +1023,7 @@ def _prepare_invocation(
     )
 
 
-def _verify_descriptor(pin: RunnerComponentPin, facade: MillforgeFacade) -> None:
+def _verify_descriptor(pin: RunnerComponentPin, facade: MillforgeFacade) -> object:
     descriptor = getattr(facade, "descriptor", None)
     expected = (
         ("component_kind", "runner"),
@@ -1049,6 +1050,7 @@ def _verify_descriptor(pin: RunnerComponentPin, facade: MillforgeFacade) -> None
         )
     ):
         raise _AuthorityRefusal("descriptor_results")
+    return descriptor
 
 
 def _verify_components(
@@ -1056,6 +1058,7 @@ def _verify_components(
     facade: MillforgeFacade,
     request: AdapterInvocationRequest,
     *,
+    descriptor: object,
     expected_profile_id: object | None,
 ) -> None:
     components = getattr(facade, "components", None)
@@ -1067,8 +1070,10 @@ def _verify_components(
         raise _AuthorityRefusal("context_files")
     compiled = getattr(components, "compiled_plan", None)
     if (
-        getattr(compiled, "harness_id", None) != pin.component_id
-        or str(getattr(compiled, "harness_version", "")) != pin.component_version
+        getattr(compiled, "harness_id", None)
+        != getattr(descriptor, "harness_id", None)
+        or getattr(compiled, "harness_version", None)
+        != getattr(descriptor, "harness_version", None)
     ):
         raise _AuthorityRefusal("compiled_component")
     profile_id = getattr(getattr(components, "model_profile", None), "profile_id", None)
