@@ -1,17 +1,32 @@
 # Getting Started
 
-This guide creates a fresh v0.22 workspace, selects the official
+This guide qualifies the **unreleased v0.22.3 candidate** in a fresh workspace,
+selects the official
 `simple_loop` workflow, queues one prompt, and runs it through Millforge.
 
-## 1. Install Millrace
+For the published bundle, install `millrace==0.22.2` and use the
+[v0.22.2 guide](https://github.com/tim-osterhus/millrace/blob/v0.22.2/docs/getting-started.md).
+There is no published v0.22.3 bundle yet. The steps below require explicitly
+reviewed candidate member wheels; they do not upgrade the public bundle.
 
-The base `millrace-ai` runtime requires Python 3.11 or newer. The complete
-`millrace` bundle requires Python 3.12 or newer.
+**Existing workspace warning:** v0.22.2 uses store schema 8; v0.22.3 requires
+fresh schema-10 state. There is no migration from schema 8 or 9. Finish or
+retire work with its matching runtime, preserve the old workspace, and create
+a new one. Do not point this candidate at active old state or copy its SQLite
+database/CAS into the new workspace. See [compatibility](v0.22-compatibility.md).
+
+## 1. Install The Candidate Members
+
+The base `millrace-ai` runtime requires Python 3.11 or newer. The published
+v0.22.2 `millrace` bundle requires Python 3.12 or newer.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install "millrace==0.22.2"
+python -m pip install \
+  /absolute/path/to/millrace_ai-0.22.3-py3-none-any.whl \
+  /absolute/path/to/millrace_plus-0.22.3-py3-none-any.whl \
+  /absolute/path/to/millforge-0.1.0-py3-none-any.whl
 millrace --version
 ```
 
@@ -36,7 +51,7 @@ millrace --workspace "$WORKSPACE" package import-installed \
   --command-id import-plus-001
 
 millrace --workspace "$WORKSPACE" package enable \
-  millrace.plus.official 0.22.2 --command-id enable-plus-001
+  millrace.plus.official 0.22.3 --command-id enable-plus-001
 
 millrace --workspace "$WORKSPACE" package list \
   --command-id list-plus-001
@@ -51,12 +66,12 @@ Verify and admit the workflow:
 
 ```bash
 millrace --workspace "$WORKSPACE" package verify \
-  millrace.plus.official 0.22.2 \
+  millrace.plus.official 0.22.3 \
   --workflow-id simple_loop --workflow-version 0.1 --entrypoint default \
   --command-id verify-simple-loop-001
 
 millrace --json --workspace "$WORKSPACE" plan admit-package \
-  millrace.plus.official 0.22.2 \
+  millrace.plus.official 0.22.3 \
   --workflow-id simple_loop --workflow-version 0.1 --entrypoint default \
   --command-id admit-simple-loop-001 --input-id admit-simple-loop-001
 ```

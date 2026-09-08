@@ -17,6 +17,7 @@ from millrace.adapters.cli import (
 )
 from millrace.adapters.cli.context import OpenRuntimeContext
 from millrace.contracts.context_checkout import (
+    ContextCheckoutLegacyManifest,
     ContextCheckoutManifest,
     decode_context_checkout_manifest,
     verify_context_checkout_manifest_digest,
@@ -134,6 +135,8 @@ def _cleanup_completed_session_context(
     manifest_bytes = runtime.cas_store.get_bytes(manifest_digest)
     verify_context_checkout_manifest_digest(manifest_bytes, manifest_digest)
     manifest = decode_context_checkout_manifest(manifest_bytes)
+    if isinstance(manifest, ContextCheckoutLegacyManifest):
+        raise ContextRetentionError("initial context manifest is inspect-only")
     _validate_manifest_authority(
         manifest,
         session=stored_session,

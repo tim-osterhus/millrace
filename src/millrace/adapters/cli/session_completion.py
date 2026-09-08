@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from millrace.adapters.cli import (
     context_retention,
@@ -21,6 +21,7 @@ from millrace.adapters.cli.context_writeback import validate_context_writeback
 from millrace.adapters.cli.session_diagnostics import (
     _completion_diagnostic_bytes,
     _completion_diagnostic_bytes_for_dispatch,
+    _context_writeback_refusal_diagnostic_bytes,
     _signal_digest,
 )
 from millrace.adapters.runner_contract import (
@@ -30,7 +31,7 @@ from millrace.adapters.runner_contract import (
     AdapterSuccessResult,
     RedactionPolicy,
     RunnerCleanupResult,
-    start_refusal_diagnostic_bytes,
+    adapter_error_diagnostic_bytes,
 )
 from millrace.adapters.runner_contract import (
     runner_evidence_from_adapter_outcome as runner_evidence_from_adapter_outcome,
@@ -71,6 +72,8 @@ __all__ = (
     "build_dispatch_envelope_for_run",
 )
 _RUNTIME_SESSION_EVENT_POLICY = RedactionPolicy(policy_id="runtime-session-events")
+
+
 @dataclass(frozen=True, slots=True)
 class SessionExecutionResult:
     code: str
@@ -170,6 +173,12 @@ def _persist_completion(
             persistence_failure_code="runner_usage_evidence_refused",
         )
     evidence = _evidence_for_outcome(outcome, request)
+    if not session_attribution.persist_runner_session_attribution(
+        runtime,
+        session=session,
+        attribution=outcome.attribution,
+    ):
+        return SessionExecutionResult("completion_refused")
     mutation_refusal = _context_writeback_refusal(
         runtime,
         run_ref=run_ref,
@@ -177,14 +186,29 @@ def _persist_completion(
         evidence=evidence,
     )
     if mutation_refusal is not None:
-        return mutation_refusal
-    if not session_attribution.persist_runner_session_attribution(
-        runtime,
-        session=session,
-        attribution=outcome.attribution,
-    ):
-        return SessionExecutionResult("completion_refused")
-    if isinstance(outcome, AdapterErrorResult):
+        refusal_result, refusal_reason = mutation_refusal
+        completion = session_records.context_mutation_completion_record(
+            session=session,
+            diagnostic_digest=runtime.cas_store.put_bytes(
+                _context_writeback_refusal_diagnostic_bytes(request, refusal_reason)
+            ),
+            cleanup_disposition=cleanup.disposition,
+            redaction_policy_id=request.redaction_policy.policy_id,
+            primary=primary,
+        )
+        if _persist_completion_record(
+            runtime,
+            run_ref,
+            session,
+            completion,
+            event_redaction_policy=request.redaction_policy,
+        ) is None:
+            return refusal_result
+        result = SessionExecutionResult(
+            "adapter_failure",
+            adapter_error_kind="context_mutation_refused",
+        )
+    elif isinstance(outcome, AdapterErrorResult):
         result = _persist_error_completion(
             runtime,
             run_ref=run_ref,
@@ -262,7 +286,7 @@ def _authenticate_completion(
         )
         return SessionExecutionResult("session_reconciliation_required")
     if isinstance(outcome, AdapterErrorResult):
-        if _adapter_error_diagnostic_bytes(outcome, request=request) is None:
+        if adapter_error_diagnostic_bytes(outcome, request=request) is None:
             _audit_session_refusal(
                 runtime,
                 run_ref=run_ref,
@@ -320,7 +344,7 @@ def _context_writeback_refusal(
     run_ref: RunRef,
     session: RunnerSessionRecord,
     evidence: RunnerResultEvidence | None,
-) -> SessionExecutionResult | None:
+) -> tuple[SessionExecutionResult, str] | None:
     refusal = validate_context_writeback(
         runtime,
         session=session,
@@ -340,7 +364,7 @@ def _context_writeback_refusal(
         ),
         signal_digest=_signal_digest({"context_writeback_refusal": refusal}),
     )
-    return SessionExecutionResult("completion_refused")
+    return SessionExecutionResult("completion_refused"), refusal
 
 
 def _persist_error_completion(
@@ -354,7 +378,7 @@ def _persist_error_completion(
     primary: RunnerSessionCancellationRecord | None,
     terminal_state: str,
 ) -> SessionExecutionResult:
-    raw_diagnostic_bytes = _adapter_error_diagnostic_bytes(
+    raw_diagnostic_bytes = adapter_error_diagnostic_bytes(
         outcome,
         request=request,
     )
@@ -486,7 +510,7 @@ def _persist_adapter_error(
         evidence=None,
     )
     if refusal is not None:
-        return refusal
+        return refusal[0]
     try:
         raw_diagnostic_bytes = runtime.cas_store.get_bytes(diagnostic_digest)
         dispatch = (
@@ -625,7 +649,7 @@ def _apply_persisted_completion(
         evidence=evidence,
     )
     if refusal is not None:
-        return refusal
+        return refusal[0]
     observation = RunnerResultObserved(
         completion.application_input_id,
         run_id=completion.run_id,
@@ -641,16 +665,19 @@ def _apply_persisted_completion(
         ),
     )
     if not decision.accepted:
+        refusal_reason = (
+            "transition_refused"
+            if decision.refusal is None
+            else decision.refusal.reason
+        )
         if not refusal_is_pre_persist(decision):
             next_state = apply(state, decision)
             runtime.store.persist_runtime_state(next_state, runtime.cas_store)
         return SessionExecutionResult(
-            "observation_refused",
-            observation_refusal_reason=(
-                "transition_refused"
-                if decision.refusal is None
-                else decision.refusal.reason
-            ),
+            "runner_session_waiting"
+            if refusal_reason == "cooldown_wait_pending"
+            else "observation_refused",
+            observation_refusal_reason=refusal_reason,
             transition_disposition=decision.disposition,
         )
     next_state = apply(state, decision)
@@ -769,19 +796,3 @@ def _evidence_matches_dispatch(
 
 def _load(runtime: OpenRuntimeContext) -> RuntimeState:
     return runtime.store.load_runtime_state(runtime.cas_store)
-
-
-def _adapter_error_diagnostic_bytes(
-    outcome: AdapterErrorResult,
-    *,
-    request: AdapterInvocationRequest,
-) -> bytes | None:
-    if outcome.redaction_policy_id != request.redaction_policy.policy_id:
-        return None
-    try:
-        redacted = request.redaction_policy.redact_authority_value(outcome.diagnostics)
-    except Exception:
-        redacted = {"redaction_failed": True}
-    if not isinstance(redacted, Mapping):
-        return None
-    return start_refusal_diagnostic_bytes(replace(outcome, diagnostics=redacted))

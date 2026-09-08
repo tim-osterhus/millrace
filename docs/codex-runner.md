@@ -140,8 +140,9 @@ from the selected `cwd` to read the selected `router_relative_path` (the
 materialized `CONTEXT.md`). It must not discover ambient context or replace
 the authenticated descriptor with another path.
 
-In v0.22.3, the authenticated checkout uses a schema-2 manifest. Required
-material is present at start; discoverable material is catalog-only until an
+In v0.22.3, the authenticated checkout uses a current schema-3 manifest
+with durable root-state proofs; schema-2 manifests are byte-preserving
+inspect-only legacy. Required material is present at start; discoverable material is catalog-only until an
 exact bounded command selects it:
 
 ```text

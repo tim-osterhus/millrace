@@ -10,10 +10,10 @@ import shutil
 import stat
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, TypeAlias
+from typing import TYPE_CHECKING, NoReturn, TypeAlias, cast
 from unicodedata import normalize
 
 from millrace.adapters.cli.context import CliWorkspacePaths
@@ -30,8 +30,10 @@ from millrace.contracts.context_checkout import (
     ContextCheckoutCatalogEntry,
     ContextCheckoutContractError,
     ContextCheckoutFile,
+    ContextCheckoutLegacyManifest,
     ContextCheckoutManifest,
     ContextCheckoutOmission,
+    ContextCheckoutRootState,
     context_checkout_manifest_digest,
     decode_context_checkout_manifest,
     encode_context_checkout_manifest,
@@ -41,11 +43,13 @@ from millrace.contracts.state import (
     Activation,
     AdmittedPlan,
     ArtifactRecord,
+    ClosedWorkItemRecord,
     ContextHydrationReceipt,
     CounterRecord,
     GovernanceEventRecord,
     PlanRef,
     RecoveryAttemptRecord,
+    RunnerObservationRecord,
     RunnerSessionRecord,
     RunRecord,
     RuntimeState,
@@ -73,6 +77,10 @@ if TYPE_CHECKING:
 
 class ContextCheckoutPreparationError(ValueError):
     """Raised when context checkout preparation is unsafe or inconsistent."""
+
+
+class ContextCheckoutUncomparableRootError(ContextCheckoutPreparationError):
+    """Raised when a selected optional root cannot be bounded safely."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +113,27 @@ JSONValue: TypeAlias = (
 )
 
 
+_RUNTIME_JSON_CHUNK_SIZE = 4096
+
+
+@dataclass(frozen=True, slots=True)
+class _DeferredRuntimeRecord:
+    materializer: Callable[[], JSONValue]
+
+
+_RuntimeRecord: TypeAlias = JSONValue | _DeferredRuntimeRecord
+
+
 class _CaptureInstability(Exception):
+    pass
+
+
+class _CaptureBoundExceeded(Exception):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+
+class _RuntimeRecordBoundExceeded(Exception):
     pass
 
 
@@ -152,6 +180,7 @@ class _CounterReplayHistory:
 class _CaptureResult:
     files: tuple[_CapturedFile, ...]
     omission: ContextCheckoutOmission | None
+    root_state: ContextCheckoutRootState | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +193,14 @@ class _Relation:
     selected_plan: SelectedCompiledPlan
     envelope: RunnerDispatchEnvelope
     router_body: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RecoveryAttemptRelation:
+    state: RuntimeState
+    run: RunRecord
+    work_item: WorkItem
+    selected_plan: SelectedCompiledPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +303,14 @@ def prepare_context_checkout(
                 captures = _capture_workspace_sources(
                     selections=selections,
                     workspace=path_authority.workspace,
+                    protect_optional_roots=(
+                        binding.mutation_policy == "forbid_selected_roots"
+                    ),
+                )
+                root_states = tuple(
+                    capture.root_state
+                    for capture in captures
+                    if capture.root_state is not None
                 )
                 runtime_files, runtime_omissions = _runtime_files(
                     selections=selections,
@@ -332,6 +377,7 @@ def prepare_context_checkout(
                     files=files,
                     catalog=catalog,
                     omissions=omissions,
+                    root_states=root_states,
                 )
                 manifest_bytes = encode_context_checkout_manifest(manifest)
                 manifest_digest = context_checkout_manifest_digest(manifest_bytes)
@@ -449,6 +495,10 @@ def rematerialize_attached_context_checkout(
             manifest_bytes = cas_store.get_bytes(manifest_digest)
             manifest = decode_context_checkout_manifest(manifest_bytes)
             verify_context_checkout_manifest_digest(manifest_bytes, manifest_digest)
+            if isinstance(manifest, ContextCheckoutLegacyManifest):
+                _refuse(
+                    "legacy context manifest is inspect-only; root baseline unavailable"
+                )
         except ContextCheckoutPreparationError:
             raise
         except Exception as exc:
@@ -780,6 +830,9 @@ def _validate_attempt_stability(
     second_captures = _capture_workspace_sources(
         selections=selections,
         workspace=workspace,
+        protect_optional_roots=(
+            binding.mutation_policy == "forbid_selected_roots"
+        ),
     )
     if second_captures != attempt.captures:
         raise _CaptureInstability("workspace material changed during validation")
@@ -960,6 +1013,7 @@ def _capture_workspace_sources(
     *,
     selections: Sequence[_SourceSelection],
     workspace: Path,
+    protect_optional_roots: bool = False,
 ) -> tuple[_CaptureResult, ...]:
     results: list[_CaptureResult] = []
     for selection in selections:
@@ -968,12 +1022,32 @@ def _capture_workspace_sources(
             results.append(_CaptureResult(files=(), omission=None))
             continue
         source_path = workspace / source.source_ref
-        results.append(
-            _capture_workspace_source(
+        try:
+            result = _capture_workspace_source(
                 selection=selection,
                 source_path=source_path,
+                protect_optional_root=protect_optional_roots,
             )
-        )
+        except _CaptureInstability as exc:
+            if protect_optional_roots and not selection.required:
+                raise ContextCheckoutUncomparableRootError(
+                    "selected optional context root is uncomparable within bounds"
+                ) from exc
+            raise
+        except ContextCheckoutPreparationError as exc:
+            if (
+                protect_optional_roots
+                and not selection.required
+                and not any(
+                    marker in str(exc)
+                    for marker in ("symlink", "special file")
+                )
+            ):
+                raise ContextCheckoutUncomparableRootError(
+                    "selected optional context root is uncomparable within bounds"
+                ) from exc
+            raise
+        results.append(result)
     return tuple(results)
 
 
@@ -981,11 +1055,25 @@ def _capture_workspace_source(
     *,
     selection: _SourceSelection,
     source_path: Path,
+    protect_optional_root: bool = False,
 ) -> _CaptureResult:
     source = selection.declaration
-    before = _snapshot_tree(source_path)
+    try:
+        before = _snapshot_tree(
+            source_path,
+            max_entries=source.max_files,
+        )
+    except _CaptureBoundExceeded as exc:
+        return _bounded_capture_result(
+            selection=selection,
+            reason=exc.reason,
+            protect_optional_root=protect_optional_root,
+        )
     if before is None:
-        after = _snapshot_tree(source_path)
+        after = _snapshot_tree(
+            source_path,
+            max_entries=source.max_files,
+        )
         if before != after:
             raise _CaptureInstability("source appeared while being captured")
         if selection.required:
@@ -997,7 +1085,10 @@ def _capture_workspace_source(
                 source_ref=source.source_ref,
                 reason="source_missing",
             ),
+            root_state=_root_state_for_snapshot(source, before),
         )
+
+    root_state = _root_state_for_snapshot(source, before)
     payloads: list[_CapturedFile] = []
     file_paths = sorted(
         (
@@ -1008,9 +1099,43 @@ def _capture_workspace_source(
         key=lambda value: value.encode("utf-8"),
     )
     directory_root = stat.S_ISDIR(before[""][0])
+    total_bytes = sum(before[relative][3] for relative in file_paths)
+    if total_bytes > source.max_bytes:
+        try:
+            after = _snapshot_tree(
+                source_path,
+                max_entries=source.max_files,
+            )
+        except _CaptureBoundExceeded as exc:
+            return _bounded_capture_result(
+                selection=selection,
+                reason=exc.reason,
+                protect_optional_root=protect_optional_root,
+            )
+        if before != after:
+            raise _CaptureInstability("workspace changed while being captured")
+        return _bounded_capture_result(
+            selection=selection,
+            reason="byte_limit_exceeded",
+            protect_optional_root=protect_optional_root,
+        )
+
+    remaining_bytes = source.max_bytes
     for relative in file_paths:
         path = source_path if relative == "" else source_path / relative
-        payload = _read_regular_file(path, before[relative])
+        expected_identity = before[relative]
+        payload = _read_regular_file(
+            path,
+            expected_identity,
+            max_bytes=remaining_bytes,
+        )
+        if len(payload) > remaining_bytes:
+            return _bounded_capture_result(
+                selection=selection,
+                reason="byte_limit_exceeded",
+                protect_optional_root=protect_optional_root,
+            )
+        remaining_bytes -= len(payload)
         _validate_utf8_text(payload)
         checkout_path = (
             f"{'required' if selection.required else 'discoverable'}/workspace/"
@@ -1033,14 +1158,24 @@ def _capture_workspace_source(
                 ),
             )
         )
-    after = _snapshot_tree(source_path)
+    try:
+        after = _snapshot_tree(
+            source_path,
+            max_entries=source.max_files,
+        )
+    except _CaptureBoundExceeded as exc:
+        raise _CaptureInstability("workspace grew beyond its capture bound") from exc
     if before != after:
         raise _CaptureInstability("workspace changed while being captured")
-    for relative, captured in zip(file_paths, payloads):
+    for relative, captured in zip(file_paths, payloads, strict=True):
         if after is None or relative not in after:
             raise _CaptureInstability("workspace file disappeared after capture")
         path = source_path if relative == "" else source_path / relative
-        verified_payload = _read_regular_file(path, after[relative])
+        verified_payload = _read_regular_file(
+            path,
+            after[relative],
+            max_bytes=len(captured.payload),
+        )
         if verified_payload != captured.payload:
             raise _CaptureInstability("workspace content changed during capture")
     if not payloads:
@@ -1053,28 +1188,27 @@ def _capture_workspace_source(
                 source_ref=source.source_ref,
                 reason="source_missing",
             ),
+            root_state=root_state,
         )
-    total_bytes = sum(len(file_record.payload) for file_record in payloads)
-    if len(payloads) > source.max_files:
-        return _bounded_capture_result(
-            selection=selection,
-            reason="file_limit_exceeded",
-        )
-    if total_bytes > source.max_bytes:
-        return _bounded_capture_result(
-            selection=selection,
-            reason="byte_limit_exceeded",
-        )
-    return _CaptureResult(files=tuple(payloads), omission=None)
+    return _CaptureResult(
+        files=tuple(payloads),
+        omission=None,
+        root_state=root_state,
+    )
 
 
 def _bounded_capture_result(
     *,
     selection: _SourceSelection,
     reason: str,
+    protect_optional_root: bool = False,
 ) -> _CaptureResult:
     if selection.required:
         _refuse("required workspace source exceeds its capture bound")
+    if protect_optional_root:
+        raise ContextCheckoutUncomparableRootError(
+            "selected optional context root is uncomparable within declared bounds"
+        )
     return _CaptureResult(
         files=(),
         omission=ContextCheckoutOmission(
@@ -1082,10 +1216,51 @@ def _bounded_capture_result(
             source_ref=selection.declaration.source_ref,
             reason=reason,
         ),
+        # Bound omissions have no complete, trusted baseline.  Unprotected
+        # optional roots are intentionally omitted from root_states;
+        # source_missing is handled separately and retains its root state.
+        root_state=None,
     )
 
 
-def _snapshot_tree(path: Path) -> dict[str, tuple[int, int, int, int, int]] | None:
+def _root_state_for_snapshot(
+    source: ContextSourceDeclaration,
+    snapshot: Mapping[str, tuple[int, int, int, int, int]] | None,
+) -> ContextCheckoutRootState:
+    if snapshot is None:
+        return ContextCheckoutRootState(
+            source_kind=source.source_kind,
+            source_ref=source.source_ref,
+            root_kind="missing",
+            files=(),
+            directories=(),
+        )
+    root_identity = snapshot[""]
+    root_kind = "file" if stat.S_ISREG(root_identity[0]) else "directory"
+    files = tuple(
+        relative
+        for relative, identity in snapshot.items()
+        if stat.S_ISREG(identity[0])
+    )
+    directories = tuple(
+        relative
+        for relative, identity in snapshot.items()
+        if stat.S_ISDIR(identity[0])
+    )
+    return ContextCheckoutRootState(
+        source_kind=source.source_kind,
+        source_ref=source.source_ref,
+        root_kind=root_kind,
+        files=files,
+        directories=directories,
+    )
+
+
+def _snapshot_tree(
+    path: Path,
+    *,
+    max_entries: int | None = None,
+) -> dict[str, tuple[int, int, int, int, int]] | None:
     try:
         root_stat = path.lstat()
     except FileNotFoundError:
@@ -1097,43 +1272,53 @@ def _snapshot_tree(path: Path) -> dict[str, tuple[int, int, int, int, int]] | No
         _refuse("workspace source cannot be a symlink")
     if not stat.S_ISREG(root_stat.st_mode) and not stat.S_ISDIR(root_stat.st_mode):
         _refuse("workspace source must be a regular file or directory")
-    snapshot = {"": root_identity}
     if stat.S_ISREG(root_stat.st_mode):
-        return snapshot
+        if max_entries is not None and max_entries < 1:
+            raise _CaptureBoundExceeded("file_limit_exceeded")
+        return {"": root_identity}
+    snapshot = {"": root_identity}
     pending: list[tuple[Path, str]] = [(path, "")]
+    entries_seen = 0
     while pending:
         current, relative_root = pending.pop()
         try:
-            entries = list(os.scandir(current))
+            entries = os.scandir(current)
         except FileNotFoundError as exc:
             raise _CaptureInstability("workspace directory disappeared") from exc
         except OSError as exc:
             raise _CaptureInstability("workspace directory could not be read") from exc
-        entries.sort(key=lambda entry: os.fsencode(entry.name))
-        for entry in entries:
-            relative = (
-                entry.name
-                if not relative_root
-                else f"{relative_root}/{entry.name}"
-            )
-            try:
-                entry_stat = entry.stat(follow_symlinks=False)
-            except FileNotFoundError as exc:
-                raise _CaptureInstability("workspace entry disappeared") from exc
-            except OSError as exc:
-                raise _CaptureInstability(
-                    "workspace entry could not be inspected"
-                ) from exc
-            identity = _file_identity(entry_stat)
-            if stat.S_ISLNK(entry_stat.st_mode):
-                _refuse("workspace source tree cannot contain symlinks")
-            if stat.S_ISREG(entry_stat.st_mode):
+        try:
+            for entry in entries:
+                entries_seen += 1
+                relative = (
+                    entry.name
+                    if not relative_root
+                    else f"{relative_root}/{entry.name}"
+                )
+                try:
+                    entry_stat = entry.stat(follow_symlinks=False)
+                except FileNotFoundError as exc:
+                    raise _CaptureInstability("workspace entry disappeared") from exc
+                except OSError as exc:
+                    raise _CaptureInstability(
+                        "workspace entry could not be inspected"
+                    ) from exc
+                identity = _file_identity(entry_stat)
+                if stat.S_ISLNK(entry_stat.st_mode):
+                    _refuse("workspace source tree cannot contain symlinks")
+                if stat.S_ISREG(entry_stat.st_mode):
+                    entry_kind = "file"
+                elif stat.S_ISDIR(entry_stat.st_mode):
+                    entry_kind = "directory"
+                else:
+                    _refuse("workspace source tree contains a special file")
+                if max_entries is not None and entries_seen > max_entries:
+                    raise _CaptureBoundExceeded("file_limit_exceeded")
                 snapshot[relative] = identity
-            elif stat.S_ISDIR(entry_stat.st_mode):
-                snapshot[relative] = identity
-                pending.append((Path(entry.path), relative))
-            else:
-                _refuse("workspace source tree contains a special file")
+                if entry_kind == "directory":
+                    pending.append((Path(entry.path), relative))
+        finally:
+            entries.close()
     return snapshot
 
 
@@ -1150,6 +1335,8 @@ def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
 def _read_regular_file(
     path: Path,
     expected_identity: tuple[int, int, int, int, int],
+    *,
+    max_bytes: int | None = None,
 ) -> bytes:
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -1171,13 +1358,12 @@ def _read_regular_file(
             _refuse("workspace file is not regular")
         with os.fdopen(descriptor, "rb") as stream:
             descriptor = -1
-            return stream.read()
+            return stream.read() if max_bytes is None else stream.read(max_bytes)
     except OSError as exc:
         raise _CaptureInstability("workspace file could not be read") from exc
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-
 
 def _runtime_files(
     *,
@@ -1190,36 +1376,39 @@ def _runtime_files(
         source = selection.declaration
         if source.source_kind == "workspace_relative_root":
             continue
-        records: tuple[bytes, ...] = ()
+        records: Iterable[_RuntimeRecord]
         if source.source_kind == "dispatch_material":
-            records = (
-                _canonical_runtime_record(relation.envelope.payload()),
-            )
+            records = cast(Iterable[_RuntimeRecord], (relation.envelope.payload(),))
         elif source.source_kind == "selected_artifacts":
-            records = _artifact_records(
-                relation,
-                selector=source.source_ref,
+            records = cast(
+                Iterable[_RuntimeRecord],
+                _artifact_records(
+                    relation,
+                    selector=source.source_ref,
+                    serialize=False,
+                    defer_body=True,
+                ),
             )
         elif source.source_kind == "selected_attempts":
-            records = _attempt_records(
-                relation,
-                selector=source.source_ref,
+            records = cast(
+                Iterable[_RuntimeRecord],
+                _attempt_records(
+                    relation,
+                    selector=source.source_ref,
+                    serialize=False,
+                    defer_body=True,
+                ),
             )
         else:
             _refuse("unsupported runtime context source kind")
-        payloads = tuple(records)
-        total_bytes = sum(len(payload) for payload in payloads)
-        if len(payloads) > source.max_files:
+        payloads, bound_reason = _bounded_runtime_payloads(
+            records=records,
+            selection=selection,
+        )
+        if bound_reason is not None:
             _runtime_bound_result(
                 selection=selection,
-                reason="file_limit_exceeded",
-                omissions=omissions,
-            )
-            continue
-        if total_bytes > source.max_bytes:
-            _runtime_bound_result(
-                selection=selection,
-                reason="byte_limit_exceeded",
+                reason=bound_reason,
                 omissions=omissions,
             )
             continue
@@ -1257,6 +1446,50 @@ def _runtime_files(
     return files, omissions
 
 
+def _bounded_runtime_payloads(
+    *,
+    records: Iterable[_RuntimeRecord],
+    selection: _SourceSelection,
+) -> tuple[list[bytes], str | None]:
+    """Serialize bounded runtime records without retaining partial sources."""
+    payloads: list[bytes] = []
+    total_bytes = 0
+    file_limit_exceeded = False
+    byte_limit_exceeded = False
+    for index, record in enumerate(records):
+        if index >= selection.declaration.max_files:
+            file_limit_exceeded = True
+            # Continue consuming the authenticated iterator.  Later records
+            # may contain relevant provenance corruption that must still refuse.
+            continue
+        if byte_limit_exceeded:
+            continue
+        if total_bytes >= selection.declaration.max_bytes:
+            byte_limit_exceeded = True
+            continue
+        try:
+            payload = _canonical_runtime_record(
+                _materialize_runtime_record(record),
+                max_bytes=selection.declaration.max_bytes - total_bytes,
+            )
+        except _RuntimeRecordBoundExceeded:
+            byte_limit_exceeded = True
+            continue
+        payloads.append(payload)
+        total_bytes += len(payload)
+    if file_limit_exceeded:
+        return [], "file_limit_exceeded"
+    if byte_limit_exceeded:
+        return [], "byte_limit_exceeded"
+    return payloads, None
+
+
+def _materialize_runtime_record(record: _RuntimeRecord) -> JSONValue:
+    if isinstance(record, _DeferredRuntimeRecord):
+        return record.materializer()
+    return record
+
+
 def _runtime_bound_result(
     *,
     selection: _SourceSelection,
@@ -1278,11 +1511,31 @@ def _artifact_records(
     relation: _Relation,
     *,
     selector: str = "current_lineage",
-) -> tuple[bytes, ...]:
+    serialize: bool = True,
+    defer_body: bool = False,
+) -> tuple[bytes, ...] | Iterator[_RuntimeRecord]:
     if selector not in {"direct_predecessors", "current_lineage"}:
         _refuse("unsupported selected artifact selector")
+    records = _iter_artifact_records(
+        relation,
+        selector=selector,
+        defer_body=defer_body,
+    )
+    if not serialize:
+        return records
+    return tuple(
+        _canonical_runtime_record(_materialize_runtime_record(record))
+        for record in records
+    )
+
+
+def _iter_artifact_records(
+    relation: _Relation,
+    *,
+    selector: str,
+    defer_body: bool = False,
+) -> Iterator[_RuntimeRecord]:
     lineage = relation.work_item.lineage_id
-    accepted: list[tuple[str, JSONValue]] = []
     counter_action_ids = {
         str(action_id)
         for counter in relation.selected_plan.counters
@@ -1324,32 +1577,73 @@ def _artifact_records(
             or source.activation.lineage_id != lineage
         ):
             _refuse("relevant artifact provenance is outside current lineage")
-        if (
-            selector == "direct_predecessors"
-            and artifact.created_by_input_id
-            != relation.activation.created_by_input_id
-        ):
-            continue
-        record: JSONValue = {
-            "artifact_id": artifact.artifact_id,
-            "payload_digest": artifact.payload_digest,
-            "schema_id": str(artifact.schema_id),
-            "payload": _json_ready(artifact.payload),
-            "provenance": {
-                "created_by_input_id": artifact.created_by_input_id,
-                "lineage_id": lineage,
-                "plan_fingerprint": relation.run.run_ref.plan_ref.authority_fingerprint,
-                "source_action_id": str(artifact.source_action_id),
-                "source_graph_node_id": artifact.source_graph_node_id,
-                "source_run_id": artifact.source_run_id,
-                "source_stage_kind_id": str(artifact.source_stage_kind_id),
-                "source_work_item_id": artifact.work_item_id,
-                "transition_id": artifact.transition_id,
-            },
-        }
-        accepted.append((artifact.artifact_id, record))
-    accepted.sort(key=lambda item: item[0].encode("utf-8"))
-    return tuple(_canonical_runtime_record(record) for _, record in accepted)
+        if selector == "direct_predecessors":
+            same_input = (
+                artifact.created_by_input_id
+                == relation.activation.created_by_input_id
+            )
+            generated_work_source = relation.envelope.governance_context.get(
+                "generated_work_source"
+            )
+            generated_predecessor = isinstance(generated_work_source, Mapping) and (
+                generated_work_source.get("source_artifact_id") == artifact.artifact_id
+            )
+            if not same_input and not generated_predecessor:
+                continue
+        plan_fingerprint = relation.run.run_ref.plan_ref.authority_fingerprint
+        if defer_body:
+            yield _deferred_artifact_record(
+                artifact,
+                lineage=lineage,
+                plan_fingerprint=plan_fingerprint,
+            )
+        else:
+            yield _artifact_record_value(
+                artifact,
+                lineage=lineage,
+                plan_fingerprint=plan_fingerprint,
+            )
+
+
+def _deferred_artifact_record(
+    artifact: ArtifactRecord,
+    *,
+    lineage: str | None,
+    plan_fingerprint: str,
+) -> _DeferredRuntimeRecord:
+    def materialize() -> JSONValue:
+        return _artifact_record_value(
+            artifact,
+            lineage=lineage,
+            plan_fingerprint=plan_fingerprint,
+        )
+
+    return _DeferredRuntimeRecord(materialize)
+
+
+def _artifact_record_value(
+    artifact: ArtifactRecord,
+    *,
+    lineage: str | None,
+    plan_fingerprint: str,
+) -> JSONValue:
+    return {
+        "artifact_id": artifact.artifact_id,
+        "payload_digest": artifact.payload_digest,
+        "schema_id": str(artifact.schema_id),
+        "payload": _json_ready(artifact.payload),
+        "provenance": {
+            "created_by_input_id": artifact.created_by_input_id,
+            "lineage_id": lineage,
+            "plan_fingerprint": plan_fingerprint,
+            "source_action_id": str(artifact.source_action_id),
+            "source_graph_node_id": artifact.source_graph_node_id,
+            "source_run_id": artifact.source_run_id,
+            "source_stage_kind_id": str(artifact.source_stage_kind_id),
+            "source_work_item_id": artifact.work_item_id,
+            "transition_id": artifact.transition_id,
+        },
+    }
 
 
 def _index_counter_replay_history(
@@ -1609,6 +1903,90 @@ def _authenticate_artifact_source(
     admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
     if work_item is None or admitted is None:
         _refuse("relevant artifact source authority is incomplete")
+    action = next(
+        (
+            candidate
+            for candidate in admitted.selected_plan.terminal_actions
+            if candidate.id == artifact.source_action_id
+        ),
+        None,
+    )
+    if action is None:
+        _refuse("relevant artifact source work item is invalid")
+    replay_closed_work_items = dict(state.closed_work_items)
+    closed_work_item = replay_closed_work_items.get(work_item.ref.work_item_id)
+    if closed_work_item is None:
+        if _action_closes_work_item(action, admitted.selected_plan):
+            _refuse("relevant artifact source closure is missing")
+    elif not _closed_work_item_matches_artifact(
+        closed_work_item,
+        artifact=artifact,
+        observation=observation,
+        run=run,
+        work_item=work_item,
+    ):
+        _refuse("relevant artifact source closure is invalid")
+    else:
+        # Replay must see the source work item as open, while every unrelated
+        # closed-work record remains part of the authenticated historical state.
+        del replay_closed_work_items[work_item.ref.work_item_id]
+    replay_recovery_attempts = dict(state.recovery_attempts)
+    return_policies = tuple(
+        policy
+        for policy in admitted.selected_plan.recovery_policies
+        if artifact.source_action_id in policy.return_action_ids
+    )
+    is_recovery_return = any(
+        action.id == artifact.source_action_id
+        and action.action_kind == "return_to_recorded_source"
+        for action in admitted.selected_plan.terminal_actions
+    )
+    if return_policies or is_recovery_return:
+        if not return_policies:
+            _refuse("relevant artifact recovery policy authority is invalid")
+        if work_item.lineage_id is None:
+            _refuse("relevant artifact recovery attempt lineage is missing")
+        matching_attempts = tuple(
+            (record_id, policy, attempt)
+            for policy in return_policies
+            for record_id, attempt in state.recovery_attempts.items()
+            if (
+                attempt.plan_ref == run.run_ref.plan_ref
+                and attempt.policy_id == policy.id
+                and attempt.lineage_id == work_item.lineage_id
+            )
+        )
+        if not matching_attempts:
+            _refuse("relevant artifact recovery attempt authority is missing")
+        if len(matching_attempts) != 1:
+            _refuse("relevant artifact recovery attempt authority is ambiguous")
+        record_id, policy, attempt = matching_attempts[0]
+        if record_id != attempt.record_id:
+            _refuse("relevant artifact recovery attempt mapping key is invalid")
+        if attempt.phase == "resolved":
+            _refuse("relevant artifact recovery attempt authority is resolved")
+        if attempt.phase not in policy.return_allowed_phases:
+            _refuse(
+                "relevant artifact recovery attempt phase is not return-allowed"
+            )
+        source_activation = state.activations.get(run.activation_id)
+        if source_activation is None:
+            _refuse("relevant artifact source authority is incomplete")
+        _validate_recovery_attempt(
+            _RecoveryAttemptRelation(
+                state=state,
+                run=run,
+                work_item=work_item,
+                selected_plan=admitted.selected_plan,
+            ),
+            attempt,
+            require_latest_recovery=True,
+        )
+        replay_recovery_attempts[record_id] = replace(
+            attempt,
+            latest_recovery_activation_id=run.activation_id,
+            latest_recovery_run_id=run.run_ref.run_id,
+        )
     replay_state = replace(
         state,
         receipts={
@@ -1630,6 +2008,8 @@ def _authenticate_artifact_source(
             source_action_id=str(artifact.source_action_id),
             replay_history=counter_replay_history,
         ),
+        recovery_attempts=replay_recovery_attempts,
+        closed_work_items=replay_closed_work_items,
     )
     context = TransitionContext(
         transition_id=f"context-checkout:{input_id}:transition",
@@ -1672,15 +2052,7 @@ def _authenticate_artifact_source(
         activation=activation,
         selected_plan=admitted.selected_plan,
     )
-    action = next(
-        (
-            candidate
-            for candidate in source.selected_plan.terminal_actions
-            if candidate.id == artifact.source_action_id
-        ),
-        None,
-    )
-    if action is None or not _artifact_work_item_matches(
+    if not _artifact_work_item_matches(
         state=state,
         artifact=artifact,
         source=source,
@@ -1690,6 +2062,46 @@ def _authenticate_artifact_source(
     if not _artifact_payload_plan_pin_matches(artifact, source):
         _refuse("relevant artifact payload plan pin is invalid")
     return source
+
+
+def _action_closes_work_item(
+    action: TerminalActionDeclaration,
+    selected_plan: SelectedCompiledPlan,
+) -> bool:
+    if action.action_kind in {
+        "close",
+        "complete_work_item",
+        "close_with_escalation",
+        "block_work_item",
+        "closure_gap",
+    }:
+        return True
+    if action.action_kind != "operator_wait":
+        return False
+    return any(
+        action.id in wait.source_action_ids
+        and wait.source_work_item_behavior == "close_on_create"
+        for wait in selected_plan.operator_waits
+    )
+
+
+def _closed_work_item_matches_artifact(
+    closed: ClosedWorkItemRecord,
+    *,
+    artifact: ArtifactRecord,
+    observation: RunnerObservationRecord,
+    run: RunRecord,
+    work_item: WorkItem,
+) -> bool:
+    return (
+        closed.work_item_id == work_item.ref.work_item_id
+        and closed.record_id == f"{artifact.transition_id}:close"
+        and closed.source_run_id == run.run_ref.run_id
+        and closed.action_id == artifact.source_action_id
+        and closed.created_by_input_id == observation.created_by_input_id
+        and closed.operator_intervention_record_id is None
+        and closed.close_kind == "terminal_action"
+    )
 
 
 def _artifact_payload_matches(
@@ -1859,22 +2271,68 @@ def _attempt_records(
     relation: _Relation,
     *,
     selector: str = "current_lineage",
-) -> tuple[bytes, ...]:
+    serialize: bool = True,
+    defer_body: bool = False,
+) -> tuple[bytes, ...] | Iterator[_RuntimeRecord]:
     if selector not in {
         "current_lineage",
         "since_last_accepted_transition",
     }:
         _refuse("unsupported selected attempt selector")
+    records = _iter_attempt_records(
+        relation,
+        selector=selector,
+        defer_body=defer_body,
+    )
+    if not serialize:
+        return records
+    return tuple(
+        _canonical_runtime_record(_materialize_runtime_record(record))
+        for record in records
+    )
 
-    records: list[tuple[int, str, JSONValue]] = []
-    attempts: list[tuple[RecoveryAttemptRecord, JSONValue]] = []
-    active_keys: set[tuple[str, str, str]] = set()
+
+def _iter_attempt_records(
+    relation: _Relation,
+    *,
+    selector: str,
+    defer_body: bool = False,
+) -> Iterator[_RuntimeRecord]:
+    attempts: list[RecoveryAttemptRecord] = []
     for record_key, attempt in relation.state.recovery_attempts.items():
         if not _attempt_is_current_or_foreign(relation, attempt):
             continue
         if record_key != attempt.record_id:
             _refuse("relevant recovery attempt mapping key is not its record id")
-        _validate_recovery_attempt(relation, attempt)
+        attempts.append(attempt)
+
+    if selector == "current_lineage":
+        ordered_attempts = sorted(
+            attempts,
+            key=lambda attempt: (
+                attempt.attempt_count,
+                attempt.record_id.encode("utf-8"),
+            ),
+        )
+        active_keys: set[tuple[str, str, str]] = set()
+        for attempt in ordered_attempts:
+            _validate_recovery_attempt(_recovery_attempt_relation(relation), attempt)
+            active_key = (
+                str(attempt.plan_ref.authority_fingerprint),
+                str(attempt.policy_id),
+                attempt.lineage_id,
+            )
+            if attempt.phase != "resolved" and active_key in active_keys:
+                _refuse("relevant recovery attempt active key is duplicated")
+            if attempt.phase != "resolved":
+                active_keys.add(active_key)
+            yield _attempt_record_candidate(attempt, defer_body=defer_body)
+        return
+
+    active_keys = set()
+    validated_attempts: list[RecoveryAttemptRecord] = []
+    for attempt in attempts:
+        _validate_recovery_attempt(_recovery_attempt_relation(relation), attempt)
         active_key = (
             str(attempt.plan_ref.authority_fingerprint),
             str(attempt.policy_id),
@@ -1884,68 +2342,85 @@ def _attempt_records(
             _refuse("relevant recovery attempt active key is duplicated")
         if attempt.phase != "resolved":
             active_keys.add(active_key)
-        record: JSONValue = {
-            "attempt_count": attempt.attempt_count,
-            "created_by_input_id": attempt.created_by_input_id,
-            "latest_recovery_activation_id": attempt.latest_recovery_activation_id,
-            "latest_recovery_run_id": attempt.latest_recovery_run_id,
-            "latest_return_action_id": (
-                None
-                if attempt.latest_return_action_id is None
-                else str(attempt.latest_return_action_id)
-            ),
-            "lineage_id": attempt.lineage_id,
-            "phase": attempt.phase,
-            "plan_ref": {
-                "authority_fingerprint": attempt.plan_ref.authority_fingerprint,
-                "plan_format_version": attempt.plan_ref.plan_format_version,
-                "plan_id": attempt.plan_ref.plan_id,
-            },
-            "policy_id": str(attempt.policy_id),
-            "recovery_action_id": str(attempt.recovery_action_id),
-            "record_id": attempt.record_id,
-            "source_activation_id": attempt.source_activation_id,
-            "source_graph_node_id": attempt.source_graph_node_id,
-            "source_queue_family_id": str(attempt.source_queue_family_id),
-            "source_run_id": attempt.source_run_id,
-            "source_stage_kind_id": str(attempt.source_stage_kind_id),
-            "source_runner_binding_id": str(attempt.source_runner_binding_id),
-            "source_work_item_id": attempt.source_work_item_id,
-            "updated_by_input_id": attempt.updated_by_input_id,
-        }
-        attempts.append((attempt, record))
+        validated_attempts.append(attempt)
 
-    if selector == "current_lineage":
-        records = [
-            (attempt.attempt_count, attempt.record_id, record)
-            for attempt, record in attempts
-        ]
-        records.sort(key=lambda item: (item[0], item[1].encode("utf-8")))
-    else:
-        active_attempts = tuple(
-            attempt for attempt, _record in attempts if attempt.phase != "resolved"
+    active_attempts = tuple(
+        attempt for attempt in validated_attempts if attempt.phase != "resolved"
+    )
+    if not active_attempts:
+        return
+    boundaries = tuple(
+        _authenticated_attempt_transition_index(
+            relation,
+            attempt,
+            input_id=attempt.created_by_input_id,
         )
-        if not active_attempts:
-            return ()
-        boundaries = tuple(
-            _authenticated_attempt_transition_index(
-                relation,
-                attempt,
-                input_id=attempt.created_by_input_id,
-            )
-            for attempt in active_attempts
+        for attempt in active_attempts
+    )
+    boundary = max(boundaries)
+    selected_attempts = []
+    for attempt in validated_attempts:
+        updated_index = _authenticated_attempt_transition_index(
+            relation,
+            attempt,
+            input_id=attempt.updated_by_input_id,
         )
-        boundary = max(boundaries)
-        for attempt, record in attempts:
-            updated_index = _authenticated_attempt_transition_index(
-                relation,
-                attempt,
-                input_id=attempt.updated_by_input_id,
-            )
-            if updated_index >= boundary:
-                records.append((updated_index, attempt.record_id, record))
-        records.sort(key=lambda item: (item[0], item[1].encode("utf-8")))
-    return tuple(_canonical_runtime_record(record) for _, _, record in records)
+        if updated_index >= boundary:
+            selected_attempts.append((updated_index, attempt.record_id, attempt))
+    selected_attempts.sort(key=lambda item: (item[0], item[1].encode("utf-8")))
+    for _updated_index, _record_id, attempt in selected_attempts:
+        yield _attempt_record_candidate(attempt, defer_body=defer_body)
+
+
+def _attempt_record_candidate(
+    attempt: RecoveryAttemptRecord,
+    *,
+    defer_body: bool,
+) -> _RuntimeRecord:
+    if defer_body:
+        return _deferred_attempt_record(attempt)
+    return _attempt_record_value(attempt)
+
+
+def _deferred_attempt_record(
+    attempt: RecoveryAttemptRecord,
+) -> _DeferredRuntimeRecord:
+    def materialize() -> JSONValue:
+        return _attempt_record_value(attempt)
+
+    return _DeferredRuntimeRecord(materialize)
+
+
+def _attempt_record_value(attempt: RecoveryAttemptRecord) -> JSONValue:
+    return {
+        "attempt_count": attempt.attempt_count,
+        "created_by_input_id": attempt.created_by_input_id,
+        "latest_recovery_activation_id": attempt.latest_recovery_activation_id,
+        "latest_recovery_run_id": attempt.latest_recovery_run_id,
+        "latest_return_action_id": (
+            None
+            if attempt.latest_return_action_id is None
+            else str(attempt.latest_return_action_id)
+        ),
+        "lineage_id": attempt.lineage_id,
+        "phase": attempt.phase,
+        "plan_ref": {
+            "authority_fingerprint": attempt.plan_ref.authority_fingerprint,
+            "plan_format_version": attempt.plan_ref.plan_format_version,
+            "plan_id": attempt.plan_ref.plan_id,
+        },
+        "policy_id": str(attempt.policy_id),
+        "recovery_action_id": str(attempt.recovery_action_id),
+        "record_id": attempt.record_id,
+        "source_activation_id": attempt.source_activation_id,
+        "source_graph_node_id": attempt.source_graph_node_id,
+        "source_queue_family_id": str(attempt.source_queue_family_id),
+        "source_run_id": attempt.source_run_id,
+        "source_stage_kind_id": str(attempt.source_stage_kind_id),
+        "source_runner_binding_id": str(attempt.source_runner_binding_id),
+        "source_work_item_id": attempt.source_work_item_id,
+        "updated_by_input_id": attempt.updated_by_input_id,
+    }
 
 
 def _authenticated_attempt_transition_index(
@@ -2136,9 +2611,22 @@ def _attempt_is_current_or_foreign(
     return True
 
 
-def _validate_recovery_attempt(
+def _recovery_attempt_relation(
     relation: _Relation,
+) -> _RecoveryAttemptRelation:
+    return _RecoveryAttemptRelation(
+        state=relation.state,
+        run=relation.run,
+        work_item=relation.work_item,
+        selected_plan=relation.selected_plan,
+    )
+
+
+def _validate_recovery_attempt(
+    relation: _RecoveryAttemptRelation,
     attempt: RecoveryAttemptRecord,
+    *,
+    require_latest_recovery: bool = False,
 ) -> None:
     if attempt.plan_ref != relation.run.run_ref.plan_ref:
         _refuse("relevant recovery attempt plan is not current authority")
@@ -2157,7 +2645,14 @@ def _validate_recovery_attempt(
     )
     if policy is None:
         _refuse("relevant recovery attempt policy is not selected authority")
-    if attempt.recovery_action_id not in policy.source_recovery_action_ids:
+    if (
+        attempt.recovery_action_id not in policy.source_recovery_action_ids
+        and not any(
+            counter.threshold_action_id == attempt.recovery_action_id
+            and counter.increment_action_id in policy.source_recovery_action_ids
+            for counter in relation.selected_plan.counters
+        )
+    ):
         _refuse("relevant recovery attempt action is not selected policy authority")
     if (
         attempt.latest_return_action_id is not None
@@ -2171,6 +2666,11 @@ def _validate_recovery_attempt(
         "resolved",
     }:
         _refuse("relevant recovery attempt phase is unsupported")
+    if require_latest_recovery and (
+        attempt.latest_recovery_activation_id is None
+        or attempt.latest_recovery_run_id is None
+    ):
+        _refuse("relevant recovery attempt latest recovery authority is missing")
 
     source_run = relation.state.runs.get(attempt.source_run_id)
     source_work_item = relation.state.work_items.get(attempt.source_work_item_id)
@@ -2324,21 +2824,155 @@ def _validate_recovery_attempt(
             _refuse("relevant recovery attempt latest return action is invalid")
 
 
-def _canonical_runtime_record(value: object) -> bytes:
+def _canonical_runtime_record(
+    value: object,
+    *,
+    max_bytes: int | None = None,
+) -> bytes:
     try:
         ready = _json_ready(value)
-        return (
-            json.dumps(
-                ready,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            + "\n"
-        ).encode("utf-8")
+        if max_bytes is None:
+            return (
+                json.dumps(
+                    ready,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode("utf-8")
+        if type(max_bytes) is not int or max_bytes < 0:
+            _refuse("runtime context record byte bound is invalid")
+        chunks: list[bytes] = []
+        remaining = max_bytes
+        for encoded_chunk in _bounded_canonical_json_chunks(
+            ready,
+            max_bytes=max_bytes,
+        ):
+            if len(encoded_chunk) > remaining:
+                raise _RuntimeRecordBoundExceeded
+            chunks.append(encoded_chunk)
+            remaining -= len(encoded_chunk)
+        return b"".join(chunks)
+    except _RuntimeRecordBoundExceeded:
+        raise
     except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
         _refuse("runtime context record is not canonical JSON", exc)
+
+
+def _bounded_canonical_json_chunks(
+    value: JSONValue,
+    *,
+    max_bytes: int | None = None,
+) -> Iterator[bytes]:
+    yield from _bounded_json_value_chunks(value, max_bytes=max_bytes)
+    yield b"\n"
+
+
+def _bounded_json_value_chunks(
+    value: JSONValue,
+    *,
+    max_bytes: int | None = None,
+) -> Iterator[bytes]:
+    if value is None:
+        yield b"null"
+        return
+    if value is True:
+        yield b"true"
+        return
+    if value is False:
+        yield b"false"
+        return
+    if type(value) is int:
+        yield from _bounded_integer_chunks(value, max_bytes=max_bytes)
+        return
+    if isinstance(value, str):
+        yield b'"'
+        yield from _bounded_json_string_body_chunks(value)
+        yield b'"'
+        return
+    if isinstance(value, list):
+        yield b"["
+        for index, item in enumerate(value):
+            if index:
+                yield b","
+            yield from _bounded_json_value_chunks(item, max_bytes=max_bytes)
+        yield b"]"
+        return
+    if isinstance(value, dict):
+        yield b"{"
+        # Unicode order matches UTF-8 byte order for the validated keys.  Keep
+        # sorting from encoding an entire large key as one scalar.
+        for index, (key, nested) in enumerate(
+            sorted(value.items(), key=lambda item: item[0])
+        ):
+            if index:
+                yield b","
+            yield from _bounded_json_string_chunks(key)
+            yield b":"
+            yield from _bounded_json_value_chunks(nested, max_bytes=max_bytes)
+        yield b"}"
+        return
+    _refuse("runtime context contains an unsupported value")
+
+
+def _bounded_integer_chunks(
+    value: int,
+    *,
+    max_bytes: int | None,
+) -> Iterator[bytes]:
+    if max_bytes is not None:
+        digit_capacity = max_bytes - (1 if value < 0 else 0)
+        if digit_capacity < 1:
+            raise _RuntimeRecordBoundExceeded
+        if value.bit_length() > 3 * digit_capacity:
+            # Values with at most 3*d bits are below 2**(3*d) < 10**d.
+            # This threshold scales only with the declared record cap.
+            decimal_threshold = 10**digit_capacity
+            if value >= decimal_threshold or value <= -decimal_threshold:
+                raise _RuntimeRecordBoundExceeded
+    yield from _bounded_ascii_chunks(str(value))
+
+
+def _bounded_ascii_chunks(value: str) -> Iterator[bytes]:
+    for offset in range(0, len(value), _RUNTIME_JSON_CHUNK_SIZE):
+        yield value[offset : offset + _RUNTIME_JSON_CHUNK_SIZE].encode("ascii")
+
+
+def _bounded_json_string_chunks(value: str) -> Iterator[bytes]:
+    yield b'"'
+    yield from _bounded_json_string_body_chunks(value)
+    yield b'"'
+
+
+def _bounded_json_string_body_chunks(value: str) -> Iterator[bytes]:
+    pending = bytearray()
+    for character in value:
+        if character == '"':
+            escaped = b'\\"'
+        elif character == "\\":
+            escaped = b"\\\\"
+        elif character == "\b":
+            escaped = b"\\b"
+        elif character == "\f":
+            escaped = b"\\f"
+        elif character == "\n":
+            escaped = b"\\n"
+        elif character == "\r":
+            escaped = b"\\r"
+        elif character == "\t":
+            escaped = b"\\t"
+        elif ord(character) < 0x20:
+            escaped = f"\\u{ord(character):04x}".encode("ascii")
+        else:
+            escaped = character.encode("utf-8")
+        if len(pending) + len(escaped) > _RUNTIME_JSON_CHUNK_SIZE:
+            yield bytes(pending)
+            pending.clear()
+        pending.extend(escaped)
+    if pending:
+        yield bytes(pending)
 
 
 def _json_ready(value: object) -> JSONValue:
@@ -2480,6 +3114,7 @@ def _manifest_for_files(
     files: tuple[_CapturedFile, ...],
     catalog: tuple[ContextCheckoutCatalogEntry, ...],
     omissions: tuple[ContextCheckoutOmission, ...],
+    root_states: tuple[ContextCheckoutRootState, ...],
 ) -> ContextCheckoutManifest:
     return ContextCheckoutManifest(
         session_id=session.session_id,
@@ -2500,6 +3135,7 @@ def _manifest_for_files(
         ),
         catalog=catalog,
         omissions=omissions,
+        root_states=root_states,
     )
 
 
@@ -2574,6 +3210,10 @@ def _reuse_existing_checkout(
     )
     try:
         manifest = decode_context_checkout_manifest(manifest_bytes)
+        if isinstance(manifest, ContextCheckoutLegacyManifest):
+            _refuse(
+                "legacy context manifest is inspect-only; root baseline unavailable"
+            )
     except ContextCheckoutContractError as exc:
         _refuse("existing checkout manifest is not canonical", exc)
     if manifest.session_id != session.session_id:
@@ -2781,6 +3421,93 @@ def _validate_checkout_manifest_shape(
                 _refuse("existing checkout required source is not represented")
         elif not has_catalog and source_key not in omissions_by_source:
             _refuse("existing checkout discoverable source is not closed")
+
+    _validate_checkout_root_states(
+        manifest,
+        binding=binding,
+        selections=selections,
+        files_by_source=files_by_source,
+        catalog_by_source=catalog_by_source,
+        omissions_by_source=omissions_by_source,
+    )
+
+
+def _validate_checkout_root_states(
+    manifest: ContextCheckoutManifest | ContextCheckoutLegacyManifest,
+    *,
+    binding: StageContextBindingDeclaration,
+    selections: Sequence[_SourceSelection],
+    files_by_source: Mapping[tuple[str, str], Sequence[ContextCheckoutFile]],
+    catalog_by_source: Mapping[
+        tuple[str, str], Sequence[ContextCheckoutCatalogEntry]
+    ],
+    omissions_by_source: set[tuple[str, str]],
+) -> None:
+    root_states = getattr(manifest, "root_states", None)
+    if root_states is None:
+        return
+    selected_workspace = {
+        (selection.declaration.source_kind, selection.declaration.source_ref): selection
+        for selection in selections
+        if selection.declaration.source_kind == "workspace_relative_root"
+    }
+    states_by_source = {
+        (item.source_kind, item.source_ref): item for item in root_states
+    }
+    if len(states_by_source) != len(root_states):
+        _refuse("existing checkout root-state sources are duplicated")
+    if set(states_by_source) - set(selected_workspace):
+        _refuse("existing checkout root-state source is not selected")
+    for source_key, selection in selected_workspace.items():
+        state = states_by_source.get(source_key)
+        if state is None:
+            omission = next(
+                (
+                    item
+                    for item in manifest.omissions
+                    if (item.source_kind, item.source_ref) == source_key
+                ),
+                None,
+            )
+            if (
+                not selection.required
+                and omission is not None
+                and omission.reason
+                in {"file_limit_exceeded", "byte_limit_exceeded"}
+                and binding.mutation_policy != "forbid_selected_roots"
+            ):
+                continue
+            _refuse("existing checkout selected root baseline is unavailable")
+
+        source_files = files_by_source.get(source_key, ())
+        source_catalog = catalog_by_source.get(source_key, ())
+        prefix = (
+            f"{'required' if selection.required else 'discoverable'}/workspace/"
+            f"{selection.declaration.source_ref}"
+        )
+        relative_files = {
+            ""
+            if item.checkout_path == prefix
+            else item.checkout_path.removeprefix(f"{prefix}/")
+            for item in source_files
+        } | {
+            ""
+            if item.logical_path == prefix
+            else item.logical_path.removeprefix(f"{prefix}/")
+            for item in source_catalog
+        }
+        if relative_files != set(state.files):
+            _refuse("existing checkout root-state files are inconsistent")
+        if state.root_kind == "missing":
+            if relative_files or state.directories:
+                _refuse("existing checkout missing root-state is inconsistent")
+            if source_key not in omissions_by_source:
+                _refuse("existing checkout missing root-state is not omitted")
+        elif state.root_kind == "file":
+            if state.files != ("",) or state.directories or not relative_files:
+                _refuse("existing checkout file root-state is inconsistent")
+        elif "" not in state.directories:
+            _refuse("existing checkout directory root-state is inconsistent")
 
 
 def _load_existing_checkout_payloads(
@@ -3100,31 +3827,34 @@ def _verify_existing_checkout(
     while pending:
         current, relative_root = pending.pop()
         try:
-            entries = list(os.scandir(current))
+            entries = os.scandir(current)
         except OSError as exc:
             _refuse("existing checkout cannot be inspected", exc)
-        for entry in entries:
-            relative = (
-                entry.name
-                if not relative_root
-                else f"{relative_root}/{entry.name}"
-            )
-            entry_path = Path(entry.path)
-            try:
-                entry_stat = entry_path.lstat()
-            except OSError as exc:
-                _refuse("existing checkout entry cannot be inspected", exc)
-            if stat.S_ISLNK(entry_stat.st_mode):
-                _refuse("existing checkout contains a symlink")
-            if stat.S_ISDIR(entry_stat.st_mode):
-                actual_dirs.add(relative)
-                pending.append((entry_path, relative))
-                continue
-            if not stat.S_ISREG(entry_stat.st_mode):
-                _refuse("existing checkout contains a special file")
-            actual_files.add(relative)
-            if entry_stat.st_mode & 0o777 != 0o444:
-                _refuse("existing checkout file mode drifted")
+        try:
+            for entry in entries:
+                relative = (
+                    entry.name
+                    if not relative_root
+                    else f"{relative_root}/{entry.name}"
+                )
+                entry_path = Path(entry.path)
+                try:
+                    entry_stat = entry_path.lstat()
+                except OSError as exc:
+                    _refuse("existing checkout entry cannot be inspected", exc)
+                if stat.S_ISLNK(entry_stat.st_mode):
+                    _refuse("existing checkout contains a symlink")
+                if stat.S_ISDIR(entry_stat.st_mode):
+                    actual_dirs.add(relative)
+                    pending.append((entry_path, relative))
+                    continue
+                if not stat.S_ISREG(entry_stat.st_mode):
+                    _refuse("existing checkout contains a special file")
+                actual_files.add(relative)
+                if entry_stat.st_mode & 0o777 != 0o444:
+                    _refuse("existing checkout file mode drifted")
+        finally:
+            entries.close()
     if actual_files != expected_files or actual_dirs != expected_dirs:
         _refuse("existing checkout path set drifted")
     if any(
@@ -3317,7 +4047,8 @@ def _require_identity(value: object, field_name: str) -> str:
 
 def _require_runtime_text(value: str) -> None:
     try:
-        value.encode("utf-8")
+        for character in value:
+            character.encode("utf-8")
     except UnicodeEncodeError as exc:
         _refuse("runtime JSON text must be valid UTF-8", exc)
     if "\x00" in value:

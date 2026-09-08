@@ -128,6 +128,16 @@ applied to durable state, not from an agent saying that it is finished.
 | `millforge` | Independently owned execution harness that supplies `millforge-base` |
 | `millrace` | Dependency-only bundle that pins `millrace-ai==0.22.2`, `millrace-plus==0.22.2`, and `millforge==0.1.0` |
 
+That table describes the **published v0.22.2 bundle**. This source checkout is
+the unreleased v0.22.3 Core candidate, qualified with explicit member wheels;
+it does not update `pip install millrace` or imply a v0.22.3 bundle exists.
+The full next bundle will be frozen separately after integration.
+
+The candidate uses store schema 10 rather than v0.22.2's schema 8. Existing
+schema-8/9 workspaces are refused without migration. Preserve old state and
+finish or retire it with its matching runtime before using a fresh candidate
+workspace; see [compatibility](v0.22-compatibility.md).
+
 This split keeps the runtime generic. Adding a new workflow should add compiled
 data and assets, not a new branch in the kernel.
 

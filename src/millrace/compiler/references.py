@@ -29,6 +29,10 @@ from millrace.compiler.source import (
 )
 from millrace.contracts import Diagnostic
 from millrace.contracts.schema import validate_closure_verdict_schema_declaration
+from millrace.contracts.selected_plan_lookups import (
+    counter_artifact_contract_mismatch,
+    runtime_owned_threshold_for_outcomes,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3189,6 +3193,138 @@ def validate_counter_references(
                 )
 
 
+def validate_counter_artifact_contracts(
+    source: Mapping[str, object],
+    diagnostics: list[Diagnostic],
+    *,
+    declaration_path_prefix: str = "",
+) -> None:
+    actions = {
+        str(record["id"]): (index, record)
+        for index, record in enumerate(records(source, "terminal_actions"))
+        if is_non_empty_text(record.get("id"))
+    }
+    stages = {
+        str(record["id"]): record
+        for record in records(source, "stage_kinds")
+        if is_non_empty_text(record.get("id"))
+    }
+    runners = {
+        str(record["id"]): record
+        for record in records(source, "runner_bindings")
+        if is_non_empty_text(record.get("id"))
+    }
+    for counter in records(source, "counters"):
+        increment_action_id = counter.get("increment_action_id")
+        threshold_action_id = counter.get("threshold_action_id")
+        stage_kind_id = counter.get("stage_kind_id")
+        if not all(
+            is_non_empty_text(value)
+            for value in (
+                increment_action_id,
+                threshold_action_id,
+                stage_kind_id,
+            )
+        ):
+            continue
+        increment_entry = actions.get(str(increment_action_id))
+        threshold_entry = actions.get(str(threshold_action_id))
+        stage = stages.get(str(stage_kind_id))
+        if increment_entry is None or threshold_entry is None or stage is None:
+            continue
+        runner = runners.get(str(stage.get("runner_binding_id", "")))
+        selectable_outcomes = _runner_selectable_outcome_ids_for_source(
+            runner,
+            stage_kind_id=str(stage_kind_id),
+        )
+        _threshold_index, threshold_action = threshold_entry
+        if not runtime_owned_threshold_for_outcomes(
+            threshold_action_kind=str(threshold_action.get("kind", "")),
+            threshold_outcome_id=str(threshold_action.get("outcome_id", "")),
+            runner_selectable_outcome_ids=selectable_outcomes,
+        ):
+            continue
+        _increment_index, increment_action = increment_entry
+        mismatch = counter_artifact_contract_mismatch(
+            increment_artifact_schema_id=increment_action.get("artifact_schema_id"),
+            threshold_artifact_schema_id=threshold_action.get("artifact_schema_id"),
+            increment_artifact_field_conditions=increment_action.get(
+                "artifact_field_conditions",
+                {},
+            ),
+            threshold_artifact_field_conditions=threshold_action.get(
+                "artifact_field_conditions",
+                {},
+            ),
+        )
+        if mismatch is None:
+            continue
+        field_name = (
+            "artifact_schema_id"
+            if mismatch == "schema"
+            else "artifact_field_conditions"
+        )
+        diagnostics.append(
+            compiler_error(
+                code=f"counter_runtime_threshold_artifact_{mismatch}_mismatch",
+                declaration_path=(
+                    f"{declaration_path_prefix}terminal_actions"
+                    f"[{_threshold_index}].{field_name}"
+                ),
+                related_declaration_path=(
+                    f"{declaration_path_prefix}terminal_actions"
+                    f"[{_increment_index}].{field_name}"
+                ),
+                message=(
+                    "Runtime-owned counter threshold and increment actions must "
+                    + (
+                        "use the same artifact schema."
+                        if mismatch == "schema"
+                        else "use compatible artifact field conditions."
+                    )
+                ),
+                context={
+                    "counter_id": str(counter.get("id", "")),
+                    "increment_action_id": str(increment_action_id),
+                    "threshold_action_id": str(threshold_action_id),
+                    "threshold_outcome_id": str(
+                        threshold_action.get("outcome_id", "")
+                    ),
+                    "runner_selectable_outcome_ids": tuple(
+                        sorted(selectable_outcomes or ())
+                    ),
+                    "mismatch": mismatch,
+                },
+                hint=(
+                    "Declare matching artifact schema IDs for the counter "
+                    "actions."
+                    if mismatch == "schema"
+                    else "Declare threshold conditions as an exact key/value "
+                    "subset of increment conditions."
+                ),
+            )
+        )
+
+
+def _runner_selectable_outcome_ids_for_source(
+    runner: SourceRecord | None,
+    *,
+    stage_kind_id: str,
+) -> frozenset[str] | None:
+    if runner is None or runner.get("component_pin") is None:
+        return None
+    raw_mappings = runner.get("terminal_result_mappings", ())
+    if not is_sequence(raw_mappings):
+        return None
+    return frozenset(
+        str(mapping.get("outcome_id"))
+        for mapping in raw_mappings
+        if isinstance(mapping, Mapping)
+        and str(mapping.get("stage_kind_id", "")) == stage_kind_id
+        and is_non_empty_text(mapping.get("outcome_id"))
+    )
+
+
 def validate_lineage_policy_references(
     source: Mapping[str, object],
     diagnostics: list[Diagnostic],
@@ -4431,6 +4567,7 @@ __all__ = (
     "validate_action_references",
     "validate_completion_remediation_references",
     "validate_concurrency_policy_references",
+    "validate_counter_artifact_contracts",
     "validate_counter_references",
     "validate_declared_outcomes_belong_to_stage",
     "validate_declared_outcomes_have_actions",

@@ -342,6 +342,11 @@ def _runs_show(namespace: object) -> CliSuccess:
                 getattr(namespace, "include_rejected_evidence", False)
             ),
         )
+        completion_diagnostic = (
+            completion_diagnostic_projection(runtime, state, run_id)
+            if bool(getattr(namespace, "include_completion_diagnostic", False))
+            else None
+        )
     finally:
         runtime.close()
     activation = state.activations.get(run.activation_id)
@@ -387,6 +392,8 @@ def _runs_show(namespace: object) -> CliSuccess:
     }
     if rejected_result is not None:
         run_projection["rejected_result"] = rejected_result
+    if completion_diagnostic is not None:
+        run_projection["completion_diagnostic"] = completion_diagnostic
     return success_result(
         command=command,
         code="run_shown",
@@ -1050,6 +1057,87 @@ def rejected_result_projection(
             projection["evidence"] = json_ready(evidence.payload())
         if diagnostic is not None:
             projection["diagnostic"] = json_ready(diagnostic)
+    return projection
+
+
+def completion_diagnostic_projection(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+    run_id: str,
+) -> dict[str, object] | None:
+    """Project the exact current session's retained redacted diagnostic."""
+    run = state.runs.get(run_id)
+    if run is None:
+        return None
+
+    session_id = run.current_session_id
+    projection: dict[str, object] = {
+        "session_id": session_id,
+        "dispatch_generation": None,
+        "completion_diagnostic_digest": None,
+        "diagnostic_status": "not_present",
+    }
+    if session_id is None:
+        return projection
+
+    session = state.runner_sessions.get(session_id)
+    if session is None:
+        projection["diagnostic_status"] = "corrupt"
+        return projection
+
+    session_record_id = getattr(session, "session_id", None)
+    session_dispatch_generation = getattr(session, "dispatch_generation", None)
+    session_fencing_token = getattr(session, "session_fencing_token", None)
+    projection["session_id"] = session_record_id
+    projection["dispatch_generation"] = session_dispatch_generation
+    completion = (
+        state.runner_session_completions.get(session_record_id)
+        if isinstance(session_record_id, str)
+        else None
+    )
+    if completion is not None:
+        digest = getattr(completion, "diagnostic_digest", None)
+        projection["completion_diagnostic_digest"] = digest
+    else:
+        digest = None
+
+    run_ref = getattr(run, "run_ref", None)
+    run_ref_id = getattr(run_ref, "run_id", None)
+    if (
+        run_ref_id != run_id
+        or session_record_id != session_id
+        or getattr(session, "run_id", None) != run_ref_id
+    ):
+        projection["diagnostic_status"] = "corrupt"
+        return projection
+    if completion is None:
+        return projection
+    if (
+        getattr(completion, "session_id", None) != session_record_id
+        or getattr(completion, "run_id", None) != run_ref_id
+        or getattr(completion, "dispatch_generation", None)
+        != session_dispatch_generation
+        or getattr(completion, "session_fencing_token", None)
+        != session_fencing_token
+    ):
+        projection["diagnostic_status"] = "corrupt"
+        return projection
+
+    if digest is None:
+        return projection
+    if not isinstance(digest, str):
+        projection["diagnostic_status"] = "corrupt"
+        return projection
+
+    diagnostic, diagnostic_status = _load_completion_diagnostic(
+        runtime,
+        state,
+        session_record_id,
+        digest,
+    )
+    projection["diagnostic_status"] = diagnostic_status
+    if diagnostic is not None:
+        projection["diagnostic"] = json_ready(diagnostic)
     return projection
 
 

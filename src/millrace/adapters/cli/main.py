@@ -80,7 +80,7 @@ GROUP_HELP = {
     "package": "Import, inspect, verify, and manage workflow packages.",
     "plan": "Admit, select, and inspect compiled plans.",
     "queue": "Enqueue work and inspect selected queue families.",
-    "context": "Select bounded session context.",
+    "context": "Select and inspect bounded session context.",
     "status": "Project current workspace status.",
     "runs": "Inspect runtime runs.",
     "trace": "Inspect governance and execution traces.",
@@ -606,6 +606,15 @@ def _add_context_commands(
     select.set_defaults(command="context.select")
     help_parsers["context.select"] = select
 
+    diff = subparsers.add_parser(
+        "diff",
+        help="Project exact direct-write changes for an active runner session.",
+    )
+    diff.add_argument("--session-id", required=True, metavar="ID")
+    diff.add_argument("--manifest-digest", required=True, metavar="DIGEST")
+    diff.set_defaults(command="context.diff")
+    help_parsers["context.diff"] = diff
+
 
 def _add_status_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -632,6 +641,11 @@ def _add_runs_commands(
         "--include-rejected-evidence",
         action="store_true",
         help="Include bounded retained evidence for a rejected session.",
+    )
+    show.add_argument(
+        "--include-completion-diagnostic",
+        action="store_true",
+        help="Include the bounded retained diagnostic for the current session.",
     )
     show.set_defaults(command="runs.show")
     help_parsers["runs.show"] = show

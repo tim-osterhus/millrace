@@ -635,6 +635,7 @@ def _generic_projection_request(
                 "action_id": "action.beta",
                 "action_kind": "route",
                 "artifact_schema_id": "schema.beta",
+                "artifact_field_conditions": {"beta": 7},
             },
             {
                 "outcome_id": "outcome.none",
@@ -747,6 +748,7 @@ def test_codex_bundle_schema3_projects_selected_schemas_and_terminal_contracts(
             "action_id": "action.alpha",
             "action_kind": "route",
             "artifact_schema_id": "schema.alpha",
+            "artifact_field_conditions": {},
             "json_schema": {
                 "properties": {"alpha": {"type": "string"}},
                 "required": ["alpha"],
@@ -759,6 +761,7 @@ def test_codex_bundle_schema3_projects_selected_schemas_and_terminal_contracts(
             "action_id": "action.beta",
             "action_kind": "route",
             "artifact_schema_id": "schema.beta",
+            "artifact_field_conditions": {"beta": 7},
             "json_schema": {
                 "properties": {"beta": {"type": "integer"}},
                 "required": ["beta"],
@@ -771,6 +774,7 @@ def test_codex_bundle_schema3_projects_selected_schemas_and_terminal_contracts(
             "action_id": "action.none",
             "action_kind": "close",
             "artifact_schema_id": None,
+            "artifact_field_conditions": {},
             "json_schema": None,
         },
     ]
@@ -999,9 +1003,9 @@ def test_codex_protocol3_bundle_bytes_remain_golden(tmp_path: Path) -> None:
     )
     raw = _bundle_stdin_bytes(request, config=config, dispatch_echo=echo)
 
-    assert len(raw) == 4492
+    assert len(raw) == 4523
     assert sha256(raw).hexdigest() == (
-        "25df07edd911623a2ffb5e2e2bb4f2e81ee711e32edbb638f61b21394b55e3e6"
+        "bcd8eecbb1218059f84a566c8b2cb632a26fbcdb379992c1afaa7fbf29b8ac63"
     )
     assert b'"schema_version":3' in raw
     assert b'"token_usage"' not in raw

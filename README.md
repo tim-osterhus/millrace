@@ -12,6 +12,16 @@
   <h1>Millrace</h1>
 </div>
 
+Millrace is a durable runtime for compiler-validated agent workflows.
+
+This checkout is the **unreleased v0.22.3 candidate**. The published
+`millrace` bundle remains v0.22.2; a v0.22.3 bundle is not yet available.
+See [installation and candidate qualification](docs/getting-started.md).
+Existing v0.22.2 workspaces use store schema 8; this candidate requires fresh
+schema-10 state and provides **no in-place migration**. Finish or retire old
+work with its matching runtime, preserve its workspace, and initialize a new
+one. See [compatibility](docs/v0.22-compatibility.md).
+
 Ever find yourself doing the same thing over and over with AI agents?
 
 You construct the plan. You tell it to execute the plan, then you have another
@@ -62,7 +72,7 @@ Millrace is **agent-first**. Give this repository to a capable local agent:
 
 > Install Millrace for me in this workspace using
 > https://github.com/tim-osterhus/millrace. Read its README and
-> [instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.3/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
+> [published instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.2/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
 > first. Check the CLI, workspace, workflows, and runners. Report what you
 > installed and what you need next. Do not store credentials in workflow
 > assets or start unattended work.
@@ -91,8 +101,8 @@ Manual setup is documented in
 
 ## Governed Context
 
-Millrace v0.22.3 is a general public governed-context/runtime-integrity
-release, not a campaign-specific product release. Compiled bindings distinguish
+Millrace v0.22.3 is an unreleased general governed-context/runtime-integrity
+candidate, not a campaign-specific product. Compiled bindings distinguish
 required files from catalog-only discoverable material. Catalog content stays in
 CAS until an exact, bounded `millrace context select` request hydrates a
 read-only selection.
@@ -111,7 +121,8 @@ See the [v0.22.3 release notes](https://github.com/tim-osterhus/millrace/blob/ma
 `millrace-plus` provides:
 
 - `simple_loop`: plan, run, review, and bounded recovery;
-- `lean_agentic_development`: full end-to-end autonomous agentic engineering;
+- `planning.lad` and `execution.lad`: separate planning and execution graphs;
+- `execution.lad_integrator` and `lad.full`: integrated LAD workflow variants;
 - `vendor_selection`: policy checks, parallel evaluation, and an operator gate.
 
 These are package data, not hard-coded kernel behavior.

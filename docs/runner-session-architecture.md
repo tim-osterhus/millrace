@@ -13,14 +13,15 @@ the selected binding or add workflow meaning.
 
 ## Selected Context Checkouts
 
-A selected plan may also bind a stage to a generic context checkout. Binding
-schema 2 is selected authority: it names one UTF-8 `template` router asset, a
-workspace-relative checkout root, bounded required and discoverable sources,
-maximum hydration files and bytes, a mutation policy, and
-`materialization_retention=until_session_durable_terminal`. The compiler checks
-the complete binding closure, including stage, runner, asset, source, path, and
-writeback linkage. It does not recognize a workflow name, stage nickname, or
-implicit workspace directory.
+A selected plan may also bind a stage to a generic context checkout. Context
+binding schema 2 is selected authority: it names one UTF-8 `template` router
+asset, a workspace-relative checkout root, bounded required and discoverable
+sources, maximum hydration files and bytes, a mutation policy, and
+`materialization_retention=until_session_durable_terminal`. This binding schema
+is distinct from the current schema-3 `millrace.context_checkout_manifest`.
+The compiler checks the complete binding closure, including stage, runner,
+asset, source, path, and writeback linkage. It does not recognize a workflow
+name, stage nickname, or implicit workspace directory.
 
 The supported source-kind/source-reference pairs are
 `dispatch_material/current`, `workspace_relative_root/<safe-relative-root>`,
@@ -34,8 +35,9 @@ overlap `.millrace`, the configured SQLite database, the CAS root, or one
 another.
 
 For a bound session, Millrace captures stable UTF-8 regular-file bytes, stores
-the canonical schema-2 `millrace.context_checkout_manifest` and selected file
-bytes in the existing CAS, then publishes a read-only checkout under:
+the canonical schema-3 `millrace.context_checkout_manifest` with durable
+`root_states` and selected file bytes in the existing CAS, then publishes a
+read-only checkout under:
 
 ```text
 <checkout_root>/<session-id>/<dispatch-generation>/
@@ -57,6 +59,32 @@ or a copy of canonical runtime state. Catalog entries become model-visible only
 after an authenticated, cumulative, read-only selection. Each selection is
 bound to the initial manifest, catalog digest and size, CAS object, and
 session-fenced hydration receipt.
+
+Optional source `max_files`/`max_bytes` caps bind actual enumeration and
+payload reads, not only the resulting manifest. Omitted declared roots retain
+authenticated missing, empty-directory, file, or directory baselines in the
+schema-3 `root_states`; protected-root reconciliation refuses later
+create/delete/rename/type changes and over-limit mutations.
+
+Concurrent selections for one session are serialized across checkout
+verification, receipt reload and limit checks, materialization, receipt
+persistence, mode restoration, and final verification. Lock acquisition is
+owned by the selecting process; selections for separate sessions remain
+independent.
+
+For an attached live session whose selected binding permits reconciled writes,
+the generic read-only projection command is:
+
+```text
+millrace --json context diff --session-id <session-id> --manifest-digest <digest>
+```
+
+The command authenticates current session, plan, binding, manifest, checkout,
+and selected write roots, then reports exact create, modify, and delete paths
+with their applicable before/after digests. It refuses protected, unselected,
+or structurally unsafe live mutations. It does not persist evidence, assign
+workflow classifications, or replace final writeback validation; a workflow
+package decides whether and how its runner consumes the projection.
 
 The session lifecycle is explicit:
 
@@ -151,9 +179,20 @@ with truthful create/modify/delete digests under direct-write roots. Protected
 proposals carry content and a digest but do not mutate the protected path. A
 no-op requires a nonblank reason. Unreported, forbidden, protected, symlinked,
 or digest-inconsistent changes refuse the result; the runtime does not roll
-back a detected filesystem mutation. A forbidden mutation retains reviewed
-usage and bounded diagnostics but records `context_mutation_refused` and does
-not apply runner-result evidence.
+back a detected filesystem mutation.
+A forbidden mutation persists a `failed` terminal session completion when cleanup
+is proved or a `lost` terminal session completion with `orphan_risk` when
+adapter cleanup reports orphan risk; in both cases it retains reviewed usage and
+bounded diagnostics, records `context_mutation_refused`, and applies no
+runner-result evidence.
+Its completion diagnostic retains the exact finite validation reason when that
+reason contains no exception-local data. Scan or validation exceptions expose
+only a stable redacted category, never their dynamic message or path.
+
+Runtime-owned counter threshold/increment actions use the same normalized
+artifact schema and normalized condition compatibility. Compiler and plan
+admission both check that contract; threshold conditions are allowed only as
+an exact key/value subset of increment conditions.
 
 At the durable terminal boundary, the runtime persists session-fenced
 source-backed attribution and a cleanup receipt. Attribution distinguishes
@@ -221,9 +260,25 @@ completion diagnostic with:
 millrace runs show RUN_ID --include-rejected-evidence
 ```
 
-This is a read-only projection. It never creates artifacts, advances queues,
-retries sessions, or changes refusal state. Accepted, pending, cancelled,
-lost, and orphan-risk sessions retain their existing projections.
+For any exact current session, including an accepted legal `BLOCKED` result,
+operators may request the retained redacted completion diagnostic without
+requesting rejected evidence:
+
+```text
+millrace runs show RUN_ID --include-completion-diagnostic
+```
+
+The opt-in `completion_diagnostic` object reports `session_id`,
+`dispatch_generation`, `completion_diagnostic_digest`, and
+`diagnostic_status`. It includes `diagnostic` only when the bounded CAS object
+passes canonical decoding and native current-authority checks. Missing,
+oversized, corrupt, or foreign objects report status and identity only. The
+default `runs show` projection and rejected-result receipt semantics are
+unchanged.
+
+These are read-only projections. They never create artifacts, advance queues,
+retry sessions, or change refusal state. Accepted, pending, cancelled, lost,
+and orphan-risk sessions retain their existing projections.
 
 Daemon stop summaries carry the final affected session, including the last
 persisted cancellation operation/result when one exists. Unsupported or
@@ -256,7 +311,8 @@ and non-authoritative; they never enter `RuntimeState.runner_observations`.
 
 Runner sessions use store schema 10 and CAS-backed bounded evidence. Selected
 plans use schema 18, runner dispatch envelopes use schema 7, runner-session
-records use schema 2, and context manifests use schema 2. There is no
+records use schema 2, and current context manifests use schema 3;
+schema-2 manifests remain byte-preserving inspect-only legacy. There is no
 automatic migration from an earlier workspace schema. An exact unsupported
 workspace is refused as `workspace_upgrade_required` with the database, CAS,
 and runner-event sidecar byte-for-byte unchanged; see

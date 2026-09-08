@@ -43,7 +43,10 @@ _TERMINAL_OPTION_REQUIRED_KEYS = frozenset(
         "artifact_schema_id",
     }
 )
-_TERMINAL_OPTION_ALLOWED_KEYS = _TERMINAL_OPTION_REQUIRED_KEYS | {"counter"}
+_TERMINAL_OPTION_ALLOWED_KEYS = _TERMINAL_OPTION_REQUIRED_KEYS | {
+    "artifact_field_conditions",
+    "counter",
+}
 _SELECTED_JOIN_EVIDENCE_REQUIRED_KEYS = frozenset(
     {
         "record_kind",

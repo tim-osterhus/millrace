@@ -1534,7 +1534,7 @@ def test_bounded_execution_projects_selected_millforge_authority_without_mutatio
     assert partially_bound_adapter.request is not None
     assert partially_bound_adapter.request.selected_component_pin == pin
     assert partially_bound_adapter.request.selected_terminal_result_mappings == ()
-    assert partially_bound_adapter.request.selected_artifact_schemas
+    assert partially_bound_adapter.request.selected_artifact_schemas == ()
     assert partially_bound_after.runner_observations == {}
     assert partially_bound_after.artifacts == {}
 

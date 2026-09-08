@@ -34,33 +34,37 @@ refused before a new claim.
 
 ## Installation
 
-On Python 3.12 or newer, install the complete supported bundle:
+On Python 3.12 or newer, the published bundle remains v0.22.2:
 
 ```bash
-python -m pip install "millrace==0.22.3"
+python -m pip install "millrace==0.22.2"
 ```
 
-The base runtime also supports Python 3.11. Install the exact member
-distributions directly when you do not want the meta package:
+This guide describes the unreleased v0.22.3 candidate. There is no published
+v0.22.3 bundle. To qualify the candidate on Python 3.11 or newer, install the
+explicit reviewed member wheels:
 
 ```bash
 python -m pip install \
-  "millrace-ai==0.22.3" \
-  "millrace-plus==0.22.3" \
-  "millforge==0.1.0"
+  /absolute/path/to/millrace_ai-0.22.3-py3-none-any.whl \
+  /absolute/path/to/millrace_plus-0.22.3-py3-none-any.whl \
+  /absolute/path/to/millforge-0.1.0-py3-none-any.whl
 ```
 
-The v0.22.3 package set has these boundaries:
+The candidate member set has these boundaries:
 
 | Distribution | Python | Role |
 | --- | --- | --- |
 | `millrace-ai==0.22.3` | 3.11+ | Runtime and CLI |
 | `millrace-plus==0.22.3` | 3.11+ | Official workflows and authoring skills |
 | `millforge==0.1.0` | 3.11+ | Independently owned execution harness |
-| `millrace==0.22.3` | 3.12+ | Dependency-only exact-pin bundle over the three members |
 
 The `millrace` meta distribution contains no runtime code. Installing one
 member distribution alone does not install the other members.
+
+Candidate state must be fresh schema 10, not a v0.22.2 schema-8 workspace;
+there is no in-place migration. See [Getting Started](getting-started.md)
+for installation and old-state preservation guidance.
 
 ## Governed Context
 

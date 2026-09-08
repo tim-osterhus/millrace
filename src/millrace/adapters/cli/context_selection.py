@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import stat
 import tempfile
@@ -16,11 +17,16 @@ from millrace.adapters.cli.context import (
     open_runtime_context,
     require_nonblank,
 )
+from millrace.adapters.cli.context_writeback import (
+    ContextDiffRefusal,
+    project_context_diff,
+)
 from millrace.adapters.cli.output import CliSuccess, ExitCode, success_result
 from millrace.contracts.compiled_plan import StageContextBindingDeclaration
 from millrace.contracts.context_checkout import (
     ContextCheckoutCatalogEntry,
     ContextCheckoutContractError,
+    ContextCheckoutLegacyManifest,
     ContextCheckoutManifest,
     decode_context_checkout_manifest,
     verify_context_checkout_manifest_digest,
@@ -43,12 +49,58 @@ def handle_context_command(namespace: object) -> CliSuccess:
     command = str(getattr(namespace, "command", "context"))
     if command == "context.select":
         return _select(namespace)
+    if command == "context.diff":
+        return _diff(namespace)
     raise CliCommandError(
         command=command,
         code="command_not_implemented",
         message="Command is not implemented.",
         exit_code=ExitCode.DOMAIN_REFUSAL,
         details={},
+    )
+
+
+def _diff(namespace: object) -> CliSuccess:
+    command = "context.diff"
+    session_id = require_nonblank(
+        str(getattr(namespace, "session_id", "")),
+        option="--session-id",
+        command=command,
+    )
+    manifest_digest = require_nonblank(
+        str(getattr(namespace, "manifest_digest", "")),
+        option="--manifest-digest",
+        command=command,
+    )
+    runtime = open_runtime_context(namespace, command=command)
+    try:
+        try:
+            state = runtime.store.load_runtime_state(runtime.cas_store)
+            changes = project_context_diff(
+                runtime,
+                state=state,
+                session_id=session_id,
+                manifest_digest=manifest_digest,
+            )
+        except (ContextDiffRefusal, SubstrateError) as exc:
+            raise CliCommandError(
+                command=command,
+                code="context_diff_refused",
+                message="Context diff was refused.",
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+                details={},
+            ) from exc
+    finally:
+        runtime.close()
+    return success_result(
+        command=command,
+        code="context_diff_projected",
+        message="Context diff projected.",
+        data={
+            "session_id": session_id,
+            "manifest_digest": manifest_digest,
+            "changes": changes,
+        },
     )
 
 
@@ -120,6 +172,7 @@ def select_context(
     catalog_paths: Sequence[str],
 ) -> list[dict[str, object]]:
     """Authenticate and durably materialize one bounded selection request."""
+    lock_descriptor: int | None = None
     try:
         session = state.runner_sessions.get(session_id)
         if session is None:
@@ -159,6 +212,17 @@ def select_context(
         context_checkout._validate_materialization_target(final_root)
         if not context_checkout._path_exists_without_following(final_root):
             _refuse("attached context checkout is missing")
+        lock_descriptor = _acquire_selection_lock(final_root)
+        locked_state = runtime.store.load_runtime_state(runtime.cas_store)
+        if locked_state.runner_sessions.get(session_id) != session:
+            _refuse("runner session is not current state authority")
+        context_checkout._validate_relation(
+            session=session,
+            plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
+            binding=binding,
+            state=locked_state,
+            require_created=False,
+        )
 
         manifest_bytes = _load_manifest_bytes(
             runtime.cas_store,
@@ -327,6 +391,42 @@ def select_context(
         ValueError,
     ) as exc:
         _refuse("context selection refused", exc)
+    finally:
+        if lock_descriptor is not None:
+            _release_selection_lock(lock_descriptor)
+
+
+def _acquire_selection_lock(final_root: Path) -> int:
+    lock_path = final_root.parent
+    context_checkout._reject_symlink_components(lock_path, stop=None)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if no_follow == 0 or directory == 0:
+        _refuse("context selection directory locking is unsupported")
+    flags = os.O_RDONLY | no_follow | directory | getattr(os, "O_CLOEXEC", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(lock_path, flags)
+        value = os.fstat(descriptor)
+        if not stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode):
+            _refuse("context selection lock is not a directory")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except ContextSelectionRefusal:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+    except OSError as exc:
+        if descriptor >= 0:
+            os.close(descriptor)
+        _refuse("context selection lock cannot be acquired", exc)
+    return descriptor
+
+
+def _release_selection_lock(descriptor: int) -> None:
+    try:
+        os.close(descriptor)
+    except OSError:
+        pass
 
 
 def _load_manifest_bytes(
@@ -360,6 +460,8 @@ def _decode_manifest(
         verify_context_checkout_manifest_digest(manifest, manifest_digest)
     except (ContextCheckoutContractError, TypeError, ValueError) as exc:
         _refuse("context manifest is not canonical", exc)
+    if isinstance(manifest, ContextCheckoutLegacyManifest):
+        _refuse("context manifest is inspect-only")
     return manifest
 
 

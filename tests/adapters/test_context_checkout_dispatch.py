@@ -18,6 +18,7 @@ from cli.test_cli_bounded_execution_unit import (
 from millrace.adapters.cli import session_completion
 from millrace.adapters.cli.run import run_bounded_execution_unit
 from millrace.contracts import context_checkout_manifest_digest
+from millrace.contracts.context_checkout import decode_context_checkout_manifest
 from millrace.contracts.transition import AttachRunnerSessionContext
 from support.runner_sessions import (
     _config,
@@ -110,6 +111,11 @@ def test_created_attached_restart_rematerializes_cas_without_recapture(
     original_bytes = (
         checkout / "required" / "workspace" / "docs" / "guide.txt"
     ).read_bytes()
+    assert original_bytes == b"original context\n"
+    manifest_digest = session.context_manifest_digest
+    assert manifest_digest is not None
+    manifest_bytes = runtime.cas_store.get_bytes(manifest_digest)
+    manifest = decode_context_checkout_manifest(manifest_bytes)
     _remove_read_only_checkout(checkout)
     source_file.write_text("live drift\n", encoding="utf-8")
 
@@ -125,10 +131,33 @@ def test_created_attached_restart_rematerializes_cas_without_recapture(
         local_config=_bound_config(runtime, adapter),
     )
 
-    assert resumed.code == "session_reconciliation_required"
-    assert (
-        checkout / "required" / "workspace" / "docs" / "guide.txt"
-    ).read_bytes() == original_bytes
+    assert resumed.code == "adapter_failure"
+    assert resumed.adapter_error_kind == "context_mutation_refused"
+    terminal_state = _load(runtime)
+    terminal = terminal_state.runner_sessions[session.session_id]
+    assert terminal.state == "failed"
+    completion = terminal_state.runner_session_completions[session.session_id]
+    assert completion.terminal_state == "failed"
+    cleanup = runtime.store.load_context_cleanup_receipt_authenticated(
+        session.session_id,
+        session.dispatch_generation,
+        manifest_digest,
+        session.session_fencing_token,
+    )
+    assert cleanup is not None
+    assert cleanup.session_id == session.session_id
+    assert cleanup.dispatch_generation == session.dispatch_generation
+    assert cleanup.fencing_token == session.session_fencing_token
+    assert cleanup.manifest_digest == manifest_digest
+    assert cleanup.removed_path_classes == ("context_checkout",)
+    assert cleanup.removed_file_count == len(manifest.files) + 1
+    assert cleanup.removed_byte_count == len(manifest_bytes) + sum(
+        item.byte_length for item in manifest.files
+    )
+    assert cleanup.adapter_cleanup_disposition == "not_required"
+    assert completion.cleanup_disposition == cleanup.adapter_cleanup_disposition
+    assert not checkout.exists()
+    assert runtime.cas_store.get_bytes(manifest_digest) == manifest_bytes
 
 
 def test_created_unattached_bound_session_captures_before_start(

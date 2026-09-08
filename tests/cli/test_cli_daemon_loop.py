@@ -5102,12 +5102,12 @@ def test_simple_loop_bound_session_mutation_refused_but_usage_durable(
         local_config=_config(adapter),
     )
     after = _ld(runtime)
-    assert result2.code in {
-        "completion_refused",
-        "session_reconciliation_required",
-        "observation_refused",
-    }
+    assert result2.code == "adapter_failure"
+    assert result2.adapter_error_kind == "context_mutation_refused"
     assert after.runner_observations == before.runner_observations
+    completion = after.runner_session_completions[session.session_id]
+    assert completion.terminal_state == "failed"
+    assert completion.adapter_error_kind == "context_mutation_refused"
     before_refusal_ids = {refusal.record_id for refusal in before.refusals}
     new_refusals = [
         refusal

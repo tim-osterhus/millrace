@@ -423,6 +423,7 @@ def _refusal_is_pre_persist(decision: TransitionDecision) -> bool:
     return refusal is not None and refusal.reason in {
         "enqueue_replay_target_invalid",
         "idempotency_conflict",
+        "cooldown_wait_pending",
     }
 
 

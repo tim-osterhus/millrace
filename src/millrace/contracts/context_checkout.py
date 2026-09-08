@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
+from pathlib import Path
 from typing import ClassVar, NoReturn, cast
 from unicodedata import normalize
 
@@ -28,8 +29,10 @@ _MANIFEST_KEYS = frozenset(
         "files",
         "catalog",
         "omissions",
+        "root_states",
     }
 )
+_LEGACY_MANIFEST_KEYS = _MANIFEST_KEYS - {"root_states"}
 _FILE_KEYS = frozenset(
     {
         "checkout_path",
@@ -54,6 +57,10 @@ _OMISSION_KEYS = frozenset({"source_kind", "source_ref", "reason"})
 _OMISSION_REASONS = frozenset(
     {"source_missing", "file_limit_exceeded", "byte_limit_exceeded"}
 )
+_ROOT_STATE_KEYS = frozenset(
+    {"source_kind", "source_ref", "root_kind", "files", "directories"}
+)
+_ROOT_KINDS = frozenset({"missing", "file", "directory"})
 
 
 def _refuse(message: str, cause: BaseException | None = None) -> NoReturn:
@@ -105,6 +112,37 @@ def _checkout_path(value: object) -> str:
     ):
         _refuse("checkout_path must be a safe relative POSIX path")
     return path
+
+
+def _root_relative_path(value: object, field_name: str) -> str:
+    if type(value) is str and value == "":
+        return value
+    path = _text(value, field_name)
+    if (
+        path.startswith("/")
+        or "\\" in path
+        or ":" in path.split("/", 1)[0]
+        or any(part in {"", ".", "..", ".millrace"} for part in path.split("/"))
+    ):
+        _refuse(f"{field_name} must be a safe relative POSIX path")
+    return path
+
+
+def _canonical_root_paths(value: object, field_name: str) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes, bytearray, Mapping)) or not isinstance(
+        value, Sequence
+    ):
+        _refuse(f"{field_name} must be a sequence")
+    try:
+        paths = tuple(cast(Sequence[object], value))
+    except Exception as exc:
+        _refuse(f"{field_name} must be a finite sequence", exc)
+    result = tuple(
+        _root_relative_path(item, "root path") for item in paths
+    )
+    if len(result) != len(set(result)):
+        _refuse(f"{field_name} must not contain duplicates")
+    return tuple(sorted(result, key=lambda item: item.encode("utf-8")))
 
 
 def _canonical_files(value: object) -> tuple[ContextCheckoutFile, ...]:
@@ -184,6 +222,34 @@ def _canonical_omissions(value: object) -> tuple[ContextCheckoutOmission, ...]:
         )
     except (UnicodeError, AttributeError, TypeError) as exc:
         _refuse("omissions cannot be canonically ordered", exc)
+
+
+def _canonical_root_states(
+    value: object,
+) -> tuple[ContextCheckoutRootState, ...]:
+    if isinstance(value, (str, bytes, bytearray, Mapping)) or not isinstance(
+        value, Sequence
+    ):
+        _refuse("root_states must be a sequence")
+    try:
+        root_states = tuple(cast(Sequence[object], value))
+    except Exception as exc:
+        _refuse("root_states must be a finite sequence", exc)
+    if any(not isinstance(item, ContextCheckoutRootState) for item in root_states):
+        _refuse("root_states must contain ContextCheckoutRootState records")
+    typed_states = cast(tuple[ContextCheckoutRootState, ...], root_states)
+    source_keys = [(item.source_kind, item.source_ref) for item in typed_states]
+    if len(source_keys) != len(set(source_keys)):
+        _refuse("root_states must not contain duplicate sources")
+    return tuple(
+        sorted(
+            typed_states,
+            key=lambda item: (
+                item.source_kind.encode("utf-8"),
+                item.source_ref.encode("utf-8"),
+            ),
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +336,114 @@ class ContextCheckoutCatalogEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextCheckoutRootState:
+    """Authenticated, bounded state for one selected workspace root."""
+
+    source_kind: str
+    source_ref: str
+    root_kind: str
+    files: tuple[str, ...]
+    directories: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _text(self.source_kind, "source_kind")
+        _text(self.source_ref, "source_ref")
+        _text(self.root_kind, "root_kind")
+        if self.root_kind not in _ROOT_KINDS:
+            _refuse("unsupported context checkout root kind")
+        files = _canonical_root_paths(self.files, "files")
+        directories = _canonical_root_paths(self.directories, "directories")
+        if set(files) & set(directories):
+            _refuse("root state files and directories must not overlap")
+        if self.root_kind == "missing" and (files or directories):
+            _refuse("missing root state must not contain entries")
+        if self.root_kind == "file" and (files != ("",) or directories):
+            _refuse("file root state must contain only its root file")
+        if self.root_kind == "directory":
+            if "" not in directories:
+                _refuse("directory root state must contain its root directory")
+            for path in (*files, *directories):
+                if any(
+                    parent.as_posix() not in directories
+                    for parent in Path(path).parents
+                    if parent.as_posix() != "."
+                ):
+                    _refuse("root state directory structure is incomplete")
+        object.__setattr__(self, "files", files)
+        object.__setattr__(self, "directories", directories)
+
+
+def _validate_manifest_fields(
+    *,
+    session_id: str,
+    dispatch_generation: int,
+    plan_fingerprint: str,
+    binding_id: str,
+    router_asset_id: str,
+    files: object,
+    catalog: object,
+    omissions: object,
+) -> tuple[
+    tuple[ContextCheckoutFile, ...],
+    tuple[ContextCheckoutCatalogEntry, ...],
+    tuple[ContextCheckoutOmission, ...],
+]:
+    _text(session_id, "session_id")
+    _int(dispatch_generation, "dispatch_generation", minimum=1)
+    _digest(plan_fingerprint, "plan_fingerprint")
+    _text(binding_id, "binding_id")
+    _text(router_asset_id, "router_asset_id")
+    typed_files = _canonical_files(files)
+    typed_catalog = _canonical_catalog(catalog)
+    declared_sizes: dict[str, int] = {}
+    declared_items: tuple[
+        ContextCheckoutFile | ContextCheckoutCatalogEntry, ...
+    ] = (*typed_files, *typed_catalog)
+    for item in declared_items:
+        previous = declared_sizes.setdefault(item.content_digest, item.byte_length)
+        if previous != item.byte_length:
+            _refuse("content digest has conflicting declared sizes")
+    return typed_files, typed_catalog, _canonical_omissions(omissions)
+
+
+@dataclass(frozen=True, slots=True)
 class ContextCheckoutManifest:
+    record_kind: ClassVar[str] = "millrace.context_checkout_manifest"
+    schema_version: ClassVar[int] = 3
+
+    session_id: str
+    dispatch_generation: int
+    plan_fingerprint: str
+    binding_id: str
+    router_asset_id: str
+    files: tuple[ContextCheckoutFile, ...]
+    catalog: tuple[ContextCheckoutCatalogEntry, ...] = ()
+    omissions: tuple[ContextCheckoutOmission, ...] = ()
+    root_states: tuple[ContextCheckoutRootState, ...] = ()
+
+    def __post_init__(self) -> None:
+        files, catalog, omissions = _validate_manifest_fields(
+            session_id=self.session_id,
+            dispatch_generation=self.dispatch_generation,
+            plan_fingerprint=self.plan_fingerprint,
+            binding_id=self.binding_id,
+            router_asset_id=self.router_asset_id,
+            files=self.files,
+            catalog=self.catalog,
+            omissions=self.omissions,
+        )
+        object.__setattr__(self, "files", files)
+        object.__setattr__(self, "catalog", catalog)
+        object.__setattr__(self, "omissions", omissions)
+        object.__setattr__(
+            self, "root_states", _canonical_root_states(self.root_states)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCheckoutLegacyManifest:
+    """Inspect-only representation of an authenticated schema-v2 manifest."""
+
     record_kind: ClassVar[str] = "millrace.context_checkout_manifest"
     schema_version: ClassVar[int] = 2
 
@@ -284,88 +457,116 @@ class ContextCheckoutManifest:
     omissions: tuple[ContextCheckoutOmission, ...] = ()
 
     def __post_init__(self) -> None:
-        _text(self.session_id, "session_id")
-        _int(self.dispatch_generation, "dispatch_generation", minimum=1)
-        _digest(self.plan_fingerprint, "plan_fingerprint")
-        _text(self.binding_id, "binding_id")
-        _text(self.router_asset_id, "router_asset_id")
-        files = _canonical_files(self.files)
-        catalog = _canonical_catalog(self.catalog)
-        declared_sizes: dict[str, int] = {}
-        declared_items: tuple[
-            ContextCheckoutFile | ContextCheckoutCatalogEntry, ...
-        ] = (*files, *catalog)
-        for item in declared_items:
-            previous = declared_sizes.setdefault(item.content_digest, item.byte_length)
-            if previous != item.byte_length:
-                _refuse("content digest has conflicting declared sizes")
+        files, catalog, omissions = _validate_manifest_fields(
+            session_id=self.session_id,
+            dispatch_generation=self.dispatch_generation,
+            plan_fingerprint=self.plan_fingerprint,
+            binding_id=self.binding_id,
+            router_asset_id=self.router_asset_id,
+            files=self.files,
+            catalog=self.catalog,
+            omissions=self.omissions,
+        )
         object.__setattr__(self, "files", files)
         object.__setattr__(self, "catalog", catalog)
-        object.__setattr__(self, "omissions", _canonical_omissions(self.omissions))
+        object.__setattr__(self, "omissions", omissions)
+
+
+
+
+def _manifest_record(
+    manifest: ContextCheckoutManifest | ContextCheckoutLegacyManifest,
+    *,
+    schema_version: int,
+) -> dict[str, object]:
+    record: dict[str, object] = {
+        "record_kind": ContextCheckoutManifest.record_kind,
+        "schema_version": schema_version,
+        "session_id": manifest.session_id,
+        "dispatch_generation": manifest.dispatch_generation,
+        "plan_fingerprint": manifest.plan_fingerprint,
+        "binding_id": manifest.binding_id,
+        "router_asset_id": manifest.router_asset_id,
+        "files": [
+            {
+                "checkout_path": item.checkout_path,
+                "source_kind": item.source_kind,
+                "source_ref": item.source_ref,
+                "content_digest": item.content_digest,
+                "byte_length": item.byte_length,
+                "required": item.required,
+            }
+            for item in manifest.files
+        ],
+        "catalog": [
+            {
+                "logical_path": item.logical_path,
+                "source_kind": item.source_kind,
+                "source_ref": item.source_ref,
+                "content_digest": item.content_digest,
+                "byte_length": item.byte_length,
+                "provenance_ids": list(item.provenance_ids),
+            }
+            for item in manifest.catalog
+        ],
+        "omissions": [
+            {
+                "source_kind": item.source_kind,
+                "source_ref": item.source_ref,
+                "reason": item.reason,
+            }
+            for item in manifest.omissions
+        ],
+    }
+    if schema_version == ContextCheckoutManifest.schema_version:
+        record["root_states"] = [
+            {
+                "source_kind": item.source_kind,
+                "source_ref": item.source_ref,
+                "root_kind": item.root_kind,
+                "files": list(item.files),
+                "directories": list(item.directories),
+            }
+            for item in getattr(manifest, "root_states", ())
+        ]
+    return record
+
+
+def _encode_manifest_record(record: Mapping[str, object]) -> bytes:
+    return json.dumps(
+        record,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 def encode_context_checkout_manifest(
-    manifest: ContextCheckoutManifest | Mapping[str, object],
+    manifest: ContextCheckoutManifest
+    | ContextCheckoutLegacyManifest
+    | Mapping[str, object],
 ) -> bytes:
-    """Return compact, sorted-key UTF-8 JSON bytes for a manifest."""
+    """Return canonical bytes without upgrading an inspect-only legacy manifest."""
     try:
         manifest = _coerce_manifest(manifest)
-        record = {
-            "record_kind": ContextCheckoutManifest.record_kind,
-            "schema_version": ContextCheckoutManifest.schema_version,
-            "session_id": manifest.session_id,
-            "dispatch_generation": manifest.dispatch_generation,
-            "plan_fingerprint": manifest.plan_fingerprint,
-            "binding_id": manifest.binding_id,
-            "router_asset_id": manifest.router_asset_id,
-            "files": [
-                {
-                    "checkout_path": item.checkout_path,
-                    "source_kind": item.source_kind,
-                    "source_ref": item.source_ref,
-                    "content_digest": item.content_digest,
-                    "byte_length": item.byte_length,
-                    "required": item.required,
-                }
-                for item in manifest.files
-            ],
-            "catalog": [
-                {
-                    "logical_path": item.logical_path,
-                    "source_kind": item.source_kind,
-                    "source_ref": item.source_ref,
-                    "content_digest": item.content_digest,
-                    "byte_length": item.byte_length,
-                    "provenance_ids": list(item.provenance_ids),
-                }
-                for item in manifest.catalog
-            ],
-            "omissions": [
-                {
-                    "source_kind": item.source_kind,
-                    "source_ref": item.source_ref,
-                    "reason": item.reason,
-                }
-                for item in manifest.omissions
-            ],
-        }
-        return json.dumps(
-            record,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        schema_version = (
+            ContextCheckoutLegacyManifest.schema_version
+            if isinstance(manifest, ContextCheckoutLegacyManifest)
+            else ContextCheckoutManifest.schema_version
+        )
+        return _encode_manifest_record(
+            _manifest_record(manifest, schema_version=schema_version)
+        )
     except ContextCheckoutContractError:
         raise
     except Exception as exc:
         _refuse("manifest cannot be canonically encoded", exc)
 
-
 def decode_context_checkout_manifest(
     raw: bytes | Mapping[str, object],
-) -> ContextCheckoutManifest:
-    """Decode strict JSON bytes and return a canonically ordered manifest."""
+) -> ContextCheckoutManifest | ContextCheckoutLegacyManifest:
+    """Decode canonical schema-v3 or inspect-only schema-v2 manifest bytes."""
     try:
         if isinstance(raw, Mapping):
             return _manifest_from_mapping(cast(Mapping[object, object], raw))
@@ -388,14 +589,21 @@ def decode_context_checkout_manifest(
         _refuse("manifest bytes are malformed", exc)
 
 
+
 def context_checkout_manifest_digest(
-    manifest: ContextCheckoutManifest | Mapping[str, object] | bytes,
+    manifest: ContextCheckoutManifest
+    | ContextCheckoutLegacyManifest
+    | Mapping[str, object]
+    | bytes,
 ) -> str:
     """Return the raw CAS digest of canonical manifest bytes."""
     try:
         raw = (
             encode_context_checkout_manifest(manifest)
-            if isinstance(manifest, (ContextCheckoutManifest, Mapping))
+            if isinstance(
+                manifest,
+                (ContextCheckoutManifest, ContextCheckoutLegacyManifest, Mapping),
+            )
             else _require_bytes(manifest)
         )
         return f"sha256:{sha256(raw).hexdigest()}"
@@ -406,7 +614,10 @@ def context_checkout_manifest_digest(
 
 
 def verify_context_checkout_manifest_digest(
-    manifest: ContextCheckoutManifest | Mapping[str, object] | bytes,
+    manifest: ContextCheckoutManifest
+    | ContextCheckoutLegacyManifest
+    | Mapping[str, object]
+    | bytes,
     expected_digest: str,
 ) -> bool:
     """Verify a raw `sha256:` digest and return ``True`` or refuse."""
@@ -424,10 +635,62 @@ def _require_bytes(value: object) -> bytes:
 
 
 def _coerce_manifest(
-    value: ContextCheckoutManifest | Mapping[str, object],
-) -> ContextCheckoutManifest:
+    value: (
+        ContextCheckoutManifest
+        | ContextCheckoutLegacyManifest
+        | Mapping[str, object]
+    ),
+) -> ContextCheckoutManifest | ContextCheckoutLegacyManifest:
     if isinstance(value, ContextCheckoutManifest):
         return ContextCheckoutManifest(
+            session_id=value.session_id,
+            dispatch_generation=value.dispatch_generation,
+            plan_fingerprint=value.plan_fingerprint,
+            binding_id=value.binding_id,
+            router_asset_id=value.router_asset_id,
+            files=tuple(
+                ContextCheckoutFile(
+                    checkout_path=item.checkout_path,
+                    source_kind=item.source_kind,
+                    source_ref=item.source_ref,
+                    content_digest=item.content_digest,
+                    byte_length=item.byte_length,
+                    required=item.required,
+                )
+                for item in value.files
+            ),
+            catalog=tuple(
+                ContextCheckoutCatalogEntry(
+                    logical_path=item.logical_path,
+                    source_kind=item.source_kind,
+                    source_ref=item.source_ref,
+                    content_digest=item.content_digest,
+                    byte_length=item.byte_length,
+                    provenance_ids=tuple(item.provenance_ids),
+                )
+                for item in value.catalog
+            ),
+            omissions=tuple(
+                ContextCheckoutOmission(
+                    source_kind=item.source_kind,
+                    source_ref=item.source_ref,
+                    reason=item.reason,
+                )
+                for item in value.omissions
+            ),
+            root_states=tuple(
+                ContextCheckoutRootState(
+                    source_kind=item.source_kind,
+                    source_ref=item.source_ref,
+                    root_kind=item.root_kind,
+                    files=tuple(item.files),
+                    directories=tuple(item.directories),
+                )
+                for item in value.root_states
+            ),
+        )
+    if isinstance(value, ContextCheckoutLegacyManifest):
+        return ContextCheckoutLegacyManifest(
             session_id=value.session_id,
             dispatch_generation=value.dispatch_generation,
             plan_fingerprint=value.plan_fingerprint,
@@ -469,17 +732,18 @@ def _coerce_manifest(
     _refuse("manifest must be a ContextCheckoutManifest or mapping")
 
 
-def _manifest_from_mapping(value: Mapping[object, object]) -> ContextCheckoutManifest:
-    if "schema_version" in value and (
-        type(value["schema_version"]) is not int
-        or value["schema_version"] != ContextCheckoutManifest.schema_version
-    ):
+def _manifest_from_mapping(
+    value: Mapping[object, object],
+) -> ContextCheckoutManifest | ContextCheckoutLegacyManifest:
+    schema_version = value.get("schema_version")
+    if type(schema_version) is not int or schema_version not in {2, 3}:
         _refuse("manifest schema_version is unsupported")
-    _exact_keys(value, _MANIFEST_KEYS, "manifest")
+    expected_keys = (
+        _LEGACY_MANIFEST_KEYS if schema_version == 2 else _MANIFEST_KEYS
+    )
+    _exact_keys(value, expected_keys, "manifest")
     if value["record_kind"] != ContextCheckoutManifest.record_kind:
         _refuse("manifest record_kind is unsupported")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
-        _refuse("manifest schema_version is unsupported")
     files = value["files"]
     catalog = value["catalog"]
     omissions = value["omissions"]
@@ -492,23 +756,90 @@ def _manifest_from_mapping(value: Mapping[object, object]) -> ContextCheckoutMan
         or not isinstance(omissions, Sequence)
     ):
         _refuse("manifest files, catalog, and omissions must be arrays")
+    decoded_files = tuple(
+        _decode_file(item, index)
+        for index, item in enumerate(cast(Sequence[object], files))
+    )
+    decoded_catalog = tuple(
+        _decode_catalog_entry(item, index)
+        for index, item in enumerate(cast(Sequence[object], catalog))
+    )
+    decoded_omissions = tuple(
+        _decode_omission(item, index)
+        for index, item in enumerate(cast(Sequence[object], omissions))
+    )
+    common = {
+        "session_id": cast(str, value["session_id"]),
+        "dispatch_generation": cast(int, value["dispatch_generation"]),
+        "plan_fingerprint": cast(str, value["plan_fingerprint"]),
+        "binding_id": cast(str, value["binding_id"]),
+        "router_asset_id": cast(str, value["router_asset_id"]),
+        "files": decoded_files,
+        "catalog": decoded_catalog,
+        "omissions": decoded_omissions,
+    }
+    if schema_version == 2:
+        return ContextCheckoutLegacyManifest(
+            session_id=cast(str, common["session_id"]),
+            dispatch_generation=cast(int, common["dispatch_generation"]),
+            plan_fingerprint=cast(str, common["plan_fingerprint"]),
+            binding_id=cast(str, common["binding_id"]),
+            router_asset_id=cast(str, common["router_asset_id"]),
+            files=cast(tuple[ContextCheckoutFile, ...], common["files"]),
+            catalog=cast(
+                tuple[ContextCheckoutCatalogEntry, ...], common["catalog"]
+            ),
+            omissions=cast(
+                tuple[ContextCheckoutOmission, ...], common["omissions"]
+            ),
+        )
+    root_states = value["root_states"]
+    if (
+        isinstance(root_states, (str, bytes, bytearray, Mapping))
+        or not isinstance(root_states, Sequence)
+    ):
+        _refuse("manifest root_states must be an array")
+    decoded_root_states = tuple(
+        _decode_root_state(item, index)
+        for index, item in enumerate(cast(Sequence[object], root_states))
+    )
     return ContextCheckoutManifest(
-        session_id=cast(str, value["session_id"]),
-        dispatch_generation=cast(int, value["dispatch_generation"]),
-        plan_fingerprint=cast(str, value["plan_fingerprint"]),
-        binding_id=cast(str, value["binding_id"]),
-        router_asset_id=cast(str, value["router_asset_id"]),
-        files=tuple(
-            _decode_file(item, index)
-            for index, item in enumerate(cast(Sequence[object], files))
+        session_id=cast(str, common["session_id"]),
+        dispatch_generation=cast(int, common["dispatch_generation"]),
+        plan_fingerprint=cast(str, common["plan_fingerprint"]),
+        binding_id=cast(str, common["binding_id"]),
+        router_asset_id=cast(str, common["router_asset_id"]),
+        files=cast(tuple[ContextCheckoutFile, ...], common["files"]),
+        catalog=cast(
+            tuple[ContextCheckoutCatalogEntry, ...], common["catalog"]
         ),
-        catalog=tuple(
-            _decode_catalog_entry(item, index)
-            for index, item in enumerate(cast(Sequence[object], catalog))
-        ),
-        omissions=tuple(
-            _decode_omission(item, index)
-            for index, item in enumerate(cast(Sequence[object], omissions))
+        omissions=cast(tuple[ContextCheckoutOmission, ...], common["omissions"]),
+        root_states=decoded_root_states,
+    )
+
+
+
+def _decode_root_state(value: object, index: int) -> ContextCheckoutRootState:
+    if not isinstance(value, Mapping):
+        _refuse(f"root_states[{index}] must be an object")
+    record = cast(Mapping[object, object], value)
+    _exact_keys(record, _ROOT_STATE_KEYS, f"root_states[{index}]")
+    files = record["files"]
+    directories = record["directories"]
+    if (
+        isinstance(files, (str, bytes, bytearray, Mapping))
+        or not isinstance(files, Sequence)
+        or isinstance(directories, (str, bytes, bytearray, Mapping))
+        or not isinstance(directories, Sequence)
+    ):
+        _refuse(f"root_states[{index}] files and directories must be arrays")
+    return ContextCheckoutRootState(
+        source_kind=cast(str, record["source_kind"]),
+        source_ref=cast(str, record["source_ref"]),
+        root_kind=cast(str, record["root_kind"]),
+        files=cast(tuple[str, ...], tuple(cast(Sequence[object], files))),
+        directories=cast(
+            tuple[str, ...], tuple(cast(Sequence[object], directories))
         ),
     )
 
@@ -597,8 +928,10 @@ __all__ = (
     "ContextCheckoutCatalogEntry",
     "ContextCheckoutContractError",
     "ContextCheckoutFile",
+    "ContextCheckoutLegacyManifest",
     "ContextCheckoutManifest",
     "ContextCheckoutOmission",
+    "ContextCheckoutRootState",
     "context_checkout_manifest_digest",
     "decode_context_checkout_manifest",
     "encode_context_checkout_manifest",

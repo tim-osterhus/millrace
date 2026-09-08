@@ -6,7 +6,8 @@ break, not an in-place upgrade.
 
 ## Start With New State
 
-1. Install the v0.22 distributions.
+1. Install the published v0.22.2 bundle or explicit reviewed v0.22.3 candidate
+   members as described in [Getting Started](getting-started.md).
 2. Create an empty workspace with `millrace workspace init`.
 3. Recreate local runner credentials and adapter configuration.
 4. Import current workflow packages.
@@ -69,11 +70,13 @@ millrace --workspace "$WORKSPACE" doctor
 Then run a bounded daemon session with explicit adapter configuration and
 inspect status and trace output before leaving it active.
 
-If a v0.22 schema-version-6 workspace contains active work, finish or retire
-that work with the matching runtime. The schema-9 runtime refuses exact
-schema-6 and schema-7 workspaces unchanged as `workspace_upgrade_required`;
-it does not automatically migrate the database/CAS or infer operator-control
-state.
+If an older workspace contains active work, finish or retire that work with
+the matching runtime and preserve its state. The v0.22.3 candidate uses store
+schema 10. It refuses exact schema-6 and schema-7 workspaces unchanged as
+`workspace_upgrade_required`; schema 8 (used by v0.22.2) and schema 9 are
+unsupported and also remain unchanged. There is no database/CAS migration or
+inferred operator-control state. Initialize a fresh workspace rather than
+copying old state into it.
 
 For the complete removed and deferred inventory, read
 [v0.22 compatibility](v0.22-compatibility.md). For stable error families and

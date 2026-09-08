@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError, fields, is_dataclass
+from dataclasses import FrozenInstanceError, fields, is_dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -10,8 +10,10 @@ import millrace.contracts as contracts
 from millrace.adapters.cli.context_checkout import PreparedContextCheckout
 from millrace.contracts import (
     ContextCheckoutFile,
+    ContextCheckoutLegacyManifest,
     ContextCheckoutManifest,
     ContextCheckoutOmission,
+    ContextCheckoutRootState,
     context_checkout_manifest_digest,
     decode_context_checkout_manifest,
     encode_context_checkout_manifest,
@@ -121,8 +123,8 @@ def test_context_checkout_manifest_uses_canonical_bytes_and_raw_digest() -> None
         b'"required":true,"source_kind":"selected_router","source_ref":"router-1"}],'
         b'"omissions":[{"reason":"source_missing","source_kind":"workspace_relative_root",'
         b'"source_ref":"missing"}],"plan_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
-        b'"record_kind":"millrace.context_checkout_manifest","router_asset_id":"router-1",'
-        b'"schema_version":2,"session_id":"session-1"}'
+        b'"record_kind":"millrace.context_checkout_manifest","root_states":[],'
+        b'"router_asset_id":"router-1","schema_version":3,"session_id":"session-1"}'
     )
     assert decode_context_checkout_manifest(raw) == ContextCheckoutManifest(
         session_id="session-1",
@@ -400,3 +402,56 @@ def test_catalog_rejects_duplicate_paths_and_conflicting_digest_sizes() -> None:
     ])
     with pytest.raises(ValueError, match="size"):
         encode_context_checkout_manifest(conflicting_size)
+
+
+def test_schema_three_root_state_round_trips_and_is_authenticated() -> None:
+    root_state = ContextCheckoutRootState(
+        source_kind="workspace_relative_root",
+        source_ref="docs",
+        root_kind="directory",
+        files=("guide.txt",),
+        directories=("", "nested"),
+    )
+    manifest = replace(_manifest(), root_states=(root_state,))
+
+    raw = encode_context_checkout_manifest(manifest)
+    decoded = decode_context_checkout_manifest(raw)
+
+    assert manifest.schema_version == 3
+    assert decoded == manifest
+    assert json.loads(raw)["root_states"] == [
+        {
+            "directories": ["", "nested"],
+            "files": ["guide.txt"],
+            "root_kind": "directory",
+            "source_kind": "workspace_relative_root",
+            "source_ref": "docs",
+        }
+    ]
+    assert context_checkout_manifest_digest(raw) == context_checkout_manifest_digest(
+        manifest
+    )
+
+
+def test_legacy_schema_two_manifest_round_trips_original_bytes_for_inspection() -> None:
+    raw = (
+        b'{"binding_id":"binding-1","catalog":[],'
+        b'"dispatch_generation":1,"files":[],'
+        b'"omissions":[{"reason":"source_missing",'
+        b'"source_kind":"workspace_relative_root",'
+        b'"source_ref":"missing"}],"plan_fingerprint":"sha256:'
+        b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+        b'"record_kind":"millrace.context_checkout_manifest",'
+        b'"router_asset_id":"router-1","schema_version":2,'
+        b'"session_id":"session-1"}'
+    )
+
+    legacy = decode_context_checkout_manifest(raw)
+
+    assert isinstance(legacy, ContextCheckoutLegacyManifest)
+    assert legacy.schema_version == 2
+    assert encode_context_checkout_manifest(legacy) == raw
+    assert context_checkout_manifest_digest(legacy) == (
+        "sha256:" + __import__("hashlib").sha256(raw).hexdigest()
+    )
+    assert "root_states" not in json.loads(encode_context_checkout_manifest(legacy))

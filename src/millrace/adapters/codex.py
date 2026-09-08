@@ -978,6 +978,9 @@ def _selected_artifact_projection(
         for key in ("marker", "action_id", "action_kind", "artifact_schema_id"):
             if key not in option:
                 raise ValueError("terminal option is missing projection material")
+        artifact_field_conditions = option.get("artifact_field_conditions", {})
+        if not isinstance(artifact_field_conditions, Mapping):
+            raise ValueError("terminal option artifact conditions must be a mapping")
         artifact_schema_id = option["artifact_schema_id"]
         if artifact_schema_id is not None:
             schema_id = _require_nonblank_string(
@@ -1078,6 +1081,9 @@ def _selected_artifact_projection(
                     "terminal option action_kind",
                 ),
                 "artifact_schema_id": artifact_schema_id,
+                "artifact_field_conditions": _to_jsonable(
+                    contract_option.get("artifact_field_conditions", {}),
+                ),
                 "json_schema": schema_json,
             }
         )

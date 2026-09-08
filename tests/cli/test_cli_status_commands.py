@@ -4,6 +4,7 @@ import io
 import json
 import sqlite3
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -309,6 +310,10 @@ def test_rejected_evidence_flag_is_only_available_on_runs_show() -> None:
     assert "--include-rejected-evidence" not in list_help
     assert "--include-rejected-evidence" not in follow_help
     assert "--include-rejected-evidence" not in trace_help
+    assert "--include-completion-diagnostic" in show_help
+    assert "--include-completion-diagnostic" not in list_help
+    assert "--include-completion-diagnostic" not in follow_help
+    assert "--include-completion-diagnostic" not in trace_help
 
 
 def test_runner_session_projection_omits_private_fencing_authority(
@@ -1652,3 +1657,434 @@ def test_populated_daemon_budget_projects_across_every_bounded_surface(
             assert projected_budget["usage_evidence"]["reason"] == (
                 "runner_usage_evidence_refused"
             )
+
+
+def test_completion_diagnostic_is_opt_in_and_current_session_scoped(
+    tmp_path: Path,
+) -> None:
+    workspace, _fingerprint, _work_item_id, activation_id = _workspace_with_work(
+        tmp_path
+    )
+    claim_code, claim_stdout, claim_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "claim",
+            activation_id,
+            "--input-id",
+            "claim-for-completion-diagnostic",
+        ]
+    )
+    assert claim_code == 0, (claim_stdout, claim_stderr)
+    run_id = str(_json(claim_stdout)["data"]["run_id"])
+    assert _complete_claimed_runner_sessions(workspace) == (run_id,)
+
+    default_code, default_stdout, default_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+        ]
+    )
+    assert default_code == 0, default_stderr
+    default_run = _json(default_stdout)["data"]["run"]
+    assert "completion_diagnostic" not in default_run
+    assert "diagnostic" not in default_run["rejected_result"]
+
+    opt_in_code, opt_in_stdout, opt_in_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+            "--include-completion-diagnostic",
+        ]
+    )
+    assert opt_in_code == 0, opt_in_stderr
+    shown = _json(opt_in_stdout)["data"]["run"]
+    diagnostic = shown["completion_diagnostic"]
+    assert diagnostic["session_id"] == shown["runner_session"]["session_id"]
+    assert diagnostic["dispatch_generation"] == (
+        shown["runner_session"]["dispatch_generation"]
+    )
+    assert diagnostic["completion_diagnostic_digest"] == shown["rejected_result"][
+        "completion_diagnostic_digest"
+    ]
+    assert diagnostic["diagnostic_status"] == "available"
+    assert diagnostic["diagnostic"] == {"bounded": True, "ordinal": 0}
+    assert "session_fencing_token" not in opt_in_stdout
+
+    both_code, both_stdout, both_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+            "--include-rejected-evidence",
+            "--include-completion-diagnostic",
+        ]
+    )
+    assert both_code == 0, both_stderr
+    both_run = _json(both_stdout)["data"]["run"]
+    assert both_run["rejected_result"]["diagnostic"] == {
+        "bounded": True,
+        "ordinal": 0,
+    }
+    assert both_run["completion_diagnostic"]["diagnostic"] == {
+        "bounded": True,
+        "ordinal": 0,
+    }
+
+
+def test_completion_diagnostic_refuses_wrong_session_or_run(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    from millrace.adapters.cli import status
+    from millrace.contracts.runner import (
+        RunnerSessionCompletionDiagnostic,
+        runner_session_completion_diagnostic_bytes,
+    )
+    from millrace.substrate.cas import ContentAddressedByteStore
+
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    runtime = SimpleNamespace(
+        cas_store=cas_store,
+        paths=SimpleNamespace(cas_path=tmp_path / "cas"),
+    )
+    run_ref = SimpleNamespace(
+        run_id="run-1",
+        plan_ref=SimpleNamespace(authority_fingerprint="sha256:" + "a" * 64),
+        claim_id="claim-1",
+        generation=1,
+        fencing_token="run-fence-1",
+    )
+
+    for session_run_id, completion_run_id in (
+        ("foreign-run", "foreign-run"),
+        ("run-1", "foreign-run"),
+    ):
+        session_id = "session-foreign"
+        session = SimpleNamespace(
+            session_id=session_id,
+            run_id=session_run_id,
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+        )
+        retained = RunnerSessionCompletionDiagnostic(
+            run_id=completion_run_id,
+            session_id=session_id,
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            plan_fingerprint="sha256:" + "a" * 64,
+            claim_id="claim-1",
+            generation=1,
+            fencing_token="run-fence-1",
+            stage_kind_id="stage.worker",
+            graph_node_id="worker.start",
+            runner_binding_id="runner.worker",
+            diagnostic={"private_transcript": "must not be emitted"},
+        )
+        digest = cas_store.put_bytes(
+            runner_session_completion_diagnostic_bytes(retained)
+        )
+        completion = SimpleNamespace(
+            session_id=session_id,
+            run_id=completion_run_id,
+            dispatch_generation=1,
+            session_fencing_token="session-fence-1",
+            diagnostic_digest=digest,
+        )
+        state = SimpleNamespace(
+            runs={
+                "run-1": SimpleNamespace(
+                    current_session_id=session_id,
+                    run_ref=run_ref,
+                )
+            },
+            runner_sessions={session_id: session},
+            runner_session_completions={session_id: completion},
+        )
+
+        projection = status.completion_diagnostic_projection(
+            runtime, state, "run-1"
+        )
+
+        assert projection is not None
+        assert projection["session_id"] == session_id
+        assert projection["completion_diagnostic_digest"] == digest
+        assert projection["diagnostic_status"] == "corrupt"
+        assert "diagnostic" not in projection
+        assert "private_transcript" not in json.dumps(projection)
+
+
+def test_completion_diagnostic_reports_unavailable_objects_without_payload(
+    tmp_path: Path,
+) -> None:
+    no_completion_root = tmp_path / "no-completion"
+    no_completion_root.mkdir()
+    workspace, _fingerprint, _work_item_id, activation_id = _workspace_with_work(
+        no_completion_root
+    )
+    claim_code, claim_stdout, claim_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "claim",
+            activation_id,
+            "--input-id",
+            "claim-without-completion",
+        ]
+    )
+    assert claim_code == 0, (claim_stdout, claim_stderr)
+    run_id = str(_json(claim_stdout)["data"]["run_id"])
+    no_completion_code, no_completion_stdout, no_completion_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+            "--include-completion-diagnostic",
+        ]
+    )
+    assert no_completion_code == 0, no_completion_stderr
+    no_completion = _json(no_completion_stdout)["data"]["run"][
+        "completion_diagnostic"
+    ]
+    assert no_completion["session_id"] is not None
+    assert no_completion["completion_diagnostic_digest"] is None
+    assert no_completion["diagnostic_status"] == "not_present"
+    assert "diagnostic" not in no_completion
+
+    invalid_objects_root = tmp_path / "invalid-objects"
+    invalid_objects_root.mkdir()
+    workspace, _fingerprint, _work_item_id, activation_id = _workspace_with_work(
+        invalid_objects_root
+    )
+    claim_code, claim_stdout, claim_stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "dispatch",
+            "claim",
+            activation_id,
+            "--input-id",
+            "claim-for-invalid-diagnostic",
+        ]
+    )
+    assert claim_code == 0, (claim_stdout, claim_stderr)
+    run_id = str(_json(claim_stdout)["data"]["run_id"])
+    assert _complete_claimed_runner_sessions(workspace) == (run_id,)
+    code, stdout, stderr = _invoke(
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "runs",
+            "show",
+            run_id,
+            "--include-completion-diagnostic",
+        ]
+    )
+    assert code == 0, stderr
+    valid = _json(stdout)["data"]["run"]["completion_diagnostic"]
+    digest = str(valid["completion_diagnostic_digest"])
+    cas_root = workspace / ".millrace" / "cas"
+    object_path = cas_root / "sha256" / digest.removeprefix("sha256:")
+    valid_payload = object_path.read_bytes()
+
+    def show_diagnostic() -> dict[str, Any]:
+        code, stdout, stderr = _invoke(
+            [
+                "--json",
+                "--workspace",
+                str(workspace),
+                "runs",
+                "show",
+                run_id,
+                "--include-completion-diagnostic",
+            ]
+        )
+        assert code == 0, stderr
+        return _json(stdout)["data"]["run"]["completion_diagnostic"]
+
+    object_path.unlink()
+    missing = show_diagnostic()
+    assert missing["completion_diagnostic_digest"] == digest
+    assert missing["diagnostic_status"] == "missing"
+    assert "diagnostic" not in missing
+    object_path.write_bytes(valid_payload)
+
+    object_path.write_bytes(b"x" * (16 * 1024 + 1))
+    oversized = show_diagnostic()
+    assert oversized["diagnostic_status"] == "corrupt"
+    assert "diagnostic" not in oversized
+    object_path.write_bytes(valid_payload)
+
+    object_path.write_bytes(b"not canonical diagnostic")
+    corrupt = show_diagnostic()
+    assert corrupt["diagnostic_status"] == "digest_mismatch"
+    assert "diagnostic" not in corrupt
+    object_path.write_bytes(valid_payload)
+
+    from millrace.contracts.runner import (
+        runner_session_completion_diagnostic_bytes,
+        runner_session_completion_diagnostic_from_payload,
+    )
+    from millrace.substrate.cas import ContentAddressedByteStore
+
+    original = runner_session_completion_diagnostic_from_payload(
+        json.loads(valid_payload)
+    )
+    foreign_digest = ContentAddressedByteStore(cas_root).put_bytes(
+        runner_session_completion_diagnostic_bytes(
+            replace(original, session_id="foreign-session")
+        )
+    )
+    with sqlite3.connect(workspace / ".millrace" / "runtime.sqlite3") as connection:
+        connection.execute(
+            """
+            UPDATE runner_session_completions
+            SET diagnostic_digest = ?
+            WHERE session_id = (
+                SELECT current_session_id FROM runs WHERE run_id = ?
+            )
+            """,
+            (foreign_digest, run_id),
+        )
+    foreign = show_diagnostic()
+    assert foreign["completion_diagnostic_digest"] == foreign_digest
+    assert foreign["diagnostic_status"] == "corrupt"
+    assert "diagnostic" not in foreign
+
+
+def test_completion_diagnostic_exposes_accepted_blocked_session(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    from millrace.adapters.cli import status
+    from millrace.contracts.runner import (
+        RunnerResultEvidence,
+        RunnerSessionCompletionDiagnostic,
+        runner_result_evidence_bytes,
+        runner_session_completion_diagnostic_bytes,
+    )
+    from millrace.substrate.cas import ContentAddressedByteStore
+
+    cas_store = ContentAddressedByteStore(tmp_path / "cas")
+    run_ref = SimpleNamespace(
+        run_id="run-blocked",
+        plan_ref=SimpleNamespace(authority_fingerprint="sha256:" + "b" * 64),
+        claim_id="claim-blocked",
+        generation=1,
+        fencing_token="run-fence-blocked",
+    )
+    session = SimpleNamespace(
+        session_id="session-blocked",
+        run_id="run-blocked",
+        dispatch_generation=2,
+        session_fencing_token="session-fence-blocked",
+    )
+    diagnostic_record = RunnerSessionCompletionDiagnostic(
+        run_id="run-blocked",
+        session_id=session.session_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        plan_fingerprint=run_ref.plan_ref.authority_fingerprint,
+        claim_id=run_ref.claim_id,
+        generation=run_ref.generation,
+        fencing_token=run_ref.fencing_token,
+        stage_kind_id="stage.blocked",
+        graph_node_id="blocked.start",
+        runner_binding_id="runner.blocked",
+        diagnostic={"blocked_reason": "requires review", "bounded": True},
+    )
+    diagnostic_digest = cas_store.put_bytes(
+        runner_session_completion_diagnostic_bytes(diagnostic_record)
+    )
+    evidence_digest = cas_store.put_bytes(
+        runner_result_evidence_bytes(
+            RunnerResultEvidence(
+                run_id=run_ref.run_id,
+                session_id=session.session_id,
+                dispatch_generation=session.dispatch_generation,
+                session_fencing_token=session.session_fencing_token,
+                plan_fingerprint=run_ref.plan_ref.authority_fingerprint,
+                claim_id=run_ref.claim_id,
+                generation=run_ref.generation,
+                fencing_token=run_ref.fencing_token,
+                stage_kind_id="stage.blocked",
+                graph_node_id="blocked.start",
+                runner_binding_id="runner.blocked",
+                marker="BLOCKED",
+                adapter_provenance=None,
+                observation_payload={"summary": "blocked"},
+                artifact_payload=None,
+            )
+        )
+    )
+    completion = SimpleNamespace(
+        session_id=session.session_id,
+        run_id=run_ref.run_id,
+        dispatch_generation=session.dispatch_generation,
+        session_fencing_token=session.session_fencing_token,
+        terminal_state="completed",
+        adapter_outcome_kind="success",
+        adapter_error_kind=None,
+        runner_result_evidence_digest=evidence_digest,
+        diagnostic_digest=diagnostic_digest,
+        application_input_id="accepted-blocked-application",
+        primary_cancellation_request_id=None,
+    )
+    state = SimpleNamespace(
+        runs={
+            run_ref.run_id: SimpleNamespace(
+                current_session_id=session.session_id,
+                activation_id="activation-blocked",
+                run_ref=run_ref,
+                stage_kind_id="stage.blocked",
+                runner_binding_id="runner.blocked",
+            )
+        },
+        activations={
+            "activation-blocked": SimpleNamespace(graph_node_id="blocked.start")
+        },
+        runner_sessions={session.session_id: session},
+        runner_session_completions={session.session_id: completion},
+        receipts={
+            completion.application_input_id: SimpleNamespace(accepted=True),
+        },
+    )
+    runtime = SimpleNamespace(
+        cas_store=cas_store,
+        paths=SimpleNamespace(cas_path=tmp_path / "cas"),
+    )
+
+    assert status.rejected_result_projection(runtime, state, run_ref.run_id) is None
+    projection = status.completion_diagnostic_projection(
+        runtime, state, run_ref.run_id
+    )
+
+    assert projection == {
+        "session_id": session.session_id,
+        "dispatch_generation": session.dispatch_generation,
+        "completion_diagnostic_digest": diagnostic_digest,
+        "diagnostic_status": "available",
+        "diagnostic": {"blocked_reason": "requires review", "bounded": True},
+    }

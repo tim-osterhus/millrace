@@ -27,6 +27,7 @@ from millrace.compiler.references import (
     validate_capability_values,
     validate_completion_remediation_references,
     validate_concurrency_policy_references,
+    validate_counter_artifact_contracts,
     validate_counter_references,
     validate_declared_outcomes_belong_to_stage,
     validate_declared_outcomes_have_actions,
@@ -133,6 +134,14 @@ def compile_workflow(
         policy=selected_runner_policy,
         declaration_path_prefix=declaration_path_prefix,
         diagnostic_context=diagnostic_context,
+    )
+    if _has_errors(diagnostics):
+        return CompileResult(plan=None, diagnostics=tuple(diagnostics))
+
+    validate_counter_artifact_contracts(
+        source,
+        diagnostics,
+        declaration_path_prefix=declaration_path_prefix,
     )
     if _has_errors(diagnostics):
         return CompileResult(plan=None, diagnostics=tuple(diagnostics))

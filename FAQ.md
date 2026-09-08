@@ -140,7 +140,7 @@ to create undeclared work.
 
 ## Which runners are supported?
 
-Millrace v0.22.0 supports Millforge and Codex runner integrations. Claude Code,
+Millrace v0.22 supports Millforge and Codex runner integrations. Claude Code,
 OpenCode, OpenHands, and other runner kinds will be supported in future
 releases.
 

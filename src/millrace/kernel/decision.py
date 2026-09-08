@@ -189,6 +189,8 @@ from millrace.kernel.lookups import (
     active_lineage_quarantine_for,
     active_operator_wait_for,
     artifact_schema_for,
+    counter_artifact_contract_mismatch,
+    counter_threshold_is_runtime_owned,
     fanout_for,
     intervention_option_for,
     lineage_quarantine_scope_key,
@@ -285,6 +287,7 @@ _SUPPORTED_CAPABILITY_SUPPORT_STATUSES = frozenset({"supported", "unsupported"})
 _SUPPORTED_CAPABILITY_GRANT_STATUSES = frozenset(
     {"granted", "denied", "approval_pending"}
 )
+_PRE_PERSIST_RUNNER_REFUSAL_REASONS = frozenset({"cooldown_wait_pending"})
 _SelectedRouteDeclaration = (
     ExternalEnqueueRouteDeclaration | GeneratedWorkRouteDeclaration
 )
@@ -1411,6 +1414,22 @@ def _selected_authority_refusal(selected_plan: SelectedCompiledPlan) -> str | No
             or counter.threshold_action_id == counter.increment_action_id
         ):
             return f"counter_threshold_action:{counter.id}"
+        if counter_threshold_is_runtime_owned(selected_plan, counter):
+            contract_mismatch = counter_artifact_contract_mismatch(
+                increment_artifact_schema_id=increment_action.artifact_schema_id,
+                threshold_artifact_schema_id=threshold_action.artifact_schema_id,
+                increment_artifact_field_conditions=(
+                    increment_action.artifact_field_conditions
+                ),
+                threshold_artifact_field_conditions=(
+                    threshold_action.artifact_field_conditions
+                ),
+            )
+            if contract_mismatch is not None:
+                return (
+                    f"counter_runtime_threshold_artifact_{contract_mismatch}:"
+                    f"{counter.id}"
+                )
         if threshold_action.action_kind == "recovery_route" and not any(
             counter.increment_action_id in policy.source_recovery_action_ids
             and threshold_action.target_stage_kind_id == policy.recovery_stage_kind_id
@@ -3402,6 +3421,21 @@ def _decide_claim(
         recovery_attempt=recovery_attempt,
     )
     if activation_authority_refusal is not None:
+        if (
+            activation_authority_refusal
+            == f"activation_route_target:{activation.activation_id}"
+            and _is_superseded_cooldown_activation(
+                state, admitted.selected_plan, activation, work_item
+            )
+        ):
+            return _refused_decision(
+                transition_input=transition_input,
+                context=context,
+                digest=digest,
+                reason="superseded_recovery_activation",
+                event_plan_fingerprint=activation.plan_ref.authority_fingerprint,
+                event_work_item_id=work_item.ref.work_item_id,
+            )
         return _refused_decision(
             transition_input=transition_input,
             context=context,
@@ -3908,6 +3942,76 @@ def _queue_closure_refusal(
         ),
         event_authority_source="operator",
     )
+
+
+def _is_superseded_cooldown_activation(
+    state: RuntimeState,
+    selected_plan: SelectedCompiledPlan,
+    activation: Activation,
+    work_item: WorkItem,
+) -> bool:
+    """Recognize a real due activation displaced by a later lineage failure."""
+    for wait in state.cooldown_waits.values():
+        if (
+            wait.resulting_recovery_activation_id != activation.activation_id
+            or wait.consumed_input_id is None
+            or wait.consumed_at is None
+            or wait.consumed_at < wait.due_at
+            or activation.created_by_input_id != wait.consumed_input_id
+            or wait.plan_ref != activation.plan_ref
+            or wait.lineage_id != activation.lineage_id
+            or wait.lineage_id != work_item.lineage_id
+            or wait.source_work_item_id != activation.work_item_id
+            or activation.queue_family_id != work_item.queue_family_id
+            or (activation.graph_node_id, activation.stage_kind_id,
+                activation.runner_binding_id) != (
+                    wait.target_graph_node_id, wait.target_stage_kind_id,
+                    wait.target_runner_binding_id,
+                )
+            or _cooldown_wait_action(selected_plan, wait) is None
+        ):
+            continue
+        attempt = state.recovery_attempts.get(wait.recovery_attempt_record_id)
+        source_run = state.runs.get(wait.source_run_id)
+        source_activation = state.activations.get(wait.source_activation_id)
+        receipt = state.receipts.get(wait.consumed_input_id)
+        if (
+            attempt is None
+            or attempt.plan_ref != wait.plan_ref
+            or attempt.policy_id != wait.policy_id
+            or attempt.lineage_id != wait.lineage_id
+            or attempt.attempt_count <= wait.attempt_count
+            or attempt.latest_recovery_activation_id == activation.activation_id
+            or source_run is None
+            or source_run.run_ref.plan_ref != wait.plan_ref
+            or source_run.work_item_id != wait.source_work_item_id
+            or source_run.activation_id != wait.source_activation_id
+            or source_activation is None
+            or source_activation.plan_ref != wait.plan_ref
+            or source_activation.lineage_id != wait.lineage_id
+            or receipt is None
+            or not receipt.accepted
+            or not any(
+                transition.record_id == receipt.transition_id
+                and transition.input_id == wait.consumed_input_id
+                and transition.input_kind == TimerDue.input_kind
+                and transition.input_family == "workflow_kernel_command"
+                and transition.accepted
+                for transition in state.transitions
+            )
+        ):
+            continue
+        if any(
+            route.target_activation_id == activation.activation_id
+            and route.created_by_input_id == wait.consumed_input_id
+            and route.action_id == wait.recovery_action_id
+            and route.source_run_id == wait.source_run_id
+            and route.source_work_item_id == wait.source_work_item_id
+            and route.target_work_item_id == wait.source_work_item_id
+            for route in state.activation_routes
+        ):
+            return True
+    return False
 
 
 def _recovery_attempt_for_activation(
@@ -6051,6 +6155,7 @@ def _runner_refused_decision(
         context=context,
         digest=digest,
         reason=reason,
+        record_receipt=reason not in _PRE_PERSIST_RUNNER_REFUSAL_REASONS,
         event_plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
         event_work_item_id=(
             work_item.ref.work_item_id if work_item is not None else run.work_item_id

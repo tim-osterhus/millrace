@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from math import isfinite
 from types import MappingProxyType
@@ -746,6 +746,22 @@ def start_refusal_diagnostic_bytes(outcome: AdapterErrorResult) -> bytes:
     )
 
 
+def adapter_error_diagnostic_bytes(
+    outcome: AdapterErrorResult,
+    *,
+    request: AdapterInvocationRequest,
+) -> bytes | None:
+    if outcome.redaction_policy_id != request.redaction_policy.policy_id:
+        return None
+    try:
+        redacted = request.redaction_policy.redact_authority_value(outcome.diagnostics)
+    except Exception:
+        redacted = {"redaction_failed": True}
+    if not isinstance(redacted, Mapping):
+        return None
+    return start_refusal_diagnostic_bytes(replace(outcome, diagnostics=redacted))
+
+
 def start_refusal_diagnostic_digest(outcome: AdapterErrorResult) -> str:
     return f"sha256:{sha256(start_refusal_diagnostic_bytes(outcome)).hexdigest()}"
 
@@ -1384,6 +1400,7 @@ __all__ = (
     "Terminal",
     "Unsupported",
     "VerifiedLive",
+    "adapter_error_diagnostic_bytes",
     "canonicalize_redaction_policy",
     "has_reviewed_token_usage_mapping",
     "resolve_adapter",

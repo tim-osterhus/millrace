@@ -17,6 +17,88 @@ from millrace.adapters.runner_contract import AdapterLocalConfig
 from support import generic_lifecycle
 
 
+@pytest.mark.parametrize("ready_code", ["no_ready_work", "observation_accepted"])
+def test_deferred_completion_does_not_starve_ready_work(
+    tmp_path, monkeypatch, ready_code
+):
+    from millrace.adapters.cli import daemon
+    from millrace.adapters.cli.run import BoundedExecutionUnitResult
+
+    runtime = _runtime(tmp_path)
+    paths = runtime.paths
+    runtime.close()
+    calls = []
+    monkeypatch.setattr(
+        daemon,
+        "run_lifecycle_transition_once",
+        lambda *_: (
+            calls.append("lifecycle")
+            or BoundedExecutionUnitResult(code="no_ready_work")
+        ),
+    )
+    monkeypatch.setattr(
+        daemon,
+        "reconcile_pending_runner_completions",
+        lambda *_args, **_kwargs: (
+            calls.append("completion")
+            or BoundedExecutionUnitResult(code="runner_session_waiting")
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        daemon,
+        "run_bounded_execution_unit",
+        lambda *_args, **_kwargs: (
+            calls.append("dispatch") or BoundedExecutionUnitResult(code=ready_code)
+        ),
+    )
+    result = daemon._run_one_bounded_unit(
+        _daemon_options(paths, max_ticks=1),
+        daemon_stop_requested=lambda: False,
+    )
+    assert calls == ["lifecycle", "completion", "dispatch"]
+    assert result.code == (
+        "runner_session_waiting" if ready_code == "no_ready_work" else ready_code
+    )
+
+
+@pytest.mark.parametrize("stop_on_wait", [False, True])
+def test_completion_wait_honors_backoff_stop_and_max_ticks(
+    tmp_path, monkeypatch, stop_on_wait
+):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from millrace.adapters.cli import daemon
+    from millrace.adapters.cli.run import BoundedExecutionUnitResult
+
+    runtime = _runtime(tmp_path)
+    paths = runtime.paths
+    runtime.close()
+    sleeps = []
+    stop = SimpleNamespace(
+        requested=False, wait=lambda seconds: sleeps.append(seconds) or stop_on_wait
+    )
+    monkeypatch.setattr(daemon, "_SignalStop", lambda: nullcontext(stop))
+    monkeypatch.setattr(
+        daemon,
+        "_run_one_bounded_unit",
+        lambda *_args, **_kwargs: BoundedExecutionUnitResult(
+            code="runner_session_waiting"
+        ),
+    )
+    options = _daemon_options(paths, max_ticks=2)
+    from dataclasses import replace
+
+    options = replace(options, idle_sleep_seconds=0.01)
+    summary = daemon.run_daemon_loop(options)
+    assert summary.stopped_reason == ("signal" if stop_on_wait else "max_ticks")
+    assert summary.iterations == (1 if stop_on_wait else 2)
+    assert summary.idle_iterations == summary.iterations
+    assert summary.units_started == 0
+    assert sleeps == [0.01]
+
+
 def test_daemon_closure_lifecycle_fences_stale_state_without_runner_dispatch(
     tmp_path: Path,
     monkeypatch,
@@ -263,6 +345,67 @@ def test_lifecycle_tick_never_invokes_runner_adapter(
     assert summary.units_started == 0
 
 
+def test_daemon_applies_due_cooldown_before_runner_dispatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_cooldown_runtime_state,
+    )
+
+    from millrace.adapters.cli import daemon
+
+    state = _generic_cooldown_runtime_state()
+    wait = next(iter(state.cooldown_waits.values()))
+    runtime = _runtime(tmp_path, state)
+    paths = runtime.paths
+    runtime.close()
+
+    def fail_runner(*_args, **_kwargs):
+        raise AssertionError("due cooldown lifecycle must run before a runner")
+
+    monkeypatch.setattr(daemon, "run_bounded_execution_unit", fail_runner)
+
+    summary = daemon.run_daemon_loop(
+        _daemon_options(paths, max_ticks=1, local_config=AdapterLocalConfig())
+    )
+    reopened = daemon.open_runtime_context(paths, command="test")
+    try:
+        after = _load(reopened)
+    finally:
+        reopened.close()
+
+    consumed = after.cooldown_waits[wait.wait_id]
+    assert summary.last_result["code"] == "lifecycle_transition_applied"
+    assert summary.lifecycle_transitions_applied == 1
+    assert summary.units_started == 0
+    assert consumed.consumed_input_id is not None
+    assert consumed.resulting_recovery_activation_id in after.activations
+
+
+def test_lifecycle_does_not_consume_cooldown_before_due_time(tmp_path: Path) -> None:
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_cooldown_runtime_state,
+    )
+
+    from millrace.adapters.cli.lifecycle import run_lifecycle_transition_once
+
+    state = _generic_cooldown_runtime_state()
+    wait = next(iter(state.cooldown_waits.values()))
+    runtime = _runtime(tmp_path, state)
+    try:
+        result = run_lifecycle_transition_once(
+            runtime,
+            observed_at=wait.due_at - 1,
+        )
+        after = _load(runtime)
+    finally:
+        runtime.close()
+
+    assert result.code == "no_ready_work"
+    assert after.cooldown_waits[wait.wait_id].consumed_input_id is None
+
+
 def test_signal_after_lifecycle_tick_preserves_applied_transition(
     tmp_path: Path,
     monkeypatch,
@@ -330,9 +473,7 @@ def _direct_signal_process(
     marker_path = tmp_path / "runner-active"
     repo_root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
-    python_path = os.pathsep.join(
-        (str(repo_root / "src"), str(repo_root / "tests"))
-    )
+    python_path = os.pathsep.join((str(repo_root / "src"), str(repo_root / "tests")))
     if env.get("PYTHONPATH"):
         python_path = os.pathsep.join((python_path, env["PYTHONPATH"]))
     env["PYTHONPATH"] = python_path

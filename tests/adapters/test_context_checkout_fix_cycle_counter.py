@@ -9,7 +9,7 @@ import pytest
 
 from millrace.adapters.cli.context import CliWorkspacePaths
 from millrace.adapters.cli.context_checkout import prepare_context_checkout
-from millrace.contracts import CounterId, QueueFamilyId
+from millrace.contracts import CounterId, QueueFamilyId, RecoveryPolicyId
 from millrace.contracts.state import CounterRecord, RunnerObservationRecord
 from millrace.contracts.transition import (
     AdmitPlan,
@@ -360,6 +360,292 @@ def _attempt_relation(state):
         envelope=None,
         router_body="router",
     )
+
+
+def test_selected_attempts_accept_counter_threshold_recovery_action() -> None:
+    import json
+    from dataclasses import replace as dataclass_replace
+
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_cooldown_runtime_state,
+    )
+
+    state = _generic_cooldown_runtime_state()
+    attempt = next(iter(state.recovery_attempts.values()))
+    plan = next(iter(state.admitted_plans.values())).selected_plan
+    counter = next(
+        candidate
+        for candidate in plan.counters
+        if candidate.increment_action_id == attempt.recovery_action_id
+    )
+    threshold_attempt = dataclass_replace(
+        attempt,
+        recovery_action_id=counter.threshold_action_id,
+    )
+    state = dataclass_replace(
+        state,
+        recovery_attempts={threshold_attempt.record_id: threshold_attempt},
+    )
+
+    records = checkout_module._attempt_records(_attempt_relation(state))
+
+    assert [json.loads(record)["recovery_action_id"] for record in records] == [
+        str(counter.threshold_action_id)
+    ]
+
+
+def test_artifact_records_authenticate_historical_return_after_later_recovery() -> None:
+    import json
+
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _apply_accepted_input,
+        _generic_consumed_cooldown_runtime_state,
+    )
+
+    state = _generic_consumed_cooldown_runtime_state()
+    activation = state.activations["activation-generic-recovery-resumed"]
+    state = _apply_accepted_input(
+        state,
+        ClaimWork("claim-generic-resumed", activation_id=activation.activation_id),
+        deterministic_context(
+            transition_id="transition-claim-generic-resumed",
+            run_id="run-generic-recovery-resumed",
+            claim_id="claim-generic-recovery-resumed",
+            fencing_token="fence-generic-recovery-resumed",
+        ),
+    )
+    attempt = next(iter(state.recovery_attempts.values()))
+    assert attempt.latest_recovery_run_id == "run-generic-recovery-resumed"
+
+    records = [
+        json.loads(payload)
+        for payload in checkout_module._artifact_records(_attempt_relation(state))
+    ]
+
+    assert [record["provenance"]["source_run_id"] for record in records] == [
+        "run-generic-recovery"
+    ]
+
+
+def test_artifact_records_authenticate_shared_return_action_with_matching_attempt(
+) -> None:
+    import json
+
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_returned_parent_claimed_state,
+    )
+
+    state, _plan, _fingerprint = _generic_returned_parent_claimed_state()
+    admitted = next(iter(state.admitted_plans.values()))
+    selected_policy = admitted.selected_plan.recovery_policies[0]
+    attempt = next(iter(state.recovery_attempts.values()))
+    assert len(state.recovery_attempts) == 1
+    assert attempt.phase == "active_recovery"
+    assert attempt.policy_id == selected_policy.id
+
+    other_policy = replace(
+        selected_policy,
+        id=RecoveryPolicyId("admission.other_recovery_policy"),
+        source_recovery_action_ids=(
+            generic_admission.ALTERNATE_RECOVERY_SOURCE_ACTION_ID,
+        ),
+        return_allowed_phases=("pending_cooldown",),
+    )
+    assert other_policy.return_action_ids == selected_policy.return_action_ids
+    shared_return_plan = replace(
+        admitted.selected_plan,
+        recovery_policies=(other_policy, selected_policy),
+    )
+    state = replace(
+        state,
+        admitted_plans={
+            admitted.plan_ref.authority_fingerprint: replace(
+                admitted,
+                selected_plan=shared_return_plan,
+            )
+        },
+    )
+
+    records = [
+        json.loads(payload)
+        for payload in checkout_module._artifact_records(_attempt_relation(state))
+    ]
+
+    assert [record["provenance"]["source_action_id"] for record in records] == [
+        generic_admission.RECOVERY_RETURN_ACTION_ID
+    ]
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_reason"),
+    (
+        ("resolved_active", "ambiguous"),
+        ("missing", "missing"),
+        ("resolved", "resolved"),
+        ("phase", "phase is not return-allowed"),
+    ),
+)
+def test_historical_return_refuses_invalid_recovery_authority_before_decide(
+    corruption: str,
+    expected_reason: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _apply_accepted_input,
+        _generic_consumed_cooldown_runtime_state,
+    )
+
+    state = _generic_consumed_cooldown_runtime_state()
+    activation = state.activations["activation-generic-recovery-resumed"]
+    state = _apply_accepted_input(
+        state,
+        ClaimWork("claim-generic-resumed", activation_id=activation.activation_id),
+        deterministic_context(
+            transition_id="transition-claim-generic-resumed",
+            run_id="run-generic-recovery-resumed",
+            claim_id="claim-generic-recovery-resumed",
+            fencing_token="fence-generic-recovery-resumed",
+        ),
+    )
+    artifact = next(
+        artifact
+        for artifact in state.artifacts.values()
+        if str(artifact.source_action_id)
+        == generic_admission.RECOVERY_RETURN_ACTION_ID
+    )
+    attempt = next(iter(state.recovery_attempts.values()))
+    if corruption == "resolved_active":
+        resolved_input_id = "input-generic-recovery-resolved"
+        resolved = replace(
+            attempt,
+            record_id=(
+                "recovery-attempt:"
+                f"{attempt.plan_ref.authority_fingerprint}:{attempt.policy_id}:"
+                f"{attempt.lineage_id}:{resolved_input_id}"
+            ),
+            phase="resolved",
+            created_by_input_id=resolved_input_id,
+            updated_by_input_id=resolved_input_id,
+        )
+        state = replace(
+            state,
+            recovery_attempts={
+                attempt.record_id: attempt,
+                resolved.record_id: resolved,
+            },
+        )
+        from substrate._runtime_store_support import persist_and_load_runtime_state
+
+        state = persist_and_load_runtime_state(tmp_path, state)
+        artifact = state.artifacts[artifact.artifact_id]
+    elif corruption == "missing":
+        state = replace(state, recovery_attempts={})
+    elif corruption == "resolved":
+        state = replace(
+            state,
+            recovery_attempts={attempt.record_id: replace(attempt, phase="resolved")},
+        )
+    else:
+        state = replace(
+            state,
+            recovery_attempts={
+                attempt.record_id: replace(attempt, phase="pending_cooldown")
+            },
+        )
+
+    decide_calls = 0
+
+    def fail_if_called(*args, **kwargs):
+        nonlocal decide_calls
+        decide_calls += 1
+        raise AssertionError("decide must not run for invalid recovery authority")
+
+    monkeypatch.setattr(checkout_module, "decide", fail_if_called)
+    with pytest.raises(
+        checkout_module.ContextCheckoutPreparationError,
+        match=(
+            f"relevant artifact recovery attempt authority is {expected_reason}"
+            if corruption != "phase"
+            else "relevant artifact recovery attempt phase is not return-allowed"
+        ),
+    ):
+        checkout_module._authenticate_artifact_source(
+            state,
+            artifact,
+            counter_replay_history=None,
+        )
+    assert decide_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_reason"),
+    (
+        ("missing_latest", "latest recovery authority is missing"),
+        ("mismatched_latest", "recovery attempt latest run is invalid"),
+        ("mapping_key", "recovery attempt mapping key is invalid"),
+    ),
+)
+def test_historical_return_refuses_incomplete_recovery_attempt_authority_before_decide(
+    corruption: str,
+    expected_reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_returned_parent_claimed_state,
+    )
+
+    state, _plan, _fingerprint = _generic_returned_parent_claimed_state()
+    artifact = next(iter(state.artifacts.values()))
+    attempt = next(iter(state.recovery_attempts.values()))
+    if corruption == "missing_latest":
+        corrupted = replace(
+            attempt,
+            latest_recovery_activation_id=None,
+            latest_recovery_run_id=None,
+        )
+        state = replace(
+            state,
+            recovery_attempts={corrupted.record_id: corrupted},
+        )
+    elif corruption == "mismatched_latest":
+        corrupted = replace(
+            attempt,
+            latest_recovery_run_id="run-generic-parent",
+        )
+        state = replace(
+            state,
+            recovery_attempts={corrupted.record_id: corrupted},
+        )
+    else:
+        state = replace(
+            state,
+            recovery_attempts={"wrong-record-id": attempt},
+        )
+
+    decide_calls = 0
+
+    def fail_if_called(*args, **kwargs):
+        nonlocal decide_calls
+        decide_calls += 1
+        raise AssertionError("decide must not run for invalid recovery authority")
+
+    monkeypatch.setattr(checkout_module, "decide", fail_if_called)
+    with pytest.raises(
+        checkout_module.ContextCheckoutPreparationError,
+        match=expected_reason,
+    ):
+        checkout_module._authenticate_artifact_source(
+            state,
+            artifact,
+            counter_replay_history=None,
+        )
+    assert decide_calls == 0
 
 
 @pytest.mark.parametrize("corruption", ("duplicate", "foreign", "unaccepted"))

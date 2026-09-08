@@ -47,6 +47,7 @@ from millrace.contracts.transition import (
 )
 from millrace.operator.dispatch import (
     DispatchSuspensionProjection,
+    artifact_provenance_for_status,
     dispatch_suspension_projection,
     join_evidence_progress_for_status,
 )
@@ -1202,15 +1203,14 @@ def _artifact_status(
     )
     if source is None:
         return None
-    action = _terminal_action_by_id(selected_plan, str(artifact.source_action_id))
-    if action is None:
+    authenticated = artifact_provenance_for_status(state, artifact)
+    if authenticated is None:
         return None
-    observation = _runner_observation_for_artifact(state, artifact)
-    if observation is None:
+    authenticated_source = authenticated.observation
+    if authenticated_source.selected_plan != selected_plan:
         return None
-    observed_action = _observed_terminal_action(selected_plan, source, observation)
-    if observed_action is None or observed_action.id != action.id:
-        return None
+    action = authenticated_source.action
+    observation = authenticated_source.observation
     if (
         action.stage_kind_id != artifact.source_stage_kind_id
         or action.artifact_schema_id != artifact.schema_id

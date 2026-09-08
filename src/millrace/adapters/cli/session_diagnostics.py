@@ -71,6 +71,27 @@ def _completion_diagnostic_bytes(
     )
 
 
+def _context_writeback_refusal_diagnostic_bytes(
+    request: _DiagnosticRequest,
+    refusal: str,
+) -> bytes:
+    return _completion_diagnostic_bytes(
+        request,
+        {"context_writeback_refusal": _public_context_writeback_refusal(refusal)},
+    )
+
+
+def _public_context_writeback_refusal(refusal: str) -> str:
+    """Project a useful refusal without retaining exception-local details."""
+    for prefix in (
+        "context writeback validation failed:",
+        "live context root scan failed:",
+    ):
+        if refusal.startswith(prefix):
+            return prefix.removesuffix(":")
+    return refusal
+
+
 def _completion_diagnostic_bytes_for_dispatch(
     dispatch: RunnerDispatchEnvelope,
     value: object,

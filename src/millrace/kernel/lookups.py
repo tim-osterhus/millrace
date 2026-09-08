@@ -15,13 +15,16 @@ from millrace.contracts.compiled_plan import (
     InterventionOptionDeclaration,
     JoinDeclaration,
     OperatorWaitDeclaration,
-    RunnerBindingDeclaration,
     SelectedCompiledPlan,
     WaitStateDeclaration,
 )
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId
 from millrace.contracts.selected_plan_lookups import (
+    counter_artifact_contract_mismatch,
+    runner_binding_for,
+    runner_selectable_outcome_ids,
+    runtime_owned_threshold_for_outcomes,
     stage_kind_for,
     terminal_action_for,
     terminal_outcome_for,
@@ -187,14 +190,29 @@ def route_contract_supported(
     )
 
 
-def runner_binding_for(
+def counter_threshold_is_runtime_owned(
     selected_plan: SelectedCompiledPlan,
-    runner_binding_id: str,
-) -> RunnerBindingDeclaration | None:
-    for runner_binding in selected_plan.runner_bindings:
-        if str(runner_binding.id) == runner_binding_id:
-            return runner_binding
-    return None
+    counter: CounterDeclaration,
+) -> bool:
+    threshold_action = next(
+        (
+            action
+            for action in selected_plan.terminal_actions
+            if action.id == counter.threshold_action_id
+        ),
+        None,
+    )
+    if threshold_action is None:
+        return False
+    selectable_outcomes = runner_selectable_outcome_ids(
+        selected_plan,
+        stage_kind_id=str(counter.stage_kind_id),
+    )
+    return runtime_owned_threshold_for_outcomes(
+        threshold_action_kind=threshold_action.action_kind,
+        threshold_outcome_id=str(threshold_action.outcome_id),
+        runner_selectable_outcome_ids=selectable_outcomes,
+    )
 
 
 def payload_text(payload: Mapping[str, object], key: str) -> str | None:
@@ -300,7 +318,9 @@ __all__ = (
     "active_operator_wait_for",
     "active_operator_wait_scope_keys",
     "artifact_schema_for",
+    "counter_artifact_contract_mismatch",
     "counter_for_action",
+    "counter_threshold_is_runtime_owned",
     "external_enqueue_routes",
     "fanout_for",
     "intervention_option_for",

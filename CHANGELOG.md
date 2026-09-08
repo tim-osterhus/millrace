@@ -11,9 +11,16 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
-## [Unreleased]
+## [Unreleased] — v0.22.3 candidate
 
-## [0.22.3] - 2026-08-25
+### MVP release scope
+
+- Defer the experimental LAD semantic-workspace workflow from the scoped MVP
+  Plus distribution. Preserve generic selected context mechanisms and runtime
+  integrity fixes; the evaluation did not establish an efficacy comparison.
+- Keep run-scoped pause/resume unavailable and retain existing public package
+  closure and Millforge instruction limits. Campaign-only capacity changes are
+  not public release fixes.
 
 ### Added
 
@@ -21,20 +28,43 @@ This file starts at `0.13.0`, the current documented public baseline.
   projections.
 - Added selected closure-evidence snapshots with deterministic ordering and
   durable restart preservation.
-- Added generic selected-plan context bindings and schema-2 CAS-backed
-  immutable context checkouts with catalog-only discovery and receipt-backed
-  selective hydration. Bound sessions attach stable context before start;
-  unbound workflows retain their existing dispatch behavior.
+- Added generic selected-plan context bindings using schema 2 and schema-3
+  CAS-backed immutable context checkout manifests with catalog-only discovery and
+  receipt-backed selective hydration. Bound sessions attach stable context before
+  start; unbound workflows retain their existing dispatch behavior.
 - Added schema-7 dispatch descriptors and Codex wrapper protocol 4 for
   authenticated checkout navigation and reviewed token usage while preserving
   byte-compatible protocol-3 behavior for unbound sessions.
 - Added fail-closed checkout rematerialization and selected direct/protected
   writeback validation before runner evidence becomes workflow authority.
+- Bound optional source `max_files`/`max_bytes` caps to actual enumeration and
+  file reads. Omitted declared roots retain authenticated missing, empty,
+  file, and directory baselines; protected create/delete/rename/type/over-limit
+  mutations refuse.
+- Added a generic read-only `millrace context diff` projection for an
+  authenticated live write-enabled session. It reports exact direct-write
+  filesystem changes without persisting evidence or assigning workflow
+  meaning; final writeback validation remains authoritative.
 - Added source-backed attribution and derived-session cleanup receipts without
   changing token-budget authority or deleting CAS-backed durable evidence.
 
 ### Fixed
 
+- Retained sibling failure completions during pending recovery cooldowns until
+  the actual due timer is accepted, then applied them exactly once. Superseded
+  timer-created recovery activations no longer appear as runnable work.
+- Kept runtime-owned counter thresholds under compiled authority. Compiler
+  and admission check threshold/increment artifact schema and normalized
+  condition compatibility; threshold conditions may only be an exact key/value
+  subset of increment conditions. Component-bound runners now receive only
+  mapped terminal outcomes; the runtime promotes an unmapped non-recovery
+  threshold only when the durable counter reaches its threshold.
+- Projected compiled terminal artifact-field conditions into Codex invocation
+  contracts so wrappers can bind marker and artifact tuples before accepting
+  runner evidence.
+- Serialized concurrent context selections per runner session so cumulative
+  hydration limits and read-only checkout modes are checked against the latest
+  durable receipts without cross-process mode drift.
 - Validated Millforge runner pins and compiled-harness identities against their
   distinct descriptor fields, allowing a version-2 runner to execute its
   version-1 compiled harness without weakening selected-authority checks.
@@ -43,6 +73,12 @@ This file starts at `0.13.0`, the current documented public baseline.
   instead of refusing with `missing_observed_at`.
 - Reconstructed counter pre-state when authenticating accepted lineage
   artifacts for context checkouts after increment and threshold actions.
+- Aligned recovery-attempt context validation with compiled counter authority,
+  allowing a declared recovery threshold action when its increment action is
+  selected by the same recovery policy.
+- Advanced due compiled cooldown waits through the activation-free daemon
+  lifecycle before runner selection, so declared recovery timers resume without
+  private state edits or workflow-specific scheduling.
 - Reduced active runner-session polling frequency to lower daemon CPU usage.
 - Preserved authenticated Codex protocol-4 errors when trustworthy token usage
   is unavailable, while keeping non-null exact usage mandatory for successful
@@ -58,6 +94,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Enforced the same generic context-binding closure at compilation, plan
   admission, dispatch, session attachment, and durable reload; corrupt or
   drifted manifest/CAS links now refuse without repairing state.
+- Preserved the exact bounded public reason for deterministic context-writeback
+  refusals while collapsing exception-local details to a stable redacted
+  category.
 - Advanced the current workspace store to schema 10 for immutable context
   evidence. Exact schema-6 and schema-7 workspaces retain the unchanged
   `workspace_upgrade_required` boundary, while schema 8 and schema 9 remain
@@ -65,8 +104,13 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### Compatibility Notes
 
-- v0.22.3 is the first public governed-context/runtime-integrity release. It is
-  a general runtime release, not a campaign-specific product release.
+- v0.22.3 is an unreleased governed-context/runtime-integrity candidate for
+  the general runtime. Workflow-specific context meaning remains in workflow
+  packages.
+- Published v0.22.2 workspaces use store schema 8; this candidate requires fresh
+  schema-10 state and provides no in-place migration from schema 8 or 9.
+  Preserve old workspaces and finish or retire their work with the matching
+  runtime. The published `millrace` bundle remains v0.22.2.
 - Context-bound plans using the unreleased schema-17 shape are historical
   evidence, not compatible plans. Import and select a schema-18 plan before
   running it under v0.22.3.
@@ -1297,7 +1341,7 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.21.1...HEAD
+[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.22.2...HEAD
 [0.21.1]: https://github.com/tim-osterhus/millrace/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/tim-osterhus/millrace/compare/v0.20.3...v0.21.0
 [0.20.3]: https://github.com/tim-osterhus/millrace/compare/v0.20.2...v0.20.3

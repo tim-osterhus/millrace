@@ -334,8 +334,62 @@ def reconcile_pending_runner_sessions(
     return latest
 
 
+def reconcile_pending_runner_completions(
+    runtime: OpenRuntimeContext,
+    *,
+    adapter_kind: str | None = None,
+    local_config: AdapterLocalConfig | None = None,
+    actor_id: str = "local_operator",
+    on_start_reserved: Callable[[RunnerSessionRecord], None] | None = None,
+    on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
+    daemon_stop_requested: Callable[[], bool] | None = None,
+    max_timeout_seconds: float | None = None,
+) -> BoundedExecutionUnitResult:
+    """Replay only durable completed results, without starting new sessions."""
+    state = runtime.store.load_runtime_state(runtime.cas_store)
+    terminal_replays: list[tuple[str, str]] = []
+    for run in state.runs.values():
+        session_id = run.current_session_id
+        if session_id is None:
+            continue
+        session = state.runner_sessions.get(session_id)
+        if session is None or session.run_id != run.run_ref.run_id:
+            return BoundedExecutionUnitResult(code="ready_state_corrupt")
+        completion = state.runner_session_completions.get(session_id)
+        if (
+            completion is not None
+            and completion.terminal_state == "completed"
+            and completion.application_input_id not in state.receipts
+        ):
+            terminal_replays.append((run.run_ref.run_id, run.activation_id))
+    if not terminal_replays:
+        return BoundedExecutionUnitResult(code="no_runner_session_reconciliation")
+
+    latest = BoundedExecutionUnitResult(code="no_runner_session_reconciliation")
+    for _run_id, activation_id in sorted(terminal_replays):
+        latest = run_bounded_execution_unit(
+            runtime,
+            activation_id=activation_id,
+            adapter_kind=adapter_kind,
+            local_config=local_config,
+            actor_id=actor_id,
+            on_start_reserved=on_start_reserved,
+            on_accepted_start=on_accepted_start,
+            daemon_stop_requested=daemon_stop_requested,
+            max_timeout_seconds=max_timeout_seconds,
+        )
+        if _runner_reconciliation_blocker_priority(latest.code) > 0:
+            return latest
+    return latest
+
+
 def _runner_reconciliation_blocker_priority(code: str | None) -> int:
-    if code in {None, "observation_accepted", "adapter_failure"}:
+    if code in {
+        None,
+        "observation_accepted",
+        "adapter_failure",
+        "runner_session_waiting",
+    }:
         return 0
     if code == "runner_session_reconciliation_contradiction":
         return 3

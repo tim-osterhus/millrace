@@ -25,6 +25,7 @@ from millrace.adapters.runner_contract import (
     StartedSession,
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
+    adapter_error_diagnostic_bytes,
     runner_evidence_from_adapter_outcome,
 )
 from millrace.contracts.state import (
@@ -527,7 +528,7 @@ def _persist_refused_start(
             (outcome.dispatch_echo, error_echo),
         )
     try:
-        diagnostic_bytes = complete._adapter_error_diagnostic_bytes(
+        diagnostic_bytes = adapter_error_diagnostic_bytes(
             outcome.adapter_error,
             request=request,
         )

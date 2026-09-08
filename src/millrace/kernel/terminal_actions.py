@@ -75,6 +75,7 @@ from millrace.kernel.lookups import (
     active_operator_wait_for,
     artifact_schema_for,
     counter_for_action,
+    counter_threshold_is_runtime_owned,
     lineage_quarantine_scope_key,
     operator_wait_for_action,
     operator_wait_scope_key,
@@ -175,6 +176,25 @@ def resolve_terminal_action(
 ) -> TerminalActionResult:
     # Branching on compiled action_kind interprets compiler-validated
     # terminal-action authority; runner marker text never selects behavior here.
+    runtime_threshold_action = _runtime_owned_threshold_action_if_due(
+        selected_plan=selected_plan,
+        state=state,
+        run=run,
+        work_item=work_item,
+        action=action,
+    )
+    if runtime_threshold_action is not None:
+        return resolve_terminal_action(
+            transition_input=transition_input,
+            context=context,
+            selected_plan=selected_plan,
+            state=state,
+            run=run,
+            activation=activation,
+            work_item=work_item,
+            action=runtime_threshold_action,
+            observation_payload=observation_payload,
+        )
     if action.action_kind == _ACTION_KIND_ROUTE:
         counter_result = _counter_record_or_refusal(
             selected_plan=selected_plan,
@@ -1287,6 +1307,21 @@ def _resolve_recovery_route_action(
         policy_id=policy.id,
         lineage_id=work_item.lineage_id,
     )
+    if (
+        existing_attempt is not None
+        and existing_attempt.phase == "pending_cooldown"
+        and _unconsumed_cooldown_wait_for_attempt(
+            state=state,
+            attempt=existing_attempt,
+        )
+        is not None
+    ):
+        # The completion remains durable and replayable until lifecycle consumes
+        # the exact wait. Do not rewrite the attempt source or count here.
+        return TerminalActionRefusal(
+            reason="cooldown_wait_pending",
+            action=action,
+        )
     attempt_count = (
         1
         if existing_attempt is None or existing_attempt.phase == "resolved"
@@ -1906,6 +1941,50 @@ def _threshold_recovery_route_for_increment(
     return None
 
 
+def _runtime_owned_threshold_action_if_due(
+    *,
+    selected_plan: SelectedCompiledPlan,
+    state: RuntimeState,
+    run: RunRecord,
+    work_item: WorkItem,
+    action: TerminalActionDeclaration,
+) -> TerminalActionDeclaration | None:
+    counter = _counter_by_id_for_increment(selected_plan, action.id)
+    if (
+        counter is None
+        or work_item.lineage_id is None
+        or not counter_threshold_is_runtime_owned(selected_plan, counter)
+    ):
+        return None
+    current_value = next(
+        (
+            record.value
+            for record in state.counters.values()
+            if record.counter_id == counter.id
+            and record.selected_plan_ref == run.run_ref.plan_ref
+            and record.lineage_id == work_item.lineage_id
+        ),
+        0,
+    )
+    if current_value + 1 < counter.threshold_count:
+        return None
+    return _terminal_action_by_id(selected_plan, counter.threshold_action_id)
+
+
+def _counter_by_id_for_increment(
+    selected_plan: SelectedCompiledPlan,
+    action_id: ActionId,
+) -> CounterDeclaration | None:
+    return next(
+        (
+            counter
+            for counter in selected_plan.counters
+            if counter.increment_action_id == action_id
+        ),
+        None,
+    )
+
+
 def _counter_by_id(
     selected_plan: SelectedCompiledPlan,
     counter_id: object,
@@ -2255,6 +2334,32 @@ def _counter_record_id(
     return f"counter:{plan_ref.authority_fingerprint}:{counter_id}:{lineage_id}"
 
 
+def _unconsumed_cooldown_wait_for_attempt(
+    *,
+    state: RuntimeState,
+    attempt: RecoveryAttemptRecord,
+) -> CooldownWaitRecord | None:
+    return next(
+        (
+            wait
+            for wait in state.cooldown_waits.values()
+            if wait.recovery_attempt_record_id == attempt.record_id
+            and wait.plan_ref == attempt.plan_ref
+            and wait.policy_id == attempt.policy_id
+            and wait.lineage_id == attempt.lineage_id
+            and wait.attempt_count == attempt.attempt_count
+            and wait.source_run_id == attempt.source_run_id
+            and wait.source_work_item_id == attempt.source_work_item_id
+            and wait.source_activation_id == attempt.source_activation_id
+            and wait.recovery_action_id == attempt.recovery_action_id
+            and wait.consumed_input_id is None
+            and wait.consumed_at is None
+            and wait.resulting_recovery_activation_id is None
+        ),
+        None,
+    )
+
+
 def _with_reset_recovery_attempts(
     *,
     result: TerminalActionResult,
@@ -2278,6 +2383,17 @@ def _with_reset_recovery_attempts(
             lineage_id=work_item.lineage_id,
         )
         if attempt is None or attempt.phase == "resolved":
+            continue
+        if (
+            attempt.phase == "pending_cooldown"
+            and _unconsumed_cooldown_wait_for_attempt(
+                state=state,
+                attempt=attempt,
+            )
+            is not None
+        ):
+            # A sibling success cannot resolve an attempt while its exact
+            # unconsumed wait still owns the pending recovery obligation.
             continue
         resolved = replace(
             attempt,

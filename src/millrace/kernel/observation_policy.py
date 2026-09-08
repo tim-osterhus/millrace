@@ -28,7 +28,11 @@ from millrace.contracts.transition import (
     artifact_payload_digest,
     input_payload_digest,
 )
-from millrace.kernel.lookups import terminal_action_for, terminal_outcome_for
+from millrace.kernel.lookups import (
+    counter_threshold_is_runtime_owned,
+    terminal_action_for,
+    terminal_outcome_for,
+)
 from millrace.kernel.projection import evaluate_projection, projection_context_for_run
 
 
@@ -394,16 +398,24 @@ def _authenticated_audit_action(
             ),
             None,
         )
-        if (
+        runtime_owned_threshold = counter_threshold_is_runtime_owned(
+            selected_plan,
+            counter,
+        )
+        recovery_threshold = (
             threshold_action is not None
             and threshold_action.action_kind == "recovery_route"
-            and threshold_action.stage_kind_id == marker_action.stage_kind_id
             and any(
                 marker_action.id in policy.source_recovery_action_ids
                 and threshold_action.target_stage_kind_id
                 == policy.recovery_stage_kind_id
                 for policy in selected_plan.recovery_policies
             )
+        )
+        if (
+            threshold_action is not None
+            and threshold_action.stage_kind_id == marker_action.stage_kind_id
+            and (runtime_owned_threshold or recovery_threshold)
             and _threshold_action_is_proven(
                 state,
                 selected_plan=selected_plan,
@@ -413,6 +425,7 @@ def _authenticated_audit_action(
                 run=run,
                 work_item=work_item,
                 threshold_action=threshold_action,
+                counter_record_is_sufficient=runtime_owned_threshold,
             )
         ):
             allowed_actions[threshold_action.id] = threshold_action
@@ -467,6 +480,7 @@ def _threshold_action_is_proven(
     run: RunRecord,
     work_item: WorkItem,
     threshold_action: TerminalActionDeclaration,
+    counter_record_is_sufficient: bool = False,
 ) -> bool:
     if work_item.lineage_id is None:
         return False
@@ -479,6 +493,8 @@ def _threshold_action_is_proven(
     )
     if len(counters) != 1 or counters[0].value < threshold_count:
         return False
+    if counter_record_is_sufficient:
+        return counters[0].updated_by_input_id == input_id
     policies = tuple(
         policy
         for policy in selected_plan.recovery_policies

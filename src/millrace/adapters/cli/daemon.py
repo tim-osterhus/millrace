@@ -36,6 +36,7 @@ from millrace.adapters.cli.output import (
 from millrace.adapters.cli.run import (
     BoundedExecutionUnitResult,
     load_adapter_local_config,
+    reconcile_pending_runner_completions,
     reconcile_pending_runner_sessions,
     run_bounded_execution_unit,
 )
@@ -845,7 +846,7 @@ def _run_locked_loop(
                 units_started += 1
             if result.code == "observation_accepted" and result.accepted:
                 units_succeeded += 1
-            elif result.code == "no_ready_work":
+            elif result.code in {"no_ready_work", "runner_session_waiting"}:
                 idle_iterations += 1
             elif result.code == "lifecycle_transition_applied":
                 lifecycle_transitions_applied += 1
@@ -938,7 +939,10 @@ def _run_locked_loop(
 
             if options.max_ticks is not None and iterations >= options.max_ticks:
                 break
-            if result.code == "no_ready_work" and options.idle_sleep_seconds > 0:
+            if (
+                result.code in {"no_ready_work", "runner_session_waiting"}
+                and options.idle_sleep_seconds > 0
+            ):
                 if stop.wait(options.idle_sleep_seconds):
                     return _summary(
                         options,
@@ -1007,11 +1011,24 @@ def _run_one_bounded_unit(
 ) -> BoundedExecutionUnitResult:
     runtime = open_runtime_context(options.paths, command=_COMMAND)
     try:
+        waiting_completion = None
         if options.activation_id is None:
             lifecycle_result = run_lifecycle_transition_once(runtime)
             if lifecycle_result.code != "no_ready_work":
                 return lifecycle_result
-        return run_bounded_execution_unit(
+            reconciliation_result = reconcile_pending_runner_completions(
+                runtime,
+                adapter_kind=options.adapter_kind,
+                local_config=options.local_config,
+                actor_id=options.actor_id,
+                daemon_stop_requested=daemon_stop_requested,
+                max_timeout_seconds=max_timeout_seconds,
+            )
+            if reconciliation_result.code == "runner_session_waiting":
+                waiting_completion = reconciliation_result
+            elif reconciliation_result.code != "no_runner_session_reconciliation":
+                return reconciliation_result
+        result = run_bounded_execution_unit(
             runtime,
             activation_id=options.activation_id,
             adapter_kind=options.adapter_kind,
@@ -1030,6 +1047,9 @@ def _run_one_bounded_unit(
             daemon_stop_requested=daemon_stop_requested,
             max_timeout_seconds=max_timeout_seconds,
         )
+        if result.code == "no_ready_work" and waiting_completion is not None:
+            return waiting_completion
+        return result
     finally:
         runtime.close()
 
@@ -1438,6 +1458,7 @@ def _non_idle_stop_reason(result: BoundedExecutionUnitResult) -> str | None:
     if result.code in {
         "lifecycle_transition_applied",
         "no_ready_work",
+        "runner_session_waiting",
         "observation_accepted",
     }:
         return None

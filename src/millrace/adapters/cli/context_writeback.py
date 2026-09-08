@@ -20,6 +20,7 @@ from millrace.contracts.compiled_plan import (
 )
 from millrace.contracts.context_checkout import (
     ContextCheckoutFile,
+    ContextCheckoutLegacyManifest,
     ContextCheckoutManifest,
     decode_context_checkout_manifest,
     verify_context_checkout_manifest_digest,
@@ -38,12 +39,18 @@ _PROTECTED_PROPOSAL = "protected_proposal"
 _WORKSPACE_SOURCE = "workspace_relative_root"
 
 
+class ContextDiffRefusal(ValueError):
+    """Raised when an active session's selected-root diff cannot be projected."""
+
+
 @dataclass(frozen=True, slots=True)
 class _RootBaseline:
     root: str
     files: Mapping[str, str]
     directories: frozenset[str]
     root_kind: str
+    max_files: int
+    max_bytes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +59,97 @@ class _LiveSnapshot:
     files: Mapping[str, str]
     directories: frozenset[str]
     root_kind: str
+
+
+def project_context_diff(
+    runtime: OpenRuntimeContext,
+    *,
+    state: RuntimeState,
+    session_id: str,
+    manifest_digest: str,
+) -> list[dict[str, str]]:
+    """Project exact direct-write changes for one authenticated live session."""
+    try:
+        session = state.runner_sessions.get(session_id)
+        if session is None:
+            raise ContextDiffRefusal("runner session is not current state authority")
+        authority = _selected_authority(state, session)
+        if authority is None:
+            raise ContextDiffRefusal("context diff authority is not current")
+        _selected_plan, binding, fingerprint = authority
+        if (
+            binding is None
+            or binding.mutation_policy != "reconcile_selected_writes"
+            or not binding.write_rules
+        ):
+            raise ContextDiffRefusal("session has no selected writeback authority")
+        context_checkout._validate_relation(
+            session=session,
+            plan_fingerprint=fingerprint,
+            binding=binding,
+            state=state,
+            require_created=False,
+        )
+        if session.context_manifest_digest != manifest_digest:
+            raise ContextDiffRefusal(
+                "manifest digest is not the attached session authority"
+            )
+        manifest = _authenticate_checkout(
+            runtime,
+            session=session,
+            binding=binding,
+            plan_fingerprint=fingerprint,
+        )
+        if isinstance(manifest, str):
+            raise ContextDiffRefusal(manifest)
+        baselines = _baselines_for_binding(manifest, binding)
+        if isinstance(baselines, str):
+            raise ContextDiffRefusal(baselines)
+        snapshots = _scan_selected_roots(runtime, baselines)
+        if isinstance(snapshots, str):
+            raise ContextDiffRefusal(snapshots)
+        write_roots = _write_rule_roots(
+            binding,
+            selected_roots=tuple(baseline.root for baseline in baselines),
+        )
+        if isinstance(write_roots, str):
+            raise ContextDiffRefusal(write_roots)
+        direct_roots, _protected_roots = write_roots
+        structure_refusal = _require_structure(
+            baselines,
+            snapshots,
+            allow_file_delete_roots=direct_roots,
+        )
+        if structure_refusal is not None:
+            raise ContextDiffRefusal(structure_refusal)
+        baseline_files = _all_files(baselines)
+        current_files = _all_files(snapshots)
+        changed_paths = tuple(
+            sorted(
+                (
+                    path
+                    for path in set(baseline_files) | set(current_files)
+                    if baseline_files.get(path) != current_files.get(path)
+                ),
+                key=lambda value: value.encode("utf-8"),
+            )
+        )
+        if any(not _path_under_any(path, direct_roots) for path in changed_paths):
+            raise ContextDiffRefusal(
+                "protected or unselected live context path changed"
+            )
+        return [
+            _project_file_change(
+                path,
+                before=baseline_files.get(path),
+                after=current_files.get(path),
+            )
+            for path in changed_paths
+        ]
+    except ContextDiffRefusal:
+        raise
+    except Exception as exc:
+        raise ContextDiffRefusal("context diff projection refused") from exc
 
 
 def validate_context_writeback(
@@ -219,6 +317,8 @@ def _authenticate_checkout(
     manifest_bytes = runtime.cas_store.get_bytes(digest)
     verify_context_checkout_manifest_digest(manifest_bytes, digest)
     manifest = decode_context_checkout_manifest(manifest_bytes)
+    if isinstance(manifest, ContextCheckoutLegacyManifest):
+        return "context root baseline is unavailable for legacy manifest"
     if (
         manifest.session_id != session.session_id
         or manifest.dispatch_generation != session.dispatch_generation
@@ -291,6 +391,9 @@ def _baselines_for_binding(
             declaration=declaration,
             root=root,
             seen_files=seen_files,
+            require_root_state=(
+                binding.mutation_policy == "forbid_selected_roots"
+            ),
         )
         if isinstance(baseline, str):
             return baseline
@@ -314,7 +417,40 @@ def _baseline_for_workspace_source(
     declaration: ContextSourceDeclaration,
     root: str,
     seen_files: set[str],
+    require_root_state: bool,
 ) -> _RootBaseline | str | None:
+    omission = next(
+        (
+            item
+            for item in manifest.omissions
+            if item.source_kind == declaration.source_kind
+            and item.source_ref == declaration.source_ref
+        ),
+        None,
+    )
+    root_states = getattr(manifest, "root_states", ())
+    root_state = next(
+        (
+            item
+            for item in root_states
+            if item.source_kind == declaration.source_kind
+            and item.source_ref == declaration.source_ref
+        ),
+        None,
+    )
+    if root_state is None:
+        if require_root_state:
+            return "context root baseline is unavailable for the selected manifest"
+        if not required and omission is not None:
+            return None
+    if (
+        not required
+        and not require_root_state
+        and omission is not None
+        and omission.reason == "source_missing"
+    ):
+        return None
+
     files = _workspace_files_for_source(
         manifest,
         required=required,
@@ -322,26 +458,80 @@ def _baseline_for_workspace_source(
         root=root,
         seen_files=seen_files,
     )
-    if isinstance(files, str) or files is None:
+    if isinstance(files, str):
         return files
-    if not files and any(
-        omission.source_kind == declaration.source_kind
-        and omission.source_ref == declaration.source_ref
-        for omission in manifest.omissions
-    ):
+
+    if omission is not None and omission.reason in {
+        "file_limit_exceeded",
+        "byte_limit_exceeded",
+    }:
+        if required:
+            return "required workspace source is not represented"
         return None
-    if not files:
-        return _RootBaseline(root, {}, frozenset(), "missing")
-    if root in files:
-        if len(files) != 1:
-            return "context manifest workspace root has conflicting file types"
-        return _RootBaseline(root, files, frozenset(), "file")
+
+    if root_state is None:
+        if not files and omission is not None:
+            return None
+        if not files:
+            return _RootBaseline(
+                root,
+                {},
+                frozenset(),
+                "missing",
+                declaration.max_files,
+                declaration.max_bytes,
+            )
+        if root in files:
+            return _RootBaseline(
+                root,
+                files,
+                frozenset(),
+                "file",
+                declaration.max_files,
+                declaration.max_bytes,
+            )
+        return _RootBaseline(
+            root,
+            files,
+            frozenset(_directories_for_files(files, root)),
+            "directory",
+            declaration.max_files,
+            declaration.max_bytes,
+        )
+
+    actual_relative_files = {
+        "" if path == root else path.removeprefix(f"{root}/")
+        for path in files
+    }
+    if actual_relative_files != set(root_state.files):
+        return "context manifest root-state files are inconsistent"
+    if omission is not None and omission.reason == "source_missing":
+        if files or root_state.root_kind not in {"missing", "directory"}:
+            return "context manifest root-state omission is inconsistent"
+    elif omission is not None:
+        return "context manifest root-state omission is unsupported"
+
+    directories = frozenset(
+        root if path == "" else f"{root}/{path}"
+        for path in root_state.directories
+    )
+    if root_state.root_kind == "missing":
+        if files or directories:
+            return "context manifest missing root-state is inconsistent"
+    elif root_state.root_kind == "file":
+        if directories or set(root_state.files) != {""} or root not in files:
+            return "context manifest file root-state is inconsistent"
+    elif root not in directories:
+        return "context manifest directory root-state is inconsistent"
     return _RootBaseline(
         root,
         files,
-        frozenset(_directories_for_files(files, root)),
-        "directory",
+        directories,
+        root_state.root_kind,
+        declaration.max_files,
+        declaration.max_bytes,
     )
+
 
 
 def _workspace_files_for_source(
@@ -422,6 +612,10 @@ def _directories_for_files(files: Mapping[str, str], root: str) -> set[str]:
     return directories
 
 
+class _UncomparableLiveRoot(Exception):
+    pass
+
+
 def _scan_selected_roots(
     runtime: OpenRuntimeContext,
     baselines: Sequence[_RootBaseline],
@@ -431,53 +625,117 @@ def _scan_selected_roots(
         root_path = runtime.paths.workspace_path / baseline.root
         try:
             context_checkout._reject_symlink_components(root_path, stop=None)
-            snapshots.append(_scan_root(root_path, baseline.root))
+            snapshots.append(
+                _scan_root(
+                    root_path,
+                    baseline.root,
+                    max_files=baseline.max_files,
+                    max_bytes=baseline.max_bytes,
+                )
+            )
         except Exception as exc:
             return f"live context root scan failed: {exc}"
     return tuple(snapshots)
 
 
-def _scan_root(root_path: Path, root: str) -> _LiveSnapshot:
+def _scan_root(
+    root_path: Path,
+    root: str,
+    *,
+    max_files: int,
+    max_bytes: int,
+) -> _LiveSnapshot:
     if not context_checkout._path_exists_without_following(root_path):
         return _LiveSnapshot(root, {}, frozenset(), "missing")
     root_stat = root_path.lstat()
     if stat.S_ISLNK(root_stat.st_mode):
         raise ValueError("selected live root is a symlink")
     if stat.S_ISREG(root_stat.st_mode):
+        if root_stat.st_size > max_bytes:
+            raise _UncomparableLiveRoot()
         return _LiveSnapshot(
             root,
-            {root: _digest_live_file(root_path)},
+            {
+                root: _digest_live_file(
+                    root_path,
+                    expected_identity=context_checkout._file_identity(root_stat),
+                    max_bytes=max_bytes,
+                )
+            },
             frozenset(),
             "file",
         )
     if not stat.S_ISDIR(root_stat.st_mode):
         raise ValueError("selected live root is a special file")
 
-    files: dict[str, str] = {}
+    files: dict[str, tuple[int, int, int, int, int]] = {}
     directories: set[str] = {root}
     pending: list[tuple[Path, str]] = [(root_path, root)]
+    entries_seen = 0
     while pending:
         current, relative_root = pending.pop()
-        with os.scandir(current) as entries:
-            children = sorted(entries, key=lambda entry: entry.name)
-        for entry in children:
-            relative = f"{relative_root}/{entry.name}"
-            _validate_live_path(relative)
-            child = Path(entry.path)
-            child_stat = child.lstat()
-            if stat.S_ISLNK(child_stat.st_mode):
-                raise ValueError("selected live root contains a symlink")
-            if stat.S_ISDIR(child_stat.st_mode):
-                directories.add(relative)
-                pending.append((child, relative))
-            elif stat.S_ISREG(child_stat.st_mode):
-                files[relative] = _digest_live_file(child)
-            else:
-                raise ValueError("selected live root contains a special file")
-    return _LiveSnapshot(root, files, frozenset(directories), "directory")
+        try:
+            entries = os.scandir(current)
+        except OSError as exc:
+            raise ValueError("selected live root could not be inspected") from exc
+        try:
+            for entry in entries:
+                entries_seen += 1
+                relative = f"{relative_root}/{entry.name}"
+                _validate_live_path(relative)
+                child = Path(entry.path)
+                try:
+                    child_stat = child.lstat()
+                except OSError as exc:
+                    raise ValueError(
+                        "selected live root entry could not be inspected"
+                    ) from exc
+                if stat.S_ISLNK(child_stat.st_mode):
+                    raise ValueError("selected live root contains a symlink")
+                if stat.S_ISDIR(child_stat.st_mode):
+                    if entries_seen > max_files:
+                        raise _UncomparableLiveRoot()
+                    directories.add(relative)
+                    pending.append((child, relative))
+                elif stat.S_ISREG(child_stat.st_mode):
+                    if entries_seen > max_files:
+                        raise _UncomparableLiveRoot()
+                    files[relative] = context_checkout._file_identity(child_stat)
+                else:
+                    raise ValueError("selected live root contains a special file")
+                if entries_seen > max_files:
+                    raise _UncomparableLiveRoot()
+        finally:
+            entries.close()
+
+    total_bytes = sum(identity[3] for identity in files.values())
+    if total_bytes > max_bytes:
+        raise _UncomparableLiveRoot()
+    digests: dict[str, str] = {}
+    remaining_bytes = max_bytes
+    for path in sorted(files, key=lambda value: value.encode("utf-8")):
+        identity = files[path]
+        file_path = (
+            root_path
+            if path == root
+            else root_path / path.removeprefix(f"{root}/")
+        )
+        digest = _digest_live_file(
+            file_path,
+            expected_identity=identity,
+            max_bytes=remaining_bytes,
+        )
+        digests[path] = digest
+        remaining_bytes -= identity[3]
+    return _LiveSnapshot(root, digests, frozenset(directories), "directory")
 
 
-def _digest_live_file(path: Path) -> str:
+def _digest_live_file(
+    path: Path,
+    *,
+    expected_identity: tuple[int, int, int, int, int] | None = None,
+    max_bytes: int | None = None,
+) -> str:
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     if no_follow == 0:
         raise ValueError("live file no-follow inspection is unsupported")
@@ -486,13 +744,21 @@ def _digest_live_file(path: Path) -> str:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or stat.S_ISLNK(opened.st_mode):
             raise ValueError("live file is not regular")
+        if expected_identity is not None and (
+            context_checkout._file_identity(opened) != expected_identity
+        ):
+            raise ValueError("live file identity changed during comparison")
+        if max_bytes is not None and opened.st_size > max_bytes:
+            raise _UncomparableLiveRoot()
         with os.fdopen(descriptor, "rb") as stream:
             descriptor = -1
-            return storage_digest_for_bytes(stream.read())
+            payload = stream.read() if max_bytes is None else stream.read(max_bytes)
+            if max_bytes is not None and len(payload) > max_bytes:
+                raise _UncomparableLiveRoot()
+            return storage_digest_for_bytes(payload)
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-
 
 def _selected_writeback_linkage(
     selected_plan: SelectedCompiledPlan,
@@ -556,7 +822,11 @@ def _require_unchanged(
     baselines: Sequence[_RootBaseline],
     snapshots: Sequence[_LiveSnapshot],
 ) -> str | None:
-    structure_refusal = _require_structure(baselines, snapshots)
+    structure_refusal = _require_structure(
+        baselines,
+        snapshots,
+        strict_structure=True,
+    )
     if structure_refusal is not None:
         return structure_refusal
     baseline_files = _all_files(baselines)
@@ -585,6 +855,7 @@ def _require_structure(
     snapshots: Sequence[_LiveSnapshot],
     *,
     allow_file_delete_roots: Sequence[str] = (),
+    strict_structure: bool = False,
 ) -> str | None:
     for baseline, snapshot in zip(baselines, snapshots, strict=True):
         if baseline.root_kind != snapshot.root_kind:
@@ -596,7 +867,14 @@ def _require_structure(
                 continue
             return "selected live context root changed type"
         if (
-            not set(baseline.directories) <= set(snapshot.directories)
+            (
+                strict_structure
+                and set(baseline.directories) != set(snapshot.directories)
+            )
+            or (
+                not strict_structure
+                and not set(baseline.directories) <= set(snapshot.directories)
+            )
             or any(
                 path in snapshot.files
                 for path in baseline.directories
@@ -803,6 +1081,34 @@ def _validate_reported_file_digest(
     return "writeback change kind is invalid"
 
 
+def _project_file_change(
+    path: str,
+    *,
+    before: str | None,
+    after: str | None,
+) -> dict[str, str]:
+    if before is None and after is not None:
+        return {
+            "path": path,
+            "change_kind": "create",
+            "after_sha256": after,
+        }
+    if before is not None and after is None:
+        return {
+            "path": path,
+            "change_kind": "delete",
+            "before_sha256": before,
+        }
+    if before is not None and after is not None and before != after:
+        return {
+            "path": path,
+            "change_kind": "modify",
+            "before_sha256": before,
+            "after_sha256": after,
+        }
+    raise AssertionError("projected context change is not a filesystem diff")
+
+
 def _write_rule_roots(
     binding: StageContextBindingDeclaration,
     *,
@@ -969,4 +1275,8 @@ def _path_under_any(path: str, roots: Sequence[str]) -> bool:
     return any(_path_is_under(path, root) for root in roots)
 
 
-__all__ = ("validate_context_writeback",)
+__all__ = (
+    "ContextDiffRefusal",
+    "project_context_diff",
+    "validate_context_writeback",
+)

@@ -52,4 +52,26 @@ def completion_record(
     )
 
 
-__all__ = ("completion_record",)
+def context_mutation_completion_record(
+    *,
+    session: RunnerSessionRecord,
+    diagnostic_digest: str,
+    cleanup_disposition: str,
+    redaction_policy_id: str,
+    primary: RunnerSessionCancellationRecord | None = None,
+) -> RunnerSessionCompletionRecord:
+    return completion_record(
+        session=session,
+        terminal_state=("lost" if cleanup_disposition == "orphan_risk" else "failed"),
+        exit_kind="error",
+        adapter_outcome_kind="error",
+        adapter_error_kind="context_mutation_refused",
+        evidence_digest=None,
+        diagnostic_digest=diagnostic_digest,
+        cleanup_disposition=cleanup_disposition,
+        redaction_policy_id=redaction_policy_id,
+        primary=primary,
+    )
+
+
+__all__ = ("completion_record", "context_mutation_completion_record")

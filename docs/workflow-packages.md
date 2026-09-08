@@ -24,7 +24,10 @@ A complete workflow definition describes its decision tree or graph:
   declarations, checkout root, and writeback policy.
 
 The compiler rejects missing references, ambiguous markers, invalid schemas,
-unsupported actions, and incomplete routes before runtime admission.
+unsupported actions, and incomplete routes before runtime admission. For
+runtime-owned counter thresholds, compiler and admission both check threshold/
+increment artifact schema and normalized condition compatibility; threshold
+conditions may only be an exact key/value subset of increment conditions.
 
 ## Context Bindings
 
@@ -32,9 +35,10 @@ Context bindings are selected workflow authority, not ambient workspace
 discovery. In v0.22.3, binding schema 2 selects one `template` router asset, a
 normalized workspace-relative checkout root, bounded required and discoverable
 sources, hydration limits, a mutation policy, and
-`materialization_retention=until_session_durable_terminal`. The complete
-binding and its fields are compiled into the selected plan; the runtime does
-not inject hidden context or policy defaults.
+`materialization_retention=until_session_durable_terminal`. It is distinct from
+the current schema-3 `millrace.context_checkout_manifest`. The complete binding
+and its fields are compiled into the selected plan; the runtime does not inject
+hidden context or policy defaults.
 
 The closed source pairs are `dispatch_material/current`,
 `workspace_relative_root/<safe-relative-root>`,
@@ -43,8 +47,11 @@ The closed source pairs are `dispatch_material/current`,
 `selected_attempts/since_last_accepted_transition`, and
 `selected_attempts/current_lineage`. Required sources fail closed when missing
 or over bounds. Discoverable sources are captured into CAS and authenticated by
-the immutable schema-2 manifest, but are represented only by catalog entries
-until selected.
+the current schema-3 manifest, but are represented only by catalog entries
+until selected. Optional source `max_files`/`max_bytes` caps bind actual
+enumeration and payload reads. Omitted declared roots retain authenticated
+missing, empty-directory, file, and directory baselines; protected
+create/delete/rename/type/over-limit mutations refuse during reconciliation.
 
 A bound session materializes required files and the router before runner start.
 The catalog has no payload bytes. An exact request can hydrate one or more

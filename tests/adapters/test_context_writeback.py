@@ -17,7 +17,11 @@ from kernel.kernel_ping_scenarios import (
 from millrace.adapters.cli import session_completion
 from millrace.adapters.cli.context import OpenRuntimeContext, contextual_input_id
 from millrace.adapters.cli.context_checkout import prepare_context_checkout
-from millrace.adapters.cli.context_writeback import validate_context_writeback
+from millrace.adapters.cli.context_writeback import (
+    ContextDiffRefusal,
+    project_context_diff,
+    validate_context_writeback,
+)
 from millrace.adapters.runner_contract import AdapterInvocationRequest
 from millrace.compiler import authority_fingerprint, compile_workflow
 from millrace.contracts.context_checkout import decode_context_checkout_manifest
@@ -53,6 +57,77 @@ def _digest(path: Path) -> str:
     return storage_digest_for_bytes(path.read_bytes())
 
 
+def test_project_context_diff_returns_exact_sorted_direct_changes(
+    tmp_path: Path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    existing = runtime.paths.workspace_path / "src" / "existing.txt"
+    before_digest = _digest(existing)
+    existing.write_text("after\n", encoding="utf-8")
+    created = runtime.paths.workspace_path / "src" / "created.txt"
+    created.write_text("created\n", encoding="utf-8")
+
+    assert project_context_diff(
+        runtime,
+        state=state,
+        session_id=session.session_id,
+        manifest_digest=cast(str, session.context_manifest_digest),
+    ) == [
+        {
+            "path": "src/created.txt",
+            "change_kind": "create",
+            "after_sha256": _digest(created),
+        },
+        {
+            "path": "src/existing.txt",
+            "change_kind": "modify",
+            "before_sha256": before_digest,
+            "after_sha256": _digest(existing),
+        },
+    ]
+
+
+def test_project_context_diff_reports_direct_delete(tmp_path: Path) -> None:
+    runtime, state, session, _binding = _bound_fixture(tmp_path)
+    existing = runtime.paths.workspace_path / "src" / "existing.txt"
+    before_digest = _digest(existing)
+    existing.unlink()
+
+    assert project_context_diff(
+        runtime,
+        state=state,
+        session_id=session.session_id,
+        manifest_digest=cast(str, session.context_manifest_digest),
+    ) == [
+        {
+            "path": "src/existing.txt",
+            "change_kind": "delete",
+            "before_sha256": before_digest,
+        }
+    ]
+
+
+def test_project_context_diff_refuses_protected_live_mutation(
+    tmp_path: Path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(
+        tmp_path,
+        protected_root=True,
+    )
+    (runtime.paths.workspace_path / "protected" / "locked.txt").write_text(
+        "mutated\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContextDiffRefusal):
+        project_context_diff(
+            runtime,
+            state=state,
+            session_id=session.session_id,
+            manifest_digest=cast(str, session.context_manifest_digest),
+        )
+
+
 def _bound_fixture(
     tmp_path: Path,
     *,
@@ -61,6 +136,8 @@ def _bound_fixture(
     unruled_required_root: bool = False,
     file_root: str | None = None,
     omitted_discoverable_root: bool = False,
+    empty_discoverable_root: bool = False,
+    overbound_unprotected_discoverable_root: bool = False,
 ) -> tuple[
     OpenRuntimeContext,
     RuntimeState,
@@ -73,12 +150,26 @@ def _bound_fixture(
         discoverable_sources = cast(
             list[dict[str, object]], binding_source["discoverable_sources"]
         )
+        if not any(item.get("source_ref") == "docs" for item in discoverable_sources):
+            discoverable_sources.append(
+                {
+                    "source_kind": "workspace_relative_root",
+                    "source_ref": "docs",
+                    "max_files": 4,
+                    "max_bytes": 2048,
+                }
+            )
+    if overbound_unprotected_discoverable_root:
+        binding_source = cast(list[dict[str, object]], source["context_bindings"])[0]
+        discoverable_sources = cast(
+            list[dict[str, object]], binding_source["discoverable_sources"]
+        )
         discoverable_sources.append(
             {
                 "source_kind": "workspace_relative_root",
                 "source_ref": "docs",
-                "max_files": 4,
-                "max_bytes": 2048,
+                "max_files": 1,
+                "max_bytes": 4096,
             }
         )
     if file_root is not None:
@@ -165,6 +256,12 @@ def _bound_fixture(
                 "guide\n",
                 encoding="utf-8",
             )
+        elif empty_discoverable_root:
+            (workspace / "docs").mkdir(parents=True)
+    if overbound_unprotected_discoverable_root:
+        (workspace / "docs").mkdir(parents=True, exist_ok=True)
+        (workspace / "docs" / "a.txt").write_text("a\n", encoding="utf-8")
+        (workspace / "docs" / "b.txt").write_text("b\n", encoding="utf-8")
 
     state = _load(runtime)
     session = state.runner_sessions[f"test-session:{run_id}"]
@@ -980,4 +1077,183 @@ def test_protected_roots_are_never_writable(tmp_path: Path) -> None:
         session=session,
         evidence=evidence,
     ) is not None
+    runtime.close()
+
+
+def test_omitted_protected_missing_root_refuses_later_creation_after_reload(
+    tmp_path: Path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(
+        tmp_path,
+        write_enabled=False,
+        omitted_discoverable_root=True,
+    )
+    manifest_digest = session.context_manifest_digest
+    assert manifest_digest is not None
+    manifest = decode_context_checkout_manifest(
+        runtime.cas_store.get_bytes(manifest_digest)
+    )
+    root_states = tuple(
+        item
+        for item in manifest.root_states
+        if item.source_kind == "workspace_relative_root"
+        and item.source_ref == "docs"
+    )
+    assert len(root_states) == 1
+    assert root_states[0].root_kind == "missing"
+
+    (runtime.paths.workspace_path / "docs").mkdir()
+    evidence = _evidence(
+        state,
+        session,
+        artifact=_writeback_report(no_op_reason="No governed update was needed."),
+    )
+
+    refusal = validate_context_writeback(
+        runtime,
+        session=session,
+        evidence=evidence,
+    )
+    assert refusal is not None
+    assert "changed" in refusal or "type" in refusal
+    assert "docs" not in refusal
+
+
+def test_omitted_protected_empty_root_refuses_later_empty_directory_insertion(
+    tmp_path: Path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(
+        tmp_path,
+        write_enabled=False,
+        omitted_discoverable_root=True,
+        empty_discoverable_root=True,
+    )
+    manifest_digest = session.context_manifest_digest
+    assert manifest_digest is not None
+    manifest = decode_context_checkout_manifest(
+        runtime.cas_store.get_bytes(manifest_digest)
+    )
+    root_states = tuple(
+        item
+        for item in manifest.root_states
+        if item.source_kind == "workspace_relative_root"
+        and item.source_ref == "docs"
+    )
+    assert len(root_states) == 1
+    assert root_states[0].root_kind == "directory"
+    assert root_states[0].directories == ("",)
+
+    (runtime.paths.workspace_path / "docs" / "later").mkdir()
+    evidence = _evidence(
+        state,
+        session,
+        artifact=_writeback_report(no_op_reason="No governed update was needed."),
+    )
+
+    refusal = validate_context_writeback(
+        runtime,
+        session=session,
+        evidence=evidence,
+    )
+    assert refusal is not None
+    assert "directory" in refusal or "changed" in refusal
+    assert "docs" not in refusal
+
+
+def test_forbidden_populated_optional_root_keeps_digest_and_structure_protection(
+    tmp_path: Path,
+) -> None:
+    runtime, state, session, _binding = _bound_fixture(
+        tmp_path,
+        write_enabled=False,
+    )
+    path = runtime.paths.workspace_path / "docs" / "guide.txt"
+    path.write_text("changed\n", encoding="utf-8")
+    evidence = _evidence(
+        state,
+        session,
+        artifact=_writeback_report(no_op_reason="No governed update was needed."),
+    )
+
+    refusal = validate_context_writeback(
+        runtime,
+        session=session,
+        evidence=evidence,
+    )
+    assert refusal == "selected live context files changed"
+    assert "docs" not in refusal
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("delete", "rename", "file_to_directory", "directory_to_file", "create"),
+)
+def test_authenticated_reload_rejects_protected_root_lifecycle_mutations(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    runtime, _state, initial_session, _binding = _bound_fixture(
+        tmp_path,
+        write_enabled=True,
+        protected_root=True,
+    )
+    protected = runtime.paths.workspace_path / "protected"
+    locked = protected / "locked.txt"
+    if mutation == "delete":
+        locked.unlink()
+    elif mutation == "rename":
+        locked.rename(protected / "renamed.txt")
+    elif mutation == "file_to_directory":
+        locked.unlink()
+        locked.mkdir()
+    elif mutation == "directory_to_file":
+        shutil.rmtree(protected)
+        protected.write_text("replacement\n", encoding="utf-8")
+    else:
+        (protected / "inserted.txt").write_text("inserted\n", encoding="utf-8")
+
+    reloaded = _load(runtime)
+    session = reloaded.runner_sessions[initial_session.session_id]
+    evidence = _evidence(
+        reloaded,
+        session,
+        artifact=_writeback_report(no_op_reason="No governed update was needed."),
+    )
+
+    refusal = validate_context_writeback(
+        runtime,
+        session=session,
+        evidence=evidence,
+    )
+    assert refusal is not None
+    assert "selected" in refusal or "changed" in refusal or "type" in refusal
+    runtime.close()
+
+
+def test_unprotected_overbound_optional_discoverable_root_is_omitted_without_baseline(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli import context_writeback
+
+    runtime, _state, session, binding = _bound_fixture(
+        tmp_path,
+        write_enabled=True,
+        overbound_unprotected_discoverable_root=True,
+    )
+    manifest_digest = session.context_manifest_digest
+    assert manifest_digest is not None
+    manifest = decode_context_checkout_manifest(
+        runtime.cas_store.get_bytes(manifest_digest)
+    )
+    assert [
+        (item.source_kind, item.source_ref, item.reason)
+        for item in manifest.omissions
+    ] == [("workspace_relative_root", "docs", "file_limit_exceeded")]
+    assert not any(
+        item.source_kind == "workspace_relative_root" and item.source_ref == "docs"
+        for item in manifest.root_states
+    )
+    baselines = context_writeback._baselines_for_binding(manifest, binding)
+    assert not isinstance(baselines, str)
+    assert all(baseline.root != "docs" for baseline in baselines)
     runtime.close()

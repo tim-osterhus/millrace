@@ -17,7 +17,14 @@ from millrace.contracts.compiled_plan import (
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId, RunnerBindingId, StageKindId
 from millrace.contracts.runner import RunnerDispatchEnvelope
-from millrace.contracts.state import Activation, RunRecord, RuntimeState, WorkItem
+from millrace.contracts.selected_plan_lookups import runner_selectable_outcome_ids
+from millrace.contracts.state import (
+    Activation,
+    ArtifactRecord,
+    RunRecord,
+    RuntimeState,
+    WorkItem,
+)
 from millrace.contracts.transition import ClaimWork, TransitionContext
 from millrace.kernel import decide
 from millrace.kernel.fanout_policy import (
@@ -30,6 +37,10 @@ from millrace.kernel.join_policy import (
     project_join_evidence_progress,
     project_selected_join_evidence_for_target,
 )
+from millrace.kernel.observation_policy import (
+    AuthenticatedArtifactProvenance,
+    authenticate_artifact_provenance,
+)
 from millrace.kernel.operator_waits import (
     SelectedWaitEvidenceProjection,
     project_selected_wait_evidence_for_target,
@@ -40,6 +51,14 @@ READY_DIAGNOSTIC_SEVERITIES = (
     "policy_refusal",
     "corrupt_authority",
 )
+
+
+def artifact_provenance_for_status(
+    state: RuntimeState, artifact: ArtifactRecord,
+) -> AuthenticatedArtifactProvenance | None:
+    """Expose authenticated provenance through the privileged projection seam."""
+    result = authenticate_artifact_provenance(state, artifact)
+    return result if isinstance(result, AuthenticatedArtifactProvenance) else None
 
 
 def join_evidence_progress_for_status(
@@ -1261,9 +1280,18 @@ def _terminal_options_for_dispatch(
     admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
     if admitted is None:
         return ()
+    selectable_outcomes = runner_selectable_outcome_ids(
+        admitted.selected_plan,
+        stage_kind_id=str(stage.id),
+    )
     options: list[Mapping[str, AuthorityValue]] = []
     for outcome in admitted.selected_plan.terminal_outcomes:
         if outcome.stage_kind_id != run.stage_kind_id:
+            continue
+        if (
+            selectable_outcomes is not None
+            and str(outcome.id) not in selectable_outcomes
+        ):
             continue
         if not outcome.marker.strip() or outcome.id not in stage.declared_outcome_ids:
             continue
@@ -1287,6 +1315,9 @@ def _terminal_options_for_dispatch(
                 str(action.artifact_schema_id)
                 if action.artifact_schema_id is not None
                 else None
+            ),
+            "artifact_field_conditions": dict(
+                action.artifact_field_conditions,
             ),
         }
         counter_context = _counter_context_for_action(

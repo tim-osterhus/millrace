@@ -35,8 +35,10 @@ from millrace.contracts.compiled_plan import (
 )
 from millrace.contracts.context_checkout import (
     ContextCheckoutFile,
+    ContextCheckoutLegacyManifest,
     ContextCheckoutManifest,
     ContextCheckoutOmission,
+    ContextCheckoutRootState,
     context_checkout_manifest_digest,
     decode_context_checkout_manifest,
     encode_context_checkout_manifest,
@@ -217,8 +219,10 @@ __all__ = (
     "CounterRecord",
     "ContextSourceDeclaration",
     "ContextCheckoutFile",
+    "ContextCheckoutLegacyManifest",
     "ContextCheckoutManifest",
     "ContextCheckoutOmission",
+    "ContextCheckoutRootState",
     "ContextWriteRule",
     "DispatchSuspensionRecord",
     "CreateActivation",

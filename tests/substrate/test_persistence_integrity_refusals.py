@@ -800,7 +800,7 @@ def test_restart_refuses_missing_context_catalog_cas_object(
             ),
         ),
     )
-    assert manifest.schema_version == 2
+    assert manifest.schema_version == 3
     manifest_digest = cas_store.put_bytes(encode_context_checkout_manifest(manifest))
     attached = _attach_state(state, digest=manifest_digest)
 

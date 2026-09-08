@@ -1963,7 +1963,10 @@ def test_discoverable_workspace_source_omits_whole_source(
     tmp_path: Path,
     case: str,
 ) -> None:
-    from millrace.adapters.cli.context_checkout import prepare_context_checkout
+    from millrace.adapters.cli.context_checkout import (
+        ContextCheckoutUncomparableRootError,
+        prepare_context_checkout,
+    )
 
     plan, fingerprint = _plan_with_all_context_sources(
         workspace_discoverable=True,
@@ -1983,6 +1986,21 @@ def test_discoverable_workspace_source_omits_whole_source(
     db_path.parent.mkdir()
     db_path.touch()
     cas_path.mkdir()
+
+    if case == "over_bound":
+        with pytest.raises(
+            ContextCheckoutUncomparableRootError,
+            match="uncomparable",
+        ):
+            prepare_context_checkout(
+                paths=CliWorkspacePaths(workspace, db_path, cas_path),
+                session=session,
+                plan_fingerprint=fingerprint,
+                binding=plan.context_bindings[0],
+                state=state,
+                cas_store=ContentAddressedByteStore(cas_path),
+            )
+        return
 
     prepared = prepare_context_checkout(
         paths=CliWorkspacePaths(workspace, db_path, cas_path),
@@ -2294,7 +2312,7 @@ def test_workspace_capture_retries_once_after_instability(
     original_snapshot = checkout_module._snapshot_tree
     calls = 0
 
-    def flaky_snapshot(path: Path):
+    def flaky_snapshot(path: Path, *args: object, **kwargs: object):
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -2335,7 +2353,7 @@ def test_workspace_capture_refuses_after_two_instabilities(
     cas_path.mkdir()
     calls = 0
 
-    def always_unstable(path: Path):
+    def always_unstable(path: Path, *args: object, **kwargs: object):
         nonlocal calls
         calls += 1
         raise checkout_module._CaptureInstability("synthetic instability")
@@ -2383,10 +2401,12 @@ def test_workspace_capture_retries_after_same_stat_content_drift(
     original_read = checkout_module._read_regular_file
     calls = 0
 
-    def drift_once(path: Path, identity: object) -> bytes:
+    def drift_once(
+        path: Path, identity: object, *args: object, **kwargs: object
+    ) -> bytes:
         nonlocal calls
         calls += 1
-        payload = original_read(path, identity)
+        payload = original_read(path, identity, *args, **kwargs)
         return b"Drifted\n" if calls == 2 else payload
 
     monkeypatch.setattr(checkout_module, "_read_regular_file", drift_once)
@@ -2424,10 +2444,12 @@ def test_workspace_capture_refuses_after_repeated_same_stat_content_drift(
     original_read = checkout_module._read_regular_file
     calls = 0
 
-    def drift_always(path: Path, identity: object) -> bytes:
+    def drift_always(
+        path: Path, identity: object, *args: object, **kwargs: object
+    ) -> bytes:
         nonlocal calls
         calls += 1
-        payload = original_read(path, identity)
+        payload = original_read(path, identity, *args, **kwargs)
         return b"Drifted\n" if calls % 2 == 0 else payload
 
     monkeypatch.setattr(checkout_module, "_read_regular_file", drift_always)
@@ -2763,3 +2785,853 @@ def test_checkout_verifier_requires_receipt_for_selected_file(tmp_path: Path) ->
         **verify_kwargs,
         hydration_receipts=(receipt,),
     )
+
+
+def _optional_workspace_selection(*, max_files: int, max_bytes: int):
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from millrace.contracts.compiled_plan import ContextSourceDeclaration
+
+    source = ContextSourceDeclaration(
+        source_kind="workspace_relative_root",
+        source_ref="docs",
+        max_files=max_files,
+        max_bytes=max_bytes,
+    )
+    return checkout_module._SourceSelection(required=False, declaration=source)
+
+
+def test_optional_directory_bound_stops_entry_enumeration_and_counts_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    source_path = tmp_path / "docs"
+    for index in range(8):
+        (source_path / f"directory-{index}").mkdir(parents=True)
+    selection = _optional_workspace_selection(max_files=2, max_bytes=1024)
+    original_scandir = checkout_module.os.scandir
+    enumerated: list[str] = []
+
+    def counted_scandir(path: object):
+        iterator = original_scandir(path)
+        if Path(path) != source_path:
+            return iterator
+
+        class _CountedScandir:
+            def __enter__(self):
+                iterator.__enter__()
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                iterator.__exit__(*args)
+
+            def close(self) -> None:
+                iterator.close()
+
+            def __iter__(self):
+                for entry in iterator:
+                    enumerated.append(entry.name)
+                    yield entry
+
+        return _CountedScandir()
+
+    monkeypatch.setattr(checkout_module.os, "scandir", counted_scandir)
+    result = checkout_module._capture_workspace_source(
+        selection=selection,
+        source_path=source_path,
+    )
+
+    assert result.omission is not None
+    assert result.omission.reason == "file_limit_exceeded"
+    assert len(enumerated) <= selection.declaration.max_files + 1
+    assert len(enumerated) < 8
+
+
+def test_optional_byte_bound_never_reads_payload_beyond_declared_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    source_path = tmp_path / "docs"
+    source_path.mkdir()
+    (source_path / "a-small.txt").write_bytes(b"tiny")
+    (source_path / "z-large.txt").write_bytes(b"x" * 10_000)
+    selection = _optional_workspace_selection(max_files=2, max_bytes=4)
+    original_read = checkout_module._read_regular_file
+    read_paths: list[Path] = []
+
+    def counted_read(path: Path, expected_identity: object, *args: object):
+        read_paths.append(path)
+        return original_read(path, expected_identity, *args)
+
+    monkeypatch.setattr(checkout_module, "_read_regular_file", counted_read)
+    result = checkout_module._capture_workspace_source(
+        selection=selection,
+        source_path=source_path,
+    )
+
+    assert result.omission is not None
+    assert result.omission.reason == "byte_limit_exceeded"
+    assert result.root_state is None
+    assert all(path.name != "z-large.txt" for path in read_paths)
+    assert (
+        sum(path.stat().st_size for path in read_paths)
+        <= selection.declaration.max_bytes
+    )
+
+
+def test_forbidden_optional_overbound_root_refuses_with_redacted_typed_diagnostic(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    plan, fingerprint = _plan_with_all_context_sources(
+        stage_kind_id="kernel_ping.worker",
+        workspace_discoverable=True,
+        workspace_max_files=1,
+    )
+    state = bootstrap_to_worker_claim(plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-worker")
+    session = state.runner_sessions["test-session:run-worker"]
+    workspace = tmp_path / "workspace"
+    docs = workspace / "docs"
+    docs.mkdir(parents=True)
+    (docs / "a.txt").write_text("a", encoding="utf-8")
+    (docs / "b.txt").write_text("b", encoding="utf-8")
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    cas_path = workspace / ".millrace" / "cas"
+    db_path.parent.mkdir()
+    db_path.touch()
+    cas_path.mkdir()
+
+    with pytest.raises(
+        checkout_module.ContextCheckoutUncomparableRootError,
+    ) as refused:
+        checkout_module.prepare_context_checkout(
+            paths=CliWorkspacePaths(workspace, db_path, cas_path),
+            session=session,
+            plan_fingerprint=fingerprint,
+            binding=plan.context_bindings[0],
+            state=state,
+            cas_store=ContentAddressedByteStore(cas_path),
+        )
+
+    assert "docs" not in str(refused.value)
+    assert "uncomparable" in str(refused.value)
+
+
+def test_optional_empty_regular_file_records_file_root_baseline(tmp_path: Path) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    source_path = tmp_path / "docs"
+    source_path.write_bytes(b"")
+    selection = _optional_workspace_selection(max_files=1, max_bytes=1)
+
+    result = checkout_module._capture_workspace_source(
+        selection=selection,
+        source_path=source_path,
+    )
+
+    assert result.omission is None
+    assert result.root_state is not None
+    assert result.root_state.root_kind == "file"
+    assert result.root_state.files == ("",)
+    assert result.root_state.directories == ()
+
+
+def test_existing_legacy_manifest_is_inspectable_but_never_rewritten(
+    tmp_path: Path,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from millrace.contracts import encode_context_checkout_manifest
+
+    plan, fingerprint = _plan_with_all_context_sources()
+    state = bootstrap_to_taskmaster_claim(plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-taskmaster")
+    session = state.runner_sessions["test-session:run-taskmaster"]
+    workspace = tmp_path / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    (workspace / "docs" / "guide.txt").write_text("Guide\n", encoding="utf-8")
+    db_path = workspace / ".millrace" / "runtime.sqlite3"
+    cas_path = workspace / ".millrace" / "cas"
+    db_path.parent.mkdir()
+    db_path.touch()
+    cas_path.mkdir()
+    cas_store = ContentAddressedByteStore(cas_path)
+    paths = CliWorkspacePaths(workspace, db_path, cas_path)
+    prepared = checkout_module.prepare_context_checkout(
+        paths=paths,
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=plan.context_bindings[0],
+        state=state,
+        cas_store=cas_store,
+    )
+
+    record = json.loads(encode_context_checkout_manifest(prepared.manifest))
+    record["schema_version"] = 2
+    record.pop("root_states")
+    legacy_bytes = encode_context_checkout_manifest(record)
+    root = prepared.materialized_checkout_root
+    for path in (root, *root.rglob("*")):
+        path.chmod(0o755 if path.is_dir() else 0o644)
+    (root / "checkout.manifest.json").write_bytes(legacy_bytes)
+    cas_store.put_bytes(legacy_bytes)
+    for path in root.rglob("*"):
+        if path.is_dir():
+            path.chmod(0o555)
+        else:
+            path.chmod(0o444)
+    root.chmod(0o555)
+
+    with pytest.raises(
+        checkout_module.ContextCheckoutPreparationError,
+        match="inspect-only|baseline unavailable",
+    ):
+        checkout_module.prepare_context_checkout(
+            paths=paths,
+            session=session,
+            plan_fingerprint=fingerprint,
+            binding=plan.context_bindings[0],
+            state=state,
+            cas_store=cas_store,
+        )
+
+    assert (root / "checkout.manifest.json").read_bytes() == legacy_bytes
+
+
+def _runtime_source_selection(
+    *,
+    source_kind: str,
+    required: bool = False,
+    max_files: int = 4,
+    max_bytes: int = 100_000,
+):
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from millrace.contracts.compiled_plan import ContextSourceDeclaration
+
+    source_ref = "current_lineage"
+    return checkout_module._SourceSelection(
+        required=required,
+        declaration=ContextSourceDeclaration(
+            source_kind=source_kind,
+            source_ref=source_ref,
+            max_files=max_files,
+            max_bytes=max_bytes,
+        ),
+    )
+
+
+def _runtime_artifact_relation(*, corrupt_second: bool = False):
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    plan, fingerprint = _plan_with_all_context_sources(
+        stage_kind_id="kernel_ping.worker",
+        workspace_discoverable=False,
+        accepted_discoverable=True,
+    )
+    state = bootstrap_to_worker_claim(plan, fingerprint)
+    state = fake_runner_session_state(state=state, run_id="run-worker")
+    original = next(iter(state.artifacts.values()))
+    second = replace(original, artifact_id="z-last")
+    if corrupt_second:
+        second = replace(second, payload_digest="sha256:" + "0" * 64)
+    state = replace(
+        state,
+        artifacts={
+            "a-first": replace(original, artifact_id="a-first"),
+            "z-last": second,
+        },
+    )
+    session = state.runner_sessions["test-session:run-worker"]
+    relation = checkout_module._validate_relation(
+        session=session,
+        plan_fingerprint=fingerprint,
+        binding=plan.context_bindings[0],
+        state=state,
+    )
+    return relation
+
+
+def _runtime_attempt_relation(*, corrupt_second: bool = False):
+    from dataclasses import replace as dataclass_replace
+
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from substrate.test_persistence_integrity_refusals import (
+        _generic_recovery_runtime_state,
+    )
+
+    state = _generic_recovery_runtime_state()
+    admitted = next(iter(state.admitted_plans.values()))
+    run = state.runs["run-generic-parent"]
+    original = next(iter(state.recovery_attempts.values()))
+
+    def make_attempt(*, input_id: str, count: int, phase: str):
+        return dataclass_replace(
+            original,
+            record_id=(
+                "recovery-attempt:"
+                f"{original.plan_ref.authority_fingerprint}:{original.policy_id}:"
+                f"{original.lineage_id}:{input_id}"
+            ),
+            attempt_count=count,
+            phase=phase,
+            created_by_input_id=input_id,
+            updated_by_input_id=input_id,
+        )
+
+    first = make_attempt(input_id="input-a", count=1, phase="active_recovery")
+    second = make_attempt(input_id="input-z", count=2, phase="resolved")
+    if corrupt_second:
+        second = dataclass_replace(second, policy_id="not-selected")
+    state = dataclass_replace(
+        state,
+        recovery_attempts={
+            first.record_id: first,
+            second.record_id: second,
+        },
+    )
+    return checkout_module._Relation(
+        state=state,
+        run=run,
+        work_item=state.work_items[run.work_item_id],
+        activation=state.activations[run.activation_id],
+        admitted=admitted,
+        selected_plan=admitted.selected_plan,
+        envelope=None,
+        router_body="router",
+    )
+
+
+def _serialization_calls(checkout_module, monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[object, dict[str, object]]] = []
+    original = checkout_module._canonical_runtime_record
+
+    def counted(value: object, *args: object, **kwargs: object) -> bytes:
+        calls.append((value, dict(kwargs)))
+        return original(value, *args, **kwargs)
+
+    monkeypatch.setattr(checkout_module, "_canonical_runtime_record", counted)
+    return calls
+
+
+@pytest.mark.parametrize("source_kind", ("selected_artifacts", "selected_attempts"))
+@pytest.mark.parametrize(
+    ("bound", "expected_reason"),
+    (("files", "file_limit_exceeded"), ("bytes", "byte_limit_exceeded")),
+)
+def test_optional_runtime_source_serializes_only_through_first_bound(
+    monkeypatch: pytest.MonkeyPatch,
+    source_kind: str,
+    bound: str,
+    expected_reason: str,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    relation = (
+        _runtime_artifact_relation()
+        if source_kind == "selected_artifacts"
+        else _runtime_attempt_relation()
+    )
+    max_files = 1 if bound == "files" else 4
+    max_bytes = 1 if bound == "bytes" else 100_000
+    selection = _runtime_source_selection(
+        source_kind=source_kind,
+        max_files=max_files,
+        max_bytes=max_bytes,
+    )
+    calls = _serialization_calls(checkout_module, monkeypatch)
+    if bound == "bytes":
+        # The capped path must not invoke an unbounded whole-body dump.
+        original_dump = checkout_module.json.dumps
+
+        def fail_unbounded_dump(*args: object, **kwargs: object):
+            value = args[0] if args else None
+            if isinstance(value, dict) and (
+                "artifact_id" in value or "attempt_count" in value
+            ):
+                raise AssertionError("unbounded runtime serialization was used")
+            return original_dump(*args, **kwargs)
+
+        monkeypatch.setattr(checkout_module.json, "dumps", fail_unbounded_dump)
+
+    authenticated: list[str] = []
+    if source_kind == "selected_artifacts":
+        original_authenticate = checkout_module._authenticate_artifact_source
+
+        def counted_authenticate(
+            state: object,
+            artifact: object,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            authenticated.append(str(artifact.artifact_id))
+            return original_authenticate(state, artifact, *args, **kwargs)
+
+        monkeypatch.setattr(
+            checkout_module,
+            "_authenticate_artifact_source",
+            counted_authenticate,
+        )
+    else:
+        original_validate = checkout_module._validate_recovery_attempt
+
+        def counted_validate(
+            relation_value: object,
+            attempt: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            authenticated.append(str(attempt.record_id))
+            original_validate(relation_value, attempt, *args, **kwargs)
+
+        monkeypatch.setattr(
+            checkout_module,
+            "_validate_recovery_attempt",
+            counted_validate,
+        )
+
+    files, omissions = checkout_module._runtime_files(
+        selections=(selection,),
+        relation=relation,
+    )
+
+    assert files == []
+    assert [(item.source_kind, item.source_ref, item.reason) for item in omissions] == [
+        (source_kind, "current_lineage", expected_reason)
+    ]
+    assert len(calls) == 1
+    assert len(authenticated) == 2
+    if source_kind == "selected_artifacts":
+        assert authenticated == ["a-first", "z-last"]
+        assert calls[0][0]["artifact_id"] == "a-first"
+    else:
+        assert calls[0][0]["record_id"] == authenticated[0]
+    if bound == "bytes":
+        assert calls[0][1]["max_bytes"] == 1
+
+
+@pytest.mark.parametrize("source_kind", ("selected_artifacts", "selected_attempts"))
+def test_required_runtime_bound_refuses_after_capped_first_record(
+    monkeypatch: pytest.MonkeyPatch,
+    source_kind: str,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    relation = (
+        _runtime_artifact_relation()
+        if source_kind == "selected_artifacts"
+        else _runtime_attempt_relation()
+    )
+    selection = _runtime_source_selection(
+        source_kind=source_kind,
+        required=True,
+        max_files=1,
+    )
+    calls = _serialization_calls(checkout_module, monkeypatch)
+
+    with pytest.raises(ValueError, match="required runtime source exceeds"):
+        checkout_module._runtime_files(
+            selections=(selection,),
+            relation=relation,
+        )
+
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("source_kind", ("selected_artifacts", "selected_attempts"))
+def test_runtime_overflow_does_not_hide_later_corrupt_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    source_kind: str,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    relation = (
+        _runtime_artifact_relation(corrupt_second=True)
+        if source_kind == "selected_artifacts"
+        else _runtime_attempt_relation(corrupt_second=True)
+    )
+    selection = _runtime_source_selection(
+        source_kind=source_kind,
+        max_files=1,
+        max_bytes=100_000,
+    )
+    calls = _serialization_calls(checkout_module, monkeypatch)
+
+    with pytest.raises(ValueError):
+        checkout_module._runtime_files(
+            selections=(selection,),
+            relation=relation,
+        )
+
+    # The first record may be serialized, but the later relevant record must
+    # still be authenticated rather than hidden by the earlier overflow.
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("source_kind", ("selected_artifacts", "selected_attempts"))
+def test_runtime_record_order_is_stable_when_within_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+    source_kind: str,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    relation = (
+        _runtime_artifact_relation()
+        if source_kind == "selected_artifacts"
+        else _runtime_attempt_relation()
+    )
+    selection = _runtime_source_selection(
+        source_kind=source_kind,
+        max_files=2,
+        max_bytes=100_000,
+    )
+    calls = _serialization_calls(checkout_module, monkeypatch)
+    files, omissions = checkout_module._runtime_files(
+        selections=(selection,),
+        relation=relation,
+    )
+
+    assert not omissions
+    assert len(files) == 2
+    assert len(calls) == 2
+    keys = [
+        (
+            value["artifact_id"]
+            if source_kind == "selected_artifacts"
+            else value["record_id"]
+        )
+        for value, _kwargs in calls
+    ]
+    assert keys == sorted(keys, key=lambda value: value.encode("utf-8"))
+
+
+
+@pytest.mark.parametrize("source_kind", ("selected_artifacts", "selected_attempts"))
+@pytest.mark.parametrize("bound", ("files", "bytes"))
+def test_runtime_bound_authenticates_later_records_without_materializing_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+    source_kind: str,
+    bound: str,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    relation = (
+        _runtime_artifact_relation()
+        if source_kind == "selected_artifacts"
+        else _runtime_attempt_relation()
+    )
+    first_payload = next(
+        iter(
+            checkout_module._artifact_records(relation)
+            if source_kind == "selected_artifacts"
+            else checkout_module._attempt_records(relation)
+        )
+    )
+    selection = _runtime_source_selection(
+        source_kind=source_kind,
+        max_files=1 if bound == "files" else 4,
+        max_bytes=100_000 if bound == "files" else len(first_payload),
+    )
+    authenticated: list[str] = []
+    if source_kind == "selected_artifacts":
+        artifact_payload_ids = {
+            id(artifact.payload) for artifact in relation.state.artifacts.values()
+        }
+        materialized_payloads: list[int] = []
+        original_json_ready = checkout_module._json_ready
+
+        def counted_json_ready(value: object):
+            if id(value) in artifact_payload_ids:
+                materialized_payloads.append(id(value))
+            return original_json_ready(value)
+
+        monkeypatch.setattr(checkout_module, "_json_ready", counted_json_ready)
+        original_authenticate = checkout_module._authenticate_artifact_source
+
+        def counted_authenticate(
+            state: object,
+            artifact: object,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            authenticated.append(str(artifact.artifact_id))
+            return original_authenticate(state, artifact, *args, **kwargs)
+
+        monkeypatch.setattr(
+            checkout_module,
+            "_authenticate_artifact_source",
+            counted_authenticate,
+        )
+    else:
+        materialized_payloads = []
+        original_attempt_value = checkout_module._attempt_record_value
+
+        def counted_attempt_value(attempt: object):
+            materialized_payloads.append(str(attempt.record_id))
+            return original_attempt_value(attempt)
+
+        monkeypatch.setattr(
+            checkout_module,
+            "_attempt_record_value",
+            counted_attempt_value,
+        )
+        original_validate = checkout_module._validate_recovery_attempt
+
+        def counted_validate(
+            relation_value: object,
+            attempt: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            authenticated.append(str(attempt.record_id))
+            original_validate(relation_value, attempt, *args, **kwargs)
+
+        monkeypatch.setattr(
+            checkout_module,
+            "_validate_recovery_attempt",
+            counted_validate,
+        )
+
+    files, omissions = checkout_module._runtime_files(
+        selections=(selection,),
+        relation=relation,
+    )
+
+    expected_reason = (
+        "file_limit_exceeded" if bound == "files" else "byte_limit_exceeded"
+    )
+    assert files == []
+    assert [
+        (item.source_kind, item.source_ref, item.reason) for item in omissions
+    ] == [(source_kind, "current_lineage", expected_reason)]
+    if source_kind == "selected_artifacts":
+        expected_authenticated = ["a-first", "z-last"]
+    else:
+        expected_authenticated = sorted(
+            str(attempt.record_id)
+            for attempt in relation.state.recovery_attempts.values()
+        )
+    assert authenticated == expected_authenticated
+    assert len(materialized_payloads) == 1
+
+
+@pytest.mark.parametrize("source_kind", ("selected_artifacts", "selected_attempts"))
+def test_runtime_byte_bound_still_refuses_later_corrupt_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    source_kind: str,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    clean_relation = (
+        _runtime_artifact_relation()
+        if source_kind == "selected_artifacts"
+        else _runtime_attempt_relation()
+    )
+    first_payload = next(
+        iter(
+            checkout_module._artifact_records(clean_relation)
+            if source_kind == "selected_artifacts"
+            else checkout_module._attempt_records(clean_relation)
+        )
+    )
+    relation = (
+        _runtime_artifact_relation(corrupt_second=True)
+        if source_kind == "selected_artifacts"
+        else _runtime_attempt_relation(corrupt_second=True)
+    )
+    selection = _runtime_source_selection(
+        source_kind=source_kind,
+        max_files=4,
+        max_bytes=len(first_payload),
+    )
+    authenticated: list[str] = []
+    if source_kind == "selected_artifacts":
+        original_authenticate = checkout_module._authenticate_artifact_source
+
+        def counted_authenticate(
+            state: object,
+            artifact: object,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            authenticated.append(str(artifact.artifact_id))
+            return original_authenticate(state, artifact, *args, **kwargs)
+
+        monkeypatch.setattr(
+            checkout_module,
+            "_authenticate_artifact_source",
+            counted_authenticate,
+        )
+    else:
+        original_validate = checkout_module._validate_recovery_attempt
+
+        def counted_validate(
+            relation_value: object,
+            attempt: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            authenticated.append(str(attempt.record_id))
+            original_validate(relation_value, attempt, *args, **kwargs)
+
+        monkeypatch.setattr(
+            checkout_module,
+            "_validate_recovery_attempt",
+            counted_validate,
+        )
+
+    with pytest.raises(ValueError):
+        checkout_module._runtime_files(
+            selections=(selection,),
+            relation=relation,
+        )
+
+    if source_kind == "selected_artifacts":
+        expected_authenticated = ["a-first", "z-last"]
+    else:
+        expected_authenticated = sorted(
+            str(attempt.record_id)
+            for attempt in relation.state.recovery_attempts.values()
+        )
+    assert authenticated == expected_authenticated
+
+
+def test_bounded_runtime_json_does_not_construct_an_unbounded_encoder_scalar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    value = "x" * 10_000
+    encoder_chunk_lengths: list[int] = []
+    original_iterencode = checkout_module.json.JSONEncoder.iterencode
+
+    def guarded_iterencode(
+        encoder: object,
+        ready: object,
+        _one_shot: bool = False,
+    ):
+        for chunk in original_iterencode(encoder, ready, _one_shot):
+            encoder_chunk_lengths.append(len(chunk))
+            if len(chunk) > 4096:
+                raise AssertionError("JSONEncoder constructed an unbounded scalar")
+            yield chunk
+
+    monkeypatch.setattr(
+        checkout_module.json.JSONEncoder,
+        "iterencode",
+        guarded_iterencode,
+    )
+
+    with pytest.raises(checkout_module._RuntimeRecordBoundExceeded):
+        checkout_module._canonical_runtime_record(value, max_bytes=1)
+
+    assert encoder_chunk_lengths == []
+
+
+def test_bounded_runtime_json_huge_scalar_uses_bounded_chunks() -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    value = "x" * 10_000
+    chunks = tuple(checkout_module._bounded_canonical_json_chunks(value))
+    expected = checkout_module._canonical_runtime_record(value)
+
+    assert chunks
+    assert (
+        max(len(chunk) for chunk in chunks)
+        <= checkout_module._RUNTIME_JSON_CHUNK_SIZE
+    )
+    assert b"".join(chunks) == expected
+    with pytest.raises(checkout_module._RuntimeRecordBoundExceeded):
+        checkout_module._canonical_runtime_record(value, max_bytes=1)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        {
+            "z": ["β", {"ключ": "значение", "a": "line\n"}],
+            "a": {"é": "café", "中": [False, None, -7]},
+        },
+        {"nested": ({"Ω": "東京"}, [True, 0, "\\\"\\n"])},
+    ),
+)
+def test_bounded_runtime_json_preserves_canonical_bytes_and_boundaries(
+    value: object,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    expected = checkout_module._canonical_runtime_record(value)
+    canonical_reference = (
+        json.dumps(
+            checkout_module._json_ready(value),
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    assert expected == canonical_reference
+    assert (
+        checkout_module._canonical_runtime_record(
+            value,
+            max_bytes=len(expected),
+        )
+        == expected
+    )
+    with pytest.raises(checkout_module._RuntimeRecordBoundExceeded):
+        checkout_module._canonical_runtime_record(
+            value,
+            max_bytes=len(expected) - 1,
+        )
+
+
+def test_bounded_runtime_json_rejects_huge_integer_before_decimal_conversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    value = int("9" * 1_000)
+    observed_decimal_lengths: list[int] = []
+    original_ascii_chunks = checkout_module._bounded_ascii_chunks
+
+    def observed_ascii_chunks(decimal_value: str):
+        observed_decimal_lengths.append(len(decimal_value))
+        return original_ascii_chunks(decimal_value)
+
+    monkeypatch.setattr(
+        checkout_module,
+        "_bounded_ascii_chunks",
+        observed_ascii_chunks,
+    )
+
+    with pytest.raises(checkout_module._RuntimeRecordBoundExceeded):
+        checkout_module._canonical_runtime_record(value, max_bytes=1)
+
+    assert observed_decimal_lengths == []
+
+
+@pytest.mark.parametrize("value", (0, 9, -9, 123_456, -123_456))
+def test_bounded_runtime_json_integer_preserves_exact_canonical_boundaries(
+    value: int,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+
+    expected = checkout_module._canonical_runtime_record(value)
+
+    assert (
+        checkout_module._canonical_runtime_record(
+            value,
+            max_bytes=len(expected),
+        )
+        == expected
+    )
+    with pytest.raises(checkout_module._RuntimeRecordBoundExceeded):
+        checkout_module._canonical_runtime_record(
+            value,
+            max_bytes=len(expected) - 1,
+        )
