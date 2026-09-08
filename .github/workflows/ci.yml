@@ -28,7 +28,7 @@ jobs:
       - name: Cache offline build backend
         run: >-
           uv run --no-project
-          --with 'uv_build>=0.11.30,<0.12'
+          --with 'uv_build==0.11.30'
           python -c 'import uv_build'
 
       - name: Run tests
@@ -41,4 +41,4 @@ jobs:
         run: uv run --frozen mypy src
 
       - name: Build package
-        run: uv build
+        run: uv build --force-pep517

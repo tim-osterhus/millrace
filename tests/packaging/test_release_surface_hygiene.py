@@ -279,16 +279,17 @@ def test_publish_workflow_matches_package_version_and_artifact_hashes() -> None:
         assert len(set(digests)) == 1
 
 
-def test_release_builds_pin_uv_before_the_012_sdist_contract_change() -> None:
+def test_release_builds_pin_exact_uv_backend_and_force_pep517() -> None:
     build_requirements = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )["build-system"]["requires"]
-    assert build_requirements == ["uv_build>=0.11.30,<0.12"]
+    assert build_requirements == ["uv_build==0.11.30"]
 
     for workflow_name in ("ci.yml", "publish-to-pypi.yml"):
         workflow = (
             PROJECT_ROOT / ".github" / "workflows" / workflow_name
         ).read_text(encoding="utf-8")
+        assert "--force-pep517" in workflow
         versions = re.findall(
             r"(?m)^\s+version:\s*[\"']?(\d+\.\d+\.\d+)[\"']?\s*$",
             workflow,

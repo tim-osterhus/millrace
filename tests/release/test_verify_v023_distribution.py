@@ -11,10 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = "0.22.3"
 WHEEL_SHA256 = (
-    "dbc6ca10655c0c2fecac925fd80bde46a6661b493eb0f4af6d5cad13e4247502"
+    "99c6d23bb898bdb47c410a078212d61d16205e1f9c9bfd64e24fcf6f32394e82"
 )
 SDIST_SHA256 = (
-    "29e1b06393bb3b5ce6f70170d2c7da238c5bc8cce261112687969bef01820cb3"
+    "301a3ec77b1c9365006fbe6e3061379d44fa05524883691f721533158fc4d34c"
 )
 EXPECTED_ARTIFACTS = {
     "millrace_ai-0.22.3-py3-none-any.whl": WHEEL_SHA256,
@@ -35,6 +35,7 @@ def _build(output_dir: Path) -> Path:
                 artifact_kind,
                 "--offline",
                 "--no-create-gitignore",
+                "--force-pep517",
                 "--out-dir",
                 str(output_dir),
             ],
