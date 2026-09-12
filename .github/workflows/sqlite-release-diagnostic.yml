@@ -1,0 +1,41 @@
+name: SQLite release diagnostic
+on:
+  push:
+    branches: [codex/c03-usage-remediation]
+    paths: [.github/workflows/sqlite-release-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: macos-14
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Measure native SQLite lock waits
+        run: |
+          python - <<'PY'
+          import json, sqlite3, sys, tempfile, time
+          from pathlib import Path
+          print(json.dumps({'python':sys.version,'sqlite':sqlite3.sqlite_version,'options':sqlite3.connect(':memory:').execute('pragma compile_options').fetchall()}))
+          with tempfile.TemporaryDirectory() as root:
+              path = Path(root)/'probe.db'
+              a = sqlite3.connect(path)
+              a.execute('create table probe (n)')
+              a.commit()
+              b = sqlite3.connect(path)
+              for milliseconds in (10,100,250,500,1000):
+                  for statement,lock in [('BEGIN IMMEDIATE','BEGIN IMMEDIATE'),('SELECT * FROM probe','BEGIN EXCLUSIVE')]:
+                      b.execute(lock)
+                      a.execute(f'pragma busy_timeout={milliseconds}')
+                      start = time.monotonic()
+                      try:
+                          a.execute(statement)
+                      except sqlite3.OperationalError as error:
+                          print(json.dumps({'milliseconds':milliseconds,'statement':statement,'elapsed':time.monotonic()-start,'error':str(error)}),flush=True)
+                      finally:
+                          a.rollback()
+                          b.rollback()
+              a.close()
+              b.close()
+          PY
