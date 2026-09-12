@@ -30,7 +30,11 @@ in this release.
 Caller observation has a five-second budget. CLI controls and bounded reads use
 a real four-second interruption boundary and bounded SQLite work. Uncertain
 commit delivery, host suspension or uninterruptible storage still requires
-same-key reconciliation. No control transaction spans a provider/native wait.
+same-key reconciliation. Control transactions and operation reads use a 100 ms
+SQLite busy timeout to leave scheduling headroom; it is a requested sleep budget,
+not a wall-clock guarantee. Sustained contention may therefore return storage
+unknown earlier, requiring the same-key reconciliation path. The prior connection
+timeout is restored. No control transaction spans a provider/native wait.
 
 ## Run holds and budgets
 

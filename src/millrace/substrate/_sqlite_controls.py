@@ -25,6 +25,10 @@ from millrace.contracts.controls import (
 )
 from millrace.substrate.errors import ControlOperationError, StoreIdentityMismatch
 
+# SQLite counts requested sleeps, not elapsed wall time. Keep native lock
+# waits short enough to leave scheduling headroom inside the caller deadline.
+_CONTROL_BUSY_TIMEOUT_MS = 100
+
 CONTROL_TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS daemon_sessions (daemon_id TEXT NOT NULL, "
     "sequence INTEGER NOT NULL, session_id TEXT NOT NULL, record_json TEXT NOT NULL, "
@@ -239,7 +243,9 @@ def control_transaction(
         raise ControlOperationError("control_deadline_unknown")
     previous_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
     remaining_ms = int((expires - time.monotonic()) * 1000)
-    connection.execute(f"PRAGMA busy_timeout={max(1, min(1000, remaining_ms))}")
+    connection.execute(
+        f"PRAGMA busy_timeout={max(1, min(_CONTROL_BUSY_TIMEOUT_MS, remaining_ms))}"
+    )
     connection.set_progress_handler(lambda: int(time.monotonic() >= expires), 1000)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -555,7 +561,7 @@ def show_operation(
     if connection.in_transaction:
         raise ControlOperationError("control_transaction_already_active")
     previous_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
-    connection.execute("PRAGMA busy_timeout=1000")
+    connection.execute(f"PRAGMA busy_timeout={_CONTROL_BUSY_TIMEOUT_MS}")
     connection.execute("BEGIN")
     deadline = time.monotonic() + 4
     connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)

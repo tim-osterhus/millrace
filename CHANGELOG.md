@@ -15,6 +15,9 @@ This file starts at `0.13.0`, the current documented public baseline.
 
 ### MVP release scope
 
+- Shorten native SQLite control lock waits to leave scheduling headroom on
+  macOS; keep uncertain acceptance and same-key reconciliation unchanged.
+
 - Defer the experimental LAD semantic-workspace workflow from the scoped MVP
   Plus distribution. Preserve generic selected context mechanisms and runtime
   integrity fixes; the evaluation did not establish an efficacy comparison.
