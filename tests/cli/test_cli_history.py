@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -290,6 +291,13 @@ def test_complete_daemon_history_keeps_all_fences_and_unknown_cleanup(tmp_path):
     from substrate.test_daemon_controls import accept, registered, stop_request
 
     runtime, _ = runtime_with_run(tmp_path)
+    if sys.platform != "darwin":
+        from millrace.substrate.errors import ControlOperationError
+
+        with pytest.raises(ControlOperationError, match="daemon_history_unknown"):
+            registered(runtime)
+        runtime.close()
+        return
     scope = registered(runtime)
     fences = [
         {

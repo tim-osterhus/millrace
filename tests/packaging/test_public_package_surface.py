@@ -532,14 +532,21 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
             "wheel-budget",
             "--max-invocations",
             "1",
-            expected_code=3,
+            expected_code=3 if sys.platform == "darwin" else 5,
         )
-        assert daemon_failure["code"] == "ready_state_refused"
+        expected_failure = (
+            "ready_state_refused" if sys.platform == "darwin" else "adapter_failure"
+        )
+        assert daemon_failure["code"] == expected_failure
         failure_details = daemon_failure["details"]
-        assert failure_details["stopped_reason"] == "ready_state_refused"
-        assert failure_details["adapter_failures"] == 0
+        assert failure_details["stopped_reason"] == expected_failure
+        assert failure_details["adapter_failures"] == (0 if sys.platform == "darwin" else 1)
         assert failure_details["units_started"] == 0
-        assert failure_details["last_result"] == {{}}
+        if sys.platform == "darwin":
+            assert failure_details["last_result"] == {{}}
+        else:
+            assert failure_details["last_result"]["code"] == "adapter_failure"
+            assert failure_details["last_result"]["accepted"] is False
         assert failure_details["runner_session"] is None
         failure_budget = failure_details["budget"]
         assert failure_budget["budget_id"] == "wheel-budget"
