@@ -99,6 +99,6 @@ jobs:
           2c6704ff94f70743f3d7214fbf9f6eabc8d19f72c8486dc0bfe576ed63b7b357  dist/millrace_ai-0.22.3-py3-none-any.whl
           a680312659350ea2058abf430de9e510614bf09dde7ab5322505b5911c8cbed3  dist/millrace_ai-0.22.3.tar.gz
           SHA256
-      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           packages-dir: dist/
