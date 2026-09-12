@@ -604,3 +604,53 @@ def _now() -> int:
 
 def _monotonic() -> float:
     return time.monotonic()
+
+
+def retire_lost_native_session(
+    runtime: OpenRuntimeContext, session: RunnerSessionRecord
+) -> None:
+    """Record the absent attempt as lost; this does not clear daemon orphan risk."""
+    from millrace.adapters.cli.session_diagnostics import (
+        _completion_diagnostic_bytes_for_dispatch,
+    )
+    from millrace.adapters.cli.session_records import completion_record
+    from millrace.substrate.errors import ControlOperationError
+
+    state = complete._load(runtime)
+    current = state.runner_sessions[session.session_id]
+    if current.state == "lost":
+        return
+    if current != session or current.session_id in state.runner_session_completions:
+        raise ControlOperationError("native_recovery_authority_changed")
+    dispatch = build_dispatch_envelope_for_run(state=state, run_id=session.run_id)
+    policy = complete._RUNTIME_SESSION_EVENT_POLICY
+    diagnostic = runtime.cas_store.put_bytes(
+        _completion_diagnostic_bytes_for_dispatch(
+            dispatch,
+            {"native_continuation": "owner_absent", "daemon_cleanup": "unproved"},
+            redaction_policy=policy,
+        )
+    )
+    completion = completion_record(
+        session=session,
+        terminal_state="lost",
+        exit_kind="lost",
+        adapter_outcome_kind="unsupported",
+        adapter_error_kind=None,
+        evidence_digest=None,
+        diagnostic_digest=diagnostic,
+        cleanup_disposition="orphan_risk",
+        redaction_policy_id=policy.policy_id,
+        primary=cancel._primary_cancellation(state, session),
+    )
+    if (
+        complete._persist_completion_record(
+            runtime,
+            state.runs[session.run_id].run_ref,
+            session,
+            completion,
+            event_redaction_policy=policy,
+        )
+        is None
+    ):
+        raise ControlOperationError("native_recovery_completion_refused")

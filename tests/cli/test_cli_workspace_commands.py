@@ -77,6 +77,7 @@ def test_workspace_init_creates_store_with_control_transition_only(
         "db_path",
         "cas_path",
         "schema_version",
+        "identity",
         "initialized",
         "transition_disposition",
         "input_id",
@@ -100,9 +101,12 @@ def test_workspace_init_creates_store_with_control_transition_only(
     assert tuple(state.receipts) == ("init-workspace",)
     assert len(state.transitions) == 1
     assert state.transitions[0].input_kind == "control.initialize_workspace"
-    assert store.load_workflow_package_registry(
-        ContentAddressedByteStore(workspace / ".millrace" / "cas")
-    ).records == ()
+    assert (
+        store.load_workflow_package_registry(
+            ContentAddressedByteStore(workspace / ".millrace" / "cas")
+        ).records
+        == ()
+    )
 
 
 def test_workspace_check_is_read_only_and_refuses_missing_store(
@@ -177,7 +181,8 @@ def test_workspace_check_reports_initialized_store_without_writing(
         "workspace_path": str(workspace),
         "db_path": str(workspace / ".millrace" / "runtime.sqlite3"),
         "cas_path": str(workspace / ".millrace" / "cas"),
-        "schema_version": 10,
+        "schema_version": 11,
+        "identity": store.control_identity(),
         "initialized": True,
         "admitted_plan_count": 0,
         "default_plan_fingerprint": None,
@@ -240,7 +245,7 @@ def test_workspace_check_maps_prior_schema_to_upgrade_required_json_and_human(
         "message": "Workspace schema upgrade is required.",
         "details": {
             "current_schema_version": old_schema_version,
-            "required_schema_version": 10,
+            "required_schema_version": 11,
         },
     }
     assert (
@@ -308,7 +313,7 @@ def test_daemon_maps_prior_schema_to_upgrade_required_without_mutation(
         "message": "Workspace schema upgrade is required.",
         "details": {
             "current_schema_version": old_schema_version,
-            "required_schema_version": 10,
+            "required_schema_version": 11,
         },
     }
     assert human_stderr == (
@@ -415,7 +420,7 @@ def test_session_projection_commands_refuse_prior_schema_without_mutation(
     assert error["code"] == "workspace_upgrade_required"
     assert error["details"] == {
         "current_schema_version": old_schema_version,
-        "required_schema_version": 10,
+        "required_schema_version": 11,
     }
     human_exit, human_stdout, human_stderr = _invoke(
         ["--workspace", str(workspace), *command]

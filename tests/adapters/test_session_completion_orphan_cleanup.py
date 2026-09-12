@@ -153,6 +153,7 @@ def test_selected_root_mutation_with_orphan_cleanup_persists_lost_completion(
         runtime,
         activation_id=state.runs[session.run_id].activation_id,
         local_config=_config(adapter),
+        driving_budget_id=epoch.budget_id,
         on_accepted_start=lambda started: runtime.store.record_budgeted_runner_start(
             epoch.budget_id,
             started,

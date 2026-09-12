@@ -9,6 +9,7 @@ import textwrap
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from uuid import uuid4
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ALLOWED_SOURCE_WORKFLOW_FILES = {
@@ -232,6 +233,11 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
             str(wheel),
         ]
     )
+    lifecycle_root = (
+        Path(os.environ.get("MILLRACE_TEST_SOCKET_ROOT", str(tmp_path)))
+        / uuid4().hex[:6]
+    )
+    lifecycle_root.mkdir(parents=True)
     smoke_script = textwrap.dedent(
         f"""
         import importlib
@@ -412,8 +418,7 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
         verified = verify_compiled_plan_export_bytes(export_bytes)
         assert verified.workflow_id == "kernel_ping"
 
-        lifecycle_root = Path.cwd() / "installed-lifecycle"
-        lifecycle_root.mkdir()
+        lifecycle_root = Path({str(lifecycle_root)!r})
         workspace = lifecycle_root / "workspace"
         export_path = lifecycle_root / "kernel-ping.plan.json"
         export_path.write_bytes(export_bytes)
@@ -527,15 +532,14 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
             "wheel-budget",
             "--max-invocations",
             "1",
-            expected_code=5,
+            expected_code=3,
         )
-        assert daemon_failure["code"] == "adapter_failure"
+        assert daemon_failure["code"] == "ready_state_refused"
         failure_details = daemon_failure["details"]
-        assert failure_details["stopped_reason"] == "adapter_failure"
-        assert failure_details["adapter_failures"] == 1
+        assert failure_details["stopped_reason"] == "ready_state_refused"
+        assert failure_details["adapter_failures"] == 0
         assert failure_details["units_started"] == 0
-        assert failure_details["last_result"]["code"] == "adapter_failure"
-        assert failure_details["last_result"]["accepted"] is False
+        assert failure_details["last_result"] == {{}}
         assert failure_details["runner_session"] is None
         failure_budget = failure_details["budget"]
         assert failure_budget["budget_id"] == "wheel-budget"
@@ -569,7 +573,10 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
         assert final_status["active_runs"][0]["run_id"] == run_id
         """
     )
-    _run([python, "-c", smoke_script], cwd=tmp_path)
+    try:
+        _run([python, "-c", smoke_script], cwd=tmp_path)
+    finally:
+        shutil.rmtree(lifecycle_root)
 
 
 def test_build_artifacts_exclude_generated_files_under_runtime_package(

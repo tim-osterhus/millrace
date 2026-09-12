@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
+from typing import Any
 
+import millrace.substrate._sqlite_controls as controls
+import millrace.substrate._sqlite_daemon as daemon_controls
+import millrace.substrate._sqlite_run_controls as run_controls
+from millrace.contracts.controls import ControlRequest
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.state import (
     DURABLE_INT64_MAX,
@@ -19,6 +26,7 @@ from millrace.contracts.state import (
     RunnerSessionUsageRecord,
     RuntimeState,
 )
+from millrace.substrate._sqlite_controls import ControlDecision
 from millrace.substrate._sqlite_load import (
     load_context_cleanup_receipt,
     load_context_cleanup_receipt_authenticated,
@@ -51,7 +59,7 @@ from millrace.substrate._workflow_package_command_audit import (
     workflow_package_command_id_exists,
 )
 from millrace.substrate.cas import ContentAddressedByteStore
-from millrace.substrate.errors import StoreNotInitialized
+from millrace.substrate.errors import ControlOperationError, StoreNotInitialized
 from millrace.substrate.records import (
     WorkflowPackageCommandAuditEventRecord,
     WorkflowPackageRegistryRecord,
@@ -73,12 +81,23 @@ _MAX_DAEMON_BUDGET_CLOCK_ADVANCE_SECONDS = 86_400
 class SQLiteRuntimeStore:
     """Owns one SQLite connection for the v0.22.0 runtime store."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self, connection: sqlite3.Connection, paths: tuple[str, str, str]
+    ) -> None:
         self._connection = connection
+        self._control_paths = paths
+        self.daemon_scope: dict[str, Any] | None = None
 
     @classmethod
-    def initialize(cls, path: str | Path) -> SQLiteRuntimeStore:
-        connection = sqlite3.connect(Path(path))
+    def initialize(
+        cls,
+        path: str | Path,
+        *,
+        workspace_path: str | Path | None = None,
+        cas_path: str | Path | None = None,
+    ) -> SQLiteRuntimeStore:
+        paths = controls.location_paths(path, workspace_path, cas_path)
+        connection = sqlite3.connect(paths[1], timeout=1.0)
         try:
             configure_connection(connection)
             existing_tables = table_names(connection)
@@ -89,30 +108,387 @@ class SQLiteRuntimeStore:
                     )
                 validate_metadata(read_metadata(connection))
                 validate_schema_shape(connection)
-            initialize_schema(connection)
+            else:
+                initialize_schema(connection, paths)
+            controls.identity(connection, paths)
             validate_metadata(read_metadata(connection))
             validate_schema_shape(connection)
+            controls.identity(connection, paths)
         except Exception:
             connection.close()
             raise
-        return cls(connection)
+        return cls(connection, paths)
 
     @classmethod
-    def open(cls, path: str | Path) -> SQLiteRuntimeStore:
-        db_path = Path(path)
+    def open(
+        cls,
+        path: str | Path,
+        *,
+        workspace_path: str | Path | None = None,
+        cas_path: str | Path | None = None,
+    ) -> SQLiteRuntimeStore:
+        paths = controls.location_paths(path, workspace_path, cas_path)
+        db_path = Path(paths[1])
         if not db_path.exists():
             raise StoreNotInitialized(
                 f"SQLite store is missing initialization marker: {db_path}"
             )
-        connection = sqlite3.connect(db_path)
+        connection = sqlite3.connect(
+            db_path.as_uri() + "?mode=rw", uri=True, timeout=1.0
+        )
         try:
             configure_connection(connection)
             validate_metadata(read_metadata(connection))
             validate_schema_shape(connection)
+            controls.identity(connection, paths)
         except Exception:
             connection.close()
             raise
-        return cls(connection)
+        return cls(connection, paths)
+
+    @classmethod
+    def open_readonly(
+        cls,
+        path: str | Path,
+        *,
+        workspace_path: str | Path | None = None,
+        cas_path: str | Path | None = None,
+    ) -> SQLiteRuntimeStore:
+        paths = controls.location_paths(path, workspace_path, cas_path)
+        if not Path(paths[1]).is_file():
+            raise StoreNotInitialized("store_not_initialized")
+        connection = sqlite3.connect(
+            Path(paths[1]).as_uri() + "?mode=ro", uri=True, timeout=0.1
+        )
+        try:
+            connection.execute("PRAGMA query_only=ON")
+            validate_metadata(read_metadata(connection))
+            validate_schema_shape(connection)
+            controls.identity(connection, paths)
+        except BaseException:
+            connection.close()
+            raise
+        return cls(connection, paths)
+
+    def read_transaction(self) -> AbstractContextManager[None]:
+        return controls.read_transaction(self._connection)
+
+    def control_history_records(
+        self, *, run_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        return controls.control_history_records(
+            self._connection,
+            snapshot_revision=self.control_identity()["source_revision"],
+            run_id=run_id,
+        )
+
+    def retained_daemon_records(self) -> list[dict[str, Any]]:
+        return daemon_controls.load_records(self._connection)
+
+    def retained_daemon_sessions(self, daemon_id: str) -> list[dict[str, Any]]:
+        records = daemon_controls.load_records(self._connection)
+        record = next(
+            (item for item in records if item["daemon_id"] == daemon_id), None
+        )
+        if record is None:
+            raise ControlOperationError("daemon_not_found")
+        return daemon_controls.session_page(
+            self._connection, daemon_id, limit=record["session_count"], wire_limit=None
+        )
+
+    def admit_daemon_unit(self) -> None:
+        if self.daemon_scope is not None:
+            daemon_controls.admit_unit(self._connection, self.daemon_scope)
+
+    def daemon_default_plan(self) -> str | None:
+        return daemon_controls.plan_fingerprint(self._connection)
+
+    def daemon_records(self) -> list[dict[str, Any]]:
+        with controls.control_transaction(
+            self._connection, deadline=time.monotonic() + 1
+        ):
+            return daemon_controls.load_records(self._connection)
+
+    def register_daemon(
+        self, record: dict[str, Any], previous_revision: int
+    ) -> dict[str, Any]:
+        return daemon_controls.register(
+            self._connection, self._control_paths, record, previous_revision
+        )
+
+    def update_daemon(self, scope: dict[str, Any], **changes: Any) -> dict[str, Any]:
+        return daemon_controls.update(self._connection, scope, **changes)
+
+    def accept_daemon_stop(
+        self, scope: dict[str, Any], request: ControlRequest, *, deadline: float
+    ) -> dict[str, Any]:
+        return daemon_controls.accept_stop(
+            self._connection, self._control_paths, scope, request, deadline=deadline
+        )
+
+    def signal_daemon_stop(self, scope: dict[str, Any]) -> None:
+        daemon_controls.accept_signal_stop(self._connection, self._control_paths, scope)
+
+    def attach_daemon_sessions(
+        self, scope: dict[str, Any], fences: list[dict[str, Any]], role: str = "owned"
+    ) -> dict[str, Any]:
+        return daemon_controls.attach_sessions(self._connection, scope, fences, role)
+
+    def daemon_snapshot(
+        self,
+        *,
+        daemon_id: str | None = None,
+        after_session: int = 0,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """One durable snapshot; callers observe processes/network only after return."""
+        with controls.control_transaction(
+            self._connection, deadline=time.monotonic() + 1
+        ):
+            records = daemon_controls.load_records(self._connection)
+            identity = controls.identity(self._connection, self._control_paths)
+            revision = identity["source_revision"]
+            if expected_revision is not None and expected_revision != revision:
+                raise ControlOperationError("daemon_snapshot_changed")
+            record = (
+                next((item for item in records if item["daemon_id"] == daemon_id), None)
+                if daemon_id is not None
+                else records[-1]
+                if records
+                else None
+            )
+            page = (
+                []
+                if record is None
+                else daemon_controls.session_page(
+                    self._connection, record["daemon_id"], after_session
+                )
+            )
+            count = 0 if record is None else record["session_count"]
+            return {
+                "record": record,
+                "identity": identity,
+                "default_plan": daemon_controls.plan_fingerprint(self._connection),
+                "page": {
+                    "runner_sessions": page,
+                    "session_count": count,
+                    "next_after_session": page[-1]["sequence"]
+                    if page and page[-1]["sequence"] < count
+                    else None,
+                    "source_revision": revision,
+                },
+            }
+
+    def daemon_session_page(
+        self, daemon_id: str, after: int = 0, expected_revision: int | None = None
+    ) -> dict[str, Any]:
+        snapshot = self.daemon_snapshot(
+            daemon_id=daemon_id,
+            after_session=after,
+            expected_revision=expected_revision,
+        )
+        return dict(snapshot["page"])
+
+    def daemon_owned_sessions(self, scope: dict[str, Any]) -> list[dict[str, Any]]:
+        with controls.control_transaction(
+            self._connection, deadline=time.monotonic() + 1
+        ):
+            record = daemon_controls.exact_record(self._connection, scope)
+            return daemon_controls.session_page(
+                self._connection,
+                record["daemon_id"],
+                limit=record["session_count"],
+                wire_limit=None,
+            )
+
+    def finish_daemon(
+        self,
+        scope: dict[str, Any],
+        summary: dict[str, Any],
+        results: list[dict[str, Any]],
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        return daemon_controls.finish(
+            self._connection, scope, summary, results, expected_revision
+        )
+
+    def control_identity(self) -> dict[str, Any]:
+        return controls.identity(self._connection, self._control_paths)
+
+    def control_transaction(self) -> AbstractContextManager[None]:
+        """Short begin-before-load transaction; no external/native/context I/O."""
+        return controls.control_transaction(self._connection)
+
+    def show_operation(self, request: ControlRequest) -> dict[str, Any]:
+        return controls.show_operation(self._connection, self._control_paths, request)
+
+    def resolve_operation(self, request: ControlRequest) -> dict[str, Any]:
+        return controls.resolve_operation(
+            self._connection, self._control_paths, request
+        )
+
+    def execute_operation(
+        self,
+        request: ControlRequest,
+        decide: Callable[[], ControlDecision],
+        *,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        return controls.execute_operation(
+            self._connection, self._control_paths, request, decide, deadline=deadline
+        )
+
+    def append_operation_result(
+        self,
+        request: ControlRequest,
+        *,
+        result_id: str,
+        stage: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        return controls.append_operation_result(
+            self._connection,
+            self._control_paths,
+            request,
+            result_id=result_id,
+            stage=stage,
+            evidence=evidence,
+        )
+
+    def execute_run_control(
+        self,
+        request: ControlRequest,
+        cas_store: ContentAddressedByteStore,
+        *,
+        supported_adapter_kinds: frozenset[str] = frozenset(),
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        deadline = (
+            min(time.monotonic() + 4, deadline)
+            if deadline is not None
+            else time.monotonic() + 4
+        )
+        # Replay remains receipt-only even if current runtime context is unusable.
+        history = self.show_operation(request)
+        run_controls.check_deadline(deadline)
+        if history["receipt"] is not None:
+            return history
+        revision = self.control_identity()["source_revision"]
+        self._connection.set_progress_handler(
+            lambda: int(time.monotonic() >= deadline), 1000
+        )
+        try:
+            state = self.load_runtime_state(
+                run_controls.BoundedControlCAS(cas_store, deadline), _optimistic=True
+            )
+        finally:
+            self._connection.set_progress_handler(None, 0)
+        run_controls.check_deadline(deadline)
+        return controls.execute_operation(
+            self._connection,
+            self._control_paths,
+            request,
+            lambda: run_controls.decide_run_control(
+                self._connection,
+                state,
+                request,
+                revision,
+                supported_adapter_kinds,
+            ),
+            deadline=deadline,
+        )
+
+    def accept_native_control(
+        self,
+        request: ControlRequest,
+        state: RuntimeState,
+        revision: int,
+        owner: dict[str, Any],
+        snapshot: dict[str, Any],
+        deadline: float,
+    ) -> dict[str, Any]:
+        return controls.execute_operation(
+            self._connection,
+            self._control_paths,
+            request,
+            lambda: run_controls.native_intent(
+                self._connection, state, request, revision, owner, snapshot
+            ),
+            deadline=deadline,
+        )
+
+    def update_native_control(
+        self,
+        run_id: str,
+        owner_id: str,
+        snapshot: dict[str, Any],
+        *,
+        reason: str | None = None,
+    ) -> None:
+        with controls.control_transaction(
+            self._connection, deadline=time.monotonic() + 0.8
+        ):
+            run_controls.native_update(
+                self._connection, run_id, owner_id, snapshot, reason=reason
+            )
+
+    def accept_native_recovery(
+        self,
+        request: ControlRequest,
+        state: RuntimeState,
+        revision: int,
+        deadline: float,
+        *,
+        observe_loss: bool = False,
+    ) -> dict[str, Any]:
+        return controls.execute_operation(
+            self._connection,
+            self._control_paths,
+            request,
+            lambda: (
+                run_controls.native_recovery_observe_loss
+                if observe_loss
+                else run_controls.native_recovery_intent
+            )(self._connection, request, state, revision),
+            deadline=deadline,
+        )
+
+    def finish_native_recovery(self, request: ControlRequest, deadline: float) -> None:
+        with controls.control_transaction(self._connection, deadline=deadline):
+            run_controls.native_recovery_finish(self._connection, request)
+
+    def persist_runner_start(
+        self,
+        state: RuntimeState,
+        cas_store: ContentAddressedByteStore,
+        session: RunnerSessionRecord,
+        driving_budget_id: str | None,
+        driving_budget_clock: Callable[[], float] | None = None,
+    ) -> None:
+        """Stage CAS; commit intent and explicit epoch reservation together."""
+        if session.state != "starting" or session.start_intent_at is None:
+            raise ValueError("runner_start_intent_required")
+
+        def reserve() -> None:
+            if (
+                driving_budget_id is None
+                and self.daemon_budget_id_for_session(session.session_id) is not None
+            ):
+                raise ValueError("runner_start_budget_required")
+            if driving_budget_id is not None:
+                self.reserve_budgeted_runner_start(
+                    driving_budget_id,
+                    session,
+                    observed_at=int((driving_budget_clock or time.time)()),
+                )
+
+        persist_runtime_state_rows(
+            self._connection,
+            state,
+            cas_store,
+            _before_sqlite_commit=reserve,
+            daemon_scope=self.daemon_scope,
+        )
 
     def schema_metadata(self) -> StoreSchemaMetadata:
         return read_metadata(self._connection)
@@ -122,13 +498,22 @@ class SQLiteRuntimeStore:
         state: RuntimeState,
         cas_store: ContentAddressedByteStore,
     ) -> None:
-        persist_runtime_state_rows(self._connection, state, cas_store)
+        if self.daemon_scope is None:
+            persist_runtime_state_rows(self._connection, state, cas_store)
+        else:
+            persist_runtime_state_rows(
+                self._connection, state, cas_store, daemon_scope=self.daemon_scope
+            )
 
     def load_runtime_state(
         self,
         cas_store: ContentAddressedByteStore,
+        *,
+        _optimistic: bool = False,
     ) -> RuntimeState:
-        return load_runtime_state_rows(self._connection, cas_store)
+        return load_runtime_state_rows(
+            self._connection, cas_store, _optimistic=_optimistic
+        )
 
     def load_runtime_state_for_rejected_result_inspection(
         self,
@@ -365,9 +750,15 @@ class SQLiteRuntimeStore:
         self,
         budget_id: str,
         session: RunnerSessionRecord,
+        *,
+        observed_at: int | None = None,
     ) -> DaemonBudgetEpochRecord:
-        try:
-            self._connection.execute("BEGIN IMMEDIATE")
+        with (
+            nullcontext()
+            if self._connection.in_transaction
+            else self.control_transaction()
+        ):
+            run_controls.guard_budget_reservation(self._connection, session.run_id)
             epoch = self.load_daemon_budget_epoch(budget_id)
             if epoch is None or epoch.status != "active":
                 raise ValueError("daemon_budget_not_active")
@@ -375,7 +766,7 @@ class SQLiteRuntimeStore:
             existing = self._connection.execute(
                 """
                 SELECT budget_id, run_id, dispatch_generation,
-                       session_fencing_token
+                       session_fencing_token, accepted_at
                 FROM daemon_budget_sessions
                 WHERE session_id = ?
                 """,
@@ -388,24 +779,35 @@ class SQLiteRuntimeStore:
                 session.session_fencing_token,
             )
             if existing is not None:
-                if tuple(existing) != expected:
+                if tuple(existing[:4]) != expected:
                     raise ValueError("runner_session_budget_identity_mismatch")
-                self._connection.commit()
-                return epoch
+                if existing[4] is not None:
+                    if existing[4] != session.start_intent_at:
+                        raise ValueError("runner_session_budget_identity_mismatch")
+                    return epoch
+            observed_at = epoch.last_observed_at if observed_at is None else observed_at
+            if observed_at < epoch.last_observed_at:
+                raise ValueError("daemon_budget_clock_discontinuity")
+            if epoch.wall_deadline is not None and observed_at >= epoch.wall_deadline:
+                raise ValueError("daemon_budget_wall_exhausted")
+            if (
+                epoch.max_total_tokens is not None
+                and epoch.cumulative_total_tokens >= epoch.max_total_tokens
+            ):
+                raise ValueError("daemon_budget_tokens_exhausted")
             if epoch.max_invocations is not None:
                 pending_count = self._connection.execute(
                     """
                     SELECT COUNT(*)
                     FROM daemon_budget_sessions
-                    WHERE budget_id = ? AND accepted_at IS NULL
+                    WHERE budget_id = ? AND accepted_at IS NULL AND session_id != ?
                     """,
-                    (budget_id,),
+                    (budget_id, session.session_id),
                 ).fetchone()[0]
-                if (
-                    epoch.accepted_start_count + pending_count
-                    >= epoch.max_invocations
-                ):
+                if epoch.accepted_start_count + pending_count >= epoch.max_invocations:
                     raise ValueError("daemon_budget_invocations_exhausted")
+            if existing is not None:
+                return epoch
             self._connection.execute(
                 """
                 INSERT INTO daemon_budget_sessions (
@@ -421,10 +823,6 @@ class SQLiteRuntimeStore:
                     session.session_fencing_token,
                 ),
             )
-            self._connection.commit()
-        except Exception:
-            self._connection.rollback()
-            raise
         return self.load_daemon_budget_epoch(budget_id) or epoch
 
     def pending_budgeted_runner_start_session_ids(
@@ -680,11 +1078,16 @@ class SQLiteRuntimeStore:
                 """,
                 (usage.session_id, usage.budget_id),
             ).fetchone()
-            if binding is None or tuple(binding[:3]) != (
-                usage.run_id,
-                usage.dispatch_generation,
-                usage.session_fencing_token,
-            ) or binding[3] is None:
+            if (
+                binding is None
+                or tuple(binding[:3])
+                != (
+                    usage.run_id,
+                    usage.dispatch_generation,
+                    usage.session_fencing_token,
+                )
+                or binding[3] is None
+            ):
                 raise ValueError("runner_usage_evidence_refused")
             prior = self._connection.execute(
                 """
@@ -1125,6 +1528,7 @@ class SQLiteRuntimeStore:
 
 
 __all__ = (
+    "ControlDecision",
     "SQLiteRuntimeStore",
     "StoreSchemaMetadata",
 )

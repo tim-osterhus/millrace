@@ -1195,7 +1195,7 @@ def test_mutation_preserves_usage_but_refuses_application(
     result2 = run_bounded_execution_unit(
         runtime,
         activation_id=state.runs[session.run_id].activation_id,
-        local_config=_config(adapter),
+        local_config=_config(adapter), driving_budget_id=epoch.budget_id,
         on_accepted_start=lambda started: runtime.store.record_budgeted_runner_start(
             epoch.budget_id,
             started,

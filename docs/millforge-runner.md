@@ -17,7 +17,7 @@ this exact six-field component selector:
 | `component_id` | `millforge-base` |
 | `component_version` | `2` |
 | `provider_distribution` | `millforge` |
-| `provider_version` | `0.1.0` |
+| `provider_version` | `0.1.1` |
 | `descriptor_media_type` | `application/json` |
 
 Default selection compares exactly these six fields. It does not compare a
@@ -34,35 +34,31 @@ refused before a new claim.
 
 ## Installation
 
-On Python 3.12 or newer, the published bundle remains v0.22.2:
+On Python 3.12 or newer, install the exact bundle:
 
 ```bash
-python -m pip install "millrace==0.22.2"
+python -m pip install "millrace==0.22.3"
 ```
 
-This guide describes the unreleased v0.22.3 candidate. There is no published
-v0.22.3 bundle. To qualify the candidate on Python 3.11 or newer, install the
-explicit reviewed member wheels:
+On Python 3.11, install the individual members with the same exact pins:
 
 ```bash
 python -m pip install \
-  /absolute/path/to/millrace_ai-0.22.3-py3-none-any.whl \
-  /absolute/path/to/millrace_plus-0.22.3-py3-none-any.whl \
-  /absolute/path/to/millforge-0.1.0-py3-none-any.whl
+  "millrace-ai==0.22.3" "millrace-plus==0.22.3" "millforge==0.1.1"
 ```
 
-The candidate member set has these boundaries:
+The member set has these boundaries:
 
 | Distribution | Python | Role |
 | --- | --- | --- |
 | `millrace-ai==0.22.3` | 3.11+ | Runtime and CLI |
 | `millrace-plus==0.22.3` | 3.11+ | Official workflows and authoring skills |
-| `millforge==0.1.0` | 3.11+ | Independently owned execution harness |
+| `millforge==0.1.1` | 3.11+ | Independently owned execution harness |
 
 The `millrace` meta distribution contains no runtime code. Installing one
 member distribution alone does not install the other members.
 
-Candidate state must be fresh schema 10, not a v0.22.2 schema-8 workspace;
+Workspace state must be fresh schema 11, not a v0.22.2 schema-8 workspace;
 there is no in-place migration. See [Getting Started](getting-started.md)
 for installation and old-state preservation guidance.
 
@@ -225,3 +221,20 @@ RUN_ID`, `status`, and `doctor`. `runs follow RUN_ID --after-sequence N`
 returns a finite bounded event page and durable final status. See
 [Runner-session architecture](runner-session-architecture.md) and
 [Daemon lifecycle](daemon-lifecycle.md).
+
+## Cooperative control candidate
+
+The native pause candidate binds the actual `MillforgeBaseLiveRunner` to one Core
+session and owned daemon thread. It supports the exact local IO profile described
+in Millforge's `docs/core-pause-profile.md`. Custom facades, injected runtime
+services and unsupported filesystem or subprocess effects do not qualify.
+
+`runs.pause` records pending intent before waiting for the actual invocation to
+park. `runs.resume` releases the same live invocation after durable settlement.
+Existing session fences, cancellation, deadlines, context and accepted-start
+accounting remain authoritative. CLI loss does not replace the owner. Core process
+death loses the native continuation.
+
+A fresh `runs.recover` request can retire a proven absent, quiescent continuation.
+It cannot retry the session or clean up a stale daemon endpoint. Pending effects
+and unsupported descendants retain unknown aftermath and refuse safe retirement.

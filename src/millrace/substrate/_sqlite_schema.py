@@ -8,6 +8,12 @@ from typing import TypeAlias
 
 from millrace.contracts.compiled_plan import SelectedCompiledPlan
 from millrace.contracts.state import DURABLE_INT64_MAX, RUNNER_SESSION_TEXT_MAX_BYTES
+from millrace.substrate._sqlite_controls import (
+    CONTROL_TABLE_COLUMNS,
+    CONTROL_TABLE_SQL,
+    control_triggers,
+    initialize_identity,
+)
 from millrace.substrate.errors import (
     StoreNotInitialized,
     StoreSchemaUpgradeRequired,
@@ -2250,6 +2256,9 @@ EXPECTED_TABLE_COLUMNS = {
 }
 
 
+EXPECTED_TABLE_COLUMNS.update(CONTROL_TABLE_COLUMNS)
+
+
 def configure_connection(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON")
 
@@ -2266,6 +2275,17 @@ def table_names(connection: sqlite3.Connection) -> frozenset[str]:
 
 
 def validate_schema_shape(connection: sqlite3.Connection) -> None:
+    expected_triggers = control_triggers(set(EXPECTED_TABLE_COLUMNS))
+    actual_triggers = {
+        row[0]: row[1]
+        for row in connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='trigger'"
+        )
+    }
+    if actual_triggers != expected_triggers:
+        raise StoreNotInitialized(
+            "SQLite store schema is not supported (control triggers)"
+        )
     expected_names = frozenset(EXPECTED_TABLE_COLUMNS)
     if table_names(connection) != expected_names:
         raise StoreNotInitialized("SQLite store schema is not supported")
@@ -2276,10 +2296,13 @@ def validate_schema_shape(connection: sqlite3.Connection) -> None:
             raise StoreNotInitialized("SQLite store schema is not supported")
 
 
-def initialize_schema(connection: sqlite3.Connection) -> None:
+def initialize_schema(
+    connection: sqlite3.Connection, paths: tuple[str, str, str]
+) -> None:
     with connection:
+        connection.execute("BEGIN IMMEDIATE")
         connection.execute(_METADATA_TABLE_SQL)
-        for statement in _RUNTIME_TABLE_SQL:
+        for statement in (*_RUNTIME_TABLE_SQL, *CONTROL_TABLE_SQL):
             connection.execute(statement)
         connection.execute(
             """
@@ -2300,6 +2323,10 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
                 SQLITE_STORE_INITIALIZATION_MARKER,
             ),
         )
+
+        initialize_identity(connection, paths)
+        for statement in control_triggers(set(EXPECTED_TABLE_COLUMNS)).values():
+            connection.execute(statement)
 
 
 def read_metadata(connection: sqlite3.Connection) -> dict[str, str | int]:
@@ -2369,7 +2396,7 @@ def _table_sql(connection: sqlite3.Connection, table_name: str) -> str:
 
 
 def _expected_table_sql(table_name: str) -> str:
-    for statement in (_METADATA_TABLE_SQL, *_RUNTIME_TABLE_SQL):
+    for statement in (_METADATA_TABLE_SQL, *_RUNTIME_TABLE_SQL, *CONTROL_TABLE_SQL):
         if _create_table_name(statement) == table_name:
             return _normalize_create_table_sql(statement)
     raise StoreNotInitialized("SQLite store schema is not supported")

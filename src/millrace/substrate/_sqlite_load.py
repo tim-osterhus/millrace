@@ -155,6 +155,7 @@ from millrace.substrate._sqlite_rows import (
     transition_from_row,
     work_dependency_from_row,
 )
+from millrace.substrate._sqlite_run_controls import load_run_controls
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.codecs import (
     decode_payload,
@@ -165,6 +166,7 @@ from millrace.substrate.errors import (
     CasDigestMismatch,
     CasObjectKindMismatch,
     CasObjectNotFound,
+    ControlOperationError,
     InvalidCasDigest,
     StorageIntegrityError,
     SubstrateError,
@@ -189,8 +191,9 @@ def load_runtime_state_rows(
     *,
     _after_admitted_plans: Callable[[], None] | None = None,
     rejected_result_inspection_run_id: str | None = None,
+    _optimistic: bool = False,
 ) -> RuntimeState:
-    if connection.in_transaction:
+    if connection.in_transaction or _optimistic:
         return _load_runtime_state_rows_in_transaction(
             connection,
             cas_store,
@@ -227,6 +230,7 @@ def _load_runtime_state_rows_in_transaction(
     if _after_admitted_plans is not None:
         _after_admitted_plans()
     state = RuntimeState(
+        run_execution_controls=load_run_controls(connection),
         admitted_plans=admitted_plans,
         default_plan_ref=_load_default_plan_ref(
             connection,
@@ -2431,6 +2435,8 @@ def _raise_cas_reference_integrity_error(
     digest: str,
     exc: SubstrateError,
 ) -> NoReturn:
+    if isinstance(exc, ControlOperationError):
+        raise exc
     if isinstance(exc, CasObjectNotFound):
         detail = "references missing CAS object"
     elif isinstance(exc, CasDigestMismatch):

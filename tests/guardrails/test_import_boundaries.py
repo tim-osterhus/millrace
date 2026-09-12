@@ -54,9 +54,7 @@ SUBSTRATE_KERNEL_POLICY_MODULES = (
     "millrace.kernel.observation_policy",
     "millrace.kernel._closure_lifecycle",
 )
-SUBSTRATE_KERNEL_POLICY_CONSUMER = Path(
-    "millrace/substrate/_sqlite_relations.py"
-)
+SUBSTRATE_KERNEL_POLICY_CONSUMER = Path("millrace/substrate/_sqlite_relations.py")
 REMOVED_DONOR_MODULE_NAMES = (
     "lad_execution",
     "lad_learning",
@@ -181,12 +179,19 @@ def _is_allowed_path_specific_import(
     path: Path,
     module_name: str,
 ) -> bool:
+    if package_name == "substrate" and path == Path(
+        "millrace/substrate/_sqlite_run_controls.py"
+    ):
+        return module_name == "millrace.kernel.run_controls" or module_name in {
+            "millrace.kernel.run_controls.exact_run_target_refusal",
+            "millrace.kernel.run_controls.run_control_projection",
+            "millrace.kernel.run_controls.run_eligibility_refusal",
+        }
     return (
         package_name == "substrate"
         and path == SUBSTRATE_KERNEL_POLICY_CONSUMER
         and any(
-            module_name == policy_module
-            or module_name.startswith(f"{policy_module}.")
+            module_name == policy_module or module_name.startswith(f"{policy_module}.")
             for policy_module in SUBSTRATE_KERNEL_POLICY_MODULES
         )
     )
@@ -501,3 +506,17 @@ def test_installed_package_discovery_does_not_call_entry_points_or_importlib_res
     )
 
     assert [item for item in forbidden if item in source] == []
+
+
+def test_substrate_run_controls_policy_is_forbidden_outside_exact_consumer(
+    tmp_path: Path,
+) -> None:
+    source_root = _write_probe_packages(
+        tmp_path, {"substrate": "import millrace.kernel.run_controls\n"}
+    )
+    violations = _dependency_matrix_violations(source_root)
+    assert any(
+        item.package_name == "substrate"
+        and item.imported_module == "millrace.kernel.run_controls"
+        for item in violations
+    )

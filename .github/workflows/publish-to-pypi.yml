@@ -8,7 +8,7 @@ on:
 jobs:
   validate:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.3' }}
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     permissions:
       contents: read
     steps:
@@ -20,8 +20,16 @@ jobs:
           version: 0.9.30
       - name: Sync dependencies
         run: uv sync --frozen --group dev
+      - name: Cache offline build backend
+        run: >-
+          uv run --no-project
+          --with 'uv_build==0.11.30'
+          python -c 'import uv_build'
       - name: Test
-        run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 uv run --frozen --group dev pytest -q
+        run: |
+          mkdir -m 700 "$HOME/mrc-tests"
+          export MILLRACE_TEST_SOCKET_ROOT="$HOME/mrc-tests"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 uv run --frozen --group dev pytest -q
       - name: Lint
         run: uv run --frozen --group dev ruff check src tests scripts
       - name: Type check
@@ -33,23 +41,21 @@ jobs:
           test ! -e dist
           SOURCE_DATE_EPOCH=1580601600 PYTHONDONTWRITEBYTECODE=1 uv build --python 3.11 --force-pep517
       - name: Verify built distributions
-        shell: bash
         run: |
-          expected=(
-            ".gitignore"
-            "millrace_ai-0.22.3-py3-none-any.whl"
-            "millrace_ai-0.22.3.tar.gz"
-          )
-          mapfile -t actual < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
-          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
-          if [[ "${actual[*]}" != "${expected_sorted[*]}" ]]; then
-            printf 'unexpected distribution set: %s\n' "${actual[*]}" >&2
-            exit 1
-          fi
-          sha256sum --check --strict <<'SHA256'
-          99c6d23bb898bdb47c410a078212d61d16205e1f9c9bfd64e24fcf6f32394e82  dist/millrace_ai-0.22.3-py3-none-any.whl
-          301a3ec77b1c9365006fbe6e3061379d44fa05524883691f721533158fc4d34c  dist/millrace_ai-0.22.3.tar.gz
-          SHA256
+          uv run --frozen python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          manifest = """
+          2c6704ff94f70743f3d7214fbf9f6eabc8d19f72c8486dc0bfe576ed63b7b357  dist/millrace_ai-0.22.3-py3-none-any.whl
+          a680312659350ea2058abf430de9e510614bf09dde7ab5322505b5911c8cbed3  dist/millrace_ai-0.22.3.tar.gz
+          """
+          expected = {Path(path): digest for digest, path in
+                      (line.split() for line in manifest.strip().splitlines())}
+          assert {p.name for p in Path("dist").iterdir()} == (
+              {p.name for p in expected} | {".gitignore"})
+          for path, digest in expected.items():
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, path
+          PY
       - name: Check source unchanged
         run: |
           git diff --exit-code
@@ -90,8 +96,8 @@ jobs:
             exit 1
           fi
           sha256sum --check --strict <<'SHA256'
-          99c6d23bb898bdb47c410a078212d61d16205e1f9c9bfd64e24fcf6f32394e82  dist/millrace_ai-0.22.3-py3-none-any.whl
-          301a3ec77b1c9365006fbe6e3061379d44fa05524883691f721533158fc4d34c  dist/millrace_ai-0.22.3.tar.gz
+          2c6704ff94f70743f3d7214fbf9f6eabc8d19f72c8486dc0bfe576ed63b7b357  dist/millrace_ai-0.22.3-py3-none-any.whl
+          a680312659350ea2058abf430de9e510614bf09dde7ab5322505b5911c8cbed3  dist/millrace_ai-0.22.3.tar.gz
           SHA256
       - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         with:

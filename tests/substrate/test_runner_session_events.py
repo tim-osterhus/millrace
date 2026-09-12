@@ -134,12 +134,15 @@ def test_terminal_survives_compaction_and_ids_are_replay_safe(tmp_path) -> None:
         observed_at=1,
         replay_key="started",
     )
-    assert writer.record(
-        "session_started",
-        {"state": "running"},
-        observed_at=1,
-        replay_key="started",
-    ) == started
+    assert (
+        writer.record(
+            "session_started",
+            {"state": "running"},
+            observed_at=1,
+            replay_key="started",
+        )
+        == started
+    )
     with pytest.raises(ValueError, match="replay"):
         writer.record(
             "session_started",
@@ -168,11 +171,18 @@ def test_terminal_survives_compaction_and_ids_are_replay_safe(tmp_path) -> None:
 
     retained = writer.store.read("run-1", after_sequence=0)
     assert retained.gap is not None
-    assert terminal in retained.events
-    assert [event.sequence for event in retained.events] == sorted(
-        event.sequence for event in retained.events
+    # Retention spans multiple bounded pages; the terminal can be on the last.
+    events = list(retained.events)
+    while events[-1].sequence < retained.last_sequence:
+        page = writer.store.read("run-1", after_sequence=events[-1].sequence)
+        assert page.events and page.events[0].sequence > events[-1].sequence
+        events.extend(page.events)
+        assert len(events) <= RUNNER_SESSION_EVENT_STORE_MAX_RECORDS
+    assert terminal in events
+    assert [event.sequence for event in events] == sorted(
+        event.sequence for event in events
     )
-    assert len({event.event_id for event in retained.events}) == len(retained.events)
+    assert len({event.event_id for event in events}) == len(events)
 
 
 def test_interleaved_sessions_keep_independent_sequences_and_cursors(
@@ -236,10 +246,13 @@ def test_reconnect_after_compaction_gets_explicit_gap_and_bounded_page(
     assert page.gap.after_sequence == 1
     assert page.gap.resumes_at_sequence == page.events[0].sequence
     assert len(page.events) <= RUNNER_SESSION_EVENT_READ_MAX_RECORDS
-    assert writer.store.read(
-        "run-1",
-        after_sequence=page.last_sequence + 10,
-    ).gap is None
+    assert (
+        writer.store.read(
+            "run-1",
+            after_sequence=page.last_sequence + 10,
+        ).gap
+        is None
+    )
 
 
 def test_slow_reader_does_not_block_event_production(tmp_path) -> None:
@@ -630,3 +643,232 @@ def test_secret_replay_keys_are_opaque_and_remain_distinct(tmp_path) -> None:
     ]
     assert all(identity.startswith("sha256:") for identity in identities)
     assert secret not in repr(identities)
+
+
+def test_public_snapshot_reads_live_and_closed_wal_without_byte_or_mode_changes(
+    tmp_path,
+):
+    from millrace.substrate.runner_session_events import public_snapshot_path
+
+    writer = _writer(tmp_path)
+    writer.record_progress({"message": "first"}, observed_at=1, replay_key="first")
+    path = tmp_path / "session-events.sqlite3"
+
+    def inventory():
+        return {
+            p.name: (p.read_bytes(), p.stat().st_mode)
+            for p in tmp_path.iterdir()
+            if p.is_file()
+        }
+
+    for closed in (False, True):
+        if closed:
+            writer.store.close()
+        before = inventory()
+        reader = RunnerSessionEventStore.open_readonly(path)
+        assert (
+            reader.read("run-1", session_id="session-1", after_sequence=0).last_sequence
+            == 1
+        )
+        assert reader.captured_at_ns > 0
+        reader.close()
+        assert inventory() == before
+    assert public_snapshot_path(path).stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_publication_keeps_committed_event_and_next_writer_recovers(
+    tmp_path, monkeypatch
+):
+    import os
+
+    from millrace.substrate.runner_session_events import public_snapshot_path
+
+    writer = _writer(tmp_path)
+    writer.record_progress({"message": "first"}, observed_at=1, replay_key="first")
+    replace = os.replace
+
+    def fail(*args):
+        raise OSError("publication fixture failure")
+
+    monkeypatch.setattr(os, "replace", fail)
+    writer.record_progress({"message": "second"}, observed_at=2, replay_key="second")
+    assert (
+        writer.store.read(
+            "run-1", session_id="session-1", after_sequence=0
+        ).last_sequence
+        == 2
+    )
+    assert not public_snapshot_path(tmp_path / "session-events.sqlite3").exists()
+    monkeypatch.setattr(os, "replace", replace)
+    writer.record_progress({"message": "third"}, observed_at=3, replay_key="third")
+    reader = RunnerSessionEventStore.open_readonly(tmp_path / "session-events.sqlite3")
+    assert (
+        reader.read("run-1", session_id="session-1", after_sequence=0).last_sequence
+        == 3
+    )
+    writer.store.close()
+
+
+def test_snapshot_rejects_corrupt_oversized_or_missing_capture(tmp_path):
+    from millrace.substrate.runner_session_events import public_snapshot_path
+
+    writer = _writer(tmp_path)
+    writer.record_progress({"message": "first"}, observed_at=1, replay_key="first")
+    writer.store.close()
+    path = tmp_path / "session-events.sqlite3"
+    capture = public_snapshot_path(path)
+    valid = capture.read_bytes()
+    for invalid in (
+        b"not json",
+        valid.replace(b'"last', b'"lost'),
+        b"x" * (2 * 1024 * 1024 + 1),
+    ):
+        if invalid == valid:
+            invalid = valid.replace(b"first", b"other")
+        capture.write_bytes(invalid)
+        with pytest.raises(ValueError):
+            RunnerSessionEventStore.open_readonly(path)
+    capture.unlink()
+    with pytest.raises(FileNotFoundError):
+        RunnerSessionEventStore.open_readonly(path)
+
+
+def test_concurrent_snapshot_publishers_never_regress_committed_sequences(tmp_path):
+    from millrace.adapters.runner_contract import RedactionPolicy
+
+    path = tmp_path / "events.sqlite3"
+    initial = RunnerSessionEventStore.initialize(path)
+    initial.close()
+
+    def write(label):
+        store = RunnerSessionEventStore.open(path)
+        writer = RunnerSessionEventWriter(
+            store,
+            session_id=label,
+            run_id=label,
+            dispatch_generation=1,
+            redaction_policy=RedactionPolicy(policy_id="test"),
+        )
+        for n in range(8):
+            writer.record_progress({"n": n}, observed_at=n, replay_key=str(n))
+        store.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(write, ("one", "two")))
+    snapshot = RunnerSessionEventStore.open_readonly(path)
+    assert snapshot.stream_scope("one")["last_sequence"] == 8
+    assert snapshot.stream_scope("two")["last_sequence"] == 8
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        "before_invalidation",
+        "after_invalidation_before_commit",
+        "after_commit",
+        "after_replace",
+    ],
+)
+def test_snapshot_fault_boundaries_preserve_committed_event_outcomes(
+    tmp_path, monkeypatch, point
+):
+    import os
+    from pathlib import Path
+
+    from millrace.substrate.runner_session_events import public_snapshot_path
+
+    writer = _writer(tmp_path)
+    writer.record_progress({"n": 1}, observed_at=1, replay_key="one")
+    capture = public_snapshot_path(tmp_path / "session-events.sqlite3")
+    original_unlink, original_replace = Path.unlink, os.replace
+    publish = writer.store._publish_snapshot
+    connection = writer.store._connection
+    if point == "before_invalidation":
+
+        def fail_unlink(path, *args, **kwargs):
+            if path == capture:
+                raise OSError("invalidation fault")
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", fail_unlink)
+        with pytest.raises(OSError):
+            writer.record_progress({"n": 2}, observed_at=2, replay_key="two")
+        expected = 1
+    elif point == "after_invalidation_before_commit":
+
+        class CommitFailure:
+            def __getattr__(self, name):
+                return getattr(connection, name)
+
+            def commit(self):
+                raise RuntimeError("interrupted before commit")
+
+        writer.store._connection = CommitFailure()
+        with pytest.raises(RuntimeError):
+            writer.record_progress({"n": 2}, observed_at=2, replay_key="two")
+        expected = 1
+        assert not capture.exists()
+    elif point == "after_commit":
+
+        def interrupted():
+            raise RuntimeError("simulated interruption after commit")
+
+        monkeypatch.setattr(writer.store, "_publish_snapshot", interrupted)
+        with pytest.raises(RuntimeError):
+            writer.record_progress({"n": 2}, observed_at=2, replay_key="two")
+        expected = 2
+        assert not capture.exists()
+    else:
+
+        def after_replace(*args):
+            original_replace(*args)
+            raise OSError("replacement completed but delivery failed")
+
+        monkeypatch.setattr(os, "replace", after_replace)
+        writer.record_progress({"n": 2}, observed_at=2, replay_key="two")
+        expected = 2
+        assert not capture.exists()
+    assert (
+        writer.store.read(
+            "run-1", session_id="session-1", after_sequence=0
+        ).last_sequence
+        == expected
+    )
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    monkeypatch.setattr(os, "replace", original_replace)
+    monkeypatch.setattr(writer.store, "_publish_snapshot", publish)
+    writer.store._connection = connection
+    writer.record_progress({"n": 3}, observed_at=3, replay_key="three")
+    reader = RunnerSessionEventStore.open_readonly(tmp_path / "session-events.sqlite3")
+    assert (
+        reader.read("run-1", session_id="session-1", after_sequence=0).last_sequence
+        == expected + 1
+    )
+    writer.store.close()
+
+
+def test_snapshot_publication_lock_duration_is_bounded(tmp_path, capsys):
+    import time
+
+    writer = _writer(tmp_path)
+    durations = []
+    publish = writer.store._publish_snapshot
+
+    def measured():
+        start = time.monotonic()
+        publish()
+        durations.append(time.monotonic() - start)
+
+    writer.store._publish_snapshot = measured
+    for n in range(32):
+        writer.record_progress({"n": n}, observed_at=n, replay_key=str(n))
+    assert max(durations) < 1.0
+    with capsys.disabled():
+        print(
+            {
+                "snapshot_publications": len(durations),
+                "maximum_capture_publication_seconds": max(durations),
+                "total_seconds": sum(durations),
+            }
+        )
+    writer.store.close()

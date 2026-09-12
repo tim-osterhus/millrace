@@ -309,7 +309,7 @@ and non-authoritative; they never enter `RuntimeState.runner_observations`.
 
 ## Persistence Compatibility
 
-Runner sessions use store schema 10 and CAS-backed bounded evidence. Selected
+Runner sessions use store schema 11 and CAS-backed bounded evidence. Selected
 plans use schema 18, runner dispatch envelopes use schema 7, runner-session
 records use schema 2, and current context manifests use schema 3;
 schema-2 manifests remain byte-preserving inspect-only legacy. There is no

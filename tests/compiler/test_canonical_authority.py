@@ -303,10 +303,10 @@ def test_kernel_ping_authority_bytes_and_fingerprint_match_golden() -> None:
 
     assert len(authority_bytes) == 13153
     assert sha256(authority_bytes).hexdigest() == (
-        "9eb296f531d547fe6ddb76f178ebd174c459b9c3d024e5fb690fa4a24ebeb977"
+        "0b9282bbc19db2b77ce9a8e32a6d56e9bc6cf3497771ccdcee95e9932efe4c08"
     )
     assert authority_fingerprint(plan) == (
-        "sha256:88ca236b32308fa47906da4a5aaed3d9b6ca6b95c1a90295482204375eb1d121"
+        "sha256:0a8d7159262508f3af0fa92ab50f66f22493556fa6c1c5cfb2e299239dafda59"
     )
 
 
@@ -341,7 +341,7 @@ def test_unbound_schema18_canonical_authority_omits_empty_context_bindings() -> 
     assert "context_bindings" not in authority
 
 
-def test_unbound_schema18_authority_restores_head_v16_bytes_by_schema_only() -> None:
+def test_unbound_schema18_authority_preserves_prior_shape_after_runner_repin() -> None:
     plan = _compile_plan(_source())
     current_authority = json.loads(canonical_authority_bytes(plan).decode("utf-8"))
     assert isinstance(current_authority, dict)
@@ -360,6 +360,17 @@ def test_unbound_schema18_authority_restores_head_v16_bytes_by_schema_only() -> 
     prior_authority["schema_version"] = 16
     prior_bytes = canonical_authority_bytes(prior_authority)
 
+    # This candidate explicitly repins Millforge version and descriptor bytes.
+    # Apart from those reviewed pins and schema, unbound authority stays intact.
+    for current, prior in zip(
+        current_authority["runner_bindings"], prior_authority["runner_bindings"],
+        strict=True,
+    ):
+        assert current["id"] == prior["id"]
+        assert current["component_pin"]["provider_version"] == "0.1.1"
+        assert prior["component_pin"]["provider_version"] == "0.1.0"
+        for field in ("provider_version", "descriptor_sha256"):
+            current["component_pin"][field] = prior["component_pin"][field]
     assert canonical_authority_bytes(current_authority) == prior_bytes
     assert len(prior_bytes) == 13153
     assert sha256(prior_bytes).hexdigest() == (

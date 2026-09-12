@@ -24,6 +24,7 @@ from millrace.adapters.cli.context_checkout import (
 )
 from millrace.adapters.cli.output import ExitCode
 from millrace.adapters.cli.session_coordinator import (
+    _RETAINED_OWNERS,
     execute_runner_session,
     session_cancellation_token,
     session_correlation_id,
@@ -61,6 +62,7 @@ from millrace.contracts.state import (
 )
 from millrace.contracts.transition import AttachRunnerSessionContext, ClaimWork
 from millrace.kernel import apply, decide
+from millrace.kernel.run_controls import run_hold_refusal
 from millrace.operator.dispatch import (
     DispatchProjectionError,
     ReadyDispatchCandidate,
@@ -73,7 +75,7 @@ from millrace.operator.prompt_material import (
     SelectedAssetMaterializationError,
     build_selected_asset_material,
 )
-from millrace.substrate.errors import StorageIntegrityError
+from millrace.substrate.errors import ControlOperationError, StorageIntegrityError
 
 _COMMAND = "run.bounded"
 _DEFAULT_REDACTION_POLICY = RedactionPolicy(policy_id="cli-default")
@@ -110,6 +112,8 @@ def run_bounded_execution_unit(
     local_config: AdapterLocalConfig | None = None,
     local_config_path: Path | None = None,
     actor_id: str = "local_operator",
+    driving_budget_id: str | None = None,
+    driving_budget_clock: Callable[[], float] | None = None,
     on_start_reserved: Callable[[RunnerSessionRecord], None] | None = None,
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
@@ -122,6 +126,20 @@ def run_bounded_execution_unit(
     _cli_nonblank(actor_id, "actor_id")
     effective_config = _effective_local_config(local_config, local_config_path)
     state = runtime.store.load_runtime_state(runtime.cas_store)
+
+    if normalized_activation_id is None and _RETAINED_OWNERS.get() is not None:
+        # Existing claims are still admitted by the ordinary start guards.
+        # A held created session must not hide another eligible created session.
+        created = sorted(
+            (session.created_at, run.run_ref.run_id, run.activation_id)
+            for run in state.runs.values()
+            if (session := state.runner_sessions.get(run.current_session_id or ""))
+            is not None
+            and session.state == "created"
+            and run_hold_refusal(state, run.run_ref.run_id) is None
+        )
+        if created:
+            normalized_activation_id = created[0][2]
 
     if normalized_activation_id is None:
         selected = _select_ready_activation(state)
@@ -211,6 +229,8 @@ def run_bounded_execution_unit(
             ),
             explicit_retry_intent=normalized_activation_id is not None,
             prepare_created_session=prepare_created_session,
+            driving_budget_id=driving_budget_id,
+            driving_budget_clock=driving_budget_clock,
             on_start_reserved=on_start_reserved,
             on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
@@ -235,7 +255,14 @@ def run_bounded_execution_unit(
             BoundedExecutionUnitResult(code="ready_state_corrupt"),
             active,
         )
-    except (AdapterResolverError, TypeError, ValueError):
+    except ControlOperationError as exc:
+        return _with_active_ids(BoundedExecutionUnitResult(code=str(exc)), active)
+    except (AdapterResolverError, TypeError, ValueError) as exc:
+        if (
+            str(exc).startswith("daemon_budget_")
+            or str(exc) == "runner_start_budget_required"
+        ):
+            return _with_active_ids(BoundedExecutionUnitResult(code=str(exc)), active)
         return _with_active_ids(
             BoundedExecutionUnitResult(code="adapter_failure"),
             active,
@@ -252,12 +279,88 @@ def run_bounded_execution_unit(
     )
 
 
+def classify_daemon_startup(
+    runtime: OpenRuntimeContext,
+    *,
+    local_config: AdapterLocalConfig | None,
+    adapter_kind: str | None,
+) -> str:
+    """Validate readiness before any created session can be driven."""
+    revision = runtime.store.control_identity()["source_revision"]
+    state = runtime.store.load_runtime_state(runtime.cas_store, _optimistic=True)
+    if runtime.store.control_identity()["source_revision"] != revision:
+        return "not_ready"
+    plan_ref = state.default_plan_ref
+    if plan_ref is None:
+        return "not_ready"
+    admitted = state.admitted_plans.get(plan_ref.authority_fingerprint)
+    if admitted is None or not admitted.selected_plan.runner_bindings:
+        return "not_ready"
+    config = local_config or AdapterLocalConfig()
+    for binding in admitted.selected_plan.runner_bindings:
+        if binding.component_pin is None:
+            return "not_ready"
+        if (
+            _preclaim_adapter_refusal(
+                requested_adapter_kind=adapter_kind,
+                selected_adapter_kind=binding.adapter_kind,
+                local_config=config,
+            )
+            is not None
+        ):
+            return "not_ready"
+    for session in state.runner_sessions.values():
+        if session.state in {
+            "starting",
+            "running",
+            "cancellation_requested",
+            "terminating",
+            "lost",
+        }:
+            return "not_ready"
+        if session.state != "created" and session.cleanup_disposition not in {
+            "complete",
+            "not_required",
+        }:
+            return "not_ready"
+    for run in state.runs.values():
+        if run.current_session_id is not None:
+            current = state.runner_sessions.get(run.current_session_id)
+            if current is None or current.run_id != run.run_ref.run_id:
+                return "not_ready"
+            if (
+                current.state == "created"
+                and run_hold_refusal(state, run.run_ref.run_id) is None
+            ):
+                return "ready_active"
+    if (
+        state.dispatch_suspension is not None
+        and state.dispatch_suspension.status == "active"
+    ):
+        return "ready_idle"
+    if state.pause is not None:
+        return "ready_idle"
+    selected = _select_ready_activation(state)
+    return (
+        "ready_idle"
+        if isinstance(selected, BoundedExecutionUnitResult)
+        and selected.code == "no_ready_work"
+        else (
+            "not_ready"
+            if isinstance(selected, BoundedExecutionUnitResult)
+            else "ready_active"
+        )
+    )
+
+
 def reconcile_pending_runner_sessions(
     runtime: OpenRuntimeContext,
     *,
     adapter_kind: str | None = None,
     local_config: AdapterLocalConfig | None = None,
     actor_id: str = "local_operator",
+    driving_budget_id: str | None = None,
+    driving_budget_clock: Callable[[], float] | None = None,
     on_start_reserved: Callable[[RunnerSessionRecord], None] | None = None,
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
@@ -285,7 +388,10 @@ def reconcile_pending_runner_sessions(
         candidate = (run.run_ref.run_id, run.activation_id)
         if needs_replay:
             terminal_replays.append(candidate)
-        elif session.state == "created":
+        elif (
+            session.state == "created"
+            and run_hold_refusal(state, run.run_ref.run_id) is None
+        ):
             created_sessions.append(candidate)
         elif session.state in {
             "starting",
@@ -309,6 +415,8 @@ def reconcile_pending_runner_sessions(
             adapter_kind=adapter_kind,
             local_config=local_config,
             actor_id=actor_id,
+            driving_budget_id=driving_budget_id,
+            driving_budget_clock=driving_budget_clock,
             on_start_reserved=on_start_reserved,
             on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
@@ -327,6 +435,9 @@ def reconcile_pending_runner_sessions(
         reconcile_candidate(activation_id)
     if blocker is not None:
         return blocker
+    # New starts belong to the daemon admission/service loop, not reconciliation.
+    if _RETAINED_OWNERS.get() is not None:
+        return latest
     for _run_id, activation_id in sorted(created_sessions):
         reconcile_candidate(activation_id)
         if blocker is not None:
@@ -340,6 +451,8 @@ def reconcile_pending_runner_completions(
     adapter_kind: str | None = None,
     local_config: AdapterLocalConfig | None = None,
     actor_id: str = "local_operator",
+    driving_budget_id: str | None = None,
+    driving_budget_clock: Callable[[], float] | None = None,
     on_start_reserved: Callable[[RunnerSessionRecord], None] | None = None,
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
@@ -373,6 +486,8 @@ def reconcile_pending_runner_completions(
             adapter_kind=adapter_kind,
             local_config=local_config,
             actor_id=actor_id,
+            driving_budget_id=driving_budget_id,
+            driving_budget_clock=driving_budget_clock,
             on_start_reserved=on_start_reserved,
             on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
@@ -514,7 +629,10 @@ def _prepare_created_session_callback(
 
     def prepare(session: RunnerSessionRecord) -> RunnerSessionRecord:
         state = _load(runtime)
-        if state.runner_sessions.get(session.session_id) != session:
+        if (
+            run_hold_refusal(state, session.run_id) is not None
+            or state.runner_sessions.get(session.session_id) != session
+        ):
             raise ContextCheckoutPreparationError(
                 "created runner session is not current authority"
             )
@@ -668,6 +786,9 @@ def _active_or_claimed_activation(
     if activation is None:
         return BoundedExecutionUnitResult(code="ready_state_corrupt")
     if activation.claimed_by_run_id is not None:
+        held = run_hold_refusal(state, activation.claimed_by_run_id)
+        if held is not None:
+            return BoundedExecutionUnitResult(code=held)
         active = _active_run_for_run(state, activation.claimed_by_run_id)
         if isinstance(active, BoundedExecutionUnitResult):
             return active
@@ -824,10 +945,13 @@ def _bound_codex_cwd_refusal(
 ) -> BoundedExecutionUnitResult | None:
     if selected_kind != CODEX_ADAPTER_KIND:
         return None
-    if _context_binding_for_stage(
-        active.selected_plan,
-        active.run.stage_kind_id,
-    ) is None:
+    if (
+        _context_binding_for_stage(
+            active.selected_plan,
+            active.run.stage_kind_id,
+        )
+        is None
+    ):
         return None
     config = (
         _codex_adapter_config(adapter) if isinstance(adapter, CodexAdapter) else None
@@ -854,9 +978,7 @@ def _bound_codex_cwd_refusal(
     if configured_cwd != workspace_root:
         return BoundedExecutionUnitResult(
             code="adapter_failure",
-            diagnostics=(
-                {"reason": "bound_codex_cwd_mismatch"},
-            ),
+            diagnostics=({"reason": "bound_codex_cwd_mismatch"},),
         )
     return None
 
@@ -869,19 +991,20 @@ def _bound_codex_protocol_refusal(
 ) -> BoundedExecutionUnitResult | None:
     if selected_kind != CODEX_ADAPTER_KIND:
         return None
-    if _context_binding_for_stage(
-        active.selected_plan,
-        active.run.stage_kind_id,
-    ) is None:
+    if (
+        _context_binding_for_stage(
+            active.selected_plan,
+            active.run.stage_kind_id,
+        )
+        is None
+    ):
         return None
     config = _adapter_config(adapter)
     protocol_version = getattr(config, "wrapper_protocol_version", None)
     if protocol_version != 4:
         return BoundedExecutionUnitResult(
             code="adapter_failure",
-            diagnostics=(
-                {"reason": "bound_codex_protocol_unsupported"},
-            ),
+            diagnostics=({"reason": "bound_codex_protocol_unsupported"},),
         )
     return None
 

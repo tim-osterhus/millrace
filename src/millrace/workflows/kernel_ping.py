@@ -408,10 +408,10 @@ WORKFLOW_SOURCE: dict[str, object] = {
                 "component_id": "millforge-base",
                 "component_version": "2",
                 "provider_distribution": "millforge",
-                "provider_version": "0.1.0",
+                "provider_version": "0.1.1",
                 "descriptor_media_type": "application/json",
                 "descriptor_sha256": (
-                    "0bace7b27871b03cd7ffe59951953348b3da3214536178d6f447a21de4403464"
+                    "420c175c5a526192f0ffe582e0205a18512df2ff6736230aea70a06613fb3fab"
                 ),
                 "required_capability_ids": (
                     "terminal.intent",
@@ -451,10 +451,10 @@ WORKFLOW_SOURCE: dict[str, object] = {
                 "component_id": "millforge-base",
                 "component_version": "2",
                 "provider_distribution": "millforge",
-                "provider_version": "0.1.0",
+                "provider_version": "0.1.1",
                 "descriptor_media_type": "application/json",
                 "descriptor_sha256": (
-                    "d6b5c75f48565b939ee4d6e30b83e3ad203764b7bda02890ca515a9bfb3318f0"
+                    "ec8e80e7fef9c06b842739ca62267e1c98bd4d6edc6423f671d04c5c766655ca"
                 ),
                 "required_capability_ids": (
                     "terminal.intent",

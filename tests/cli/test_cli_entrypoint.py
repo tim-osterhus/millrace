@@ -3,20 +3,20 @@ from __future__ import annotations
 import io
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from contextlib import redirect_stderr, redirect_stdout
-from importlib import import_module
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
-PROJECT_METADATA = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))[
-    "project"
-]
+PROJECT_METADATA = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
 PROJECT_VERSION = PROJECT_METADATA["version"]
 LOCKED_GROUPS = (
+    "daemon",
     "workspace",
+    "operations",
     "package",
     "plan",
     "queue",
@@ -56,31 +56,28 @@ def test_pyproject_exposes_millrace_console_script() -> None:
     assert scripts["millrace"] == "millrace.adapters.cli.main:cli"
 
 
-def test_console_script_entrypoint_import_has_no_side_effects(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    for module_name in list(sys.modules):
-        if module_name == "millrace.adapters.cli" or module_name.startswith(
-            "millrace.adapters.cli."
-        ):
-            sys.modules.pop(module_name)
-    before_runtime_modules = {
-        module_name
-        for module_name in sys.modules
-        if module_name.startswith(RUNTIME_AUTHORITY_PREFIXES)
-    }
-
-    imported = import_module("millrace.adapters.cli.main")
-
-    after_runtime_modules = {
-        module_name
-        for module_name in sys.modules
-        if module_name.startswith(RUNTIME_AUTHORITY_PREFIXES)
-    }
-    assert imported.__name__ == "millrace.adapters.cli.main"
-    assert after_runtime_modules == before_runtime_modules
+def test_console_script_entrypoint_import_has_no_side_effects(tmp_path: Path) -> None:
+    # A fresh interpreter proves import isolation without invalidating classes
+    # retained by other tests through sys.modules deletion in this interpreter.
+    code = (
+        "import sys; from importlib import import_module; "
+        f"prefixes = {RUNTIME_AUTHORITY_PREFIXES!r}; "
+        "before = {name for name in sys.modules if name.startswith(prefixes)}; "
+        "module = import_module('millrace.adapters.cli.main'); "
+        "after = {name for name in sys.modules if name.startswith(prefixes)}; "
+        "assert module.__name__ == 'millrace.adapters.cli.main'; "
+        "assert after == before, after - before"
+    )
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "" and result.stderr == ""
     assert list(tmp_path.iterdir()) == []
 
 
@@ -91,7 +88,7 @@ def test_root_help_lists_locked_command_groups() -> None:
     assert stderr == ""
     for group in LOCKED_GROUPS:
         assert re.search(rf"^\s+{re.escape(group)}\b", stdout, re.MULTILINE), stdout
-    assert not re.search(r"^\s+daemon\b", stdout, re.MULTILINE)
+    assert re.search(r"^\s+daemon\b", stdout, re.MULTILINE)
     for forbidden in ("tick", "observe", "once", "invoke"):
         assert forbidden not in stdout
     for forbidden in ("Reserved", "later Millrace packet", "later commands"):
@@ -165,8 +162,20 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
     from millrace.adapters.cli import main as cli_main
 
     command_cases = (
+        (("daemon", "inspect"), "_dispatch_daemon_control"),
+        (("daemon", "history"), "_dispatch_projection"),
+        (("plan", "graph", "fingerprint"), "_dispatch_projection"),
+        (("plan", "overlay", "fingerprint"), "_dispatch_projection"),
+        (("operations", "history"), "_dispatch_projection"),
+        (("daemon", "stop", "--request-json", "{}"), "_dispatch_daemon_control"),
         (("workspace", "init", "--input-id", "input"), "_dispatch_workspace"),
         (("workspace", "check"), "_dispatch_workspace"),
+        (("workspace", "identity"), "_dispatch_workspace"),
+        (("operations", "show", "--request-json", "{}"), "_dispatch_operations"),
+        (
+            ("operations", "resolve", "--request-json", "{}", "--seal-if-absent"),
+            "_dispatch_operations",
+        ),
         (
             ("package", "import-path", "/tmp/package", "--command-id", "command"),
             "_dispatch_package",
@@ -361,16 +370,19 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
             "_dispatch_context",
         ),
         (("status",), "_dispatch_status"),
-            (("runs", "list"), "_dispatch_status"),
-            (("runs", "show", "run.id"), "_dispatch_status"),
-            (
-                ("runs", "cancel", "run.id", "--input-id", "cancel.id"),
-                "_dispatch_status",
-            ),
-            (
-                ("runs", "follow", "run.id", "--after-sequence", "0"),
-                "_dispatch_status",
-            ),
+        (("runs", "pause", "--request-json", "{}"), "_dispatch_run_control"),
+        (("runs", "resume", "--request-json", "{}"), "_dispatch_run_control"),
+        (("runs", "recover", "--request-json", "{}"), "_dispatch_run_control"),
+        (("runs", "list"), "_dispatch_status"),
+        (("runs", "show", "run.id"), "_dispatch_status"),
+        (
+            ("runs", "cancel", "run.id", "--input-id", "cancel.id"),
+            "_dispatch_status",
+        ),
+        (
+            ("runs", "follow", "run.id", "--after-sequence", "0"),
+            "_dispatch_status",
+        ),
         (("trace", "show"), "_dispatch_status"),
         (("waits", "list"), "_dispatch_status"),
         (("waits", "resume", "wait.id"), "_dispatch_intervention"),
@@ -465,7 +477,7 @@ def test_all_registered_leaf_commands_route_to_concrete_dispatchers(
         for command in help_parsers
         if command in {"status", "doctor"} or "." in command
     }
-    assert len(command_cases) == 46
+    assert len(command_cases) == 58
     assert registered_leaves == {
         ".".join(argv[:2]) if argv[0] not in {"status", "doctor"} else argv[0]
         for argv, _expected in command_cases
@@ -494,3 +506,40 @@ def test_version_output_is_deterministic_in_text_and_json() -> None:
         "message": f"millrace {PROJECT_VERSION}",
         "data": {"version": PROJECT_VERSION},
     }
+
+
+def test_module_entrypoint_initializes_workspace_and_reads_bounded_runs(
+    tmp_path: Path,
+) -> None:
+    command = [
+        sys.executable,
+        "-m",
+        "millrace.adapters.cli.main",
+        "--json",
+        "--workspace",
+        str(tmp_path),
+    ]
+    initialized = subprocess.run(
+        [*command, "workspace", "init", "--input-id", "module-entrypoint-init"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert initialized.returncode == 0, initialized.stderr
+    assert json.loads(initialized.stdout)["command"] == "workspace.init"
+
+    projected = subprocess.run(
+        [*command, "--bounded", "runs", "list"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert projected.returncode == 0, projected.stderr
+    assert projected.stderr == ""
+    result = json.loads(projected.stdout)
+    assert result["ok"] is True
+    assert result["command"] == "runs.list"
+    assert result["code"] == "bounded_projection"
+    assert result["data"]["records"] == []

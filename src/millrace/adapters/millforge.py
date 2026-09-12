@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
+from importlib import import_module
 from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
@@ -232,9 +233,17 @@ class MillforgeAdapter:
                     "provider_unavailable",
                 ),
             )
-        cancellation = _MutableCancellationToken(
+        cancellation: Any = _MutableCancellationToken(
             request.cancellation_token or request.correlation_id
         )
+        if self._config.facade is None:
+            try:
+                native_services = import_module("millforge.pause_control")
+                cancellation = native_services.NativeCancellationToken(
+                    request.cancellation_token or request.correlation_id
+                )
+            except ImportError:
+                pass
         if self._config.facade is not None:
             prepared = self._prepare_injected(
                 request,
@@ -313,10 +322,7 @@ class MillforgeAdapter:
         request: AdapterInvocationRequest,
         provider: object,
         facade: MillforgeFacade,
-    ) -> (
-        tuple[_PreparedInvocation, RunnerAdapterProvenance]
-        | AdapterErrorResult
-    ):
+    ) -> tuple[_PreparedInvocation, RunnerAdapterProvenance] | AdapterErrorResult:
         try:
             prepared = _prepare_invocation(request, self._config, provider, facade)
         except _AuthorityRefusal as exc:
@@ -392,10 +398,7 @@ class MillforgeAdapter:
         self,
         request: AdapterInvocationRequest,
         provider: object,
-    ) -> (
-        tuple[object, object, _EnvironmentSecretResolver]
-        | AdapterErrorResult
-    ):
+    ) -> tuple[object, object, _EnvironmentSecretResolver] | AdapterErrorResult:
         live_config = self._config.live_config
         if live_config is None:
             return self._error(request, "invocation_failed", "local_configuration")
@@ -438,6 +441,10 @@ class MillforgeAdapter:
                 cleanup_state=cleanup_state,
             )
             try:
+                if type(facade) is getattr(provider, "MillforgeBaseLiveRunner", None):
+                    cleanup_state.native_control = getattr(
+                        facade, "native_control", None
+                    )
                 try:
                     prepared = _prepare_invocation(
                         request,
@@ -458,9 +465,7 @@ class MillforgeAdapter:
                         "request_construction",
                     )
                 try:
-                    evidence = facade.invocation_evidence_for(
-                        prepared.provider_request
-                    )
+                    evidence = facade.invocation_evidence_for(prepared.provider_request)
                 except Exception:
                     return self._authority_error(request, "invocation_evidence")
                 invocation_evidence_sha256 = _verified_invocation_evidence_sha256(
@@ -587,6 +592,7 @@ class _MillforgeSessionHandle:
         self._completion: AdapterInvocationOutcome | None = None
         self._completion_polled = False
         self._done = threading.Event()
+        self._native_owner_ended: Callable[[], None] | None = None
         self._cancellation = cancellation
         self._fallback_outcome = fallback_outcome
         self._owns_facade = owns_facade
@@ -612,7 +618,22 @@ class _MillforgeSessionHandle:
             outcome = self._fallback_outcome
         with self._lock:
             self._completion = cast(AdapterInvocationOutcome | None, outcome)
-        self._done.set()
+            self._done.set()
+            ended = self._native_owner_ended
+            self._native_owner_ended = None
+        if ended is not None:
+            ended()
+
+    def register_native_owner_end(self, callback: Callable[[], None]) -> None:
+        with self._lock:
+            ended = self._done.is_set()
+            if not ended:
+                self._native_owner_ended = callback
+        if ended:
+            callback()
+
+    def native_control(self) -> object | None:
+        return self._cleanup_state.native_control if self._owns_facade else None
 
     def poll_completion(self) -> AdapterInvocationOutcome | None:
         if not self._done.is_set():
@@ -658,10 +679,7 @@ class _MillforgeSessionHandle:
 
     def cleanup(self) -> RunnerCleanupResult:
         started_at = time.time_ns()
-        if (
-            self._done.is_set()
-            and threading.current_thread() is not self._thread
-        ):
+        if self._done.is_set() and threading.current_thread() is not self._thread:
             self._thread.join(timeout=0.1)
         worker_live = self._thread.is_alive()
         if worker_live:
@@ -760,6 +778,7 @@ class _LiveConfigError(ValueError):
 
 class _ExecutionCleanupState:
     def __init__(self) -> None:
+        self.native_control: object | None = None
         self._lock = threading.Lock()
         self._disposition = "not_required"
 
@@ -926,16 +945,33 @@ async def _create_live_facade(
         or not callable(getattr(timeouts_type, "uniform", None))
     ):
         raise _LiveConfigError("provider public factory contract is unavailable")
+    clock: object = _SystemClock()
+    resolver: object = cancellation_resolver
+    secrets: object = secret_resolver
+    try:
+        native_services = import_module("millforge.pause_control")
+        # Older/injected provider fixtures retain their original unqualified services.
+        if (
+            type(cancellation_resolver._token)
+            is native_services.NativeCancellationToken
+        ):
+            clock = native_services.NativeClock()
+            resolver = native_services.NativeCancellationResolver(
+                cancellation_resolver._token
+            )
+            secrets = native_services.NativeEnvironmentSecretResolver(secret_ref)
+    except ImportError:
+        pass
     try:
         facade = await factory(
             legal_terminal_results=legal_terminal_results,
             profile_id=getattr(profile, "profile_id"),
             model_profile=profile,
             secret_ref=secret_ref,
-            secret_resolver=secret_resolver,
+            secret_resolver=secrets,
             cwd=workspace_root,
-            clock=_SystemClock(),
-            cancellation_resolver=cancellation_resolver,
+            clock=clock,
+            cancellation_resolver=resolver,
             timeouts=cast(Any, timeouts_type).uniform(timeout_seconds),
             options=options_type(load_context_files=False),
         )
@@ -1069,21 +1105,17 @@ def _verify_components(
     if getattr(metadata, "context_file_count", None) != 0:
         raise _AuthorityRefusal("context_files")
     compiled = getattr(components, "compiled_plan", None)
-    if (
-        getattr(compiled, "harness_id", None)
-        != getattr(descriptor, "harness_id", None)
-        or getattr(compiled, "harness_version", None)
-        != getattr(descriptor, "harness_version", None)
+    if getattr(compiled, "harness_id", None) != getattr(
+        descriptor, "harness_id", None
+    ) or getattr(compiled, "harness_version", None) != getattr(
+        descriptor, "harness_version", None
     ):
         raise _AuthorityRefusal("compiled_component")
     profile_id = getattr(getattr(components, "model_profile", None), "profile_id", None)
     if (
         not isinstance(profile_id, str)
         or not profile_id.strip()
-        or (
-            expected_profile_id is not None
-            and profile_id != expected_profile_id
-        )
+        or (expected_profile_id is not None and profile_id != expected_profile_id)
     ):
         raise _AuthorityRefusal("model_profile")
     envelope = getattr(components, "capability_envelope", None)
@@ -1489,9 +1521,7 @@ def _instruction_input(request: AdapterInvocationRequest) -> dict[str, object]:
             "run_id": request.dispatch_envelope.run_id,
             "session_id": request.dispatch_envelope.session_id,
             "dispatch_generation": request.dispatch_envelope.dispatch_generation,
-            "session_fencing_token": (
-                request.dispatch_envelope.session_fencing_token
-            ),
+            "session_fencing_token": (request.dispatch_envelope.session_fencing_token),
             "plan_id": request.dispatch_envelope.plan_id,
             "claim_id": request.dispatch_envelope.claim_id,
             "generation": request.dispatch_envelope.generation,
@@ -1815,12 +1845,8 @@ def _millforge_attribution(
         provider_event_count=cast(int | None, values.get("provider_event_count")),
         provider_event_bytes=cast(int | None, values.get("provider_event_bytes")),
         wrapper_input_bytes=cast(int | None, values.get("wrapper_input_bytes")),
-        retained_result_bytes=cast(
-            int | None, values.get("retained_result_bytes")
-        ),
-        tool_call_event_count=cast(
-            int | None, values.get("tool_call_event_count")
-        ),
+        retained_result_bytes=cast(int | None, values.get("retained_result_bytes")),
+        tool_call_event_count=cast(int | None, values.get("tool_call_event_count")),
         runner_wall_milliseconds=cast(
             int | None, values.get("runner_wall_milliseconds")
         ),
@@ -1883,9 +1909,7 @@ def _artifact_payload(
         Mapping,
     ):
         return _INVALID_PAYLOAD
-    if (
-        not validate_schema(selected.schema.schema, value).accepted
-    ):
+    if not validate_schema(selected.schema.schema, value).accepted:
         return _INVALID_PAYLOAD
     return cast(Mapping[str, object], value)
 

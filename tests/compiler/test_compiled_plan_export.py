@@ -918,10 +918,10 @@ def test_compiler_provenance_does_not_change_selected_authority() -> None:
 
     assert COMPILER_ID == "millrace-ai"
     assert authority_fingerprint(plan) == (
-        "sha256:88ca236b32308fa47906da4a5aaed3d9b6ca6b95c1a90295482204375eb1d121"
+        "sha256:0a8d7159262508f3af0fa92ab50f66f22493556fa6c1c5cfb2e299239dafda59"
     )
     assert hashlib.sha256(authority_bytes).hexdigest() == (
-        "9eb296f531d547fe6ddb76f178ebd174c459b9c3d024e5fb690fa4a24ebeb977"
+        "0b9282bbc19db2b77ce9a8e32a6d56e9bc6cf3497771ccdcee95e9932efe4c08"
     )
     assert len(authority_bytes) == 13153
 

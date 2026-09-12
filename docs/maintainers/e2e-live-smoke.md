@@ -37,8 +37,8 @@ A release-candidate live qualification must:
 8. retain sanitized evidence without retaining credentials or derived
    session-local material.
 
-`simple_loop` selects Millforge runner bindings. The governed semantic LAD
-workflow selects Codex runner bindings. Do not override a selected adapter
+`simple_loop` selects Millforge runner bindings. The deferred experimental semantic LAD
+workflow selects Codex runner bindings and is excluded from the MVP package. Do not override a selected adapter
 kind merely to make local credentials fit a workflow. Configure the selected
 adapter through [Codex runner setup](../codex-runner.md) or
 [Millforge runner setup](../millforge-runner.md), as applicable.
@@ -70,3 +70,14 @@ open waits, closure blocks, quarantines, or interventions, plus the expected
 results and artifacts. A deliberately selected recovery transition may stop
 at its declared recovery barrier, but must be reported as recovery evidence,
 not completed workflow closure.
+
+## Local source qualification of lifecycle controls
+
+On macOS, run process/lifecycle fixtures under a short private directory with
+owner-safe ancestors. The default system temporary directory does not satisfy
+that control boundary. For example, create a fresh `~/mrc-tests` with mode 0700
+and set `MILLRACE_TEST_SOCKET_ROOT` to its absolute path while running pytest;
+remove the owned directory when the test processes finish. Platform-specific
+process tests skip on other systems; CI also runs the full macOS lane. The
+unsupported-platform foreground regression uses a simulated platform boundary
+and does not establish a native Linux process-control implementation.

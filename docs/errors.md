@@ -40,7 +40,7 @@ Example:
 | Daemon lifecycle | `no_ready_work`, `ready_state_refused`, `ready_state_corrupt`, `lifecycle_transition_refused`, `observation_refused` | The daemon found no work or could not legally advance it. | Depends on the last accepted transition | After inspection | Read status, runs, trace, waits, and doctor output before retrying. |
 | Adapter and evidence | `timeout`, `cancelled`, `missing_opt_in_config`, `invocation_failed`, `result_parse_failed`, `input_too_large`, `output_too_large`, `redaction_refused`, `selected_authority_refused` | The runner attempt failed or its output could not become candidate evidence. | A claim may exist; no terminal route was accepted | Only when category permits | Repair local configuration, selected authority, wrapper output, or bounds. |
 | Runner sessions | `runner_session_cancel_requested`, `runner_session_cancel_refused`, `runner_session_retry_refused`, `runner_session_orphan_risk` | A durable session command was accepted or safely refused. | Accepted cancellation records a request; refusals do not alter session authority | Re-query first | Inspect `runs show`, `trace show`, `status`, and `doctor`; never replace lost/orphan-risk work blindly. |
-| Workspace upgrade | `workspace_upgrade_required` | An exact schema-version-6 or schema-version-7 workspace reached the schema-10 runtime. | No; the database, CAS, and runner-event sidecar remain byte-for-byte unchanged | No | Finish or retire active work with its matching runtime, then initialize a schema-10 workspace. |
+| Workspace upgrade | `workspace_upgrade_required` | An exact schema-version-6 or schema-version-7 workspace reached the schema-11 runtime. | No; the database, CAS, and runner-event sidecar remain byte-for-byte unchanged | No | Finish or retire active work with its matching runtime, then initialize a schema-11 workspace. |
 | Package doctor | `workflow_package_registry_load_refused`, `active_pin_selected_plan_corrupt`, and finding categories such as `manifest_digest_mismatch` | Package health is unhealthy or unknown. | No; doctor is read-only | After repair | Repair the package source/registry or preserve an active pin as reported. |
 
 ## Stable Fields
@@ -144,3 +144,19 @@ normalization.
 
 See [Runner-session architecture](runner-session-architecture.md) for command
 and projection semantics.
+
+## Local schema-11 control foundation candidate
+
+`invalid_control_request` refuses malformed, duplicate-key, noncanonical or
+oversized input before admission (`receipt_persisted=false`); raw input is omitted.
+`operation_idempotency_conflict` and `operation_result_conflict` preserve the
+original record and require the original identity/payload for reconciliation.
+`store_identity_mismatch` and `store_location_mismatch` refuse stale scope or a
+copied/relocated store; no adoption or epoch reset is performed.
+`control_storage_unknown`, `control_deadline_unknown`, and
+`control_storage_contradiction` require inspection and same-key reconciliation.
+Neither timeout nor `not_found_at_revision` proves nonacceptance.
+`control_history_item_too_large` refuses an oversized finite observation without
+truncating or deleting the retained evidence. `operation_already_settled` refuses
+a second terminal result while allowing separately identified aftermath evidence.
+These candidate surfaces do not qualify native pause/resume or a release.

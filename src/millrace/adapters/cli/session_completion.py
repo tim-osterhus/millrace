@@ -14,6 +14,7 @@ from millrace.adapters.cli import (
 from millrace.adapters.cli import session_persistence as persistence
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
+    persist_runner_transition,
     refusal_is_pre_persist,
     transition_context,
 )
@@ -54,7 +55,6 @@ from millrace.contracts.transition import (
     RecordRunnerSessionCompletion,
     RefuseRunnerSessionSignal,
     RunnerResultObserved,
-    TransitionInput,
 )
 from millrace.kernel import apply, decide
 from millrace.operator.dispatch import (
@@ -62,6 +62,8 @@ from millrace.operator.dispatch import (
     build_dispatch_envelope_for_run,
 )
 from millrace.substrate.errors import SubstrateError
+
+_persist_transition = persist_runner_transition
 
 _COMMAND = "run.session"
 SESSION_DIAGNOSTIC_MAX_BYTES = RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES
@@ -196,13 +198,16 @@ def _persist_completion(
             redaction_policy_id=request.redaction_policy.policy_id,
             primary=primary,
         )
-        if _persist_completion_record(
-            runtime,
-            run_ref,
-            session,
-            completion,
-            event_redaction_policy=request.redaction_policy,
-        ) is None:
+        if (
+            _persist_completion_record(
+                runtime,
+                run_ref,
+                session,
+                completion,
+                event_redaction_policy=request.redaction_policy,
+            )
+            is None
+        ):
             return refusal_result
         result = SessionExecutionResult(
             "adapter_failure",
@@ -687,28 +692,6 @@ def _apply_persisted_completion(
         accepted=True,
         transition_disposition=decision.disposition,
     )
-
-
-def _persist_transition(
-    runtime: OpenRuntimeContext,
-    transition_input: TransitionInput,
-) -> RuntimeState | None:
-    state = _load(runtime)
-    decision = decide(
-        state,
-        transition_input,
-        transition_context(
-            command=_COMMAND,
-            input_id_value=transition_input.input_id,
-        ),
-    )
-    if not decision.accepted and refusal_is_pre_persist(decision):
-        return None
-    next_state = apply(state, decision)
-    runtime.store.persist_runtime_state(next_state, runtime.cas_store)
-    if not decision.accepted:
-        return None
-    return next_state
 
 
 def _audit_session_refusal(

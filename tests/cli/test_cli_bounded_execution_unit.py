@@ -230,15 +230,11 @@ def _ready_state_with_stage_timeouts() -> tuple[RuntimeState, str]:
     source = _codex_authority_source()
     runners = cast(list[dict[str, object]], source["runner_bindings"])
     next(
-        runner
-        for runner in runners
-        if runner["id"] == "kernel_ping.taskmaster_runner"
+        runner for runner in runners if runner["id"] == "kernel_ping.taskmaster_runner"
     )["invocation_timeout_seconds"] = 3600
-    next(
-        runner
-        for runner in runners
-        if runner["id"] == "kernel_ping.worker_runner"
-    )["invocation_timeout_seconds"] = 1800
+    next(runner for runner in runners if runner["id"] == "kernel_ping.worker_runner")[
+        "invocation_timeout_seconds"
+    ] = 1800
     plan, fingerprint = _compile_codex_with_selected_authority(source)
     return _ready_state_for_plan(plan, fingerprint)
 
@@ -523,14 +519,14 @@ _MILLFORGE_CAPABILITIES = (
 )
 _MILLFORGE_RESULTS = ("BLOCKED", "TASK_COMPLETE")
 _MILLFORGE_DESCRIPTOR_SHA256 = (
-    "0bace7b27871b03cd7ffe59951953348b3da3214536178d6f447a21de4403464"
+    "420c175c5a526192f0ffe582e0205a18512df2ff6736230aea70a06613fb3fab"
 )
 _MILLFORGE_WORKER_RESULTS = ("BLOCKED", "NEEDS_REVIEW", "WORK_COMPLETE")
 _MILLFORGE_WORKER_DESCRIPTOR_SHA256 = (
-    "d6b5c75f48565b939ee4d6e30b83e3ad203764b7bda02890ca515a9bfb3318f0"
+    "ec8e80e7fef9c06b842739ca62267e1c98bd4d6edc6423f671d04c5c766655ca"
 )
 _MILLFORGE_PLAN_FINGERPRINT = (
-    "sha256:88ca236b32308fa47906da4a5aaed3d9b6ca6b95c1a90295482204375eb1d121"
+    "sha256:0a8d7159262508f3af0fa92ab50f66f22493556fa6c1c5cfb2e299239dafda59"
 )
 
 
@@ -707,7 +703,7 @@ class _RecordingMillforgeFacade:
             harness_id="millforge.base.unrestricted_agent.v1",
             harness_version=1,
             package_name="millforge",
-            package_version="0.1.0",
+            package_version="0.1.1",
             descriptor_sha256=descriptor_sha256,
             required_capability_ids=_MILLFORGE_CAPABILITIES,
             legal_terminal_result_ids=legal_terminal_results,
@@ -1105,6 +1101,12 @@ def test_restarted_active_millforge_run_uses_persisted_plan_not_current_default(
         before.default_plan_ref.authority_fingerprint
     ].selected_plan
     assert current_default.runner_bindings[0].adapter_kind == "codex"
+    persisted_binding = next(
+        binding
+        for binding in millforge_plan.runner_bindings
+        if str(binding.id) == str(active_run.runner_binding_id)
+    )
+    assert persisted_binding.adapter_kind == "millforge"
     facade = _RecordingMillforgeFacade(
         artifact_payload=task_artifact_payload(
             objective="Use the persisted Millforge plan",
@@ -1129,8 +1131,9 @@ def test_restarted_active_millforge_run_uses_persisted_plan_not_current_default(
     assert request.selected_adapter_kind == "millforge"
     assert request.dispatch_envelope.plan_fingerprint == millforge_fingerprint
     assert request.dispatch_envelope.plan_fingerprint != codex_fingerprint
-    assert request.dispatch_envelope.runner_binding_id == (
-        "kernel_ping.fake_local_runner"
+    assert request.dispatch_envelope.runner_binding_id == str(persisted_binding.id)
+    assert request.dispatch_envelope.runner_binding_id == str(
+        active_run.runner_binding_id
     )
     assert request.selected_component_pin == (
         millforge_plan.runner_bindings[0].component_pin
@@ -1313,6 +1316,9 @@ def test_restarted_millforge_descriptor_drift_refuses_before_provider_execute(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from millrace.adapters.cli.run import run_bounded_execution_unit
+    from millrace.contracts.runner import (
+        runner_session_completion_diagnostic_from_payload,
+    )
 
     state, _plan, _millforge_fingerprint, _codex_fingerprint = (
         _active_millforge_state_with_codex_default()
@@ -1336,6 +1342,7 @@ def test_restarted_millforge_descriptor_drift_refuses_before_provider_execute(
         adapter_kind=None,
         local_config=local_config,
     )
+    after = _load(runtime)
 
     assert result.code == "adapter_failure"
     assert result.adapter_error_kind == "selected_authority_refused"
@@ -1344,8 +1351,129 @@ def test_restarted_millforge_descriptor_drift_refuses_before_provider_execute(
     assert facade.evidence_calls == 0
     assert facade.execute_calls == 0
     assert facade.close_calls == 1
-    assert _load(runtime) == before
-    assert _durable_file_bytes(runtime) == before_bytes
+    assert facade.provider_requests == []
+
+    before_run = before.runs["run-millforge-taskmaster"]
+    before_activation = before.activations[before_run.activation_id]
+    after_run = after.runs[before_run.run_ref.run_id]
+    assert after.admitted_plans == before.admitted_plans
+    assert after.default_plan_ref == before.default_plan_ref
+    assert after.work_items == before.work_items
+    assert after.activations == before.activations
+    assert after_run.run_ref == before_run.run_ref
+    assert after_run.work_item_id == before_run.work_item_id
+    assert after_run.activation_id == before_run.activation_id
+    assert after_run.stage_kind_id == before_run.stage_kind_id
+    assert after_run.runner_binding_id == before_run.runner_binding_id
+    assert after_run.created_by_input_id == before_run.created_by_input_id
+    assert after_run.current_session_id is not None
+    assert after_run.last_dispatch_generation == 1
+
+    request = adapter.request
+    session = after.runner_sessions[after_run.current_session_id]
+    assert request.selected_adapter_kind == "millforge"
+    assert request.selected_runner_binding_id == str(after_run.runner_binding_id)
+    assert request.session_id == session.session_id
+    assert request.dispatch_envelope.run_id == after_run.run_ref.run_id
+    assert request.dispatch_envelope.session_id == session.session_id
+    assert request.dispatch_envelope.plan_fingerprint == str(
+        after_run.run_ref.plan_ref.authority_fingerprint
+    )
+    assert request.dispatch_envelope.runner_binding_id == str(
+        after_run.runner_binding_id
+    )
+    selected_plan = before.admitted_plans[
+        before_run.run_ref.plan_ref.authority_fingerprint
+    ].selected_plan
+    selected_binding = next(
+        binding
+        for binding in selected_plan.runner_bindings
+        if str(binding.id) == str(before_run.runner_binding_id)
+    )
+    assert request.selected_component_pin == selected_binding.component_pin
+    assert request.selected_terminal_result_mappings == (
+        selected_binding.terminal_result_mappings
+    )
+
+    assert session.run_id == after_run.run_ref.run_id
+    assert session.dispatch_generation == after_run.last_dispatch_generation
+    assert session.state == "failed"
+    assert session.cleanup_disposition == "complete"
+    completion = after.runner_session_completions[session.session_id]
+    assert completion.session_id == session.session_id
+    assert completion.run_id == session.run_id
+    assert completion.dispatch_generation == session.dispatch_generation
+    assert completion.session_fencing_token == session.session_fencing_token
+    assert completion.terminal_state == "failed"
+    assert completion.exit_kind == "error"
+    assert completion.adapter_outcome_kind == "error"
+    assert completion.adapter_error_kind == "selected_authority_refused"
+    assert completion.runner_result_evidence_digest is None
+    assert completion.cleanup_disposition == "complete"
+    assert (
+        f"cli:run.session-record-completion:{completion.completion_id}"
+        in after.receipts
+    )
+    assert completion.application_input_id not in after.receipts
+
+    diagnostic = runner_session_completion_diagnostic_from_payload(
+        json.loads(runtime.cas_store.get_bytes(completion.diagnostic_digest))
+    )
+    assert diagnostic.run_id == after_run.run_ref.run_id
+    assert diagnostic.session_id == session.session_id
+    assert diagnostic.dispatch_generation == session.dispatch_generation
+    assert diagnostic.plan_fingerprint == str(
+        after_run.run_ref.plan_ref.authority_fingerprint
+    )
+    assert diagnostic.claim_id == after_run.run_ref.claim_id
+    assert diagnostic.generation == after_run.run_ref.generation
+    assert diagnostic.fencing_token == after_run.run_ref.fencing_token
+    assert diagnostic.stage_kind_id == str(after_run.stage_kind_id)
+    assert diagnostic.graph_node_id == before_activation.graph_node_id
+    assert diagnostic.runner_binding_id == str(after_run.runner_binding_id)
+    assert diagnostic.diagnostic == {
+        "diagnostics": {"reason": "descriptor"},
+        "error_kind": "selected_authority_refused",
+    }
+
+    assert after.runner_observations == before.runner_observations == {}
+    assert after.artifacts == before.artifacts == {}
+    assert after.activation_routes == before.activation_routes == ()
+    assert after.effect_proposals == before.effect_proposals == {}
+    assert runtime.store.load_runner_session_usage(session.session_id) is None
+    attribution = runtime.store.load_runner_session_attribution_authenticated(
+        session.session_id,
+        session.dispatch_generation,
+        session.session_fencing_token,
+    )
+    assert attribution is not None
+    assert attribution.final is True
+    assert all(metric.value is None for metric in attribution.metrics.values())
+
+    after_bytes = _durable_file_bytes(runtime)
+    assert set(before_bytes).issubset(after_bytes)
+    assert (
+        after_bytes[".millrace/runtime.sqlite3"]
+        != before_bytes[".millrace/runtime.sqlite3"]
+    )
+
+    reopened = _reopen_runtime(runtime)
+    persisted = _load(reopened)
+    assert persisted.runner_sessions[session.session_id] == session
+    assert persisted.runner_session_completions[session.session_id] == completion
+    assert persisted.admitted_plans == before.admitted_plans
+    assert persisted.default_plan_ref == before.default_plan_ref
+    assert persisted.work_items == before.work_items
+    assert reopened.store.load_runner_session_usage(session.session_id) is None
+    assert (
+        reopened.store.load_runner_session_attribution_authenticated(
+            session.session_id,
+            session.dispatch_generation,
+            session.session_fencing_token,
+        )
+        == attribution
+    )
+    reopened.close()
 
 
 def test_restarted_active_millforge_claim_never_falls_back_to_current_codex_default(

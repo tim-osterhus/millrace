@@ -21,6 +21,22 @@ def handle_workspace_command(namespace: object) -> CliSuccess:
     command = str(getattr(namespace, "command", "workspace"))
     if command == "workspace.init":
         return _workspace_init(namespace)
+    if command == "workspace.identity":
+        context = open_runtime_context(namespace, command=command)
+        try:
+            identity = context.store.control_identity()
+            metadata = context.store.schema_metadata()
+        finally:
+            context.close()
+        return success_result(
+            command=command,
+            code="workspace_identity",
+            message="Durable workspace identity.",
+            data={
+                "identity": identity,
+                "schema_version": metadata["store_schema_version"],
+            },
+        )
     if command == "workspace.check":
         return _workspace_check(namespace)
     raise CliCommandError(
@@ -57,6 +73,7 @@ def _workspace_init(namespace: object) -> CliSuccess:
         context.store.persist_runtime_state(next_state, context.cas_store)
         if not decision.accepted:
             raise transition_refusal_error(command=command, decision=decision)
+        identity = context.store.control_identity()
         metadata = context.store.schema_metadata()
     finally:
         context.close()
@@ -70,6 +87,7 @@ def _workspace_init(namespace: object) -> CliSuccess:
             "db_path": str(context.paths.db_path),
             "cas_path": str(context.paths.cas_path),
             "schema_version": metadata["store_schema_version"],
+            "identity": identity,
             "initialized": was_empty,
             "transition_disposition": decision.disposition,
             "input_id": input_id_value,
@@ -78,12 +96,13 @@ def _workspace_init(namespace: object) -> CliSuccess:
 
 
 def _workspace_check(namespace: object) -> CliSuccess:
-    command = "workspace.check"
+    command = str(getattr(namespace, "command", "workspace.check"))
     paths = workspace_paths(namespace)
     if not paths.db_path.exists():
         raise store_not_initialized(command, paths)
     context = open_runtime_context(namespace, command=command)
     try:
+        identity = context.store.control_identity()
         metadata = context.store.schema_metadata()
         state = context.store.load_runtime_state(context.cas_store)
     finally:
@@ -102,6 +121,7 @@ def _workspace_check(namespace: object) -> CliSuccess:
             "db_path": str(paths.db_path),
             "cas_path": str(paths.cas_path),
             "schema_version": metadata["store_schema_version"],
+            "identity": identity,
             "initialized": True,
             "admitted_plan_count": len(state.admitted_plans),
             "default_plan_fingerprint": default_fingerprint,

@@ -44,6 +44,7 @@ source-include = [
     "docs/how-millrace-works.md",
     "docs/runner-session-architecture.md",
     "docs/daemon-lifecycle.md",
+    "docs/core-control-candidate.md",
     "docs/workflow-packages.md",
     "docs/millforge-runner.md",
     "docs/codex-runner.md",

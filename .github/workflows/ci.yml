@@ -6,7 +6,10 @@ on:
 
 jobs:
   validation:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Check out repository
@@ -32,7 +35,10 @@ jobs:
           python -c 'import uv_build'
 
       - name: Run tests
-        run: uv run --frozen pytest -q
+        run: |
+          mkdir -m 700 "$HOME/mrc-tests"
+          export MILLRACE_TEST_SOCKET_ROOT="$HOME/mrc-tests"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 uv run --frozen pytest -q
 
       - name: Run Ruff
         run: uv run --frozen ruff check src tests

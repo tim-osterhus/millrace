@@ -21,15 +21,14 @@ from millrace.contracts.transition import (
     RecordRunnerSessionCompletion,
     RequestRunnerSessionCancellation,
 )
+from millrace.kernel.run_controls import run_hold_refusal
 
 RUNNER_SESSION_TRANSITIONS = {
     "created": frozenset({"starting", "cancellation_requested", "failed"}),
     "starting": frozenset(
         {"running", "completed", "failed", "cancellation_requested", "lost"}
     ),
-    "running": frozenset(
-        {"completed", "failed", "cancellation_requested", "lost"}
-    ),
+    "running": frozenset({"completed", "failed", "cancellation_requested", "lost"}),
     "cancellation_requested": frozenset(
         {"terminating", "completed", "interrupted", "failed", "lost"}
     ),
@@ -80,6 +79,9 @@ def create_runner_session_refusal(
     state: RuntimeState,
     transition_input: CreateRunnerSession,
 ) -> str | None:
+    held = run_hold_refusal(state, transition_input.run_ref.run_id)
+    if held is not None:
+        return held
     run = state.runs.get(transition_input.run_ref.run_id)
     if run is None or run.run_ref != transition_input.run_ref:
         return "runner_session_authority_mismatch"
@@ -169,6 +171,9 @@ def attach_runner_session_context_refusal(
     state: RuntimeState,
     transition_input: AttachRunnerSessionContext,
 ) -> str | None:
+    held = run_hold_refusal(state, transition_input.run_ref.run_id)
+    if held is not None:
+        return held
     session = state.runner_sessions.get(transition_input.session_id)
     expected_state = session.state if session is not None else "created"
     refusal = session_authority_refusal(
@@ -211,6 +216,9 @@ def advance_runner_session_refusal(
     state: RuntimeState,
     transition_input: AdvanceRunnerSession,
 ) -> str | None:
+    held = run_hold_refusal(state, transition_input.run_ref.run_id)
+    if held is not None:
+        return held
     refusal = session_authority_refusal(
         state,
         run_ref=transition_input.run_ref,
@@ -257,16 +265,12 @@ def advance_runner_session_refusal(
         and session.durable_locator_digest is not None
     )
     locator_update = starting_locator_enrichment or active_locator_refresh
-    if (
-        not locator_update
-        and (
-            not is_legal_runner_session_transition(
-                transition_input.expected_state,
-                transition_input.next_state,
-            )
-            or transition_input.next_state
-            in {"completed", "interrupted", "failed", "lost"}
+    if not locator_update and (
+        not is_legal_runner_session_transition(
+            transition_input.expected_state,
+            transition_input.next_state,
         )
+        or transition_input.next_state in {"completed", "interrupted", "failed", "lost"}
     ):
         return "invalid_runner_session_transition"
     if transition_input.durable_locator_digest is not None and (
@@ -366,10 +370,10 @@ def cancellation_request_refusal(
         transition_input.expected_state != "cancellation_requested"
         and not preserving_terminating_secondary
         and (
-        not is_legal_runner_session_transition(
-            transition_input.expected_state,
-            "cancellation_requested",
-        )
+            not is_legal_runner_session_transition(
+                transition_input.expected_state,
+                "cancellation_requested",
+            )
         )
     ):
         return "invalid_runner_session_transition"
@@ -557,6 +561,27 @@ def completion_refusal(
     state: RuntimeState,
     transition_input: RecordRunnerSessionCompletion,
 ) -> str | None:
+    held = run_hold_refusal(state, transition_input.run_ref.run_id)
+    control = state.run_execution_controls.get(transition_input.run_ref.run_id)
+    native_attempt = (
+        None
+        if control is None or control.native is None
+        else control.native.get("attempt")
+    )
+    completion = transition_input.completion
+    retained_native_attempt = (
+        native_attempt is not None
+        and native_attempt.get("state") == "running"
+        and native_attempt.get("session_id") == completion.session_id
+        and native_attempt.get("dispatch_generation") == completion.dispatch_generation
+        and native_attempt.get("session_fencing_token")
+        == completion.session_fencing_token
+        and control is not None
+        and control.state
+        in {"paused", "pause_pending", "resume_pending", "unknown", "recover_pending"}
+    )
+    if held is not None and not retained_native_attempt:
+        return "run_aftermath_unknown"
     completion = transition_input.completion
     run = state.runs.get(transition_input.run_ref.run_id)
     if (

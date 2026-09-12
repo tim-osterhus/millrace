@@ -33,6 +33,7 @@ PUBLIC_DOCS = {
     "docs/how-millrace-works.md",
     "docs/runner-session-architecture.md",
     "docs/daemon-lifecycle.md",
+    "docs/core-control-candidate.md",
     "docs/workflow-packages.md",
     "docs/millforge-runner.md",
     "docs/codex-runner.md",
@@ -327,6 +328,7 @@ def test_public_docs_are_self_contained_and_links_are_release_safe() -> None:
     )
     canonical_root = "https://github.com/tim-osterhus/millrace/blob/main/"
     current_relative_docs = {
+        "docs/core-control-candidate.md",
         "docs/runner-session-architecture.md",
         "docs/daemon-lifecycle.md",
     }

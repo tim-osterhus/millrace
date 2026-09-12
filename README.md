@@ -14,11 +14,11 @@
 
 Millrace is a durable runtime for compiler-validated agent workflows.
 
-This checkout is the **unreleased v0.22.3 candidate**. The published
-`millrace` bundle remains v0.22.2; a v0.22.3 bundle is not yet available.
-See [installation and candidate qualification](docs/getting-started.md).
-Existing v0.22.2 workspaces use store schema 8; this candidate requires fresh
-schema-10 state and provides **no in-place migration**. Finish or retire old
+**Millrace v0.22.3** provides governed context and durable public controls.
+Install the exact `millrace==0.22.3` bundle on Python 3.12 or newer; see
+[Getting Started](docs/getting-started.md).
+Existing v0.22.2 workspaces use store schema 8; this release requires fresh
+schema-11 state and provides **no in-place migration**. Finish or retire old
 work with its matching runtime, preserve its workspace, and initialize a new
 one. See [compatibility](docs/v0.22-compatibility.md).
 
@@ -72,7 +72,7 @@ Millrace is **agent-first**. Give this repository to a capable local agent:
 
 > Install Millrace for me in this workspace using
 > https://github.com/tim-osterhus/millrace. Read its README and
-> [published instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.2/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
+> [published instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.3/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
 > first. Check the CLI, workspace, workflows, and runners. Report what you
 > installed and what you need next. Do not store credentials in workflow
 > assets or start unattended work.
@@ -93,6 +93,9 @@ Manual setup is documented in
 - Each stage receives only its selected assets and context.
 - Model output is evidence, not runtime truth.
 - Retries, reroutes, pauses, and operator decisions remain on record.
+- Exact run pause/resume preserves authority and budgets for supported
+  unstarted/native states; pending acceptance is distinct from verified pause.
+  See [control boundaries](docs/core-control-candidate.md).
 - Operator dispatch suspension gates only new claim acceptance. Already
   accepted or active work keeps its durable authority.
 - Queue cancellation closes eligible workflow work through the normal audited
@@ -101,8 +104,8 @@ Manual setup is documented in
 
 ## Governed Context
 
-Millrace v0.22.3 is an unreleased general governed-context/runtime-integrity
-candidate, not a campaign-specific product. Compiled bindings distinguish
+Millrace v0.22.3 is a general governed-context/runtime-integrity
+release. Compiled bindings distinguish
 required files from catalog-only discoverable material. Catalog content stays in
 CAS until an exact, bounded `millrace context select` request hydrates a
 read-only selection.
@@ -141,7 +144,8 @@ These are package data, not hard-coded kernel behavior.
 [Migrating from v0.21](https://github.com/tim-osterhus/millrace/blob/main/docs/migrating-from-v0.21.md) ·
 [v0.22 support](https://github.com/tim-osterhus/millrace/blob/main/docs/v0.22-compatibility.md)
 
-Millrace v0.22 is local and single-operator. It supports Linux, macOS, and WSL.
+Millrace v0.22 is local and single-operator. Foreground execution supports Linux, macOS, and WSL. The new public daemon
+lifecycle controls currently qualify process identity on macOS only.
 
 ## License
 

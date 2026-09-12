@@ -252,16 +252,14 @@ def test_kernel_ping_authors_current_millforge_default_authority() -> None:
             "stages": ("kernel_ping.taskmaster",),
             "results": ("BLOCKED", "TASK_COMPLETE"),
             "digest": (
-                "0bace7b27871b03cd7ffe59951953348b3da3214536178d6f"
-                "447a21de4403464"
+                "420c175c5a526192f0ffe582e0205a18512df2ff6736230aea70a06613fb3fab"
             ),
         },
         "kernel_ping.worker_runner": {
             "stages": ("kernel_ping.worker",),
             "results": ("BLOCKED", "NEEDS_REVIEW", "WORK_COMPLETE"),
             "digest": (
-                "d6b5c75f48565b939ee4d6e30b83e3ad203764b7bda0289"
-                "0ca515a9bfb3318f0"
+                "ec8e80e7fef9c06b842739ca62267e1c98bd4d6edc6423f671d04c5c766655ca"
             ),
         },
     }
@@ -286,7 +284,7 @@ def test_kernel_ping_authors_current_millforge_default_authority() -> None:
             "component_id": "millforge-base",
             "component_version": "2",
             "provider_distribution": "millforge",
-            "provider_version": "0.1.0",
+            "provider_version": "0.1.1",
             "descriptor_media_type": "application/json",
             "descriptor_sha256": authority["digest"],
             "required_capability_ids": selected_capabilities[1:],
@@ -534,7 +532,7 @@ def test_kernel_ping_compile_accepts_explicit_millforge_component_authority() ->
                 "component_id": "millforge-base",
                 "component_version": "1",
                 "provider_distribution": "millforge",
-                "provider_version": "0.1.0",
+                "provider_version": "0.1.1",
                 "descriptor_media_type": "application/json",
                 "descriptor_sha256": "a" * 64,
                 "required_capability_ids": ("terminal.intent",),

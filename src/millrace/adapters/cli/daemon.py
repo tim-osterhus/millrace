@@ -15,6 +15,8 @@ from types import FrameType, SimpleNamespace
 from typing import Any, TextIO
 from uuid import uuid4
 
+from millrace.adapters.cli import session_cancellation as cancellation
+from millrace.adapters.cli import session_coordinator as sessions
 from millrace.adapters.cli.context import (
     CliCommandError,
     CliWorkspacePaths,
@@ -26,6 +28,7 @@ from millrace.adapters.cli.context import (
 from millrace.adapters.cli.context import (
     open_runtime_context as _open_runtime_context,
 )
+from millrace.adapters.cli.daemon_control import ACTIVE_LIFECYCLE, DaemonLifecycle
 from millrace.adapters.cli.lifecycle import run_lifecycle_transition_once
 from millrace.adapters.cli.output import (
     CliSuccess,
@@ -35,6 +38,7 @@ from millrace.adapters.cli.output import (
 )
 from millrace.adapters.cli.run import (
     BoundedExecutionUnitResult,
+    classify_daemon_startup,
     load_adapter_local_config,
     reconcile_pending_runner_completions,
     reconcile_pending_runner_sessions,
@@ -53,7 +57,11 @@ from millrace.contracts.state import (
     RunnerSessionRecord,
     RuntimeState,
 )
-from millrace.substrate.errors import SubstrateError
+from millrace.substrate.errors import (
+    ControlOperationError,
+    StorageIntegrityError,
+    SubstrateError,
+)
 
 _COMMAND = "run.daemon"
 _LOCK_FILENAME = "daemon.lock"
@@ -175,6 +183,8 @@ class _SignalStop:
         self._event = threading.Event()
         self._previous: dict[int, _SignalHandler] = {}
         self._enabled = False
+        self._signal_received = False
+        self._signal_recorded = False
 
     def __enter__(self) -> _SignalStop:
         if threading.current_thread() is not threading.main_thread():
@@ -191,20 +201,44 @@ class _SignalStop:
         _exc: object,
         _traceback: object,
     ) -> None:
-        if not self._enabled:
-            return
-        for signum, handler in self._previous.items():
-            signal.signal(signum, handler)
+        try:
+            if self._enabled:
+                for signum, handler in self._previous.items():
+                    signal.signal(signum, handler)
+        finally:
+            # Restoring handlers closes this receiver before its final durable drain.
+            # Every terminal return/exception leaves this context before finalization.
+            self._persist_received_signal()
 
     def _handle(self, _signum: int, _frame: FrameType | None) -> None:
+        self._signal_received = True
         self._event.set()
 
     def wait(self, seconds: float) -> bool:
         return self._event.wait(seconds)
 
+    def _persist_received_signal(self) -> None:
+        lifecycle = ACTIVE_LIFECYCLE.get()
+        if (
+            self._signal_received
+            and not self._signal_recorded
+            and lifecycle is not None
+            and lifecycle.scope
+        ):
+            lifecycle.signal_stop()
+            self._signal_recorded = True
+
     @property
     def requested(self) -> bool:
-        return self._event.is_set()
+        lifecycle = ACTIVE_LIFECYCLE.get()
+        if lifecycle is not None and lifecycle.scope:
+            lifecycle.stop_requested()
+        # Snapshot the event before checking received signals: returning a newly
+        # signaled event can never outrun this durable drain. A later signal is
+        # caught by the next observation or the context's terminal drain.
+        requested = self._event.is_set()
+        self._persist_received_signal()
+        return requested
 
 
 def handle_daemon_command(namespace: object) -> CliSuccess:
@@ -214,7 +248,31 @@ def handle_daemon_command(namespace: object) -> CliSuccess:
         if options.monitor == "basic" and not bool(getattr(namespace, "json", False))
         else None
     )
-    summary = run_daemon_loop(options, progress_stream=progress_stream)
+    # Exact process birth/peer observation is currently macOS-only. Other
+    # platforms retain foreground execution without advertising native control.
+    lifecycle = (
+        DaemonLifecycle(
+            options.paths,
+            str(getattr(namespace, "launch_correlation_id", None) or uuid4()),
+        )
+        if sys.platform == "darwin"
+        else None
+    )
+    token = ACTIVE_LIFECYCLE.set(lifecycle)
+    try:
+        summary = run_daemon_loop(options, progress_stream=progress_stream)
+    except CliCommandError:
+        raise
+    except (OSError, ValueError, ControlOperationError) as exc:
+        raise CliCommandError(
+            command=_COMMAND,
+            code="daemon_lifecycle_refused",
+            message="Daemon lifecycle could not establish compatible owner authority.",
+            exit_code=ExitCode.DOMAIN_REFUSAL,
+            details={"status": "unknown", "ready": False},
+        ) from exc
+    finally:
+        ACTIVE_LIFECYCLE.reset(token)
     if _summary_is_success(summary):
         return success_result(
             command=_COMMAND,
@@ -248,8 +306,7 @@ def handle_budget_stop_command(namespace: object) -> CliSuccess:
             command=command,
             code="invalid_budget_id",
             message=(
-                "--budget-id must be at most "
-                f"{_BUDGET_STOP_ID_MAX_BYTES} UTF-8 bytes."
+                f"--budget-id must be at most {_BUDGET_STOP_ID_MAX_BYTES} UTF-8 bytes."
             ),
             exit_code=ExitCode.CLI_USAGE,
             details={},
@@ -288,8 +345,7 @@ def handle_budget_stop_command(namespace: object) -> CliSuccess:
                 },
             )
         replayed = (
-            epoch.status == "stopped"
-            and epoch.terminal_reason == "operator_completed"
+            epoch.status == "stopped" and epoch.terminal_reason == "operator_completed"
         )
         if epoch.status != "active" and not replayed:
             raise _budget_stop_refusal(
@@ -315,6 +371,7 @@ def handle_budget_stop_command(namespace: object) -> CliSuccess:
             except ValueError as exc:
                 raise _budget_projection_refusal(command, budget_id, exc) from exc
         else:
+
             def validate_budget_stop(
                 checked_runtime: OpenRuntimeContext,
                 checked_state: object,
@@ -494,9 +551,7 @@ def _validate_budget_stop_preconditions(
                     "cleanup_disposition": session.cleanup_disposition,
                 },
             )
-        completion = getattr(state, "runner_session_completions", {}).get(
-            session_id
-        )
+        completion = getattr(state, "runner_session_completions", {}).get(session_id)
         if completion is None:
             raise _budget_stop_refusal(
                 command,
@@ -717,15 +772,26 @@ def run_daemon_loop(
         preflight = _preflight_state_load(options)
         if preflight is not None:
             return preflight
+        lifecycle = ACTIVE_LIFECYCLE.get()
+        if lifecycle is not None:
+            lifecycle.initialize()
         budget = _prepare_budget_epoch(options, now=int(wall_clock()))
-        return _run_locked_loop(
+        result = _run_locked_loop(
             options,
             progress_stream=progress_stream,
             wall_clock=wall_clock,
             budget=budget,
         )
+        return result
     finally:
-        daemon_lock.release()
+        lifecycle = ACTIVE_LIFECYCLE.get()
+        try:
+            if lifecycle is not None and lifecycle.scope:
+                lifecycle.finish(
+                    result.stopped_reason if "result" in locals() else "daemon_failed"
+                )
+        finally:
+            daemon_lock.release()
 
 
 def open_runtime_context(namespace: object, *, command: str) -> OpenRuntimeContext:
@@ -735,7 +801,11 @@ def open_runtime_context(namespace: object, *, command: str) -> OpenRuntimeConte
             db=str(namespace.db_path),
             cas=str(namespace.cas_path),
         )
-    return _open_runtime_context(namespace, command=command)
+    runtime = _open_runtime_context(namespace, command=command)
+    lifecycle = ACTIVE_LIFECYCLE.get()
+    if lifecycle is not None and lifecycle.scope:
+        runtime.store.daemon_scope = lifecycle.scope
+    return runtime
 
 
 def _run_locked_loop(
@@ -745,231 +815,249 @@ def _run_locked_loop(
     wall_clock: Callable[[], float],
     budget: DaemonBudgetEpochRecord | None,
 ) -> DaemonRunSummary:
-    iterations = 0
-    units_started = 0
-    units_succeeded = 0
-    units_refused = 0
-    adapter_failures = 0
-    idle_iterations = 0
-    lifecycle_transitions_applied = 0
+    owners: dict[str, sessions._RetainedOwner] = {}
+    token = sessions._RETAINED_OWNERS.set(owners)
+    iterations = units_succeeded = units_refused = adapter_failures = 0
+    idle_iterations = lifecycle_transitions_applied = 0
+    started_runs: set[str] = set()
     last_result: dict[str, object] = {}
     last_handled_run_id: str | None = None
+    diagnostics: list[dict[str, object]] = []
+    stopped_reason: str | None = None
+    budget_reason: str | None = None
 
-    with _SignalStop() as stop:
-
-        def wall_expired() -> bool:
-            return (
-                budget is not None
-                and budget.wall_deadline is not None
-                and int(wall_clock()) >= budget.wall_deadline
-            )
-
-        _account_budgeted_starts(options)
-        recovered_exhaustion = _budget_exhaustion_reason(options)
-        if recovered_exhaustion is not None:
-            _finish_budget(
-                options,
-                observed_at=int(wall_clock()),
-                reason=recovered_exhaustion,
-            )
-        startup = _reconcile_startup_sessions(
-            options,
-            daemon_stop_requested=lambda: stop.requested or wall_expired(),
-            max_timeout_seconds=_remaining_wall_seconds(budget, wall_clock),
+    def wall_expired() -> bool:
+        return (
+            budget is not None
+            and budget.wall_deadline is not None
+            and int(wall_clock()) >= budget.wall_deadline
         )
-        if startup.code != "no_runner_session_reconciliation":
-            last_result = _result_data(startup)
-            last_handled_run_id = _result_run_id(startup)
-            stopped_reason = _non_idle_stop_reason(startup)
-            if stopped_reason is not None:
-                return _summary(
-                    options,
-                    iterations=0,
-                    units_started=0,
-                    units_succeeded=0,
-                    units_refused=0,
-                    adapter_failures=(
-                        1 if startup.code in _RUNNER_FAILURE_REASONS else 0
-                    ),
-                    idle_iterations=0,
-                    lifecycle_transitions_applied=0,
-                    stopped_reason=stopped_reason,
-                    last_result=last_result,
-                    last_handled_run_id=last_handled_run_id,
-                    diagnostics=tuple(dict(item) for item in startup.diagnostics),
-                )
-        if wall_expired():
-            _finish_budget(
-                options,
-                observed_at=int(wall_clock()),
-                reason="wall_time_exhausted",
+
+    def record(result: BoundedExecutionUnitResult) -> None:
+        nonlocal last_result, last_handled_run_id, units_succeeded
+        nonlocal units_refused, adapter_failures, idle_iterations
+        nonlocal lifecycle_transitions_applied
+        last_result = _result_data(result)
+        result_run_id = _result_run_id(result)
+        if result_run_id is not None:
+            last_handled_run_id = result_run_id
+        if _result_started(result):
+            started_runs.add(result.run_id or str(result.activation_id))
+        if result.code == "observation_accepted" and result.accepted:
+            units_succeeded += 1
+        elif result.code in {"no_ready_work", "runner_session_waiting"}:
+            idle_iterations += 1
+        elif result.code == "lifecycle_transition_applied":
+            lifecycle_transitions_applied += 1
+        elif result.code in {"asset_material_refused", "observation_refused"}:
+            units_refused += 1
+        elif result.code in _RUNNER_FAILURE_REASONS:
+            adapter_failures += 1
+        diagnostics.extend(dict(item) for item in result.diagnostics)
+        if options.monitor == "basic" and progress_stream is not None:
+            _render_basic_progress(
+                stream=progress_stream,
+                iteration=iterations,
+                result=result,
             )
-            return _summary(
-                options,
-                stopped_reason="budget_exhausted",
-                last_result=last_result,
-                last_handled_run_id=last_handled_run_id,
-            )
-        while options.max_ticks is None or iterations < options.max_ticks:
-            exhausted = _budget_exhaustion_reason(options)
-            if exhausted is not None:
-                _finish_budget(
-                    options,
-                    observed_at=int(wall_clock()),
-                    reason=exhausted,
-                )
-                return _summary(
-                    options,
-                    iterations=iterations,
-                    units_started=units_started,
-                    units_succeeded=units_succeeded,
-                    units_refused=units_refused,
-                    adapter_failures=adapter_failures,
-                    idle_iterations=idle_iterations,
-                    lifecycle_transitions_applied=lifecycle_transitions_applied,
-                    stopped_reason="budget_exhausted",
-                    last_result=last_result,
-                    last_handled_run_id=last_handled_run_id,
-                )
-            result = _run_one_bounded_unit(
-                options,
-                daemon_stop_requested=lambda: stop.requested or wall_expired(),
-                max_timeout_seconds=_remaining_wall_seconds(budget, wall_clock),
-            )
-            iterations += 1
-            last_result = _result_data(result)
-            result_run_id = _result_run_id(result)
-            if result_run_id is not None:
-                last_handled_run_id = result_run_id
 
-            if _result_started(result):
-                units_started += 1
-            if result.code == "observation_accepted" and result.accepted:
-                units_succeeded += 1
-            elif result.code in {"no_ready_work", "runner_session_waiting"}:
-                idle_iterations += 1
-            elif result.code == "lifecycle_transition_applied":
-                lifecycle_transitions_applied += 1
-            elif result.code in {"asset_material_refused", "observation_refused"}:
-                units_refused += 1
-            elif result.code in _RUNNER_FAILURE_REASONS:
-                adapter_failures += 1
-
-            if options.monitor == "basic" and progress_stream is not None:
-                _render_basic_progress(
-                    stream=progress_stream,
-                    iteration=iterations,
-                    result=result,
+    def service(*, drain: bool) -> None:
+        nonlocal stopped_reason
+        # A fresh context for each turn; no retained object owns its connection.
+        for session_id, owner in tuple(owners.items()):
+            runtime: OpenRuntimeContext | None = None
+            try:
+                runtime = open_runtime_context(options.paths, command=_COMMAND)
+                result = sessions._step_retained_owner(
+                    runtime,
+                    owner,
+                    stop_requested=drain,
                 )
-
-            if (
-                wall_expired()
-                and result.adapter_error_kind == "cancelled"
-                and result.code != "runner_session_orphan_risk"
-            ):
-                _finish_budget(
-                    options,
-                    observed_at=int(wall_clock()),
-                    reason="wall_time_exhausted",
-                )
-                return _summary(
-                    options,
-                    iterations=iterations,
-                    units_started=units_started,
-                    units_succeeded=units_succeeded,
-                    units_refused=units_refused,
-                    adapter_failures=adapter_failures,
-                    idle_iterations=idle_iterations,
-                    lifecycle_transitions_applied=lifecycle_transitions_applied,
-                    stopped_reason="budget_exhausted",
-                    last_result=last_result,
-                    last_handled_run_id=last_handled_run_id,
-                )
-
-            if (
-                stop.requested
-                and result.adapter_error_kind == "cancelled"
-                and result.code != "runner_session_orphan_risk"
-            ):
-                return _summary(
-                    options,
-                    iterations=iterations,
-                    units_started=units_started,
-                    units_succeeded=units_succeeded,
-                    units_refused=units_refused,
-                    adapter_failures=adapter_failures,
-                    idle_iterations=idle_iterations,
-                    lifecycle_transitions_applied=lifecycle_transitions_applied,
-                    stopped_reason="signal",
-                    last_result=last_result,
-                    last_handled_run_id=last_handled_run_id,
-                )
-
-            stopped_reason = _non_idle_stop_reason(result)
-            if stopped_reason is not None:
-                return _summary(
-                    options,
-                    iterations=iterations,
-                    units_started=units_started,
-                    units_succeeded=units_succeeded,
-                    units_refused=units_refused,
-                    adapter_failures=adapter_failures,
-                    idle_iterations=idle_iterations,
-                    lifecycle_transitions_applied=lifecycle_transitions_applied,
-                    stopped_reason=stopped_reason,
-                    last_result=last_result,
-                    last_handled_run_id=last_handled_run_id,
-                    diagnostics=tuple(dict(item) for item in result.diagnostics),
-                )
-
-            if stop.requested:
-                return _summary(
-                    options,
-                    iterations=iterations,
-                    units_started=units_started,
-                    units_succeeded=units_succeeded,
-                    units_refused=units_refused,
-                    adapter_failures=adapter_failures,
-                    idle_iterations=idle_iterations,
-                    lifecycle_transitions_applied=lifecycle_transitions_applied,
-                    stopped_reason="signal",
-                    last_result=last_result,
-                    last_handled_run_id=last_handled_run_id,
-                )
-
-            if options.max_ticks is not None and iterations >= options.max_ticks:
-                break
-            if (
-                result.code in {"no_ready_work", "runner_session_waiting"}
-                and options.idle_sleep_seconds > 0
-            ):
-                if stop.wait(options.idle_sleep_seconds):
-                    return _summary(
-                        options,
-                        iterations=iterations,
-                        units_started=units_started,
-                        units_succeeded=units_succeeded,
-                        units_refused=units_refused,
-                        adapter_failures=adapter_failures,
-                        idle_iterations=idle_iterations,
-                        lifecycle_transitions_applied=lifecycle_transitions_applied,
-                        stopped_reason="signal",
-                        last_result=last_result,
-                        last_handled_run_id=last_handled_run_id,
+            except Exception as exc:
+                if isinstance(exc, (StorageIntegrityError, ControlOperationError)) and (
+                    str(exc).startswith("stale runtime state ")
+                    or str(exc) == "stale_runtime_controls"
+                ):
+                    # Retain the exact consumed outcome and reload next turn.
+                    continue
+                diagnostics.append(_exception_diagnostic(exc))
+                stopped_reason = stopped_reason or "session_reconciliation_required"
+                if runtime is not None:
+                    result = cancellation._emergency_cleanup_live_handle(
+                        runtime,
+                        run_ref=owner.run_ref,
+                        session=owner.session,
+                        handle=owner.handle,
                     )
+                else:
+                    # A failed store open cannot leave another accepted owner
+                    # unvisited. No durable completion is claimed in this case.
+                    cancellation._call_cancellation_operation(
+                        "cooperative_cancel",
+                        owner.handle.request_cancel,
+                    )
+                    cancellation._call_cancellation_operation(
+                        "terminate",
+                        owner.handle.terminate,
+                    )
+                    cancellation._call_cancellation_operation("kill", owner.handle.kill)
+                    cleanup = cancellation._call_cleanup(owner.handle.cleanup)
+                    result = sessions.SessionExecutionResult(
+                        "runner_session_orphan_risk"
+                        if cleanup.disposition == "orphan_risk"
+                        else "session_reconciliation_required",
+                    )
+            finally:
+                if runtime is not None:
+                    runtime.close()
+            if result is None:
+                continue
+            del owners[session_id]
+            envelope = owner.request.dispatch_envelope
+            bounded = BoundedExecutionUnitResult(
+                code=result.code,
+                accepted=result.accepted,
+                activation_id=envelope.activation_id,
+                run_id=owner.run_ref.run_id,
+                claim_id=envelope.claim_id,
+                fencing_token=envelope.fencing_token,
+                adapter_error_kind=result.adapter_error_kind,
+                observation_refusal_reason=result.observation_refusal_reason,
+                transition_disposition=result.transition_disposition,
+            )
+            record(bounded)
+            reason = _non_idle_stop_reason(bounded)
+            if (
+                reason == "runner_session_orphan_risk"
+                or (
+                    stopped_reason != "runner_session_orphan_risk"
+                    and reason
+                    in {
+                        "session_reconciliation_required",
+                        "runner_session_reconciliation_contradiction",
+                    }
+                )
+                or (reason is not None and stopped_reason is None)
+            ):
+                stopped_reason = reason
 
+    try:
+        with _SignalStop() as stop:
+            lifecycle = ACTIVE_LIFECYCLE.get()
+            if lifecycle is not None:
+                runtime = open_runtime_context(options.paths, command=_COMMAND)
+                try:
+                    readiness = classify_daemon_startup(
+                        runtime,
+                        local_config=options.local_config,
+                        adapter_kind=options.adapter_kind,
+                    )
+                finally:
+                    runtime.close()
+                lifecycle.ready(readiness, stop._event)
+                if readiness == "not_ready":
+                    stopped_reason = "ready_state_refused"
+            try:
+                if stopped_reason is None:
+                    _account_budgeted_starts(options)
+                    startup = _reconcile_startup_sessions(
+                        options,
+                        daemon_stop_requested=lambda: stop.requested or wall_expired(),
+                        max_timeout_seconds=_remaining_wall_seconds(budget, wall_clock),
+                        driving_budget_clock=wall_clock,
+                    )
+                    if startup.code != "no_runner_session_reconciliation":
+                        record(startup)
+                        stopped_reason = _non_idle_stop_reason(startup)
+                while stopped_reason is None:
+                    if stop.requested:
+                        stopped_reason = "signal"
+                        break
+                    if wall_expired():
+                        budget_reason = "wall_time_exhausted"
+                        stopped_reason = "budget_exhausted"
+                        break
+                    service(drain=False)
+                    if stopped_reason is not None:
+                        break
+                    budget_reason = _budget_exhaustion_reason(options)
+                    if budget_reason is not None and (
+                        not owners
+                        or budget_reason
+                        not in {"invocation_limit_exhausted", "token_limit_exhausted"}
+                    ):
+                        stopped_reason = "budget_exhausted"
+                        break
+                    if (
+                        options.max_ticks is not None
+                        and iterations >= options.max_ticks
+                    ):
+                        # A foreground unit still runs to terminal/verified hold.
+                        if not owners or all(owner.held for owner in owners.values()):
+                            stopped_reason = "max_ticks"
+                            break
+                    elif budget_reason is None and all(
+                        owner.held for owner in owners.values()
+                    ):
+                        result = _run_one_bounded_unit(
+                            options,
+                            daemon_stop_requested=lambda: (
+                                stop.requested or wall_expired()
+                            ),
+                            max_timeout_seconds=_remaining_wall_seconds(
+                                budget, wall_clock
+                            ),
+                            driving_budget_clock=wall_clock,
+                        )
+                        iterations += 1
+                        record(result)
+                        stopped_reason = _non_idle_stop_reason(result)
+                        if stopped_reason is not None:
+                            break
+                        if not owners and result.code not in {
+                            "no_ready_work",
+                            "runner_session_waiting",
+                        }:
+                            continue
+                    if (
+                        not owners
+                        and options.max_ticks is not None
+                        and iterations >= options.max_ticks
+                    ):
+                        continue
+                    wait_seconds = (
+                        sessions._POLL_INTERVAL_SECONDS
+                        if owners
+                        else options.idle_sleep_seconds
+                    )
+                    if wait_seconds > 0 and stop.wait(wait_seconds):
+                        _ = stop.requested
+                        stopped_reason = "signal"
+                        break
+            finally:
+                # Every normal exit and exception settles/cleans every accepted
+                # owner before lifecycle.finish and lock release in the caller.
+                while owners:
+                    service(drain=True)
+                    if owners:
+                        time.sleep(cancellation._POLL_INTERVAL_SECONDS)
+    finally:
+        sessions._RETAINED_OWNERS.reset(token)
+    if stopped_reason == "budget_exhausted" and budget_reason is not None:
+        _finish_budget(options, observed_at=int(wall_clock()), reason=budget_reason)
     return _summary(
         options,
         iterations=iterations,
-        units_started=units_started,
+        units_started=len(started_runs),
         units_succeeded=units_succeeded,
         units_refused=units_refused,
         adapter_failures=adapter_failures,
         idle_iterations=idle_iterations,
         lifecycle_transitions_applied=lifecycle_transitions_applied,
-        stopped_reason="max_ticks",
+        stopped_reason=stopped_reason or "max_ticks",
         last_result=last_result,
         last_handled_run_id=last_handled_run_id,
+        diagnostics=tuple(diagnostics),
     )
 
 
@@ -978,7 +1066,10 @@ def _reconcile_startup_sessions(
     *,
     daemon_stop_requested: Callable[[], bool],
     max_timeout_seconds: float | None = None,
+    driving_budget_clock: Callable[[], float] | None = None,
 ) -> BoundedExecutionUnitResult:
+    if options.activation_id is not None:
+        return BoundedExecutionUnitResult(code="no_runner_session_reconciliation")
     runtime = open_runtime_context(options.paths, command=_COMMAND)
     try:
         return reconcile_pending_runner_sessions(
@@ -986,11 +1077,8 @@ def _reconcile_startup_sessions(
             adapter_kind=options.adapter_kind,
             local_config=options.local_config,
             actor_id=options.actor_id,
-            on_start_reserved=(
-                None
-                if options.budget_id is None
-                else lambda session: _reserve_budgeted_start(options, session)
-            ),
+            driving_budget_id=options.budget_id,
+            driving_budget_clock=driving_budget_clock,
             on_accepted_start=(
                 None
                 if options.budget_id is None
@@ -1008,9 +1096,11 @@ def _run_one_bounded_unit(
     *,
     daemon_stop_requested: Callable[[], bool],
     max_timeout_seconds: float | None = None,
+    driving_budget_clock: Callable[[], float] | None = None,
 ) -> BoundedExecutionUnitResult:
     runtime = open_runtime_context(options.paths, command=_COMMAND)
     try:
+        runtime.store.admit_daemon_unit()
         waiting_completion = None
         if options.activation_id is None:
             lifecycle_result = run_lifecycle_transition_once(runtime)
@@ -1034,11 +1124,8 @@ def _run_one_bounded_unit(
             adapter_kind=options.adapter_kind,
             local_config=options.local_config,
             actor_id=options.actor_id,
-            on_start_reserved=(
-                None
-                if options.budget_id is None
-                else lambda session: _reserve_budgeted_start(options, session)
-            ),
+            driving_budget_id=options.budget_id,
+            driving_budget_clock=driving_budget_clock,
             on_accepted_start=(
                 None
                 if options.budget_id is None
@@ -1050,6 +1137,12 @@ def _run_one_bounded_unit(
         if result.code == "no_ready_work" and waiting_completion is not None:
             return waiting_completion
         return result
+    except ControlOperationError as exc:
+        if str(exc) != "daemon_admission_stopped":
+            raise
+        return BoundedExecutionUnitResult(
+            code="no_ready_work", diagnostics=({"reason": "daemon_stop_requested"},)
+        )
     finally:
         runtime.close()
 
@@ -1459,6 +1552,7 @@ def _non_idle_stop_reason(result: BoundedExecutionUnitResult) -> str | None:
         "lifecycle_transition_applied",
         "no_ready_work",
         "runner_session_waiting",
+        "runner_session_retained",
         "observation_accepted",
     }:
         return None

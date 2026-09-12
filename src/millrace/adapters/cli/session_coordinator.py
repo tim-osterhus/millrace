@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from hashlib import sha256
-from math import isfinite
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import cast
 from uuid import uuid4
 
@@ -13,19 +13,30 @@ from millrace.adapters.cli import session_cancellation as cancel
 from millrace.adapters.cli import session_completion as complete
 from millrace.adapters.cli import session_persistence as persistence
 from millrace.adapters.cli import session_reconciliation as reconcile
+from millrace.adapters.cli import session_supervision as supervision
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
+    _RunnerStartDeferred,
+)
+from millrace.adapters.cli.run_controls import (
+    validate_effective_timeout as _validate_effective_timeout,
+)
+from millrace.adapters.cli.session_supervision import (
+    _persist_indeterminate_start,
+    _persist_refused_start,
+    _recover_after_running_persistence_failure,
+    _start_refusal,
 )
 from millrace.adapters.runner_contract import (
     AdapterErrorResult,
     AdapterInvocationRequest,
     AdapterSuccessResult,
     RunnerAdapter,
+    RunnerCleanupResult,
     RunnerSessionHandle,
     StartedSession,
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
-    adapter_error_diagnostic_bytes,
     runner_evidence_from_adapter_outcome,
 )
 from millrace.contracts.state import (
@@ -37,6 +48,7 @@ from millrace.contracts.transition import (
     AdvanceRunnerSession,
     CreateRunnerSession,
 )
+from millrace.kernel.run_controls import run_hold_refusal
 
 SESSION_DIAGNOSTIC_MAX_BYTES = complete.SESSION_DIAGNOSTIC_MAX_BYTES
 SessionCancellationRequestResult = cancel.SessionCancellationRequestResult
@@ -48,9 +60,173 @@ session_correlation_id = reconcile.session_correlation_id
 terminate_grace_seconds = cancel.terminate_grace_seconds
 
 _POLL_INTERVAL_SECONDS = 0.25
-_PrepareCreatedSession = Callable[
-    [RunnerSessionRecord], RunnerSessionRecord
-]
+_PrepareCreatedSession = Callable[[RunnerSessionRecord], RunnerSessionRecord]
+
+
+@dataclass(slots=True)
+class _RetainedOwner:
+    # No runtime, connection, or callback may survive a bounded unit here.
+    run_ref: RunRef
+    session: RunnerSessionRecord
+    request: AdapterInvocationRequest
+    handle: RunnerSessionHandle
+    deadline: float
+    outcome: AdapterSuccessResult | AdapterErrorResult | None = None
+    cleanup: RunnerCleanupResult | None = None
+    cancellation: supervision._CancellationCursor | None = None
+    held: bool = False
+
+
+_RETAINED_OWNERS: ContextVar[dict[str, _RetainedOwner] | None] = ContextVar(
+    "daemon_retained_runner_owners", default=None
+)
+
+
+def _retained_start_eligible(state: RuntimeState) -> bool:
+    """Validate held overlap against the state that will admit the new start."""
+    for owner in (_RETAINED_OWNERS.get() or {}).values():
+        session = state.runner_sessions.get(owner.session.session_id)
+        run = state.runs.get(owner.run_ref.run_id)
+        if (
+            session is None
+            or run is None
+            or run.run_ref != owner.run_ref
+            or run.current_session_id != owner.session.session_id
+            or session.run_id != owner.session.run_id
+            or session.dispatch_generation != owner.session.dispatch_generation
+            or session.session_fencing_token != owner.session.session_fencing_token
+        ):
+            return False
+        if session.session_id in state.runner_session_completions:
+            continue
+        control = state.run_execution_controls.get(owner.run_ref.run_id)
+        if session.state != "running" or control is None or control.state != "paused":
+            return False
+        native = control.native
+        if native is None or native["attempt"] != {
+            "session_id": session.session_id,
+            "dispatch_generation": session.dispatch_generation,
+            "session_fencing_token": session.session_fencing_token,
+            "state": session.state,
+        }:
+            return False
+        snapshot = native["snapshot"]
+        if (
+            snapshot["state"] != "held"
+            or snapshot["active_effects"] != 0
+            or snapshot.get("eligible") is not True
+            or snapshot.get("parked") is not True
+            or snapshot.get("invalidation_pending") is not False
+        ):
+            return False
+    return True
+
+
+def _step_retained_owner(
+    runtime: OpenRuntimeContext,
+    owner: _RetainedOwner,
+    *,
+    stop_requested: bool,
+) -> SessionExecutionResult | None:
+    """Service the exact accepted attempt once, retaining consumed outcomes."""
+    from millrace.adapters.cli.run_controls import drive_native_control
+
+    owner.held = False
+    state = complete._load(runtime)
+    session = state.runner_sessions[owner.session.session_id]
+    run = state.runs[owner.run_ref.run_id]
+    if (
+        run.run_ref != owner.run_ref
+        or run.current_session_id != session.session_id
+        or session.dispatch_generation != owner.session.dispatch_generation
+        or session.session_fencing_token != owner.session.session_fencing_token
+    ):
+        raise RuntimeError("retained runner authority changed")
+    owner.session = session
+    completion = state.runner_session_completions.get(session.session_id)
+    if completion is not None:
+        return complete._apply_persisted_completion(runtime, completion)
+    drive_native_control(runtime, session, owner.handle)
+    if stop_requested:
+        _request_daemon_cancellation(runtime, owner.run_ref, session)
+    state = complete._load(runtime)
+    primary = cancel._primary_cancellation(state, session)
+    if owner.cancellation is None and primary is not None:
+        owner.cancellation = supervision._CancellationCursor(primary)
+        # A completion consumed before a conflicting public write stays consumed.
+        owner.cancellation.outcome = owner.outcome
+        owner.cancellation.cleanup = owner.cleanup
+    if owner.cancellation is not None:
+        owner.held = False
+        return supervision._step_cancellation(
+            runtime,
+            run_ref=owner.run_ref,
+            session=session,
+            request=owner.request,
+            handle=owner.handle,
+            cursor=owner.cancellation,
+        )
+    _poll_retained_owner(owner)
+    if owner.outcome is not None:
+        return _finish_retained_owner(runtime, owner, session)
+    if _monotonic() >= owner.deadline:
+        cancel._request_cancellation(
+            runtime,
+            run_id=owner.run_ref.run_id,
+            request_id=f"runtime:runner-session-timeout:{session.session_id}",
+            reason="runner_timeout",
+            source_kind="runtime",
+            actor_id="runtime",
+        )
+        owner.held = False
+        return None
+    state = complete._load(runtime)
+    control = state.run_execution_controls.get(owner.run_ref.run_id)
+    owner.held = (
+        control is not None and control.state == "paused" and control.native is not None
+    )
+    return None
+
+
+def _poll_retained_owner(owner: _RetainedOwner) -> None:
+    if owner.outcome is None:
+        outcome = owner.handle.poll_completion()
+        if outcome is not None:
+            if not isinstance(outcome, (AdapterSuccessResult, AdapterErrorResult)):
+                raise RuntimeError("malformed retained runner completion")
+            owner.outcome = outcome
+
+
+def _finish_retained_owner(
+    runtime: OpenRuntimeContext,
+    owner: _RetainedOwner,
+    session: RunnerSessionRecord,
+) -> SessionExecutionResult:
+    assert owner.outcome is not None
+    refusal = complete._completion_refusal(
+        runtime,
+        run_ref=owner.run_ref,
+        session=session,
+        request=owner.request,
+        outcome=owner.outcome,
+    )
+    if refusal is not None:
+        raise RuntimeError("retained runner completion authority refused")
+    if owner.cleanup is None:
+        owner.cleanup = cancel._call_cleanup(owner.handle.cleanup)
+    # Reload cancellation/session authority after native cleanup and context I/O.
+    state = complete._load(runtime)
+    session = state.runner_sessions[session.session_id]
+    primary = cancel._primary_cancellation(state, session)
+    return complete._persist_completion(
+        runtime,
+        run_ref=owner.run_ref,
+        session=session,
+        request=owner.request,
+        outcome=owner.outcome,
+        cleanup=owner.cleanup,
+        primary=primary,
+    )
 
 
 def execute_runner_session(
@@ -65,6 +241,8 @@ def execute_runner_session(
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
     effective_timeout_seconds: float | None = None,
+    driving_budget_id: str | None = None,
+    driving_budget_clock: Callable[[], float] | None = None,
 ) -> SessionExecutionResult:
     """Start or replay one durable session attempt for the current run."""
 
@@ -74,7 +252,10 @@ def execute_runner_session(
     run = state.runs.get(run_ref.run_id)
     if run is None or run.run_ref != run_ref:
         return SessionExecutionResult("ready_state_corrupt")
-    current = _current_session(state, run.current_session_id)
+    held = run_hold_refusal(state, run_ref.run_id)
+    if held is not None:
+        return SessionExecutionResult(held)
+    current = state.runner_sessions.get(run.current_session_id or "")
     resumed = _resume_current_session(
         runtime,
         run_ref,
@@ -87,6 +268,8 @@ def execute_runner_session(
         on_accepted_start,
         daemon_stop_requested,
         effective_timeout_seconds,
+        driving_budget_id,
+        driving_budget_clock,
     )
     if resumed is not None:
         return resumed
@@ -118,16 +301,9 @@ def execute_runner_session(
         on_accepted_start=on_accepted_start,
         daemon_stop_requested=daemon_stop_requested,
         effective_timeout_seconds=effective_timeout_seconds,
+        driving_budget_id=driving_budget_id,
+        driving_budget_clock=driving_budget_clock,
     )
-
-
-def _validate_effective_timeout(effective_timeout_seconds: float | None) -> None:
-    if effective_timeout_seconds is None:
-        return
-    if type(effective_timeout_seconds) not in {int, float}:
-        raise TypeError("effective_timeout_seconds must be a number")
-    if effective_timeout_seconds <= 0 or not isfinite(float(effective_timeout_seconds)):
-        raise ValueError("effective_timeout_seconds must be finite and positive")
 
 
 def _resume_current_session(
@@ -142,6 +318,8 @@ def _resume_current_session(
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None,
     daemon_stop_requested: Callable[[], bool] | None,
     effective_timeout_seconds: float | None,
+    driving_budget_id: str | None,
+    driving_budget_clock: Callable[[], float] | None,
 ) -> SessionExecutionResult | None:
     if current is None:
         return None
@@ -197,6 +375,8 @@ def _resume_current_session(
             on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
             effective_timeout_seconds=effective_timeout_seconds,
+            driving_budget_id=driving_budget_id,
+            driving_budget_clock=driving_budget_clock,
         )
     return None
 
@@ -237,6 +417,8 @@ def _start_created_session(
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None,
     daemon_stop_requested: Callable[[], bool] | None,
     effective_timeout_seconds: float | None,
+    driving_budget_id: str | None,
+    driving_budget_clock: Callable[[], float] | None,
 ) -> SessionExecutionResult:
     durable_session, cancellation = _pre_start_cancellation(
         runtime,
@@ -254,26 +436,24 @@ def _start_created_session(
     if isinstance(prepared_session, SessionExecutionResult):
         return prepared_session
     durable_session = session = prepared_session
-    if on_start_reserved is not None:
-        on_start_reserved(durable_session)
-    persisted = complete._persist_transition(
-        runtime,
-        AdvanceRunnerSession(
-            f"cli:run.session-start-intent:{session.session_id}",
-            run_ref=run_ref,
-            session_id=session.session_id,
-            dispatch_generation=session.dispatch_generation,
-            session_fencing_token=session.session_fencing_token,
-            expected_state="created",
-            next_state="starting",
+    from millrace.adapters.cli.run_controls import admit_runner_start
+
+    try:
+        admitted = admit_runner_start(
+            runtime,
+            run_ref,
+            session,
             occurred_at=max(_now(), session.created_at),
-        ),
-    )
-    if persisted is None:
+            driving_budget_id=driving_budget_id,
+            driving_budget_clock=driving_budget_clock,
+            on_start_reserved=on_start_reserved,
+            on_accepted_start=on_accepted_start,
+        )
+    except _RunnerStartDeferred:
+        return SessionExecutionResult("runner_session_waiting")
+    if admitted is None:
         return SessionExecutionResult("session_start_intent_refused")
-    session = persisted.runner_sessions[session.session_id]
-    if on_accepted_start is not None:
-        on_accepted_start(session)
+    session = admitted
     request = request_factory(session)
     _durable_session, cancellation = _pre_start_cancellation(
         runtime,
@@ -369,25 +549,6 @@ def _observe_daemon_stop(
         _request_daemon_cancellation(runtime, run_ref, session)
 
 
-def _start_refusal(
-    runtime: OpenRuntimeContext,
-    run_ref: RunRef,
-    session: RunnerSessionRecord,
-    reason: str,
-    signal_kind: str,
-    signal: object,
-) -> SessionExecutionResult:
-    complete._audit_session_refusal(
-        runtime,
-        run_ref=run_ref,
-        session=session,
-        reason=reason,
-        signal_kind=signal_kind,
-        signal_digest=complete._signal_digest(signal),
-    )
-    return SessionExecutionResult("session_reconciliation_required")
-
-
 def _handle_start_outcome(
     runtime: OpenRuntimeContext,
     run_ref: RunRef,
@@ -430,147 +591,6 @@ def _handle_start_outcome(
         start_outcome,
         deadline,
         daemon_stop_requested,
-    )
-
-
-def _persist_indeterminate_start(
-    runtime: OpenRuntimeContext,
-    run_ref: RunRef,
-    session: RunnerSessionRecord,
-    request: AdapterInvocationRequest,
-    outcome: StartIndeterminate,
-) -> SessionExecutionResult:
-    try:
-        outcome.dispatch_echo.validate_against(
-            request.dispatch_envelope,
-            correlation_id=request.correlation_id,
-            selected_adapter_kind=request.selected_adapter_kind,
-        )
-    except (TypeError, ValueError):
-        return _start_refusal(
-            runtime,
-            run_ref,
-            session,
-            "runner_session_authority_mismatch",
-            "runner_dispatch_echo",
-            outcome.dispatch_echo,
-        )
-    locator = outcome.durable_locator_metadata
-    if locator is None:
-        return SessionExecutionResult("session_reconciliation_required")
-    locator_digest = reconcile._safe_coordinator_locator_digest(
-        runtime,
-        request,
-        handle_id=None,
-        adapter_locator=locator,
-    )
-    if locator_digest is None:
-        return _start_refusal(
-            runtime,
-            run_ref,
-            session,
-            "runner_session_reconciliation_contradiction",
-            "runner_session_locator",
-            locator,
-        )
-    complete._persist_transition(
-        runtime,
-        AdvanceRunnerSession(
-            f"cli:run.session-starting-locator:{session.session_id}",
-            run_ref=run_ref,
-            session_id=session.session_id,
-            dispatch_generation=session.dispatch_generation,
-            session_fencing_token=session.session_fencing_token,
-            expected_state="starting",
-            next_state="starting",
-            occurred_at=cast(int, session.start_intent_at),
-            durable_locator_digest=locator_digest,
-        ),
-    )
-    return SessionExecutionResult("session_reconciliation_required")
-
-
-def _persist_refused_start(
-    runtime: OpenRuntimeContext,
-    run_ref: RunRef,
-    session: RunnerSessionRecord,
-    request: AdapterInvocationRequest,
-    outcome: StartRefusedBeforeExternalWork,
-) -> SessionExecutionResult:
-    error_echo = outcome.adapter_error.dispatch_echo
-    if error_echo is None:
-        return _start_refusal(
-            runtime,
-            run_ref,
-            session,
-            "runner_session_reconciliation_contradiction",
-            "runner_start_outcome",
-            outcome,
-        )
-    try:
-        outcome.dispatch_echo.validate_against(
-            request.dispatch_envelope,
-            correlation_id=request.correlation_id,
-            selected_adapter_kind=request.selected_adapter_kind,
-        )
-        error_echo.validate_against(
-            request.dispatch_envelope,
-            correlation_id=request.correlation_id,
-            selected_adapter_kind=request.selected_adapter_kind,
-        )
-    except (AttributeError, TypeError, ValueError):
-        return _start_refusal(
-            runtime,
-            run_ref,
-            session,
-            "runner_session_authority_mismatch",
-            "runner_dispatch_echo",
-            (outcome.dispatch_echo, error_echo),
-        )
-    try:
-        diagnostic_bytes = adapter_error_diagnostic_bytes(
-            outcome.adapter_error,
-            request=request,
-        )
-    except (TypeError, ValueError):
-        diagnostic_bytes = None
-    if diagnostic_bytes is None:
-        return _start_refusal(
-            runtime,
-            run_ref,
-            session,
-            "runner_session_reconciliation_contradiction",
-            "runner_start_diagnostic",
-            outcome,
-        )
-    declared_digest = f"sha256:{sha256(diagnostic_bytes).hexdigest()}"
-    if declared_digest != outcome.diagnostic_digest:
-        return _start_refusal(
-            runtime,
-            run_ref,
-            session,
-            "runner_session_reconciliation_contradiction",
-            "runner_start_diagnostic",
-            outcome,
-        )
-    stored_digest = runtime.cas_store.put_bytes(diagnostic_bytes)
-    if stored_digest != declared_digest:
-        return _start_refusal(
-            runtime,
-            run_ref,
-            session,
-            "runner_session_reconciliation_contradiction",
-            "runner_start_diagnostic",
-            (stored_digest, declared_digest),
-        )
-    return complete._persist_adapter_error(
-        runtime,
-        run_ref=run_ref,
-        session=session,
-        outcome=outcome.adapter_error,
-        diagnostic_digest=stored_digest,
-        cleanup_disposition="not_required",
-        redaction_policy=request.redaction_policy,
     )
 
 
@@ -638,6 +658,11 @@ def _persist_started_session(
             handle=outcome.handle,
         )
     running_session = running_state.runner_sessions[session.session_id]
+    owners = _RETAINED_OWNERS.get()
+    if owners is not None:
+        owners[running_session.session_id] = _RetainedOwner(
+            run_ref, running_session, request, outcome.handle, deadline
+        )
     persistence._record_session_event(
         runtime,
         session=running_session,
@@ -668,6 +693,11 @@ def _drive_owned_live_handle(
     deadline: float,
     daemon_stop_requested: Callable[[], bool] | None,
 ) -> SessionExecutionResult:
+    owners = _RETAINED_OWNERS.get()
+    if owners is not None and session.session_id in owners:
+        if owners[session.session_id].handle is not handle:
+            raise RuntimeError("retained runner handle mismatch")
+        return SessionExecutionResult("runner_session_retained")
     try:
         result, terminal_cleanup_disposition = _drive_running_session(
             runtime,
@@ -720,6 +750,9 @@ def _drive_running_session(
     daemon_stop_requested: Callable[[], bool] | None,
 ) -> tuple[SessionExecutionResult, str | None]:
     while True:
+        from millrace.adapters.cli.run_controls import drive_native_control
+
+        drive_native_control(runtime, session, handle)
         _observe_daemon_stop(runtime, run_ref, session, daemon_stop_requested)
         primary = cancel._primary_cancellation(complete._load(runtime), session)
         if primary is not None:
@@ -824,55 +857,6 @@ def _drive_running_session(
                 None,
             )
         _sleep(min(_POLL_INTERVAL_SECONDS, remaining))
-
-
-def _recover_after_running_persistence_failure(
-    runtime: OpenRuntimeContext,
-    *,
-    run_ref: RunRef,
-    session: RunnerSessionRecord,
-    request: AdapterInvocationRequest,
-    handle: RunnerSessionHandle,
-) -> SessionExecutionResult:
-    request_id = f"runtime:runner-session-failure:{session.session_id}"
-    try:
-        cancel._request_cancellation(
-            runtime,
-            run_id=run_ref.run_id,
-            request_id=request_id,
-            reason="runtime_failure",
-            source_kind="runtime",
-            actor_id="runtime",
-        )
-        state = complete._load(runtime)
-        current = state.runner_sessions[session.session_id]
-        primary = cancel._primary_cancellation(state, current)
-        if primary is not None:
-            return cancel._cancel_running_session(
-                runtime,
-                run_ref=run_ref,
-                session=current,
-                request=request,
-                handle=handle,
-                primary=primary,
-            )
-    except Exception:
-        pass
-    return cancel._emergency_cleanup_live_handle(
-        runtime,
-        run_ref=run_ref,
-        session=session,
-        handle=handle,
-    )
-
-
-def _current_session(
-    state: RuntimeState,
-    session_id: str | None,
-) -> RunnerSessionRecord | None:
-    if session_id is None:
-        return None
-    return state.runner_sessions.get(session_id)
 
 
 def _now() -> int:

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
 from types import MappingProxyType
-from typing import ClassVar, TypeVar, cast
+from typing import Any, ClassVar, TypeVar, cast
 
 from millrace.contracts.compiled_plan import (
     AuthorityValue,
@@ -226,9 +226,7 @@ class RunnerSessionRecord:
         ):
             value = getattr(self, field_name)
             if value is not None and (
-                type(value) is not int
-                or value < 0
-                or value > DURABLE_INT64_MAX
+                type(value) is not int or value < 0 or value > DURABLE_INT64_MAX
             ):
                 raise ValueError(f"{field_name} must be a durable non-negative integer")
         timestamps = tuple(
@@ -247,14 +245,12 @@ class RunnerSessionRecord:
             raise ValueError("unsupported runner session state")
         if self.cleanup_disposition not in _RUNNER_SESSION_CLEANUP_DISPOSITIONS:
             raise ValueError("unsupported runner session cleanup disposition")
-        if (
-            self.durable_locator_digest is not None
-            and not _is_sha256_digest(self.durable_locator_digest)
+        if self.durable_locator_digest is not None and not _is_sha256_digest(
+            self.durable_locator_digest
         ):
             raise ValueError("durable_locator_digest must be a sha256 digest")
-        if (
-            self.context_manifest_digest is not None
-            and not _is_sha256_digest(self.context_manifest_digest)
+        if self.context_manifest_digest is not None and not _is_sha256_digest(
+            self.context_manifest_digest
         ):
             raise ValueError("context_manifest_digest must be a sha256 digest")
         if self.state == "created" and self.durable_locator_digest is not None:
@@ -493,8 +489,7 @@ def _validate_bounded_runner_session_text(
 ) -> None:
     if len(value.encode("utf-8")) > RUNNER_SESSION_TEXT_MAX_BYTES:
         raise ValueError(
-            f"{field_name} must be at most "
-            f"{RUNNER_SESSION_TEXT_MAX_BYTES} UTF-8 bytes"
+            f"{field_name} must be at most {RUNNER_SESSION_TEXT_MAX_BYTES} UTF-8 bytes"
         )
 
 
@@ -535,10 +530,7 @@ class RunnerObservationRecord:
             raise ValueError("observed_at must be an integer")
         if self.observed_at is not None and self.observed_at < 0:
             raise ValueError("observed_at must be non-negative")
-        if (
-            self.observed_at is not None
-            and self.observed_at > DURABLE_INT64_MAX
-        ):
+        if self.observed_at is not None and self.observed_at > DURABLE_INT64_MAX:
             raise ValueError("observed_at exceeds durable integer range")
         object.__setattr__(
             self,
@@ -682,9 +674,7 @@ class ClosureTargetRecord:
         object.__setattr__(
             self,
             "evidence_window",
-            freeze_authority_mapping(
-                cast(Mapping[str, object], self.evidence_window)
-            ),
+            freeze_authority_mapping(cast(Mapping[str, object], self.evidence_window)),
         )
 
 
@@ -794,10 +784,7 @@ class DispatchSuspensionRecord:
             _validate_bounded_runner_session_text(field_name, value)
         if type(self.generation) is not int or self.generation < 1:
             raise ValueError("generation must be a positive integer")
-        if (
-            type(self.dispatch_generation) is not int
-            or self.dispatch_generation < 0
-        ):
+        if type(self.dispatch_generation) is not int or self.dispatch_generation < 0:
             raise ValueError("dispatch_generation must be a non-negative integer")
         if self.status not in {"active", "resumed"}:
             raise ValueError("unsupported dispatch suspension status")
@@ -876,9 +863,7 @@ class DaemonBudgetEpochRecord:
         ):
             value = getattr(self, field_name)
             if type(value) is not int or value < 0 or value > DURABLE_INT64_MAX:
-                raise ValueError(
-                    f"{field_name} must be a non-negative durable integer"
-                )
+                raise ValueError(f"{field_name} must be a non-negative durable integer")
         if self.last_observed_at < self.started_at:
             raise ValueError("last_observed_at cannot precede started_at")
         expected_deadline = (
@@ -946,11 +931,7 @@ class RunnerSessionUsageRecord:
         ):
             value = getattr(self, field_name)
             minimum = 1 if field_name == "dispatch_generation" else 0
-            if (
-                type(value) is not int
-                or value < minimum
-                or value > DURABLE_INT64_MAX
-            ):
+            if type(value) is not int or value < minimum or value > DURABLE_INT64_MAX:
                 raise ValueError(f"{field_name} is outside durable integer range")
         if self.total_tokens != self.input_tokens + self.output_tokens:
             raise ValueError("runner usage token counters are contradictory")
@@ -1101,9 +1082,7 @@ class ContextCleanupReceipt:
         _validate_sha256_digest("manifest_digest", self.manifest_digest)
         if not isinstance(self.removed_path_classes, tuple):
             raise ValueError("removed_path_classes must be a tuple")
-        if self.removed_path_classes != tuple(
-            sorted(set(self.removed_path_classes))
-        ):
+        if self.removed_path_classes != tuple(sorted(set(self.removed_path_classes))):
             raise ValueError("removed_path_classes must be sorted and unique")
         for path_class in self.removed_path_classes:
             if not isinstance(path_class, str) or not path_class.strip():
@@ -1230,9 +1209,8 @@ class QueueClosureRecord:
                 _validate_bounded_runner_session_text(field_name, value)
         if not self.closed_work_item_ids:
             raise ValueError("queue closure must close at least one work item")
-        if (
-            self.target_kind == "work_item"
-            and self.closed_work_item_ids != (self.target_id,)
+        if self.target_kind == "work_item" and self.closed_work_item_ids != (
+            self.target_id,
         ):
             raise ValueError("work-item queue closure target must match closed work")
 
@@ -1470,6 +1448,63 @@ class TraceRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RunExecutionControl:
+    """A run hold; independent of claims, sessions and workspace dispatch gates."""
+
+    run_id: str
+    control_revision: int
+    pause_id: str | None
+    state: str
+    cause: str
+    operation_key: tuple[str, str, str, str, str] | None
+    source_revision: int
+    recorded_at: str
+
+    native: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        from millrace.contracts.controls import (
+            CONTROL_MAX_BYTES,
+            revision_field,
+            text_field,
+            uuid_field,
+        )
+
+        text_field(self.run_id, CONTROL_MAX_BYTES)
+        if self.pause_id is not None:
+            uuid_field(self.pause_id)
+        elif self.state != "unknown":
+            raise ValueError("missing_run_pause_id")
+        if self.state not in {
+            "paused",
+            "resumed",
+            "superseded",
+            "unknown",
+            "pause_pending",
+            "resume_pending",
+            "recover_pending",
+            "retired",
+            "unqualified",
+        }:
+            raise ValueError("invalid_run_control_state")
+        if revision_field(self.control_revision) == 0:
+            raise ValueError("invalid_run_control_revision")
+        revision_field(self.source_revision)
+        text_field(self.cause)
+        text_field(self.recorded_at)
+        if self.operation_key is None:
+            if self.state != "unknown":
+                raise ValueError("missing_run_control_key")
+            return
+        if len(self.operation_key) != 5:
+            raise ValueError("invalid_run_control_key")
+        for value in self.operation_key[:3]:
+            uuid_field(value)
+        for value in self.operation_key[3:]:
+            text_field(value)
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeState:
     admitted_plans: Mapping[AuthorityFingerprint, AdmittedPlan] = field(
         default_factory=dict
@@ -1479,6 +1514,9 @@ class RuntimeState:
     work_items: Mapping[str, WorkItem] = field(default_factory=dict)
     activations: Mapping[str, Activation] = field(default_factory=dict)
     runs: Mapping[str, RunRecord] = field(default_factory=dict)
+    run_execution_controls: Mapping[str, RunExecutionControl] = field(
+        default_factory=dict
+    )
     runner_sessions: Mapping[str, RunnerSessionRecord] = field(default_factory=dict)
     runner_session_cancellation_requests: Mapping[
         str, RunnerSessionCancellationRecord
@@ -1486,16 +1524,14 @@ class RuntimeState:
     runner_session_cancellation_attempts: Mapping[
         str, RunnerSessionCancellationAttemptRecord
     ] = field(default_factory=dict)
-    runner_session_completions: Mapping[
-        str, RunnerSessionCompletionRecord
-    ] = field(default_factory=dict)
+    runner_session_completions: Mapping[str, RunnerSessionCompletionRecord] = field(
+        default_factory=dict
+    )
     runner_observations: Mapping[str, RunnerObservationRecord] = field(
         default_factory=dict
     )
     artifacts: Mapping[str, ArtifactRecord] = field(default_factory=dict)
-    effect_proposals: Mapping[str, EffectProposalRecord] = field(
-        default_factory=dict
-    )
+    effect_proposals: Mapping[str, EffectProposalRecord] = field(default_factory=dict)
     effect_reconciliations: Mapping[str, EffectReconciliationRecord] = field(
         default_factory=dict
     )
@@ -1503,8 +1539,8 @@ class RuntimeState:
     fanout_records: Mapping[str, FanoutRecord] = field(default_factory=dict)
     work_dependencies: Mapping[str, WorkDependencyRecord] = field(default_factory=dict)
     closure_targets: Mapping[str, ClosureTargetRecord] = field(default_factory=dict)
-    closure_evaluations: Mapping[str, ClosureEvaluationRecord] = (
-        field(default_factory=dict)
+    closure_evaluations: Mapping[str, ClosureEvaluationRecord] = field(
+        default_factory=dict
     )
     closure_terminal_records: Mapping[str, ClosureTerminalRecord] = field(
         default_factory=dict
@@ -1523,9 +1559,7 @@ class RuntimeState:
     lineage_quarantines: Mapping[str, LineageQuarantineRecord] = field(
         default_factory=dict
     )
-    recovery_attempts: Mapping[str, RecoveryAttemptRecord] = field(
-        default_factory=dict
-    )
+    recovery_attempts: Mapping[str, RecoveryAttemptRecord] = field(default_factory=dict)
     operator_interventions: Mapping[str, OperatorInterventionRecord] = field(
         default_factory=dict
     )
@@ -1543,6 +1577,9 @@ class RuntimeState:
         object.__setattr__(self, "work_items", _freeze_mapping(self.work_items))
         object.__setattr__(self, "activations", _freeze_mapping(self.activations))
         object.__setattr__(self, "runs", _freeze_mapping(self.runs))
+        object.__setattr__(
+            self, "run_execution_controls", _freeze_mapping(self.run_execution_controls)
+        )
         object.__setattr__(
             self,
             "runner_sessions",

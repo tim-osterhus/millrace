@@ -108,6 +108,10 @@ PUBLIC_KERNEL_ENTRYPOINTS = {
 }
 
 AUTHORIZED_KERNEL_INTERNAL_CONSUMERS = {
+    SOURCE_ROOT / "millrace" / "substrate" / "_sqlite_run_controls.py",
+    SOURCE_ROOT / "millrace" / "adapters" / "cli" / "run.py",
+    SOURCE_ROOT / "millrace" / "adapters" / "cli" / "status.py",
+    SOURCE_ROOT / "millrace" / "adapters" / "cli" / "session_coordinator.py",
     SOURCE_ROOT / "millrace" / "adapters" / "cli" / "lifecycle.py",
     SOURCE_ROOT / "millrace" / "operator" / "dispatch.py",
     SOURCE_ROOT / "millrace" / "substrate" / "_sqlite_relations.py",
@@ -244,6 +248,7 @@ PYTEST_REPOSITORY_CLEANUP_CALLS = {
 }
 
 ALLOWED_KERNEL_INTERNAL_IMPORTS = {
+    "millrace.kernel.run_controls": frozenset[str](),
     "millrace.kernel": frozenset(
         {
             "millrace.kernel.lifecycle",
@@ -254,6 +259,7 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
     "millrace.kernel.audit": frozenset[str](),
     "millrace.kernel.decision": frozenset(
         {
+            "millrace.kernel.run_controls",
             "millrace.kernel._closure_lifecycle",
             "millrace.kernel.audit",
             "millrace.kernel.fanout_policy",
@@ -291,6 +297,7 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
     "millrace.kernel.lookups": frozenset[str](),
     "millrace.kernel.mutations": frozenset(
         {
+            "millrace.kernel.run_controls",
             "millrace.kernel._closure_lifecycle",
             "millrace.kernel.errors",
             "millrace.kernel.lookups",
@@ -311,7 +318,7 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
         }
     ),
     "millrace.kernel.projection": frozenset[str](),
-    "millrace.kernel.runner_sessions": frozenset[str](),
+    "millrace.kernel.runner_sessions": frozenset({"millrace.kernel.run_controls"}),
     "millrace.kernel.schema": frozenset[str](),
     "millrace.kernel.state": frozenset[str](),
     "millrace.kernel.terminal_actions": frozenset(
@@ -421,6 +428,16 @@ ALLOWED_COMPILER_INTERNAL_IMPORTS = {
 }
 
 ALLOWED_SUBSTRATE_INTERNAL_IMPORTS = {
+    "millrace.substrate._sqlite_daemon": frozenset(
+        {"millrace.substrate._sqlite_controls", "millrace.substrate.errors"}
+    ),
+    "millrace.substrate._sqlite_run_controls": frozenset(
+        {
+            "millrace.substrate._sqlite_controls",
+            "millrace.substrate.errors",
+            "millrace.substrate.cas",
+        }
+    ),
     "millrace.substrate": frozenset(
         {
             "millrace.substrate.cas",
@@ -428,8 +445,10 @@ ALLOWED_SUBSTRATE_INTERNAL_IMPORTS = {
             "millrace.substrate.sqlite",
         }
     ),
+    "millrace.substrate._sqlite_controls": frozenset({"millrace.substrate.errors"}),
     "millrace.substrate._sqlite_load": frozenset(
         {
+            "millrace.substrate._sqlite_run_controls",
             "millrace.substrate._sqlite_relations",
             "millrace.substrate._sqlite_rows",
             "millrace.substrate.cas",
@@ -446,6 +465,9 @@ ALLOWED_SUBSTRATE_INTERNAL_IMPORTS = {
     ),
     "millrace.substrate._sqlite_write": frozenset(
         {
+            "millrace.substrate._sqlite_daemon",
+            "millrace.substrate._sqlite_controls",
+            "millrace.substrate._sqlite_run_controls",
             "millrace.substrate._sqlite_relations",
             "millrace.substrate._sqlite_rows",
             "millrace.substrate.cas",
@@ -461,6 +483,7 @@ ALLOWED_SUBSTRATE_INTERNAL_IMPORTS = {
     ),
     "millrace.substrate._sqlite_schema": frozenset(
         {
+            "millrace.substrate._sqlite_controls",
             "millrace.substrate.errors",
             "millrace.substrate.records",
         }
@@ -484,6 +507,9 @@ ALLOWED_SUBSTRATE_INTERNAL_IMPORTS = {
     "millrace.substrate.runner_session_events": frozenset[str](),
     "millrace.substrate.sqlite": frozenset(
         {
+            "millrace.substrate._sqlite_daemon",
+            "millrace.substrate._sqlite_run_controls",
+            "millrace.substrate._sqlite_controls",
             "millrace.substrate._sqlite_load",
             "millrace.substrate._sqlite_schema",
             "millrace.substrate._workflow_package_command_audit",
@@ -1104,8 +1130,8 @@ def test_compiler_default_policy_keeps_provider_authority_out_of_generic_logic()
         "TASK_COMPLETE",
         "WORK_COMPLETE",
         "NEEDS_REVIEW",
-        "0bace7b27871b03cd7ffe59951953348b3da3214536178d6f447a21de4403464",
-        "d6b5c75f48565b939ee4d6e30b83e3ad203764b7bda02890ca515a9bfb3318f0",
+        "420c175c5a526192f0ffe582e0205a18512df2ff6736230aea70a06613fb3fab",
+        "ec8e80e7fef9c06b842739ca62267e1c98bd4d6edc6423f671d04c5c766655ca",
     )
 
     assert compiler_millforge_mentions == {"runner_bindings.py"}

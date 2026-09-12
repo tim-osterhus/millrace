@@ -27,6 +27,7 @@ from tests.cli.test_cli_bounded_execution_unit import (
     _runtime,
     _state_with_runner_kind,
 )
+from tests.cli.test_cli_daemon_control import short_root as short_root
 
 from millrace.adapters.runner_contract import AdapterLocalConfig
 
@@ -271,8 +272,7 @@ def test_daemon_retry_refusal_is_domain_refusal_in_json_and_human_output(
     assert error["code"] == "runner_session_retry_refused"
     assert error["message"] == "Daemon stopped before successful completion."
     assert human_stderr == (
-        "runner_session_retry_refused: "
-        "Daemon stopped before successful completion.\n"
+        "runner_session_retry_refused: Daemon stopped before successful completion.\n"
     )
 
 
@@ -811,8 +811,7 @@ def test_budget_stop_accepts_the_maximum_safe_ascii_id_with_active_suspension(
     assert state.default_plan_ref is not None
     fixed_suspension_input_id = "daemon-budget::suspend"
     budget_id = "x" * (
-        RUNNER_SESSION_TEXT_MAX_BYTES
-        - len(fixed_suspension_input_id.encode("utf-8"))
+        RUNNER_SESSION_TEXT_MAX_BYTES - len(fixed_suspension_input_id.encode("utf-8"))
     )
     assert len(budget_id.encode("utf-8")) == 4074
     epoch = DaemonBudgetEpochRecord(
@@ -848,9 +847,7 @@ def test_budget_stop_accepts_the_maximum_safe_ascii_id_with_active_suspension(
     assert result["code"] == "budget_stopped"
     assert result["data"]["budget"]["status"] == "stopped"
     assert suspension["status"] == "active"
-    assert suspension["suspended_by_input_id"] == (
-        f"daemon-budget:{budget_id}:suspend"
-    )
+    assert suspension["suspended_by_input_id"] == (f"daemon-budget:{budget_id}:suspend")
     assert len(suspension["suspended_by_input_id"].encode("utf-8")) == (
         RUNNER_SESSION_TEXT_MAX_BYTES
     )
@@ -1230,9 +1227,12 @@ def test_budget_stop_refuses_missing_or_nonfinal_governed_usage_without_mutation
         persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
         assert persisted is not None
         assert persisted.status == "active"
-        assert observer.load_runtime_state(
-            ContentAddressedByteStore(paths.cas_path)
-        ).dispatch_suspension is None
+        assert (
+            observer.load_runtime_state(
+                ContentAddressedByteStore(paths.cas_path)
+            ).dispatch_suspension
+            is None
+        )
     finally:
         observer.close()
 
@@ -1284,9 +1284,12 @@ def test_budget_stop_refuses_lost_orphan_risk_session_without_mutation(
         persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
         assert persisted is not None
         assert persisted.status == "active"
-        assert observer.load_runtime_state(
-            ContentAddressedByteStore(paths.cas_path)
-        ).dispatch_suspension is None
+        assert (
+            observer.load_runtime_state(
+                ContentAddressedByteStore(paths.cas_path)
+            ).dispatch_suspension
+            is None
+        )
     finally:
         observer.close()
 
@@ -1318,6 +1321,8 @@ def test_budget_stop_missing_completion_is_a_bounded_persistence_refusal(
     assert exit_code == 4
     assert stdout == ""
     assert _json(stderr)["code"] == "substrate_error"
+
+
 def test_budget_stop_refuses_unknown_wrong_workspace_and_terminal_conflicts(
     tmp_path: Path,
 ) -> None:
@@ -1372,7 +1377,7 @@ def test_budget_stop_refuses_unknown_wrong_workspace_and_terminal_conflicts(
     )
     assert wrong_code == 3
     assert wrong_stdout == ""
-    assert _json(wrong_stderr)["code"] == "budget_workspace_mismatch"
+    assert _json(wrong_stderr)["code"] == "store_location_mismatch"
 
     runtime = _runtime(tmp_path / "terminal", state)
     terminal_epoch = replace(
@@ -1479,9 +1484,12 @@ def test_budget_stop_maps_active_to_concurrent_terminal_race(
         persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
         assert persisted is not None
         assert persisted.status == "exhausted"
-        assert observer.load_runtime_state(
-            ContentAddressedByteStore(paths.cas_path)
-        ).dispatch_suspension is None
+        assert (
+            observer.load_runtime_state(
+                ContentAddressedByteStore(paths.cas_path)
+            ).dispatch_suspension
+            is None
+        )
     finally:
         observer.close()
 
@@ -1541,9 +1549,7 @@ def test_budget_stop_replay_after_public_dispatch_resume_does_not_resuspend(
         ]
     )
     assert resume_code == 0, resume_stderr
-    assert _json(resume_stdout)["data"]["dispatch_suspension"]["status"] == (
-        "resumed"
-    )
+    assert _json(resume_stdout)["data"]["dispatch_suspension"]["status"] == ("resumed")
 
     replay_code, replay_stdout, replay_stderr = _invoke(
         [
@@ -1561,17 +1567,25 @@ def test_budget_stop_replay_after_public_dispatch_resume_does_not_resuspend(
     assert replay["data"]["replayed"] is True
     assert replay["data"]["budget"]["status"] == "stopped"
     assert replay["data"]["dispatch_suspension"]["status"] == "resumed"
-    assert replay["data"]["dispatch_suspension"]["generation"] == (
-        suspension["generation"]
+    assert (
+        replay["data"]["dispatch_suspension"]["generation"]
+        == (suspension["generation"])
     )
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="exact daemon lifecycle requires macOS"
+)
 def test_automatic_daemon_restart_replays_publicly_stopped_budget(
-    tmp_path: Path,
+    short_root: Path,
 ) -> None:
+    from tests.cli.test_cli_daemon_control import write_config
+
     from millrace.contracts.state import DaemonBudgetEpochRecord
 
-    state, _fingerprint = _ready_state()
+    tmp_path = short_root
+
+    state, _fingerprint = _ready_state_with_selected_codex_authority()
     runtime = _runtime(tmp_path, state)
     assert state.default_plan_ref is not None
     epoch = DaemonBudgetEpochRecord(
@@ -1588,6 +1602,7 @@ def test_automatic_daemon_restart_replays_publicly_stopped_budget(
     runtime.store.create_or_resume_daemon_budget_epoch(epoch)
     paths = runtime.paths
     runtime.close()
+    config_path = write_config(short_root, paths)
 
     stop_code, stop_stdout, stop_stderr = _invoke(
         [
@@ -1608,6 +1623,8 @@ def test_automatic_daemon_restart_replays_publicly_stopped_budget(
             str(paths.workspace_path),
             "run",
             "daemon",
+            "--adapter-config-json",
+            str(config_path),
             "--max-ticks",
             "1",
             "--budget-id",
@@ -1686,9 +1703,12 @@ def test_budget_stop_rolls_back_when_dispatch_suspension_persistence_fails(
     try:
         persisted = observer.load_daemon_budget_epoch(epoch.budget_id)
         assert persisted == epoch
-        assert observer.load_runtime_state(
-            ContentAddressedByteStore(paths.cas_path)
-        ).dispatch_suspension is None
+        assert (
+            observer.load_runtime_state(
+                ContentAddressedByteStore(paths.cas_path)
+            ).dispatch_suspension
+            is None
+        )
     finally:
         observer.close()
 
@@ -3229,10 +3249,11 @@ def test_failure_before_start_intent_leaves_pending_identity_uncharged(
     def refuse_start_intent(
         runtime_arg: object,
         transition_input: object,
+        **kwargs: object,
     ) -> object:
         if isinstance(transition_input, AdvanceRunnerSession):
             return None
-        return real_persist_transition(runtime_arg, transition_input)
+        return real_persist_transition(runtime_arg, transition_input, **kwargs)
 
     monkeypatch.setattr(
         session_coordinator.complete,
@@ -3242,10 +3263,7 @@ def test_failure_before_start_intent_leaves_pending_identity_uncharged(
     result = run_bounded_execution_unit(
         runtime,
         local_config=_codex_success_config(),
-        on_start_reserved=lambda session: daemon._reserve_budgeted_start(
-            options,
-            session,
-        ),
+        driving_budget_id=options.budget_id,
         on_accepted_start=lambda session: daemon._account_budgeted_start(
             options,
             session,
@@ -3268,13 +3286,7 @@ def test_failure_before_start_intent_leaves_pending_identity_uncharged(
         """,
         (session.session_id,),
     ).fetchone()
-    assert binding == (
-        options.budget_id,
-        session.run_id,
-        session.dispatch_generation,
-        session.session_fencing_token,
-        None,
-    )
+    assert binding is None
     monkeypatch.setattr(
         session_coordinator.complete,
         "_persist_transition",
@@ -3284,10 +3296,7 @@ def test_failure_before_start_intent_leaves_pending_identity_uncharged(
         runtime,
         activation_id=durable.runs[session.run_id].activation_id,
         local_config=_codex_success_config(),
-        on_start_reserved=lambda replayed_session: daemon._reserve_budgeted_start(
-            options,
-            replayed_session,
-        ),
+        driving_budget_id=options.budget_id,
         on_accepted_start=lambda replayed_session: daemon._account_budgeted_start(
             options,
             replayed_session,
@@ -4436,14 +4445,9 @@ def test_daemon_reloads_persisted_state_between_bounded_units(
     finally:
         reopened.close()
 
-    assert loop_opened_db_paths == (
-        paths.db_path,
-        paths.db_path,
-        paths.db_path,
-        paths.db_path,
-        paths.db_path,
-        paths.db_path,
-    )
+    # Cooperative ownership adds fresh contexts for each bounded service turn.
+    assert len(loop_opened_db_paths) >= 6
+    assert set(loop_opened_db_paths) == {paths.db_path}
     assert summary.iterations == 3
     assert summary.units_succeeded == 2
     assert summary.idle_iterations == 1
@@ -5114,8 +5118,39 @@ def test_simple_loop_bound_session_mutation_refused_but_usage_durable(
         for refusal in after.refusals
         if refusal.record_id not in before_refusal_ids
     ]
-    assert any(
-        refusal.reason == "context_mutation_refused" for refusal in new_refusals
-    )
+    assert any(refusal.reason == "context_mutation_refused" for refusal in new_refusals)
     assert mutated.exists()
     runtime.close()
+
+
+def test_foreground_daemon_without_supported_lifecycle_platform(tmp_path, monkeypatch):
+    from tests.cli.test_cli_daemon_control import write_config
+
+    from millrace.adapters.cli import daemon
+
+    state, _ = _ready_state_with_selected_codex_authority()
+    runtime = _runtime(tmp_path, state)
+    paths = runtime.paths
+    config = write_config(tmp_path, paths)
+    runtime.close()
+    monkeypatch.setattr(
+        daemon, "sys", SimpleNamespace(platform="linux", stdout=sys.stdout)
+    )
+    code, out, err = _invoke([
+        "--json", "--workspace", str(paths.workspace_path), "run", "daemon",
+        "--max-ticks", "1", "--adapter-config-json", str(config),
+    ])
+    assert code == 0, (out, err)
+    assert json.loads(out)["code"] == "daemon_stopped"
+    from millrace.substrate.sqlite import SQLiteRuntimeStore
+
+    store = SQLiteRuntimeStore.open(paths.db_path)
+    try:
+        assert store.daemon_records() == []
+        after = store.load_runtime_state(runtime.cas_store)
+        assert after.runner_sessions
+        assert all(
+            session.state == "completed" for session in after.runner_sessions.values()
+        )
+    finally:
+        store.close()

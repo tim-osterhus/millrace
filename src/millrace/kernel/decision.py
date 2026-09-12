@@ -213,6 +213,7 @@ from millrace.kernel.operator_waits import (
     decide_operator_resume_wait,
     decide_operator_revise_wait,
 )
+from millrace.kernel.run_controls import run_hold_refusal
 from millrace.kernel.runner_sessions import (
     advance_runner_session_refusal,
     attach_runner_session_context_refusal,
@@ -1170,6 +1171,7 @@ def _closure_replay_invalid_detail(
     ):
         return "closure_identity_noncanonical"
     return None
+
 
 def _decide_admit_plan(
     state: RuntimeState,
@@ -5885,6 +5887,15 @@ def _decide_runner_result(
     context: TransitionContext,
     digest: str,
 ) -> TransitionDecision:
+    held = run_hold_refusal(state, transition_input.run_id)
+    if held is not None:
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason=held,
+            event_run_id=transition_input.run_id,
+        )
     try:
         evidence = runner_result_evidence_from_payload(transition_input.payload)
     except (TypeError, ValueError):

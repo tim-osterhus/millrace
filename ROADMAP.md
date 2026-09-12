@@ -4,17 +4,22 @@ This roadmap is directional. Shipped behavior belongs in `CHANGELOG.md`.
 Millrace remains in pre-1.0 stabilization and keeps runtime authority compiled,
 durable, inspectable, and workflow-neutral.
 
-## Active
+## v0.22.3 Release Line
 
-### v0.22.3 Runtime Integrity
+### Runtime Integrity And Public Controls
 
-- Publish the first public governed-context/runtime-integrity contract in
+- Provide the first public governed-context/runtime-integrity contract in
   `millrace-ai`.
 - Keep compiled catalog and binding authority, bounded hydration,
   selected-root mutation enforcement, honest attribution, and derived-session
   cleanup coherent across the CLI, runner sessions, and durable evidence.
+- Qualify schema-11 durable operations, supported run pause/resume, macOS
+  daemon controls and bounded public projections with exact installed packages.
+  Released OS/provider integration remains a subsequent cross-product gate.
 - Document schema-18 compatibility and keep unreleased schema-17 context-bound
   campaign plans as historical evidence rather than compatible plans.
+
+## Active
 
 ### Public Documentation
 

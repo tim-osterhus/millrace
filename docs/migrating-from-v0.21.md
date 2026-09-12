@@ -72,7 +72,7 @@ inspect status and trace output before leaving it active.
 
 If an older workspace contains active work, finish or retire that work with
 the matching runtime and preserve its state. The v0.22.3 candidate uses store
-schema 10. It refuses exact schema-6 and schema-7 workspaces unchanged as
+schema 11. It refuses exact schema-6 and schema-7 workspaces unchanged as
 `workspace_upgrade_required`; schema 8 (used by v0.22.2) and schema 9 are
 unsupported and also remain unchanged. There is no database/CAS migration or
 inferred operator-control state. Initialize a fresh workspace rather than

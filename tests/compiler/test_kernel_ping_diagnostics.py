@@ -175,7 +175,7 @@ def _source_with_defaultable_millforge_component() -> Source:
                 "component_id": "millforge-base",
                 "component_version": "2",
                 "provider_distribution": "millforge",
-                "provider_version": "0.1.0",
+                "provider_version": "0.1.1",
                 "descriptor_media_type": "application/json",
                 "descriptor_sha256": "a" * 64,
                 "required_capability_ids": _MILLFORGE_COMPONENT_CAPABILITY_IDS,
@@ -209,7 +209,7 @@ def test_defaulted_component_binding_requires_policy_compatible_authored_authori
         if diagnostic.severity == "warning"
     ] == [RUNNER_ADAPTER_KIND_DEFAULTED]
 
-    for case in ("missing_pin", "mismatched_selector"):
+    for case in ("missing_pin", "mismatched_selector", "old_provider_version"):
         source = _source_with_defaultable_millforge_component()
         runner = _records(source, "runner_bindings")[0]
         if case == "missing_pin":
@@ -217,7 +217,10 @@ def test_defaulted_component_binding_requires_policy_compatible_authored_authori
             runner.pop("terminal_result_mappings")
         else:
             pin = cast(Record, runner["component_pin"])
-            pin["component_version"] = "3"
+            if case == "old_provider_version":
+                pin["provider_version"] = "0.1.0"
+            else:
+                pin["component_version"] = "3"
 
         result = compile_workflow(source)
 

@@ -77,3 +77,11 @@ __all__ = (
     "UnsupportedSchemaVersion",
     "UnsupportedStoreSchemaVersion",
 )
+
+
+class ControlOperationError(SubstrateError, RuntimeError):
+    """Bounded control refusal or uncertain storage observation."""
+
+
+class StoreIdentityMismatch(ControlOperationError):
+    """Registered location or durable request scope does not match."""

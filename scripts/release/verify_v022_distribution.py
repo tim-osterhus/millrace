@@ -20,18 +20,18 @@ from pathlib import Path
 from typing import Any
 
 EXPECTED_WHEELS = {
-    "millforge-0.1.0-py3-none-any.whl": ("millforge", "0.1.0"),
-    "millrace_ai-0.22.2-py3-none-any.whl": ("millrace-ai", "0.22.2"),
-    "millrace_plus-0.22.2-py3-none-any.whl": ("millrace-plus", "0.22.2"),
-    "millrace-0.22.2-py3-none-any.whl": ("millrace", "0.22.2"),
+    "millforge-0.1.1-py3-none-any.whl": ("millforge", "0.1.1"),
+    "millrace_ai-0.22.3-py3-none-any.whl": ("millrace-ai", "0.22.3"),
+    "millrace_plus-0.22.3-py3-none-any.whl": ("millrace-plus", "0.22.3"),
+    "millrace-0.22.3-py3-none-any.whl": ("millrace", "0.22.3"),
 }
 EXPECTED_SOURCE_PINS = frozenset(
     {"millforge", "millrace-ai", "millrace-plus", "millrace"}
 )
 EXPECTED_BUNDLE_REQUIREMENTS = (
-    "millforge==0.1.0",
-    "millrace-ai==0.22.2",
-    "millrace-plus==0.22.2",
+    "millforge==0.1.1",
+    "millrace-ai==0.22.3",
+    "millrace-plus==0.22.3",
 )
 EXPECTED_WORKFLOW_IDS = frozenset(
     {
@@ -428,7 +428,7 @@ def build_install_command(
         str(resolver_closure.resolve()),
         "--only-binary=:all:",
         "--no-cache-dir",
-        "millrace==0.22.2",
+        "millrace==0.22.3",
     )
 
 
@@ -611,7 +611,7 @@ def validate_installed_probe(
         raise VerificationError("installed Plus skill inventory drifted")
     descriptor = probe["millforge_descriptor"]
     if descriptor != {
-        "package_version": "0.1.0",
+        "package_version": "0.1.1",
         "runner_id": "millforge-base",
         "runner_version": 2,
     }:
@@ -643,7 +643,7 @@ def run_installed_cli_smoke(
     cli = executable_dir / ("millrace.exe" if os.name == "nt" else "millrace")
     prefix = [str(cli), "--json", "--workspace", str(workspace)]
     package = [*prefix, "package"]
-    official = ["millrace.plus.official", "0.22.2"]
+    official = ["millrace.plus.official", "0.22.3"]
     workflow = [
         "--workflow-id",
         "simple_loop",
@@ -1340,7 +1340,7 @@ def verify(
                 "policy": {
                     "cache": "disabled",
                     "index": "disabled",
-                    "requirement": "millrace==0.22.2",
+                    "requirement": "millrace==0.22.3",
                     "wheel_sources": ["product_wheels", "resolver_closure"],
                 },
                 "result": installed,

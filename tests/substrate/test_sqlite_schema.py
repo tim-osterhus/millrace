@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from millrace.contracts.compiled_plan import SelectedCompiledPlan
+from millrace.substrate._sqlite_controls import CONTROL_TABLE_COLUMNS
 
 SUBSTRATE_ROOT = Path(__file__).resolve().parents[2] / "src/millrace/substrate"
 
@@ -757,6 +758,9 @@ EXPECTED_TABLE_COLUMNS = {
 }
 
 
+EXPECTED_TABLE_COLUMNS.update(CONTROL_TABLE_COLUMNS)
+
+
 def _table_names(db_path: Path) -> set[str]:
     with sqlite3.connect(db_path) as connection:
         rows = connection.execute(
@@ -1018,10 +1022,10 @@ def test_open_refuses_unknown_store_schema_version_without_mutation(
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
     db_path = tmp_path / "runtime.sqlite3"
-    _create_marked_store_metadata(db_path, store_schema_version=11)
+    _create_marked_store_metadata(db_path, store_schema_version=12)
 
     before = _store_snapshot(db_path)
-    with pytest.raises(UnsupportedStoreSchemaVersion, match="11"):
+    with pytest.raises(UnsupportedStoreSchemaVersion, match="12"):
         SQLiteRuntimeStore.open(db_path)
     assert _store_snapshot(db_path) == before
 
@@ -1057,10 +1061,10 @@ def test_workflow_package_command_audit_schema_bumps_sqlite_store_version() -> N
     assert SQLITE_STORE_SCHEMA_VERSION >= 5
 
 
-def test_context_evidence_schema_uses_store_version_10() -> None:
+def test_context_evidence_schema_uses_candidate_store_version() -> None:
     from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
 
-    assert SQLITE_STORE_SCHEMA_VERSION == 10
+    assert SQLITE_STORE_SCHEMA_VERSION == 11
 
 
 @pytest.mark.parametrize("operation", ("open", "initialize"))
@@ -1076,9 +1080,7 @@ def test_schema_8_open_and_initialize_refuse_without_byte_mutation(
     store = SQLiteRuntimeStore.initialize(db_path)
     store.close()
     with sqlite3.connect(db_path) as connection:
-        connection.execute(
-            "UPDATE store_metadata SET store_schema_version = 8"
-        )
+        connection.execute("UPDATE store_metadata SET store_schema_version = 8")
     before = db_path.read_bytes()
 
     with pytest.raises(
@@ -1090,10 +1092,10 @@ def test_schema_8_open_and_initialize_refuse_without_byte_mutation(
     assert db_path.read_bytes() == before
 
 
-def test_daemon_budget_store_schema_remains_version_10() -> None:
+def test_control_candidate_store_schema_is_version_11() -> None:
     from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
 
-    assert SQLITE_STORE_SCHEMA_VERSION == 10
+    assert SQLITE_STORE_SCHEMA_VERSION == 11
 
 
 def test_open_refuses_package_registry_table_shape_drift(tmp_path: Path) -> None:
@@ -1439,8 +1441,9 @@ def test_runner_observation_schema_separates_observed_at_from_order(
         for row in _table_info(db_path, "runner_observations")
     }
 
-    assert _table_columns(db_path, "runner_observations") == (
-        EXPECTED_TABLE_COLUMNS["runner_observations"]
+    assert (
+        _table_columns(db_path, "runner_observations")
+        == (EXPECTED_TABLE_COLUMNS["runner_observations"])
     )
     assert table_info["observed_at"] == {"type": "INTEGER", "notnull": 0}
     assert table_info["observed_at_order"] == {"type": "INTEGER", "notnull": 1}
@@ -1598,9 +1601,7 @@ def test_sqlite_runtime_rows_use_store_schema_except_versioned_records(
     for table_name in runtime_tables:
         columns = _table_columns(db_path, table_name)
         assert "record_kind" not in columns
-        assert ("schema_version" in columns) == (
-            table_name in versioned_record_tables
-        )
+        assert ("schema_version" in columns) == (table_name in versioned_record_tables)
 
 
 def test_open_refuses_schema_with_same_columns_but_missing_constraints(
@@ -1673,3 +1674,23 @@ def test_sqlite_split_modules_do_not_use_reflective_serializers() -> None:
         for token in forbidden_tokens
         if token in source
     ] == []
+
+
+def test_run_execution_control_current_row_is_retained(tmp_path):
+    from support.run_controls import pause, runtime_with_run
+
+    runtime, run = runtime_with_run(tmp_path)
+    held = pause(runtime, run)["receipt"]
+    connection = runtime.store._connection
+    with pytest.raises(sqlite3.IntegrityError, match="run_execution_control_retained"):
+        connection.execute(
+            "DELETE FROM run_execution_controls WHERE run_id=?", (run.run_ref.run_id,)
+        )
+    connection.rollback()
+    assert (
+        runtime.store.load_runtime_state(runtime.cas_store)
+        .run_execution_controls[run.run_ref.run_id]
+        .pause_id
+        == held["pause_id"]
+    )
+    runtime.close()

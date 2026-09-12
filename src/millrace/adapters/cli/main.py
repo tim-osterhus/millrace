@@ -53,15 +53,28 @@ GLOBAL_OPTIONS_WITH_VALUES = {
     "--adapter-config-json",
     "--monitor",
     "--after-sequence",
+    "--request-json",
+    "--launch-correlation-id",
+    "--wait-for",
+    "--after-session",
+    "--expected-source-revision",
+    "--page-size",
+    "--cursor",
+    "--session-id",
+    "--daemon-id",
 }
 GLOBAL_FLAG_OPTIONS = {
     "--json",
     "--no-color",
     "--version",
     "--payload-stdin",
+    "--seal-if-absent",
+    "--bounded",
 }
 LOCKED_GROUPS = (
+    "daemon",
     "workspace",
+    "operations",
     "package",
     "plan",
     "queue",
@@ -76,6 +89,8 @@ LOCKED_GROUPS = (
     "run",
 )
 GROUP_HELP = {
+    "daemon": "Inspect or gracefully stop an exact Core daemon incarnation.",
+    "operations": "Read and resolve durable control operation identity.",
     "workspace": "Initialize and inspect local runtime storage.",
     "package": "Import, inspect, verify, and manage workflow packages.",
     "plan": "Admit, select, and inspect compiled plans.",
@@ -117,7 +132,7 @@ class MillraceArgumentParser(argparse.ArgumentParser):
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(argv) if argv is not None else sys.argv[1:]
     json_mode = "--json" in args
-    parser, help_parsers = _build_parser()
+    parser, help_parsers = _build_parser(bounded="--bounded" in args)
 
     if json_mode and _has_help_flag(args):
         return _render_json_help(args, parser=parser, help_parsers=help_parsers)
@@ -127,7 +142,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except CliParserExit as exc:
         return exc.status
     except CliArgumentError as exc:
-        return _render_cli_usage_error(exc.message, json_mode=json_mode)
+        return _render_cli_usage_error(
+            "Invalid bounded read arguments." if "--bounded" in args else exc.message,
+            json_mode=json_mode,
+        )
     except Exception:
         return _render_internal_error(json_mode=json_mode)
 
@@ -159,6 +177,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return int(ExitCode.SUCCESS)
 
+    if getattr(namespace, "bounded", False) or command in {
+        "plan.graph",
+        "plan.overlay",
+        "operations.history",
+        "daemon.history",
+    }:
+        return _dispatch_projection(namespace)
+    if command in {"runs.pause", "runs.resume", "runs.recover"}:
+        return _dispatch_run_control(namespace)
+    if command.startswith("daemon."):
+        return _dispatch_daemon_control(namespace)
+    if command.startswith("operations."):
+        return _dispatch_operations(namespace)
     if command.startswith("workspace."):
         return _dispatch_workspace(namespace)
     if command.startswith("package."):
@@ -195,7 +226,9 @@ def cli() -> None:
     raise SystemExit(main())
 
 
-def _build_parser() -> tuple[
+def _build_parser(
+    *, bounded: bool = False
+) -> tuple[
     MillraceArgumentParser,
     dict[str, argparse.ArgumentParser],
 ]:
@@ -211,10 +244,26 @@ def _build_parser() -> tuple[
         group_parser = subparsers.add_parser(group, help=GROUP_HELP[group])
         group_parser.set_defaults(command=group)
         help_parsers[group] = group_parser
-        if group == "workspace":
+        if group == "daemon":
+            actions = group_parser.add_subparsers(dest="daemon_command")
+            for action in ("inspect", "stop", "history"):
+                leaf = actions.add_parser(action)
+                if action == "stop":
+                    leaf.add_argument("--request-json", required=True)
+                else:
+                    leaf.add_argument("--after-session", type=int, default=0)
+                    leaf.add_argument("--expected-source-revision", type=int)
+                    leaf.add_argument(
+                        "--wait-for", choices=("readiness", "exit", "cleanup")
+                    )
+                leaf.set_defaults(command=f"daemon.{action}")
+                help_parsers[f"daemon.{action}"] = leaf
+        elif group == "operations":
+            _add_operations_commands(group_parser, help_parsers)
+        elif group == "workspace":
             _add_workspace_commands(group_parser, help_parsers)
         elif group == "package":
-            _add_package_commands(group_parser, help_parsers)
+            _add_package_commands(group_parser, help_parsers, bounded=bounded)
         elif group == "plan":
             _add_plan_commands(group_parser, help_parsers)
         elif group == "queue":
@@ -299,6 +348,7 @@ def _build_parser() -> tuple[
                 default="none",
                 help="Bounded local progress presentation.",
             )
+            daemon_parser.add_argument("--launch-correlation-id")
             daemon_parser.set_defaults(command="run.daemon")
             help_parsers["run.daemon"] = daemon_parser
             budget_stop_parser = run_subparsers.add_parser(
@@ -316,6 +366,34 @@ def _build_parser() -> tuple[
 
     parser.set_defaults(command="cli")
     return parser, help_parsers
+
+
+def _add_operations_commands(
+    group_parser: argparse.ArgumentParser,
+    help_parsers: dict[str, argparse.ArgumentParser],
+) -> None:
+    subparsers = group_parser.add_subparsers(dest="operations_command")
+    history = subparsers.add_parser(
+        "history", help="Read immutable control receipt/result pages."
+    )
+    history.add_argument("--run-id")
+    history.set_defaults(command="operations.history")
+    help_parsers["operations.history"] = history
+    for action in ("show", "resolve"):
+        parser = subparsers.add_parser(action)
+        parser.add_argument(
+            "--request-json",
+            "--launch-correlation-id",
+            "--wait-for",
+            "--after-session",
+            "--expected-source-revision",
+            required=True,
+            help="Exact bounded control request JSON.",
+        )
+        if action == "resolve":
+            parser.add_argument("--seal-if-absent", action="store_true", required=True)
+        parser.set_defaults(command=f"operations.{action}")
+        help_parsers[f"operations.{action}"] = parser
 
 
 def _add_workspace_commands(
@@ -345,11 +423,18 @@ def _add_workspace_commands(
     )
     check_parser.set_defaults(command="workspace.check")
     help_parsers["workspace.check"] = check_parser
+    identity_parser = subparsers.add_parser(
+        "identity", help="Read durable workspace identity."
+    )
+    identity_parser.set_defaults(command="workspace.identity")
+    help_parsers["workspace.identity"] = identity_parser
 
 
 def _add_package_commands(
     group_parser: argparse.ArgumentParser,
     help_parsers: dict[str, argparse.ArgumentParser],
+    *,
+    bounded: bool = False,
 ) -> None:
     subparsers = group_parser.add_subparsers(
         dest="package_command",
@@ -408,7 +493,7 @@ def _add_package_commands(
         "list",
         help="List current workflow package registry records.",
     )
-    _add_command_id_option(list_parser)
+    _add_command_id_option(list_parser, required=not bounded)
     list_parser.set_defaults(command="package.list")
     help_parsers["package.list"] = list_parser
 
@@ -417,7 +502,7 @@ def _add_package_commands(
         help="Inspect one workflow package registry record.",
     )
     _add_package_identity_arguments(inspect)
-    _add_command_id_option(inspect)
+    _add_command_id_option(inspect, required=not bounded)
     inspect.set_defaults(command="package.inspect")
     help_parsers["package.inspect"] = inspect
 
@@ -523,6 +608,11 @@ def _add_plan_commands(
     show.add_argument("fingerprint", nargs="?", metavar="FINGERPRINT")
     show.set_defaults(command="plan.show")
     help_parsers["plan.show"] = show
+    for name in ("graph", "overlay"):
+        bounded = subparsers.add_parser(name, help="Bounded selected graph projection.")
+        bounded.add_argument("fingerprint", metavar="FINGERPRINT")
+        bounded.set_defaults(command="plan." + name)
+        help_parsers["plan." + name] = bounded
 
 
 def _add_queue_commands(
@@ -631,7 +721,17 @@ def _add_runs_commands(
 ) -> None:
     subparsers = group_parser.add_subparsers(dest="runs_command", metavar="command")
 
+    for action in ("pause", "resume", "recover"):
+        parser = subparsers.add_parser(
+            action,
+            help="Apply an exact run control or retire a qualified lost continuation.",
+        )
+        parser.add_argument("--request-json", required=True)
+        parser.set_defaults(command=f"runs.{action}")
+        help_parsers[f"runs.{action}"] = parser
+
     list_parser = subparsers.add_parser("list", help="List active runs.")
+    list_parser.add_argument("--plan-fingerprint")
     list_parser.set_defaults(command="runs.list")
     help_parsers["runs.list"] = list_parser
 
@@ -647,6 +747,7 @@ def _add_runs_commands(
         action="store_true",
         help="Include the bounded retained diagnostic for the current session.",
     )
+    show.add_argument("--plan-fingerprint")
     show.set_defaults(command="runs.show")
     help_parsers["runs.show"] = show
 
@@ -671,12 +772,18 @@ def _add_runs_commands(
     follow.add_argument("run_id", metavar="RUN_ID")
     follow.add_argument(
         "--after-sequence",
+        "--request-json",
+        "--launch-correlation-id",
+        "--wait-for",
+        "--after-session",
+        "--expected-source-revision",
         type=int,
         default=0,
         metavar="N",
         help="Return retained events after this per-session sequence.",
     )
     _add_max_events_option(follow)
+    follow.add_argument("--plan-fingerprint")
     follow.set_defaults(command="runs.follow")
     help_parsers["runs.follow"] = follow
 
@@ -690,6 +797,7 @@ def _add_trace_commands(
     show = subparsers.add_parser("show", help="Show recent or run-specific trace.")
     show.add_argument("run_id", nargs="?", metavar="RUN_ID")
     _add_max_events_option(show)
+    show.add_argument("--plan-fingerprint")
     show.set_defaults(command="trace.show")
     help_parsers["trace.show"] = show
 
@@ -830,10 +938,12 @@ def _add_workflow_selection_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--entrypoint", required=True, metavar="NAME")
 
 
-def _add_command_id_option(parser: argparse.ArgumentParser) -> None:
+def _add_command_id_option(
+    parser: argparse.ArgumentParser, *, required: bool = True
+) -> None:
     parser.add_argument(
         "--command-id",
-        required=True,
+        required=required,
         metavar="ID",
         help="Explicit replay-safe package command ID.",
     )
@@ -849,6 +959,16 @@ def _add_input_id_option(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_global_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--bounded",
+        action="store_true",
+        help="Use the versioned finite public read contract.",
+    )
+    parser.add_argument("--page-size", type=int, default=50)
+    parser.add_argument("--cursor")
+    parser.add_argument("--session-id")
+    parser.add_argument("--daemon-id")
+
     parser.add_argument(
         "--version",
         action="store_true",
@@ -978,22 +1098,18 @@ def _help_command_from_args(args: Sequence[str]) -> str:
         return "run.daemon"
     if command_parts == ["run", "budget-stop"]:
         return "run.budget-stop"
-    if (
-        len(command_parts) == 2
-        and command_parts[0]
-        in {
-            "workspace",
-            "package",
-            "plan",
-            "queue",
-            "context",
-            "runs",
-            "trace",
-            "waits",
-            "interventions",
-            "dispatch",
-        }
-    ):
+    if len(command_parts) == 2 and command_parts[0] in {
+        "workspace",
+        "package",
+        "plan",
+        "queue",
+        "context",
+        "runs",
+        "trace",
+        "waits",
+        "interventions",
+        "dispatch",
+    }:
         return ".".join(command_parts)
     if len(command_parts) == 1 and command_parts[0] in LOCKED_GROUPS:
         return command_parts[0]
@@ -1025,6 +1141,46 @@ def _render_internal_error(*, json_mode: bool) -> int:
         exit_code=ExitCode.INTERNAL_ERROR,
     )
     return render_error(error, json_mode=json_mode)
+
+
+def _dispatch_run_control(namespace: argparse.Namespace) -> int:
+    try:
+        from millrace.adapters.cli.run_controls import handle_run_control_command
+
+        result = handle_run_control_command(namespace)
+    except Exception as exc:
+        return _render_command_exception(
+            exc,
+            command=_command_from_namespace(namespace),
+            json_mode=namespace.json,
+        )
+    return render_success(result, json_mode=namespace.json)
+
+
+def _dispatch_daemon_control(namespace: argparse.Namespace) -> int:
+    try:
+        from millrace.adapters.cli.daemon_control import handle_daemon_control
+
+        result = handle_daemon_control(namespace)
+    except Exception as exc:
+        return _render_command_exception(
+            exc, command=_command_from_namespace(namespace), json_mode=namespace.json
+        )
+    return render_success(result, json_mode=namespace.json)
+
+
+def _dispatch_operations(namespace: argparse.Namespace) -> int:
+    try:
+        from millrace.adapters.cli.operations import handle_operations_command
+
+        result = handle_operations_command(namespace)
+    except Exception as exc:
+        return _render_command_exception(
+            exc,
+            command=_command_from_namespace(namespace),
+            json_mode=namespace.json,
+        )
+    return render_success(result, json_mode=namespace.json)
 
 
 def _dispatch_workspace(namespace: argparse.Namespace) -> int:
@@ -1175,6 +1331,7 @@ def _render_command_exception(
 ) -> int:
     from millrace.adapters.cli.context import CliCommandError
     from millrace.substrate.errors import (
+        StoreIdentityMismatch,
         StoreNotInitialized,
         StoreSchemaUpgradeRequired,
         SubstrateError,
@@ -1182,6 +1339,16 @@ def _render_command_exception(
 
     if isinstance(exc, CliCommandError):
         return render_error(exc.to_cli_error(), json_mode=json_mode)
+    if isinstance(exc, StoreIdentityMismatch):
+        return render_error(
+            error_result(
+                command=command,
+                code=str(exc),
+                message="Workspace identity or registered location does not match.",
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+            ),
+            json_mode=json_mode,
+        )
     if isinstance(exc, StoreSchemaUpgradeRequired):
         from millrace.substrate.records import SQLITE_STORE_SCHEMA_VERSION
 
@@ -1214,6 +1381,17 @@ def _render_command_exception(
         )
         return render_error(error, json_mode=json_mode)
     return _render_internal_error(json_mode=json_mode)
+
+
+def _dispatch_projection(namespace: argparse.Namespace) -> int:
+    from millrace.adapters.cli.context import CliCommandError
+    from millrace.adapters.cli.projections import handle_projection
+
+    try:
+        result = handle_projection(namespace)
+    except CliCommandError as exc:
+        return render_error(exc.to_cli_error(), json_mode=namespace.json)
+    return render_success(result, json_mode=namespace.json)
 
 
 if __name__ == "__main__":

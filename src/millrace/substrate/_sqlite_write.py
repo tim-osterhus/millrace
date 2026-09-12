@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
+from contextlib import nullcontext
+from typing import Any
 
 from millrace.contracts.runner import runner_session_locator_from_bytes
 from millrace.contracts.state import (
@@ -14,6 +16,8 @@ from millrace.contracts.state import (
     context_cleanup_receipt_id,
     context_hydration_receipt_id,
 )
+from millrace.substrate._sqlite_controls import control_transaction
+from millrace.substrate._sqlite_daemon import guard_runtime_write as guard_daemon_write
 from millrace.substrate._sqlite_relations import (
     runner_session_cas_references,
     validate_audit_transition_rows,
@@ -106,6 +110,10 @@ from millrace.substrate._sqlite_rows import (
     encode_work_dependency_row,
     encode_work_item_row,
 )
+from millrace.substrate._sqlite_run_controls import (
+    guard_budget_reservation,
+    guard_runtime_write,
+)
 from millrace.substrate.cas import ContentAddressedByteStore
 from millrace.substrate.codecs import (
     dumps_cas_object,
@@ -122,6 +130,7 @@ def persist_runtime_state_rows(
     cas_store: ContentAddressedByteStore,
     *,
     _before_sqlite_commit: Callable[[], None] | None = None,
+    daemon_scope: dict[str, Any] | None = None,
 ) -> None:
     _validate_runner_session_cas_references(state, cas_store)
     selected_plan_digests = _put_selected_plan_objects(state, cas_store)
@@ -170,8 +179,7 @@ def persist_runtime_state_rows(
         for order, run in enumerate(state.runs.values())
     )
     runner_session_rows = tuple(
-        encode_runner_session_row(session)
-        for session in state.runner_sessions.values()
+        encode_runner_session_row(session) for session in state.runner_sessions.values()
     )
     runner_session_cancellation_rows = tuple(
         encode_runner_session_cancellation_row(record)
@@ -252,9 +260,7 @@ def persist_runtime_state_rows(
         for order, record in enumerate(state.closed_work_items.values())
     )
     pause_state_row = encode_pause_state_row(state.pause)
-    dispatch_suspension_row = encode_dispatch_suspension_row(
-        state.dispatch_suspension
-    )
+    dispatch_suspension_row = encode_dispatch_suspension_row(state.dispatch_suspension)
     queue_closure_rows = tuple(
         encode_queue_closure_row(record, created_at_order=order)
         for order, record in enumerate(state.queue_closures.values())
@@ -331,59 +337,15 @@ def persist_runtime_state_rows(
         for order, refusal in enumerate(state.refusals)
     )
 
-    if connection.in_transaction:
-        _replace_runtime_rows(
-            connection,
-            state=state,
-            cas_store=cas_store,
-            admitted_plan_rows=admitted_plan_rows,
-            default_plan_row=default_plan_row,
-            receipt_rows=receipt_rows,
-            work_item_rows=work_item_rows,
-            activation_rows=activation_rows,
-            run_rows=run_rows,
-            runner_session_rows=runner_session_rows,
-            runner_session_cancellation_rows=runner_session_cancellation_rows,
-            runner_session_cancellation_attempt_rows=(
-                runner_session_cancellation_attempt_rows
-            ),
-            runner_session_completion_rows=runner_session_completion_rows,
-            observation_rows=observation_rows,
-            artifact_rows=artifact_rows,
-            effect_proposal_rows=effect_proposal_rows,
-            effect_reconciliation_rows=effect_reconciliation_rows,
-            activation_route_rows=activation_route_rows,
-            fanout_rows=fanout_rows,
-            work_dependency_rows=work_dependency_rows,
-            closure_target_rows=closure_target_rows,
-            closure_evaluation_rows=closure_evaluation_rows,
-            closure_terminal_rows=closure_terminal_rows,
-            remediation_work_rows=remediation_work_rows,
-            closure_blocked_rows=closure_blocked_rows,
-            closed_work_item_rows=closed_work_item_rows,
-            pause_state_row=pause_state_row,
-            dispatch_suspension_row=dispatch_suspension_row,
-            queue_closure_rows=queue_closure_rows,
-            quarantine_rows=quarantine_rows,
-            lineage_quarantine_rows=lineage_quarantine_rows,
-            recovery_attempt_rows=recovery_attempt_rows,
-            operator_intervention_rows=operator_intervention_rows,
-            operator_wait_rows=operator_wait_rows,
-            cooldown_wait_rows=cooldown_wait_rows,
-            counter_rows=counter_rows,
-            transition_rows=transition_rows,
-            governance_event_rows=governance_event_rows,
-            trace_rows=trace_rows,
-            refusal_rows=refusal_rows,
-        )
-        if _before_sqlite_commit is not None:
-            _before_sqlite_commit()
-        return
-
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        # Budget evidence references replace-managed run/session rows. Defer the
-        # relationship check until their authoritative rows are reinserted.
+    _refuse_stale_or_divergent_transition_history(connection, transition_rows)
+    validate_loaded_runtime_state(state)
+    _validate_runner_session_evidence_authority(state, cas_store)
+    with (
+        nullcontext()
+        if connection.in_transaction
+        else control_transaction(connection, translate_errors=False)
+    ):
+        guard_daemon_write(connection, state, daemon_scope)
         connection.execute("PRAGMA defer_foreign_keys = ON")
         _replace_runtime_rows(
             connection,
@@ -431,10 +393,6 @@ def persist_runtime_state_rows(
         )
         if _before_sqlite_commit is not None:
             _before_sqlite_commit()
-    except Exception:
-        connection.execute("ROLLBACK")
-        raise
-    connection.execute("COMMIT")
 
 
 def _validate_context_evidence_authority(
@@ -510,6 +468,11 @@ def persist_context_hydration_receipt(
             decode_context_hydration_receipt_row(receipt_id_row) != row
         ):
             raise ValueError("context hydration evidence conflict")
+        run_id = connection.execute(
+            "SELECT run_id FROM runner_sessions WHERE session_id=?",
+            (row.session_id,),
+        ).fetchone()[0]
+        guard_budget_reservation(connection, run_id)
         connection.execute(
             """
             INSERT INTO context_hydration_receipts (
@@ -1714,9 +1677,7 @@ def _candidate_runtime_signature(
         "closed_work_items": closed_work_item_rows,
         "pause_state": () if pause_state_row is None else (pause_state_row,),
         "dispatch_suspension": (
-            ()
-            if dispatch_suspension_row is None
-            else (dispatch_suspension_row,)
+            () if dispatch_suspension_row is None else (dispatch_suspension_row,)
         ),
         "queue_closures": queue_closure_rows,
         "quarantine_records": quarantine_rows,
@@ -1751,12 +1712,8 @@ def _validate_candidate_runtime_rows(
     trace_rows: tuple[TraceRow, ...],
     refusal_rows: tuple[RefusalRow, ...],
 ) -> None:
-    transition_rows_by_record_id = {
-        row.record_id: row for row in transition_rows
-    }
-    transition_rows_by_order = {
-        row.transition_order: row for row in transition_rows
-    }
+    transition_rows_by_record_id = {row.record_id: row for row in transition_rows}
+    transition_rows_by_order = {row.transition_order: row for row in transition_rows}
     governance_rows_by_order = {
         row.transition_order: row for row in governance_event_rows
     }
@@ -1867,8 +1824,7 @@ def _replace_runtime_rows(
         trace_rows=trace_rows,
         refusal_rows=refusal_rows,
     )
-    validate_loaded_runtime_state(state)
-    _validate_runner_session_evidence_authority(state, cas_store)
+    guard_runtime_write(connection, state)
     for table_name in (
         "refusals",
         "traces",

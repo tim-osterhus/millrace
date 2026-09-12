@@ -184,6 +184,16 @@ def _cleanup_projection(
             str(manifest_digest),
             str(getattr(session, "session_fencing_token")),
         )
+        # An exact match must not hide other cleanup evidence attributed to
+        # this session's current authority but a different checkout manifest.
+        receipts = runtime.store.load_context_cleanup_receipts(
+            str(getattr(session, "session_id")),
+        )
+        if any(item["manifest_digest"] != manifest_digest for item in receipts):
+            return {
+                "status": "contradictory",
+                "reason": "context_cleanup_evidence_refused",
+            }
     except (SubstrateError, TypeError, ValueError):
         return {
             "status": "contradictory",
@@ -355,7 +365,10 @@ def _runs_show(namespace: object) -> CliSuccess:
         observation.run_id == run_id
         for observation in state.runner_observations.values()
     )
+    from millrace.kernel.run_controls import run_control_projection
+
     run_projection: dict[str, object] = {
+        **run_control_projection(state, run_id),
         "run_id": run.run_ref.run_id,
         "work_item_id": run.work_item_id,
         "activation_id": run.activation_id,
@@ -368,9 +381,7 @@ def _runs_show(namespace: object) -> CliSuccess:
         "queue_family_id": (
             None if work_item is None else str(work_item.queue_family_id)
         ),
-        "graph_node_id": (
-            None if activation is None else activation.graph_node_id
-        ),
+        "graph_node_id": (None if activation is None else activation.graph_node_id),
         "observed": observed,
         "closed": run.work_item_id in state.closed_work_items,
         "runner_session": _runner_session_with_budget(

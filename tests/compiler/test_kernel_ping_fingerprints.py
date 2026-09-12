@@ -317,7 +317,7 @@ def test_kernel_ping_millforge_default_fingerprint_is_stable() -> None:
     plan = _compile_plan(_source())
 
     assert authority_fingerprint(plan) == (
-        "sha256:88ca236b32308fa47906da4a5aaed3d9b6ca6b95c1a90295482204375eb1d121"
+        "sha256:0a8d7159262508f3af0fa92ab50f66f22493556fa6c1c5cfb2e299239dafda59"
     )
 
 

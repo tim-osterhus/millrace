@@ -11,18 +11,25 @@ out operator-visible contract changes when they matter.
 
 This file starts at `0.13.0`, the current documented public baseline.
 
-## [Unreleased] — v0.22.3 candidate
+## [0.22.3] - 2026-09-11
 
 ### MVP release scope
 
 - Defer the experimental LAD semantic-workspace workflow from the scoped MVP
   Plus distribution. Preserve generic selected context mechanisms and runtime
   integrity fixes; the evaluation did not establish an efficacy comparison.
-- Keep run-scoped pause/resume unavailable and retain existing public package
-  closure and Millforge instruction limits. Campaign-only capacity changes are
-  not public release fixes.
+- Add exact run controls and bounded public projections while retaining public
+  package closure and Millforge instruction limits. Campaign-only capacity
+  changes are not public release fixes.
 
 ### Added
+
+- Added immutable operation acceptance, pending settlement and same-key
+  reconciliation; admitted unstarted run holds and qualified same-attempt
+  Millforge cooperative pause/resume preserve selected authority and budgets.
+- Added exact macOS daemon inspect/stop, durable progress attribution, bounded
+  public run/graph/history projections and explicit safe native retirement.
+  Owner-death continuation and released OS/provider qualification remain open.
 
 - Added trusted projection metadata for selected runtime authority and operator
   projections.
@@ -49,6 +56,9 @@ This file starts at `0.13.0`, the current documented public baseline.
   changing token-budget authority or deleting CAS-backed durable evidence.
 
 ### Fixed
+
+- Preserve foreground daemon execution on platforms without the new macOS
+  lifecycle observer, without advertising unsupported native controls.
 
 - Retained sibling failure completions during pending recovery cooldowns until
   the actual due timer is accepted, then applied them exactly once. Superseded
@@ -97,20 +107,21 @@ This file starts at `0.13.0`, the current documented public baseline.
 - Preserved the exact bounded public reason for deterministic context-writeback
   refusals while collapsing exception-local details to a stable redacted
   category.
-- Advanced the current workspace store to schema 10 for immutable context
-  evidence. Exact schema-6 and schema-7 workspaces retain the unchanged
-  `workspace_upgrade_required` boundary, while schema 8 and schema 9 remain
+- Advanced the current workspace store to schema 11 for immutable context
+  evidence, operation receipts, run controls and daemon lifecycle records. Exact schema-6 and schema-7 workspaces retain the unchanged
+  `workspace_upgrade_required` boundary, while schemas 8, 9 and 10 remain
   unsupported for this release.
 
 ### Compatibility Notes
 
-- v0.22.3 is an unreleased governed-context/runtime-integrity candidate for
+- v0.22.3 is a governed-context/runtime-integrity release for
   the general runtime. Workflow-specific context meaning remains in workflow
   packages.
-- Published v0.22.2 workspaces use store schema 8; this candidate requires fresh
-  schema-10 state and provides no in-place migration from schema 8 or 9.
+- Published v0.22.2 workspaces use store schema 8; this release requires fresh
+  schema-11 state and provides no in-place migration from schema 8, 9 or 10.
   Preserve old workspaces and finish or retire their work with the matching
-  runtime. The published `millrace` bundle remains v0.22.2.
+  runtime. The `millrace==0.22.3` bundle pins Core and Plus 0.22.3 with
+  Millforge 0.1.1.
 - Context-bound plans using the unreleased schema-17 shape are historical
   evidence, not compatible plans. Import and select a schema-18 plan before
   running it under v0.22.3.
@@ -1341,7 +1352,7 @@ as a first-class alternative instead of treating it as an out-of-band runner.
 - Switching from `default_codex` to `default_pi` changes only compiled runner
   bindings. The shipped execution and planning loop topology remains the same.
 
-[Unreleased]: https://github.com/tim-osterhus/millrace/compare/v0.22.2...HEAD
+[0.22.3]: https://github.com/tim-osterhus/millrace/compare/v0.22.2...v0.22.3
 [0.21.1]: https://github.com/tim-osterhus/millrace/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/tim-osterhus/millrace/compare/v0.20.3...v0.21.0
 [0.20.3]: https://github.com/tim-osterhus/millrace/compare/v0.20.2...v0.20.3

@@ -47,7 +47,7 @@ _MILLFORGE_DEFAULT_COMPONENT_SELECTOR = (
     ("component_id", "millforge-base"),
     ("component_version", "2"),
     ("provider_distribution", "millforge"),
-    ("provider_version", "0.1.0"),
+    ("provider_version", "0.1.1"),
     ("descriptor_media_type", "application/json"),
 )
 _MILLFORGE_DEFAULT_COMPONENT_CAPABILITY_IDS = frozenset(

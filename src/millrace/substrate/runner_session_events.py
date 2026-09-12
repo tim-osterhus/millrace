@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Any, Final, Protocol
 
 from millrace.contracts.compiled_plan import AuthorityValue
 from millrace.contracts.runner_events import (
@@ -105,8 +107,11 @@ class RunnerSessionEventStoreStats:
 class RunnerSessionEventStore:
     """Synchronous WAL store; readers never participate in session execution."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self, connection: sqlite3.Connection, path: Path | None = None
+    ) -> None:
         self._connection = connection
+        self._snapshot_path = None if path is None else public_snapshot_path(path)
 
     @classmethod
     def initialize(cls, path: str | Path) -> RunnerSessionEventStore:
@@ -175,7 +180,7 @@ class RunnerSessionEventStore:
                 connection.close()
                 raise ValueError("invalid runner-session event store schema shape")
         connection.commit()
-        return cls(connection)
+        return cls(connection, db_path)
 
     @classmethod
     def open(cls, path: str | Path) -> RunnerSessionEventStore:
@@ -184,6 +189,50 @@ class RunnerSessionEventStore:
             raise FileNotFoundError(db_path)
         store = cls.initialize(db_path)
         return store
+
+    @classmethod
+    def open_readonly(cls, path: str | Path) -> RunnerSessionEventSnapshot:
+        return RunnerSessionEventSnapshot(public_snapshot_path(Path(path)))
+
+    def _publish_snapshot(self) -> None:
+        if self._snapshot_path is None:
+            return
+        temporary: str | None = None
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            payload = {
+                "schema_version": 1,
+                "captured_at_ns": time.time_ns(),
+                "sequences": self._connection.execute(
+                    "SELECT * FROM session_event_sequences ORDER BY session_id"
+                ).fetchall(),
+                "events": self._connection.execute(
+                    "SELECT * FROM session_events ORDER BY session_id,sequence"
+                ).fetchall(),
+            }
+            raw = _canonical_json(payload).encode()
+            if len(raw) > 2 * 1024 * 1024:
+                raise ValueError("public_event_snapshot_too_large")
+            wrapped = _canonical_json(
+                {"payload": payload, "sha256": sha256(raw).hexdigest()}
+            ).encode()
+            fd, temporary = tempfile.mkstemp(
+                prefix=".runner-snapshot-", dir=self._snapshot_path.parent
+            )
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(wrapped)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self._snapshot_path)
+            temporary = None
+        except (OSError, sqlite3.Error, ValueError):
+            # Committed telemetry remains lossy; failed capture is explicitly absent.
+            if self._snapshot_path is not None:
+                self._snapshot_path.unlink(missing_ok=True)
+        finally:
+            self._connection.rollback()
+            if temporary is not None:
+                Path(temporary).unlink(missing_ok=True)
 
     def append(
         self,
@@ -198,21 +247,11 @@ class RunnerSessionEventStore:
         truncation_metadata: Mapping[str, AuthorityValue],
         replay_key: str,
     ) -> RunnerSessionEvent:
-        if (
-            not isinstance(replay_key, str)
-            or not replay_key.startswith("sha256:")
-            or len(replay_key) != 71
-            or any(
-                character not in "0123456789abcdef"
-                for character in replay_key.removeprefix("sha256:")
-            )
-        ):
-            raise ValueError("replay_key must be an opaque sha256 identity")
+        _validate_event_replay_key(replay_key)
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             existing = self._connection.execute(
-                "SELECT * FROM session_events "
-                "WHERE session_id = ? AND replay_key = ?",
+                "SELECT * FROM session_events WHERE session_id = ? AND replay_key = ?",
                 (session_id, replay_key),
             ).fetchone()
             if existing is not None:
@@ -228,6 +267,7 @@ class RunnerSessionEventStore:
                     truncation_metadata=truncation_metadata,
                 )
                 self._connection.commit()
+                self._publish_snapshot()
                 return replayed
             sequence_row = self._connection.execute(
                 "SELECT run_id, dispatch_generation, last_sequence, "
@@ -239,8 +279,7 @@ class RunnerSessionEventStore:
                 self._make_stream_room()
                 sequence = 1
                 self._connection.execute(
-                    "INSERT INTO session_event_sequences "
-                    "VALUES (?, ?, ?, ?, 0, ?, 0)",
+                    "INSERT INTO session_event_sequences VALUES (?, ?, ?, ?, 0, ?, 0)",
                     (
                         session_id,
                         run_id,
@@ -260,13 +299,9 @@ class RunnerSessionEventStore:
                     "WHERE session_id = ?",
                     (sequence, session_id),
                 )
-            drop_progress = self._enforce_update_rate(
-                session_id=session_id,
-                kind=kind,
-            )
-            event_id = _event_id(session_id, dispatch_generation, replay_key)
+            drop_progress = self._enforce_update_rate(session_id=session_id, kind=kind)
             event = RunnerSessionEvent(
-                event_id=event_id,
+                event_id=_event_id(session_id, dispatch_generation, replay_key),
                 session_id=session_id,
                 run_id=run_id,
                 dispatch_generation=dispatch_generation,
@@ -311,7 +346,10 @@ class RunnerSessionEventStore:
             if drop_progress:
                 self._drop_oldest_progress(session_id)
             self._enforce_bounds()
+            if self._snapshot_path is not None:
+                self._snapshot_path.unlink(missing_ok=True)
             self._connection.commit()
+            self._publish_snapshot()
         except Exception:
             self._connection.rollback()
             raise
@@ -370,12 +408,7 @@ class RunnerSessionEventStore:
                 )
                 break
             expected = sequence + 1
-        if (
-            gap is None
-            and not rows
-            and last is not None
-            and int(last) > after_sequence
-        ):
+        if gap is None and not rows and last is not None and int(last) > after_sequence:
             gap = RunnerSessionEventGap(
                 after_sequence,
                 None,
@@ -450,9 +483,7 @@ class RunnerSessionEventStore:
         admitted = int(rate_count) if int(rate_second) == now_second else 0
         if admitted >= RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND:
             if kind != "runner_progress":
-                raise ValueError(
-                    "runner-session event update-rate ceiling reached"
-                )
+                raise ValueError("runner-session event update-rate ceiling reached")
             return True
         self._connection.execute(
             "UPDATE session_event_sequences "
@@ -480,9 +511,7 @@ class RunnerSessionEventStore:
             ).fetchone()
             if victim is None:
                 if not self._evict_oldest_closed_stream():
-                    raise ValueError(
-                        "runner-session event store hard ceiling reached"
-                    )
+                    raise ValueError("runner-session event store hard ceiling reached")
             else:
                 self._connection.execute(
                     "DELETE FROM session_events WHERE event_id = ?",
@@ -535,6 +564,158 @@ class RunnerSessionEventStore:
             raise ValueError("runner-session event stream ceiling reached")
 
 
+def _validate_event_replay_key(replay_key: str) -> None:
+    if (
+        not isinstance(replay_key, str)
+        or not replay_key.startswith("sha256:")
+        or len(replay_key) != 71
+        or any(
+            character not in "0123456789abcdef"
+            for character in replay_key.removeprefix("sha256:")
+        )
+    ):
+        raise ValueError("replay_key must be an opaque sha256 identity")
+
+
+def public_snapshot_path(path: Path) -> Path:
+    return path.with_name(path.name + ".public.json")
+
+
+class RunnerSessionEventSnapshot:
+    """Immutable writer-published capture; no SQLite locks or filesystem writes."""
+
+    def __init__(self, path: Path) -> None:
+        with path.open("rb") as stream:
+            raw = stream.read(2 * 1024 * 1024 + 1)
+        if len(raw) > 2 * 1024 * 1024:
+            raise ValueError("history_corrupt")
+        try:
+            wrapper = json.loads(raw)
+            payload = wrapper["payload"]
+            if (
+                wrapper["sha256"]
+                != sha256(_canonical_json(payload).encode()).hexdigest()
+                or payload["schema_version"] != 1
+            ):
+                raise ValueError("history_corrupt")
+            self.captured_at_ns = payload["captured_at_ns"]
+            if (
+                type(self.captured_at_ns) is not int
+                or not 0 < self.captured_at_ns <= time.time_ns()
+            ):
+                raise ValueError("history_corrupt")
+            sequences = payload["sequences"]
+            rows = payload["events"]
+            if (
+                len(sequences) > RUNNER_SESSION_EVENT_STORE_MAX_STREAMS
+                or len(rows) > RUNNER_SESSION_EVENT_STORE_MAX_RECORDS
+            ):
+                raise ValueError("history_corrupt")
+            self._load_sequences(sequences)
+            self._load_events(rows)
+        except (KeyError, TypeError, IndexError, RecursionError) as exc:
+            raise ValueError("history_corrupt") from exc
+
+    def _load_sequences(self, sequences: list[Any]) -> None:
+        self._sequences: dict[str, list[Any]] = {}
+        for row in sequences:
+            if (
+                len(row) != 7
+                or not all(isinstance(v, str) and v for v in row[:2])
+                or any(type(v) is not int or v < 0 for v in row[2:])
+                or row[2] < 1
+                or row[4] not in (0, 1)
+                or row[0] in self._sequences
+            ):
+                raise ValueError("history_corrupt")
+            self._sequences[row[0]] = row
+
+    def _load_events(self, rows: list[Any]) -> None:
+        self._events: list[RunnerSessionEvent] = []
+        identities: set[str] = set()
+        last_sequences: dict[str, int] = {}
+        total = 0
+        for row in rows:
+            if len(row) != 12:
+                raise ValueError("history_corrupt")
+            event = _event_from_row(tuple(row))
+            scope = self._sequences.get(event.session_id)
+            if (
+                scope is None
+                or (scope[1], scope[2]) != (event.run_id, event.dispatch_generation)
+                or not last_sequences.get(event.session_id, 0)
+                < event.sequence
+                <= scope[3]
+                or event.event_id in identities
+            ):
+                raise ValueError("history_corrupt")
+            if event.event_id != _event_id(
+                event.session_id, event.dispatch_generation, row[1]
+            ):
+                raise ValueError("history_corrupt")
+            size = len(_canonical_json(event.payload()).encode()) + len(row[1].encode())
+            if size != row[11] or size > RUNNER_SESSION_EVENT_MAX_BYTES:
+                raise ValueError("history_corrupt")
+            total += size
+            last_sequences[event.session_id] = event.sequence
+            identities.add(event.event_id)
+            self._events.append(event)
+        if total > RUNNER_SESSION_EVENT_STORE_MAX_BYTES:
+            raise ValueError("history_corrupt")
+
+    def stream_scope(self, session_id: str) -> dict[str, object] | None:
+        row = self._sequences.get(session_id)
+        if row is None:
+            return None
+        earliest = min(
+            (
+                event.sequence
+                for event in self._events
+                if event.session_id == session_id
+            ),
+            default=None,
+        )
+        return {
+            "run_id": row[1],
+            "dispatch_generation": row[2],
+            "last_sequence": row[3],
+            "earliest_retained_sequence": earliest,
+        }
+
+    def read(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int,
+        limit: int = 100,
+        session_id: str | None = None,
+    ) -> RunnerSessionEventPage:
+        if type(after_sequence) is not int or after_sequence < 0 or session_id is None:
+            raise ValueError("invalid_snapshot_cursor")
+        scope = self.stream_scope(session_id)
+        if scope is None or scope["run_id"] != run_id:
+            return RunnerSessionEventPage((), None, 0, False)
+        rows = [
+            event
+            for event in self._events
+            if event.session_id == session_id and event.sequence > after_sequence
+        ][: min(max(limit, 1), 100)]
+        last = int(str(scope["last_sequence"]))
+        gap = None
+        expected = after_sequence + 1
+        for event in rows:
+            if event.sequence != expected:
+                gap = RunnerSessionEventGap(expected - 1, event.sequence, "compacted")
+                break
+            expected += 1
+        if not rows and last > after_sequence:
+            gap = RunnerSessionEventGap(after_sequence, None, "history_unavailable")
+        return RunnerSessionEventPage(tuple(rows), gap, last, True)
+
+    def close(self) -> None:
+        pass
+
+
 class RunnerSessionEventWriter:
     """Redacts and bounds producer input before it reaches the event store."""
 
@@ -578,8 +759,7 @@ class RunnerSessionEventWriter:
         replay_identity = (
             "sha256:"
             + sha256(
-                b"millrace.runner-session-event.replay-key.v1\0"
-                + replay_key_bytes
+                b"millrace.runner-session-event.replay-key.v1\0" + replay_key_bytes
             ).hexdigest()
         )
         return self.store.append(
@@ -620,9 +800,7 @@ class RunnerSessionEventWriter:
         redacted = self._redactor.feed(chunk, final=final)
         if not redacted:
             return None
-        digest = sha256(
-            f"{observed_at}:{redacted}:{final}".encode()
-        ).hexdigest()
+        digest = sha256(f"{observed_at}:{redacted}:{final}".encode()).hexdigest()
         return self.record_progress(
             {"text": redacted, "final": final},
             observed_at=observed_at,
@@ -643,9 +821,13 @@ class _StreamingRedactor:
         if not self._tokens:
             immediate_output, self._buffer = self._buffer, ""
             return immediate_output
-        safe_end = len(self._buffer) if final else max(
-            0,
-            len(self._buffer) - self._max_token + 1,
+        safe_end = (
+            len(self._buffer)
+            if final
+            else max(
+                0,
+                len(self._buffer) - self._max_token + 1,
+            )
         )
         parts: list[str] = []
         index = 0

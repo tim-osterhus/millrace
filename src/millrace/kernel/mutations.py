@@ -86,6 +86,7 @@ from millrace.kernel.lookups import (
     external_enqueue_routes,
     run_has_observation,
 )
+from millrace.kernel.run_controls import run_hold_refusal
 
 T = TypeVar("T")
 
@@ -101,6 +102,15 @@ def apply(state: RuntimeState, decision: TransitionDecision) -> RuntimeState:
 
     next_state = state
     for mutation in decision.mutations:
+        if isinstance(
+            mutation, (CreateRunnerSessionRecord, AttachRunnerSessionContextRecord)
+        ) or (
+            isinstance(mutation, AdvanceRunnerSessionRecord)
+            and mutation.session.state in {"starting", "running"}
+        ):
+            held = run_hold_refusal(state, mutation.expected_run_ref.run_id)
+            if held is not None:
+                raise StateConcurrencyError(held)
         if isinstance(mutation, RecordInputReceipt):
             next_state = _apply_record_receipt(next_state, mutation)
         elif isinstance(mutation, AdmitPlanRef):

@@ -2088,3 +2088,85 @@ def test_completion_diagnostic_exposes_accepted_blocked_session(
         "diagnostic_status": "available",
         "diagnostic": {"blocked_reason": "requires review", "bounded": True},
     }
+
+
+def test_cleanup_projection_keeps_other_session_evidence_separate(
+    tmp_path: Path,
+) -> None:
+    from cli.test_cli_projections import (
+        _cleanup_receipt,
+        _refused_context_completion,
+        inventory,
+    )
+    from millrace.adapters.cli import status
+    from millrace.adapters.cli.context import transition_context
+    from millrace.contracts.ids import QueueFamilyId
+    from millrace.contracts.transition import (
+        ClaimWork,
+        CreateRunnerSession,
+        EnqueueWork,
+    )
+    from millrace.kernel import apply, decide
+
+    runtime, run, session, manifest = _refused_context_completion(tmp_path)
+    try:
+        state = runtime.store.load_runtime_state(runtime.cas_store)
+
+        def transition(item):
+            nonlocal state
+            result = decide(
+                state,
+                item,
+                transition_context(command="other", input_id_value=item.input_id),
+            )
+            assert result.accepted, result
+            state = apply(state, result)
+
+        transition(
+            EnqueueWork(
+                "other-work",
+                queue_family_id=QueueFamilyId("prompt"),
+                payload={"prompt_id": "other", "body": "other context"},
+            )
+        )
+        other_activation = next(
+            a.activation_id
+            for a in state.activations.values()
+            if a.activation_id != run.activation_id
+        )
+        transition(ClaimWork("other-claim", activation_id=other_activation))
+        other_run = next(
+            r for r in state.runs.values() if r.run_ref.run_id != run.run_ref.run_id
+        )
+        transition(
+            CreateRunnerSession(
+                "other-session",
+                run_ref=other_run.run_ref,
+                session_id="other-session",
+                session_fencing_token="other-private-fence",
+                created_at=200,
+                explicit_retry_intent=False,
+            )
+        )
+        runtime.store.persist_runtime_state(state, runtime.cas_store)
+        other = state.runner_sessions["other-session"]
+        _cleanup_receipt(
+            runtime,
+            other,
+            replace(manifest, session_id=other.session_id),
+            conflicting=True,
+        )
+        before = inventory(tmp_path)
+        assert status._cleanup_projection(runtime, session) == {"status": "missing"}
+        # Both generation and fence are authenticated before interpreting evidence.
+        for invalid in (
+            replace(session, dispatch_generation=2),
+            replace(session, session_fencing_token="wrong"),
+        ):
+            assert status._cleanup_projection(runtime, invalid) == {
+                "status": "contradictory",
+                "reason": "context_cleanup_evidence_refused",
+            }
+        assert inventory(tmp_path) == before
+    finally:
+        runtime.close()

@@ -99,7 +99,9 @@ def open_runtime_context(namespace: object, *, command: str) -> OpenRuntimeConte
             details=_path_details(paths),
         )
     try:
-        store = SQLiteRuntimeStore.open(paths.db_path)
+        store = SQLiteRuntimeStore.open(
+            paths.db_path, workspace_path=paths.workspace_path, cas_path=paths.cas_path
+        )
     except StoreSchemaUpgradeRequired as exc:
         raise workspace_upgrade_required(
             command,
@@ -120,8 +122,10 @@ def initialize_runtime_context(namespace: object) -> OpenRuntimeContext:
 
     paths = workspace_paths(namespace)
     paths.db_path.parent.mkdir(parents=True, exist_ok=True)
+    store = SQLiteRuntimeStore.initialize(
+        paths.db_path, workspace_path=paths.workspace_path, cas_path=paths.cas_path
+    )
     paths.cas_path.mkdir(parents=True, exist_ok=True)
-    store = SQLiteRuntimeStore.initialize(paths.db_path)
     return OpenRuntimeContext(
         paths=paths,
         store=store,
@@ -444,3 +448,71 @@ def _canonical_cli_value(value: object) -> object:
     if isinstance(value, dict):
         return {str(key): _canonical_cli_value(nested) for key, nested in value.items()}
     return str(value)
+
+
+class _RunnerStartDeferred(RuntimeError):
+    """The held-owner opportunity ended before a new native start committed."""
+
+
+def persist_runner_transition(
+    runtime: OpenRuntimeContext,
+    transition_input: TransitionInput,
+    *,
+    driving_budget_id: str | None = None,
+    driving_budget_clock: Callable[[], float] | None = None,
+) -> RuntimeState | None:
+    from millrace.adapters.cli.session_coordinator import (
+        _RETAINED_OWNERS,
+        _retained_start_eligible,
+    )
+    from millrace.contracts.transition import AdvanceRunnerSession
+    from millrace.kernel import apply, decide
+    from millrace.substrate.errors import ControlOperationError, StorageIntegrityError
+
+    state = runtime.store.load_runtime_state(runtime.cas_store)
+    held_admission = (
+        isinstance(transition_input, AdvanceRunnerSession)
+        and transition_input.expected_state == "created"
+        and transition_input.next_state == "starting"
+        and bool(_RETAINED_OWNERS.get())
+    )
+    if held_admission and not _retained_start_eligible(state):
+        raise _RunnerStartDeferred
+    decision = decide(
+        state,
+        transition_input,
+        transition_context(
+            command="run.session",
+            input_id_value=transition_input.input_id,
+        ),
+    )
+    if not decision.accepted and refusal_is_pre_persist(decision):
+        return None
+    next_state = apply(state, decision)
+    if (
+        decision.accepted
+        and isinstance(transition_input, AdvanceRunnerSession)
+        and transition_input.next_state == "starting"
+    ):
+        try:
+            # The existing SQL control-map/history guards fence this exact
+            # eligibility snapshot through the atomic intent/budget reservation.
+            runtime.store.persist_runner_start(
+                next_state,
+                runtime.cas_store,
+                next_state.runner_sessions[transition_input.session_id],
+                driving_budget_id,
+                driving_budget_clock,
+            )
+        except (ControlOperationError, StorageIntegrityError) as exc:
+            if held_admission and (
+                str(exc) == "stale_runtime_controls"
+                or str(exc).startswith("stale runtime state ")
+            ):
+                raise _RunnerStartDeferred from exc
+            raise
+    else:
+        runtime.store.persist_runtime_state(next_state, runtime.cas_store)
+    if not decision.accepted:
+        return None
+    return next_state
