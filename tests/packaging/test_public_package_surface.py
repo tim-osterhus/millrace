@@ -540,7 +540,9 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
         assert daemon_failure["code"] == expected_failure
         failure_details = daemon_failure["details"]
         assert failure_details["stopped_reason"] == expected_failure
-        assert failure_details["adapter_failures"] == (0 if sys.platform == "darwin" else 1)
+        assert failure_details["adapter_failures"] == (
+            0 if sys.platform == "darwin" else 1
+        )
         assert failure_details["units_started"] == 0
         if sys.platform == "darwin":
             assert failure_details["last_result"] == {{}}
