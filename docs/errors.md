@@ -160,3 +160,20 @@ Neither timeout nor `not_found_at_revision` proves nonacceptance.
 truncating or deleting the retained evidence. `operation_already_settled` refuses
 a second terminal result while allowing separately identified aftermath evidence.
 These candidate surfaces do not qualify native pause/resume or a release.
+
+### Private S02 demo refusals
+
+`demo_preflight_refused` means no demo was enqueued. Check interactive stdin or
+use the explicitly simulated `--auto-confirm`; install the exact reviewed
+Core/Plus wheel pair with its retained artifact evidence. Do not supply global
+workspace, database, CAS or actor selectors to demo.
+
+`demo_blocked` retains the owned runtime and reports the concrete boundary.
+`demo_interrupted` reports handled interruption and the UUID usable with
+`--resume`. `demo_cancelled` is not workflow closure. `demo_cleanup_incomplete`
+retains remaining owned evidence; do not infer successful deletion or discard
+unknown files. An ambiguous lock is never removed based on age or PID.
+
+The demo distinguishes declared `demo_blocked` refusals from `demo_failed`
+runtime exceptions. Both retain the owned incomplete workspace; an error is
+never completion evidence. `demo_cleanup_incomplete` retains cleanup evidence.

@@ -28,6 +28,11 @@ from millrace.compiler.source import (
     text_tuple,
 )
 from millrace.contracts import Diagnostic
+from millrace.contracts.runner_payload_capacity import (
+    PayloadCapacityError,
+    completion_capacity,
+    validate_payload_capacity_binding,
+)
 from millrace.contracts.schema import validate_closure_verdict_schema_declaration
 from millrace.contracts.selected_plan_lookups import (
     counter_artifact_contract_mismatch,
@@ -1488,57 +1493,20 @@ def _validate_completion_runner_capacity(
             reason="missing_runner_binding_capacity",
         )
         return
-    raw_pin = runner.get("component_pin")
-    if not isinstance(raw_pin, Mapping):
+    try:
+        completion_capacity(runner, record.get("request_payload_byte_limit"))
+    except PayloadCapacityError as exc:
+        field = (
+            "runner_binding_id"
+            if str(exc) == "missing_runner_component_pin"
+            else "request_payload_byte_limit"
+        )
         _completion_behavior_diagnostic_append(
             diagnostics=diagnostics,
-            declaration_path=f"{referrer_path}.runner_binding_id",
+            declaration_path=f"{referrer_path}.{field}",
             referrer_path=referrer_path,
             behavior_id=str(record.get("id", "")),
-            reason="missing_runner_component_pin",
-        )
-        return
-    if "max_work_item_payload_bytes" not in raw_pin:
-        diagnostics.append(
-            _completion_behavior_diagnostic(
-                declaration_path=f"{referrer_path}.request_payload_byte_limit",
-                referrer_path=referrer_path,
-                behavior_id=str(record.get("id", "")),
-                reason="missing_runner_payload_capacity",
-            )
-        )
-        return
-    capacity = raw_pin.get("max_work_item_payload_bytes")
-    request_limit = record.get("request_payload_byte_limit")
-    if capacity is None:
-        diagnostics.append(
-            _completion_behavior_diagnostic(
-                declaration_path=f"{referrer_path}.request_payload_byte_limit",
-                referrer_path=referrer_path,
-                behavior_id=str(record.get("id", "")),
-                reason="missing_runner_payload_capacity",
-            )
-        )
-        return
-    if type(capacity) is not int or capacity <= 0:
-        _completion_behavior_diagnostic_append(
-            diagnostics=diagnostics,
-            declaration_path=(
-                f"{referrer_path}.request_payload_byte_limit"
-            ),
-            referrer_path=referrer_path,
-            behavior_id=str(record.get("id", "")),
-            reason="invalid_runner_payload_capacity",
-        )
-        return
-    if type(request_limit) is int and request_limit > capacity:
-        diagnostics.append(
-            _completion_behavior_diagnostic(
-                declaration_path=f"{referrer_path}.request_payload_byte_limit",
-                referrer_path=referrer_path,
-                behavior_id=str(record.get("id", "")),
-                reason="request_payload_byte_limit_exceeds_runner_capacity",
-            )
+            reason=str(exc),
         )
 
 
@@ -2402,6 +2370,13 @@ def _validate_runner_component_authority(
     referrer_path: str,
     diagnostics: list[Diagnostic],
 ) -> None:
+    try:
+        validate_payload_capacity_binding(record)
+    except PayloadCapacityError as exc:
+        _append_runner_component_error(
+            diagnostics, code="invalid_runner_payload_capacity_pin",
+            declaration_path=f"{referrer_path}.payload_capacity_pin", message=str(exc),
+        )
     raw_pin = record.get("component_pin")
     raw_mappings = record.get("terminal_result_mappings", ())
     if raw_pin is None:

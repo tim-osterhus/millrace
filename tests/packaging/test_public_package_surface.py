@@ -233,8 +233,10 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
             str(wheel),
         ]
     )
+    # macOS daemon control requires a short socket path with safe ancestors.
+    default_root = str(Path.home()) if sys.platform == "darwin" else str(tmp_path)
     lifecycle_root = (
-        Path(os.environ.get("MILLRACE_TEST_SOCKET_ROOT", str(tmp_path)))
+        Path(os.environ.get("MILLRACE_TEST_SOCKET_ROOT", default_root))
         / uuid4().hex[:6]
     )
     lifecycle_root.mkdir(parents=True)
@@ -328,6 +330,7 @@ def test_built_wheel_advertises_typing_and_imports_public_api(
             "compiled_plan_export_record",
             "verify_compiled_plan_export_bytes",
             "verify_compiled_plan_export_record",
+            "pi_capability_refusals",
         )
         assert all(not name.startswith("_") for name in compiler.__all__)
         assert compiler_export.__all__ == (

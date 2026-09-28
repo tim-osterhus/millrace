@@ -30,6 +30,7 @@ from millrace.contracts.compiled_plan import (
     RecoveryPolicyDeclaration,
     RemediationPolicyDeclaration,
     RunnerBindingDeclaration,
+    RunnerBindingWithPayloadCapacityDeclaration,
     RunnerComponentPin,
     RunnerTerminalResultMapping,
     SelectedCompiledPlan,
@@ -68,6 +69,11 @@ from millrace.contracts.ids import (
     WaitStateId,
     WorkflowId,
     WorkflowVersion,
+)
+from millrace.contracts.runner_payload_capacity import (
+    decode_payload_capacity_pin,
+    payload_capacity_pin_record,
+    validate_payload_capacity_binding,
 )
 from millrace.substrate.errors import (
     CasObjectKindMismatch,
@@ -2060,9 +2066,10 @@ def _decode_operator_wait(record: Record) -> OperatorWaitDeclaration:
 def _encode_runner_binding(
     runner_binding: RunnerBindingDeclaration,
 ) -> Mapping[str, JsonValue]:
-    return {
+    validate_payload_capacity_binding(runner_binding)
+    result: dict[str, JsonValue] = {
         "record_kind": RunnerBindingDeclaration.record_kind,
-        "schema_version": RunnerBindingDeclaration.schema_version,
+        "schema_version": runner_binding.schema_version,
         "id": str(runner_binding.id),
         "adapter_kind": runner_binding.adapter_kind,
         "stage_kind_ids": tuple(str(item) for item in runner_binding.stage_kind_ids),
@@ -2077,6 +2084,12 @@ def _encode_runner_binding(
             for item in runner_binding.terminal_result_mappings
         ),
     }
+
+    if type(runner_binding) is RunnerBindingWithPayloadCapacityDeclaration:
+        result["payload_capacity_pin"] = cast(
+            JsonValue, payload_capacity_pin_record(runner_binding.payload_capacity_pin)
+        )
+    return result
 
 
 def _encode_runner_component_pin(
@@ -2118,11 +2131,25 @@ def _decode_runner_binding(record: Record) -> RunnerBindingDeclaration:
     _ensure_record_header(
         record,
         RunnerBindingDeclaration.record_kind,
-        RunnerBindingDeclaration.schema_version,
-        _RUNNER_BINDING_KEYS,
+        4 if record.get("schema_version") == 4 else 3,
+        _RUNNER_BINDING_KEYS
+        | ({"payload_capacity_pin"} if record.get("schema_version") == 4 else set()),
     )
     try:
-        return RunnerBindingDeclaration(
+        return (
+            RunnerBindingWithPayloadCapacityDeclaration
+            if record.get("schema_version") == 4
+            else RunnerBindingDeclaration
+        )(
+            **(
+                {
+                    "payload_capacity_pin": decode_payload_capacity_pin(
+                        record["payload_capacity_pin"]
+                    )
+                }
+                if record.get("schema_version") == 4
+                else {}
+            ),
             id=RunnerBindingId(_expect_string(record, "id")),
             adapter_kind=_expect_string(record, "adapter_kind"),
             stage_kind_ids=tuple(

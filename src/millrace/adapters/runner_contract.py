@@ -26,6 +26,10 @@ from millrace.contracts.runner import (
     RunnerDispatchEnvelope,
     RunnerResultEvidence,
 )
+from millrace.contracts.runner_payload_capacity import (
+    RunnerPayloadCapacityPin,
+    validate_payload_capacity_pin,
+)
 
 _ERROR_KINDS = frozenset(
     {
@@ -246,6 +250,7 @@ class AdapterInvocationRequest:
     environment_policy_ref: str | None = None
     local_config_ref: str | None = None
     cancellation_token: str | None = None
+    selected_payload_capacity_pin: RunnerPayloadCapacityPin | None = None
     selected_component_pin: RunnerComponentPin | None = None
     selected_terminal_result_mappings: tuple[RunnerTerminalResultMapping, ...] = ()
     selected_artifact_schemas: tuple[ArtifactSchemaDeclaration, ...] = ()
@@ -1180,9 +1185,28 @@ def _coerce_record_tuple(
     return tuple(sorted(records, key=key))
 
 
+def _validate_selected_payload_capacity(
+    request: AdapterInvocationRequest,
+) -> None:
+    if request.selected_payload_capacity_pin is not None:
+        if type(request.selected_payload_capacity_pin) is not RunnerPayloadCapacityPin:
+            raise TypeError(
+                "selected_payload_capacity_pin must be RunnerPayloadCapacityPin"
+            )
+        if (
+            request.selected_component_pin is not None
+            or request.selected_terminal_result_mappings
+        ):
+            raise ValueError("payload capacity requires component-free authority")
+        validate_payload_capacity_pin(
+            request.selected_payload_capacity_pin, request.selected_adapter_kind
+        )
+
+
 def _validate_selected_projection_coherence(
     request: AdapterInvocationRequest,
 ) -> None:
+    _validate_selected_payload_capacity(request)
     option_outcome_counts: dict[str, int] = {}
     terminal_artifact_schema_ids: set[str] = set()
     declared_schema_ids = set(request.dispatch_envelope.artifact_schema_ids)

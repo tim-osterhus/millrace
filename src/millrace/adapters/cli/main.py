@@ -72,6 +72,8 @@ GLOBAL_FLAG_OPTIONS = {
     "--bounded",
 }
 LOCKED_GROUPS = (
+    "demo",
+    "setup",
     "daemon",
     "workspace",
     "operations",
@@ -89,6 +91,8 @@ LOCKED_GROUPS = (
     "run",
 )
 GROUP_HELP = {
+    "demo": "Run an isolated zero-key demonstration in the foreground.",
+    "setup": "Inspect headless setup readiness without changing state.",
     "daemon": "Inspect or gracefully stop an exact Core daemon incarnation.",
     "operations": "Read and resolve durable control operation identity.",
     "workspace": "Initialize and inspect local runtime storage.",
@@ -143,8 +147,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return exc.status
     except CliArgumentError as exc:
         return _render_cli_usage_error(
-            "Invalid bounded read arguments." if "--bounded" in args else exc.message,
+            "Invalid setup arguments."
+            if _help_command_from_args(args) == "setup"
+            else "Invalid bounded read arguments."
+            if "--bounded" in args
+            else exc.message,
             json_mode=json_mode,
+            setup=_help_command_from_args(args) == "setup",
         )
     except Exception:
         return _render_internal_error(json_mode=json_mode)
@@ -158,7 +167,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             message="--actor-id must be nonblank.",
             exit_code=ExitCode.CLI_USAGE,
         )
-        return render_error(error, json_mode=namespace.json)
+        return render_error(
+            error,
+            json_mode=namespace.json,
+            stream=sys.stdout if command == "setup" and namespace.json else None,
+        )
 
     if namespace.version:
         return _render_version(json_mode=namespace.json)
@@ -177,6 +190,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return int(ExitCode.SUCCESS)
 
+    if command == "demo":
+        if any(
+            a.split("=", 1)[0] in GLOBAL_OPTIONS_WITH_VALUES
+            or a in {"--bounded", "--payload-stdin", "--seal-if-absent"}
+            for a in args
+        ):
+            return _render_cli_usage_error(
+                "Demo does not accept workspace, database, CAS, actor "
+                "or runtime selectors.",
+                json_mode=namespace.json,
+            )
+        from millrace.adapters.cli.demo import dispatch_demo
+
+        return dispatch_demo(namespace)
+    if command == "setup":
+        return _dispatch_setup(namespace)
     if getattr(namespace, "bounded", False) or command in {
         "plan.graph",
         "plan.overlay",
@@ -244,7 +273,50 @@ def _build_parser(
         group_parser = subparsers.add_parser(group, help=GROUP_HELP[group])
         group_parser.set_defaults(command=group)
         help_parsers[group] = group_parser
-        if group == "daemon":
+        if group == "demo":
+            group_parser.add_argument("--keep", action="store_true")
+            group_parser.add_argument("--auto-confirm", action="store_true")
+            group_parser.add_argument("--resume")
+        elif group == "setup":
+            group_parser.add_argument(
+                "--action", choices=("demo", "useful_recipe"), default="demo"
+            )
+            group_parser.add_argument("--plan-fingerprint")
+            group_parser.add_argument(
+                "--management-mode", choices=("headless", "managed"), default="headless"
+            )
+            group_parser.add_argument("--setup-schema-version", type=int, default=1)
+            group_parser.add_argument(
+                "--setup-operation",
+                choices=(
+                    "inspect",
+                    "disclose_trust",
+                    "accept_trust",
+                    "propose",
+                    "apply",
+                    "lookup",
+                    "resume",
+                ),
+                default="inspect",
+            )
+            group_parser.add_argument("--request-json")
+            group_parser.add_argument(
+                "--interactive",
+                action="store_true",
+                help="Explain and confirm setup effects interactively.",
+            )
+            group_parser.add_argument(
+                "--wheelhouse",
+                help=(
+                    "Explicit local source of exact installed Core/Plus wheels; "
+                    "no network."
+                ),
+            )
+            group_parser.add_argument(
+                "--resume-receipt",
+                help="Recover one previously consented action without composing JSON.",
+            )
+        elif group == "daemon":
             actions = group_parser.add_subparsers(dest="daemon_command")
             for action in ("inspect", "stop", "history"):
                 leaf = actions.add_parser(action)
@@ -1029,7 +1101,13 @@ def _render_json_help(
     try:
         namespace = parser.parse_args(_without_help_flags(args))
     except CliArgumentError as exc:
-        return _render_cli_usage_error(exc.message, json_mode=True)
+        return _render_cli_usage_error(
+            "Invalid setup arguments."
+            if _help_command_from_args(args) == "setup"
+            else exc.message,
+            json_mode=True,
+            setup=_help_command_from_args(args) == "setup",
+        )
     except CliParserExit as exc:
         return exc.status
 
@@ -1041,7 +1119,9 @@ def _render_json_help(
             message="--actor-id must be nonblank.",
             exit_code=ExitCode.CLI_USAGE,
         )
-        return render_error(error, json_mode=True)
+        return render_error(
+            error, json_mode=True, stream=sys.stdout if command == "setup" else None
+        )
 
     help_parser = help_parsers.get(command, help_parsers["cli"])
     return render_success(
@@ -1123,14 +1203,18 @@ def _command_from_namespace(namespace: argparse.Namespace) -> str:
     return "cli"
 
 
-def _render_cli_usage_error(message: str, *, json_mode: bool) -> int:
+def _render_cli_usage_error(
+    message: str, *, json_mode: bool, setup: bool = False
+) -> int:
     error = error_result(
         command="cli",
         code="argument_parse_error",
         message=message,
         exit_code=ExitCode.CLI_USAGE,
     )
-    return render_error(error, json_mode=json_mode)
+    return render_error(
+        error, json_mode=json_mode, stream=sys.stdout if setup and json_mode else None
+    )
 
 
 def _render_internal_error(*, json_mode: bool) -> int:
@@ -1391,6 +1475,43 @@ def _dispatch_projection(namespace: argparse.Namespace) -> int:
         result = handle_projection(namespace)
     except CliCommandError as exc:
         return render_error(exc.to_cli_error(), json_mode=namespace.json)
+    return render_success(result, json_mode=namespace.json)
+
+
+def _dispatch_setup(namespace: argparse.Namespace) -> int:
+    from millrace.adapters.cli.setup import handle_setup_command
+    from millrace.contracts.setup import SetupRefusal
+
+    try:
+        result = handle_setup_command(namespace)
+    except SetupRefusal as exc:
+        return render_error(
+            error_result(
+                command="setup",
+                code=str(exc),
+                message=(
+                    "Setup request refused. Inspect retained receipts "
+                    "before retrying an interrupted action."
+                ),
+                exit_code=ExitCode.DOMAIN_REFUSAL,
+            ),
+            json_mode=namespace.json,
+            stream=sys.stdout if namespace.json else None,
+        )
+    except Exception:
+        return render_error(
+            error_result(
+                command="setup",
+                code="internal_error",
+                message=(
+                    "Setup result unavailable. Inspect retained receipts "
+                    "before retrying an interrupted action."
+                ),
+                exit_code=ExitCode.INTERNAL_ERROR,
+            ),
+            json_mode=namespace.json,
+            stream=sys.stdout if namespace.json else None,
+        )
     return render_success(result, json_mode=namespace.json)
 
 

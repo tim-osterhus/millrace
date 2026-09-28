@@ -21,6 +21,17 @@ durable, inspectable, and workflow-neutral.
 
 ## Active
 
+### Private v0.22.4 candidate
+
+The coordinated Core, Plus, and meta source candidate targets 0.22.4; published
+v0.22.3 remains the public release. Monitor-retained predecessor Core
+0.22.4.dev6+pi.local01 and Plus 0.22.4.dev5+pi.local01 artifacts have installed
+scripted-provider foreground evidence on Darwin and one pinned Ubuntu 24.04
+x86_64 environment, including one five-stage LAD route. This does not qualify
+the final 0.22.4 artifacts, every LAD stage, a real model, arbitrary descendants,
+or production provider token accounting. The real-model Campaign Monitor and
+final release checks remain open, so public v0.22.4 is held.
+
 ### Public Documentation
 
 Keep the README, runtime guides, release notes, changelog, and this roadmap

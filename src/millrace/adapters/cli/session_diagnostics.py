@@ -8,6 +8,7 @@ from dataclasses import fields, is_dataclass
 from hashlib import sha256
 from typing import Protocol
 
+from millrace.adapters.runner_contract import RunnerCleanupResult
 from millrace.contracts.compiled_plan import AuthorityValue
 from millrace.contracts.runner import (
     RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES,
@@ -27,6 +28,78 @@ class _DiagnosticRequest(Protocol):
 
     @property
     def redaction_policy(self) -> _RedactionPolicy: ...
+
+
+_CLEANUP_BOOLEAN_FACTS = frozenset(
+    {
+        "root_exited",
+        "root_exit_zero",
+        "client_closed",
+        "stdout_eof",
+        "stderr_eof",
+        "bridge_eof",
+        "reader_threads_joined",
+        "session_thread_joined",
+        "attempt_removed",
+        "disposed",
+        "observer_integrity",
+        "observer_hello",
+        "observer_bye",
+        "rpc_hashes_match",
+        "call_sets_match",
+    }
+)
+_CLEANUP_COUNT_FACTS = frozenset(
+    {
+        "uncertainty_count",
+        "stream_error_count",
+        "pending_response_count",
+        "bash_call_count",
+        "numeric_nonzero_count",
+        "spawns_without_root_count",
+        "unretired_spawn_count",
+        "unretired_present_group_count",
+        *(
+            f"{name}_{measure}"
+            for name in ("stdout", "stderr", "bridge")
+            for measure in ("bytes", "events")
+        ),
+    }
+)
+_STREAM_ERROR_CODES = frozenset(
+    {
+        "none",
+        "partial_final_line",
+        "stream_bound",
+        "event_bound",
+        "event_count",
+        "unterminated_event_bound",
+        "event_queue_full",
+        "invalid_stream",
+        "invalid_stderr_utf8",
+    }
+)
+
+
+def _orphan_cleanup_facts(cleanup: RunnerCleanupResult) -> dict[str, object]:
+    """Only bounded, content-free closure facts enter a lost completion."""
+    observed = cleanup.diagnostic
+    facts: dict[str, object] = {"diagnostic_digest": cleanup.diagnostic_digest}
+    for name in _CLEANUP_BOOLEAN_FACTS:
+        value = observed.get(name)
+        if type(value) is bool:
+            facts[name] = value
+    for name in _CLEANUP_COUNT_FACTS:
+        value = observed.get(name)
+        if type(value) is int and 0 <= value <= 2**63 - 1:
+            facts[name] = value
+    for name in ("stdout", "stderr", "bridge"):
+        value = observed.get(f"{name}_error_code")
+        if isinstance(value, str) and value in _STREAM_ERROR_CODES:
+            facts[f"{name}_error_code"] = value
+    if "error" in observed:
+        facts["cleanup_exception"] = True
+    return facts
 
 
 def _canonical_json_bytes(value: object) -> bytes:

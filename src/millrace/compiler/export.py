@@ -22,6 +22,11 @@ from millrace.contracts.compiled_plan import (
     canonical_authority_bytes,
     context_binding_authority_refusal,
 )
+from millrace.contracts.runner_payload_capacity import (
+    PayloadCapacityError,
+    completion_capacity,
+    validate_payload_capacity_binding,
+)
 from millrace.contracts.schema import validate_closure_verdict_schema_declaration
 
 COMPILED_PLAN_EXPORT_RECORD_KIND = "compiled_plan_export"
@@ -563,6 +568,11 @@ def _validate_runner_bindings(values: Sequence[object]) -> None:
                     "component_pin",
                     "terminal_result_mappings",
                 }
+                | (
+                    {"payload_capacity_pin"}
+                    if item.get("schema_version") == 4
+                    else set()
+                )
             ),
             label="runner binding",
         )
@@ -575,9 +585,13 @@ def _validate_runner_bindings(values: Sequence[object]) -> None:
         _require_exact_value(
             item,
             "schema_version",
-            RunnerBindingDeclaration.schema_version,
+            4 if "payload_capacity_pin" in item else 3,
             label="runner binding",
         )
+        try:
+            validate_payload_capacity_binding(item)
+        except PayloadCapacityError as exc:
+            raise CompiledPlanExportError(str(exc)) from exc
         component_pin = item["component_pin"]
         mappings = _require_sequence(item, "terminal_result_mappings")
         legal_result_ids: frozenset[str] = frozenset()
@@ -829,20 +843,15 @@ def _validate_completion_behaviors(
             raise CompiledPlanExportError(
                 "completion behavior runner binding is missing"
             )
-        component_pin = runner.get("component_pin")
-        if not isinstance(component_pin, Mapping):
-            raise CompiledPlanExportError(
-                "completion behavior runner component pin is missing"
-            )
-        capacity = component_pin.get("max_work_item_payload_bytes")
-        if type(capacity) is not int or capacity <= 0:
-            raise CompiledPlanExportError(
-                "completion behavior runner payload capacity must be positive"
-            )
-        if request_limit > capacity:
-            raise CompiledPlanExportError(
+        try:
+            completion_capacity(runner, request_limit)
+        except PayloadCapacityError as exc:
+            message = (
                 "completion behavior request payload limit exceeds runner capacity"
+                if str(exc) == "request_payload_byte_limit_exceeds_runner_capacity"
+                else str(exc)
             )
+            raise CompiledPlanExportError(message) from exc
 
 
 def _closure_verdict_schema_supported(schema: Mapping[str, object]) -> bool:

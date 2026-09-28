@@ -55,6 +55,10 @@ from millrace.contracts.runner import (
     runner_result_evidence_digest,
     runner_result_evidence_from_payload,
 )
+from millrace.contracts.runner_payload_capacity import (
+    PayloadCapacityError,
+    completion_capacity,
+)
 from millrace.contracts.schema import (
     validate_closure_verdict_schema_declaration,
 )
@@ -1049,14 +1053,26 @@ def _closure_replay_invalid_detail(
 ) -> str | None:
     if _closure.closure_creator_refusal(state, transition_input) is not None:
         return "creating_transition_missing_or_invalid"
-    resolved = _completion_behavior_context(
-        state,
-        transition_input.selected_plan_ref,
-        transition_input.completion_behavior_id,
+    # Accepted replay authenticates the stored authority and durable relations.
+    # Installed descriptor support governs new work, not accepted receipts.
+    admitted = state.admitted_plans.get(
+        transition_input.selected_plan_ref.authority_fingerprint
     )
-    if isinstance(resolved, str):
+    if (
+        admitted is None
+        or admitted.plan_ref != transition_input.selected_plan_ref
+        or not verify_authority_fingerprint(
+            admitted.selected_plan,
+            transition_input.selected_plan_ref.authority_fingerprint,
+        )
+    ):
         return "target_relation_missing"
-    _selected_plan, behavior = resolved
+    _selected_plan = admitted.selected_plan
+    behavior = _completion_behavior_for(
+        _selected_plan, transition_input.completion_behavior_id
+    )
+    if behavior is None:
+        return "target_relation_missing"
 
     def without(values: Mapping[str, _T], excluded: str) -> dict[str, _T]:
         return {key: value for key, value in values.items() if key != excluded}
@@ -2002,7 +2018,10 @@ def _completion_behavior_authority_refusal(
         return f"completion_behavior_evidence_schema:{behavior.id}"
     if not 1 <= behavior.evidence_item_limit <= 256:
         return f"completion_behavior_evidence_item_limit:{behavior.id}"
-    if behavior.request_payload_byte_limit <= 0:
+    if (
+        type(behavior.request_payload_byte_limit) is not int
+        or behavior.request_payload_byte_limit <= 0
+    ):
         return f"completion_behavior_request_payload_limit:{behavior.id}"
     target_stage = stage_kind_for(selected_plan, str(behavior.target_stage_kind_id))
     target_runner = runner_binding_for(selected_plan, str(behavior.runner_binding_id))
@@ -2017,13 +2036,12 @@ def _completion_behavior_authority_refusal(
         not in {None, behavior.target_stage_kind_id}
     ):
         return f"completion_behavior_target:{behavior.id}"
-    if target_runner.component_pin is None:
+    try:
+        completion_capacity(target_runner, behavior.request_payload_byte_limit)
+    except PayloadCapacityError as exc:
+        if str(exc) == "request_payload_byte_limit_exceeds_runner_capacity":
+            return f"completion_behavior_request_payload_capacity:{behavior.id}"
         return f"completion_behavior_runner_payload_capacity:{behavior.id}"
-    capacity = target_runner.component_pin.max_work_item_payload_bytes
-    if type(capacity) is not int or capacity <= 0:
-        return f"completion_behavior_runner_payload_capacity:{behavior.id}"
-    if behavior.request_payload_byte_limit > capacity:
-        return f"completion_behavior_request_payload_capacity:{behavior.id}"
     actions = (
         (behavior.pass_action_id, {"close", "complete_work_item"}),
         (behavior.gap_action_id, {"closure_gap"}),

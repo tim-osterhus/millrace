@@ -248,7 +248,25 @@ def control_transaction(
     )
     connection.set_progress_handler(lambda: int(time.monotonic() >= expires), 1000)
     try:
-        connection.execute("BEGIN IMMEDIATE")
+        # Retry only lock acquisition, before any authority read or effect.
+        # An explicit caller deadline permits bounded acquisition retries;
+        # callers without one retain their existing single short wait.
+        while True:
+            remaining_ms = int((expires - time.monotonic()) * 1000)
+            if remaining_ms <= 0:
+                raise ControlOperationError("control_deadline_unknown")
+            connection.execute(
+                f"PRAGMA busy_timeout={min(_CONTROL_BUSY_TIMEOUT_MS, remaining_ms)}"
+            )
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                break
+            except sqlite3.OperationalError as exc:
+                if (
+                    deadline is None
+                    or getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_BUSY
+                ):
+                    raise
         yield
         if time.monotonic() >= expires:
             raise ControlOperationError("control_deadline_unknown")

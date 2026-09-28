@@ -3,11 +3,11 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - v0.22.3
+      - v0.22.4
 
 jobs:
   validate:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.3' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.4' }}
     runs-on: macos-14
     permissions:
       contents: read
@@ -46,8 +46,8 @@ jobs:
           from pathlib import Path
           import hashlib
           manifest = """
-          5e87f92f2330af30395f35860d319db7e5574367da7995a3613276d0a08f163d  dist/millrace_ai-0.22.3-py3-none-any.whl
-          4f500e6e474fa087dbc0f8a5d8f8f137370a71d9a04d4663f67eb6af37acf6eb  dist/millrace_ai-0.22.3.tar.gz
+          828ca3b41f4f5dcc11c495001443a86b1e4438ee7256e154f0edf435305cb9fd  dist/millrace_ai-0.22.4-py3-none-any.whl
+          828007e31bdd978b9898aa5830f90ebc0da0746dd1c0ab44ac18591ea0b8eb23  dist/millrace_ai-0.22.4.tar.gz
           """
           expected = {Path(path): digest for digest, path in
                       (line.split() for line in manifest.strip().splitlines())}
@@ -65,12 +65,12 @@ jobs:
           name: pypi-distributions
           if-no-files-found: error
           path: |
-            dist/millrace_ai-0.22.3-py3-none-any.whl
-            dist/millrace_ai-0.22.3.tar.gz
+            dist/millrace_ai-0.22.4-py3-none-any.whl
+            dist/millrace_ai-0.22.4.tar.gz
 
   publish:
     needs: validate
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.3' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.4' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -86,8 +86,8 @@ jobs:
         shell: bash
         run: |
           expected=(
-            "millrace_ai-0.22.3-py3-none-any.whl"
-            "millrace_ai-0.22.3.tar.gz"
+            "millrace_ai-0.22.4-py3-none-any.whl"
+            "millrace_ai-0.22.4.tar.gz"
           )
           mapfile -t actual < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
           mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
@@ -96,8 +96,8 @@ jobs:
             exit 1
           fi
           sha256sum --check --strict <<'SHA256'
-          5e87f92f2330af30395f35860d319db7e5574367da7995a3613276d0a08f163d  dist/millrace_ai-0.22.3-py3-none-any.whl
-          4f500e6e474fa087dbc0f8a5d8f8f137370a71d9a04d4663f67eb6af37acf6eb  dist/millrace_ai-0.22.3.tar.gz
+          828ca3b41f4f5dcc11c495001443a86b1e4438ee7256e154f0edf435305cb9fd  dist/millrace_ai-0.22.4-py3-none-any.whl
+          828007e31bdd978b9898aa5830f90ebc0da0746dd1c0ab44ac18591ea0b8eb23  dist/millrace_ai-0.22.4.tar.gz
           SHA256
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:

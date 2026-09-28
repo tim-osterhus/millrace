@@ -517,3 +517,107 @@ def test_queue_closure_refuses_every_unsafe_session_aftermath(
     )
     assert close_after_reload.accepted is True
     assert "work-origin" in apply(reloaded, close_after_reload).closed_work_items
+
+
+@pytest.mark.parametrize('marker', ['REVIEW_PASSED', 'REVIEW_GAP', 'REVIEW_BLOCKED'])
+def test_pi_capacity_completion_closure_and_reload(tmp_path, monkeypatch, marker):
+    from millrace.compiler import compile_workflow
+    from millrace.contracts.compiled_plan import authority_fingerprint
+    from substrate._runtime_store_support import persist_and_load_runtime_state
+    from support import generic_lifecycle
+    from tests.compiler.test_completion_capacity import capacity_source
+    from tests.operator.test_status_projection import _closure_verdict_payload
+
+    def compile_pi(source):
+        result = compile_workflow(source)
+        assert result.plan is not None, result.diagnostics
+        return result.plan, authority_fingerprint(result.plan)
+
+    monkeypatch.setattr(generic_lifecycle, 'compile_lifecycle', compile_pi)
+    state, plan, fingerprint = generic_lifecycle.closure_evaluation_state(
+        capacity_source()
+    )
+    (tmp_path / 'before').mkdir()
+    (tmp_path / 'after').mkdir()
+    state = persist_and_load_runtime_state(tmp_path / 'before', state)
+    evaluation = next(iter(state.closure_evaluations.values()))
+    state = generic_lifecycle.claim_activation(
+        state, activation_id=evaluation.target_activation_id, suffix="evaluator"
+    )
+    work = state.work_items[evaluation.target_work_item_id]
+    state = generic_lifecycle.apply_observation(
+        state,
+        plan=plan,
+        fingerprint=fingerprint,
+        run_id="run-evaluator",
+        input_id="observe-evaluator",
+        marker=marker,
+        artifact_payload=_closure_verdict_payload(
+            work.payload["closure_evidence_snapshot"], marker=marker
+        ),
+    )
+    loaded = persist_and_load_runtime_state(tmp_path / 'after', state)
+    assert loaded.closure_targets == state.closure_targets
+    assert loaded.admitted_plans[fingerprint].selected_plan == plan
+
+
+def test_pi_capacity_drift_refuses_closure_without_mutations(monkeypatch):
+    from millrace.compiler import compile_workflow
+    from millrace.contracts.compiled_plan import authority_fingerprint
+    from millrace.kernel.lifecycle import project_next_lifecycle_transition
+    from support import generic_lifecycle
+    from tests.compiler.test_completion_capacity import capacity_source
+
+    def compile_pi(source):
+        plan = compile_workflow(source).plan
+        return plan, authority_fingerprint(plan)
+
+    monkeypatch.setattr(generic_lifecycle, 'compile_lifecycle', compile_pi)
+    state, plan, fingerprint = generic_lifecycle.closure_opened_state(capacity_source())
+    transition = project_next_lifecycle_transition(state).candidate.transition_input
+    assert transition is not None
+    object.__setattr__(
+        plan.runner_bindings[0].payload_capacity_pin, "descriptor_sha256", "0" * 64
+    )
+    decision = decide(state, transition, context(transition.input_id))
+    assert not decision.accepted
+    refused = apply(state, decision)
+    assert refused.work_items == state.work_items
+    assert refused.artifacts == state.artifacts
+    assert refused.closure_evaluations == state.closure_evaluations
+    assert not state.closure_evaluations
+
+
+def test_pi_accepted_completion_request_replays_after_reload(tmp_path, monkeypatch):
+    from millrace.compiler import compile_workflow
+    from millrace.contracts import runner_payload_capacity as capacity
+    from millrace.contracts.compiled_plan import authority_fingerprint
+    from millrace.kernel.lifecycle import project_next_lifecycle_transition
+    from support import generic_lifecycle
+    from tests.compiler.test_completion_capacity import capacity_source
+
+    def compile_pi(source):
+        plan = compile_workflow(source).plan
+        return plan, authority_fingerprint(plan)
+
+    monkeypatch.setattr(generic_lifecycle, 'compile_lifecycle', compile_pi)
+    state, _, _ = generic_lifecycle.closure_opened_state(capacity_source())
+    candidate = project_next_lifecycle_transition(state).candidate
+    transition = candidate.transition_input
+    decision = decide(state, transition, candidate.transition_context)
+    assert decision.accepted
+    state = persist_and_load_runtime_state(tmp_path, apply(state, decision))
+    # Old accepted evidence replays without recompiling or running another adapter.
+    monkeypatch.setattr(capacity, 'files', lambda _: tmp_path)
+    replay = decide(state, transition, candidate.transition_context)
+    assert replay.disposition == 'replayed'
+    assert replay.mutations == ()
+    assert apply(state, replay) == state
+
+    stored = next(iter(state.admitted_plans.values())).selected_plan
+    object.__setattr__(stored.runner_bindings[0].payload_capacity_pin,
+                       "descriptor_sha256", "0" * 64)
+    tampered = decide(state, transition, candidate.transition_context)
+    assert not tampered.accepted
+    assert tampered.refusal.reason == "closure_replay_relations_invalid"
+    assert len(state.closure_evaluations) == 1

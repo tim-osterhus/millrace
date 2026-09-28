@@ -128,3 +128,20 @@ Review remain workflow data. The runtime does not assign meaning to them.
 
 For practical authoring guidance, read the `millrace-loop-configuration` and
 `millrace-entrypoint-authoring` skills distributed with `millrace-plus`.
+
+
+## Private Pi workflow candidate
+
+The coordinated unpublished Plus 0.22.4 source candidate includes an explicitly
+selected Pi variant using adapter_kind pi_rpc; Millforge remains the default,
+and published v0.22.3 does not include this runner. A component-free binding
+must declare the complete supported and granted unrestricted read, write, and
+process requirements. The optional bounded runner_report is adapter-format
+narrative evidence only. The selected plan continues to own terminal options,
+routes, and exact artifact schemas.
+
+Pi completion selects Core's packaged payload-capacity contract through nested
+runner-binding schema 4. Generic Pi bindings without this pin retain schema 3.
+The retained scripted-provider proof used predecessor Core 0.22.4.dev6 and Plus
+0.22.4.dev5 artifacts; it does not qualify final 0.22.4 artifacts or real-model
+behavior. See [Pi runner](pi-runner.md) for the profile and evidence limits.

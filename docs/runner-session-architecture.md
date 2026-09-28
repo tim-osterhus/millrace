@@ -324,3 +324,31 @@ context manifest is inferred for a pre-session run.
 See [Daemon lifecycle](daemon-lifecycle.md) for startup, restart, signal, and
 shutdown behavior and [Errors and refusals](errors.md) for stable public
 codes.
+
+
+## Pi RPC in the private v0.22.4 candidate
+
+The coordinated, unpublished Core and Plus source candidate targets 0.22.4 and
+adds explicitly selected pi_rpc workflow bindings. Published v0.22.3 remains
+the public release. Millforge remains the default. Pi uses the existing session
+fencing, context, evidence, and result-application path. Its optional bounded
+runner_report is narrative observation only; selected-plan authority still
+defines legal terminal results and artifact schemas.
+
+Pi completion selects Core's packaged payload-capacity pin through nested
+runner-binding schema 4. Bindings without this pin retain schema 3, including
+their existing bytes and fingerprints. Store schema 11, selected-plan schema 18,
+dispatch schema 7, runner-session schema 2, and context-manifest schema 3 remain
+unchanged.
+
+The foreground profile uses the pinned v2 trusted per-command POSIX-group
+observer. Monitor-retained predecessor artifacts have installed
+scripted-provider evidence on Darwin and one pinned Ubuntu 24.04 x86_64
+installation; the Linux run includes one five-stage LAD route. This evidence
+does not qualify final 0.22.4 artifacts, every LAD stage, or real-model behavior.
+The observer qualifies only its covered process groups: escaped descendants and
+remote work are outside the guarantee. Uncertain evidence refuses workflow-result
+application and may leave orphan_risk. Pi reconciliation, active native controls,
+and owner-loss reattachment are unsupported. Real-model behavior and production
+provider token accounting remain unqualified. See [Pi runner](pi-runner.md) for
+the pinned profile and its limits.

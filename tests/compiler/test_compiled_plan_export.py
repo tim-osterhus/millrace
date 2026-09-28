@@ -1499,11 +1499,11 @@ def test_verify_bytes_wraps_unpaired_surrogate_canonicalization_failure() -> Non
             "duplicate JSON object key: record_kind",
         ),
         (
-            '{"caf\u00e9":1,"cafe\u0301":2}'.encode("utf-8"),
+            '{"caf\u00e9":1,"cafe\u0301":2}'.encode(),
             "duplicate JSON object key: café",
         ),
         (
-            '{"cafe\u0301":1}'.encode("utf-8"),
+            '{"cafe\u0301":1}'.encode(),
             "non-NFC JSON object key: café",
         ),
     ),

@@ -72,6 +72,7 @@ from millrace.contracts.compiled_plan import (
     AuthorityValue,
     ContextSourceDeclaration,
     ContextWriteRule,
+    RunnerBindingWithPayloadCapacityDeclaration,
     StageContextBindingDeclaration,
     freeze_authority_value,
 )
@@ -79,6 +80,7 @@ from millrace.contracts.operator_waits import (
     _canonical_operator_wait_resolution_kinds,
     _canonical_operator_wait_source_action_ids,
 )
+from millrace.contracts.runner_payload_capacity import decode_payload_capacity_pin
 
 
 def build_selected_plan(
@@ -360,9 +362,7 @@ def build_selected_plan(
                 readiness_rule=str(record.get("readiness_rule", "")),
                 request_kind=str(record.get("request_kind", "")),
                 target_selector=str(record.get("target_selector", "")),
-                target_stage_kind_id=StageKindId(
-                    str(record["target_stage_kind_id"])
-                ),
+                target_stage_kind_id=StageKindId(str(record["target_stage_kind_id"])),
                 target_graph_node_id=str(record["target_graph_node_id"]),
                 runner_binding_id=RunnerBindingId(str(record["runner_binding_id"])),
                 request_queue_family_id=QueueFamilyId(
@@ -376,9 +376,7 @@ def build_selected_plan(
                 ),
                 evidence_artifact_schema_ids=tuple(
                     ArtifactSchemaId(value)
-                    for value in text_tuple(
-                        record["evidence_artifact_schema_ids"]
-                    )
+                    for value in text_tuple(record["evidence_artifact_schema_ids"])
                 ),
                 evidence_item_limit=_required_int(record["evidence_item_limit"]),
                 request_payload_byte_limit=_required_int(
@@ -423,7 +421,20 @@ def build_selected_plan(
         ),
         lineage_policy=str(source["lineage_policy"]),
         runner_bindings=tuple(
-            RunnerBindingDeclaration(
+            (
+                RunnerBindingWithPayloadCapacityDeclaration
+                if "payload_capacity_pin" in record
+                else RunnerBindingDeclaration
+            )(
+                **(
+                    {
+                        "payload_capacity_pin": decode_payload_capacity_pin(
+                            record["payload_capacity_pin"]
+                        )
+                    }
+                    if "payload_capacity_pin" in record
+                    else {}
+                ),
                 id=RunnerBindingId(str(record["id"])),
                 adapter_kind=str(record.get("adapter_kind", "")),
                 stage_kind_ids=tuple(
@@ -436,9 +447,7 @@ def build_selected_plan(
                 presentation=authority_mapping(record.get("presentation")),
                 required_capability_ids=tuple(
                     CapabilityId(value)
-                    for value in text_tuple(
-                        record.get("required_capability_ids", ())
-                    )
+                    for value in text_tuple(record.get("required_capability_ids", ()))
                 ),
                 component_pin=_optional_runner_component_pin(
                     record.get("component_pin")
@@ -469,9 +478,7 @@ def build_selected_plan(
                 target_stage_kind_id=_optional_stage_kind_id(
                     record.get("target_stage_kind_id")
                 ),
-                target_graph_node_id=_optional_text(
-                    record.get("target_graph_node_id")
-                ),
+                target_graph_node_id=_optional_text(record.get("target_graph_node_id")),
                 target_runner_binding_id=_optional_runner_binding_id(
                     record.get("target_runner_binding_id")
                 ),
@@ -515,9 +522,7 @@ def build_selected_plan(
                 target_stage_kind_id=_optional_stage_kind_id(
                     record.get("target_stage_kind_id")
                 ),
-                target_graph_node_id=_optional_text(
-                    record.get("target_graph_node_id")
-                ),
+                target_graph_node_id=_optional_text(record.get("target_graph_node_id")),
                 target_runner_binding_id=_optional_runner_binding_id(
                     record.get("target_runner_binding_id")
                 ),

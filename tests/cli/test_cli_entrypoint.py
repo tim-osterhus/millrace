@@ -14,6 +14,7 @@ PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 PROJECT_METADATA = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
 PROJECT_VERSION = PROJECT_METADATA["version"]
 LOCKED_GROUPS = (
+    "setup",
     "daemon",
     "workspace",
     "operations",
@@ -52,7 +53,7 @@ def test_pyproject_exposes_millrace_console_script() -> None:
     scripts = PROJECT_METADATA.get("scripts", {})
 
     assert PROJECT_METADATA["name"] == "millrace-ai"
-    assert PROJECT_VERSION == "0.22.3"
+    assert PROJECT_VERSION == "0.22.4"
     assert scripts["millrace"] == "millrace.adapters.cli.main:cli"
 
 

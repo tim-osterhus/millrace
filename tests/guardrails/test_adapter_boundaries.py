@@ -40,6 +40,9 @@ CLI_ALLOWED_IMPORT_PREFIXES = (
 )
 
 CLI_REVIEWED_RUNNER_IMPORT_PREFIXES_BY_FILE = {
+    # The isolated demo uses the same coordinator and session contract.
+    "millrace/adapters/cli/demo.py": ("millrace.adapters.runner_contract",),
+    "millrace/adapters/cli/demo_adapter.py": ("millrace.adapters.runner_contract",),
     "millrace/adapters/cli/daemon.py": ("millrace.adapters.runner_contract",),
     "millrace/adapters/cli/session_coordinator.py": (
         "millrace.adapters.runner_contract",
@@ -48,6 +51,9 @@ CLI_REVIEWED_RUNNER_IMPORT_PREFIXES_BY_FILE = {
         "millrace.adapters.runner_contract",
     ),
     "millrace/adapters/cli/session_cancellation.py": (
+        "millrace.adapters.runner_contract",
+    ),
+    "millrace/adapters/cli/session_diagnostics.py": (
         "millrace.adapters.runner_contract",
     ),
     "millrace/adapters/cli/session_completion.py": (
@@ -62,6 +68,8 @@ CLI_REVIEWED_RUNNER_IMPORT_PREFIXES_BY_FILE = {
     "millrace/adapters/cli/run.py": (
         "millrace.adapters.codex",
         "millrace.adapters.millforge",
+        "millrace.adapters.pi_rpc",
+        "millrace.adapters.pi_rpc_config",
         "millrace.adapters.runner_contract",
     ),
 }
@@ -163,20 +171,91 @@ def _imported_modules(
         if isinstance(node, ast.Import):
             imports.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
+            # Pi capacity uses this pure serializer, never transition decisions.
+            if (
+                path.relative_to(source_root).as_posix()
+                == "millrace/adapters/pi_rpc.py"
+                and node.level == 0
+                and node.module == "millrace.contracts.transition"
+                and [alias.name for alias in node.names]
+                == ["canonical_authority_mapping_bytes"]
+            ):
+                continue
             imports.extend(_resolve_import_from(path, node, source_root=source_root))
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "import_module"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            imports.append(node.args[0].value)
     return imports
 
 
-def _call_names(tree: ast.AST) -> tuple[list[str], list[str]]:
+def _call_names(
+    tree: ast.AST, *, reviewed_calls: set[ast.Call] | None = None
+) -> tuple[list[str], list[str]]:
     names: list[str] = []
     attrs: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
+            if reviewed_calls and node in reviewed_calls:
+                continue
             if isinstance(node.func, ast.Name):
                 names.append(node.func.id)
             elif isinstance(node.func, ast.Attribute):
                 attrs.append(node.func.attr)
     return names, attrs
+
+
+def _reviewed_pi_config_calls(path: Path, tree: ast.AST) -> set[ast.Call]:
+    if path.relative_to(SOURCE_ROOT).as_posix() != "millrace/adapters/pi_rpc_config.py":
+        return set()
+    # These bounded, no-follow opens read pinned config and write owned templates.
+    # Ordinary asset discovery and file access elsewhere remain forbidden.
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "regular_bytes"
+    ]
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "PiRpcConfig":
+            functions.extend(
+                child
+                for child in node.body
+                if isinstance(child, ast.FunctionDef) and child.name == "materialize"
+            )
+    return {
+        call
+        for function in functions
+        for call in ast.walk(function)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "os"
+        and call.func.attr == "open"
+    }
+
+
+def _reviewed_pi_supervisor_calls(path: Path, tree: ast.AST) -> set[ast.Call]:
+    if path.relative_to(SOURCE_ROOT).as_posix() != (
+        "millrace/adapters/pi_rpc_supervisor.py"
+    ):
+        return set()
+    # Only these kernel process-state reads and stdio detachment belong to the
+    # pinned Linux reaper. Other adapter asset/file access remains forbidden.
+    allowed = {
+        "open(f'/proc/{pid}/task/{pid}/children', encoding='ascii')",
+        "open(f'/proc/{pid}/status', encoding='ascii')",
+        "os.open(os.devnull, os.O_RDWR)",
+    }
+    return {
+        call
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call) and ast.unparse(call) in allowed
+    }
 
 
 def _adapter_import_violations_for_file(
@@ -288,7 +367,13 @@ def test_adapter_modules_do_not_discover_packages_or_touch_asset_files() -> None
     violations: list[tuple[str, str]] = []
     for path in _runner_adapter_python_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        call_names, attribute_calls = _call_names(tree)
+        call_names, attribute_calls = _call_names(
+            tree,
+            reviewed_calls=(
+                _reviewed_pi_config_calls(path, tree)
+                | _reviewed_pi_supervisor_calls(path, tree)
+            ),
+        )
         for name in call_names:
             if name in FORBIDDEN_ADAPTER_CALL_NAMES:
                 violations.append((path.relative_to(SOURCE_ROOT).as_posix(), name))
@@ -297,6 +382,59 @@ def test_adapter_modules_do_not_discover_packages_or_touch_asset_files() -> None
                 violations.append((path.relative_to(SOURCE_ROOT).as_posix(), attr))
 
     assert violations == []
+
+
+def test_pi_serializer_exception_does_not_allow_transition_authority(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src"
+    path = source / "millrace/adapters/pi_rpc.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "from millrace.contracts.transition import canonical_authority_mapping_bytes\n"
+        "from millrace.contracts.transition import InitializeWorkspace\n"
+        "from millrace.contracts.transition import *\n"
+    )
+    violations = _adapter_import_violations_for_file(path, source_root=source)
+    assert (
+        "millrace/adapters/pi_rpc.py",
+        "millrace.contracts.transition.InitializeWorkspace",
+    ) in violations
+    assert (
+        "millrace/adapters/pi_rpc.py",
+        "millrace.contracts.transition",
+    ) in violations
+
+
+def test_pi_config_exception_is_limited_to_owned_config_operations() -> None:
+    tree = ast.parse(
+        "def regular_bytes():\n    os.open('pinned', 0)\n    open('forbidden')\n"
+        "class PiRpcConfig:\n"
+        "    def materialize(self):\n        os.open('owned', 0)\n"
+        "    def discover(self):\n        os.open('forbidden', 0)\n"
+    )
+    path = SOURCE_ROOT / "millrace/adapters/pi_rpc_config.py"
+    calls, attributes = _call_names(
+        tree, reviewed_calls=_reviewed_pi_config_calls(path, tree)
+    )
+    assert calls == ["open"]
+    assert attributes == ["open"]
+
+
+def test_pi_supervisor_exception_is_limited_to_kernel_process_state() -> None:
+    tree = ast.parse(
+        "open(f'/proc/{pid}/task/{pid}/children', encoding='ascii')\n"
+        "open(f'/proc/{pid}/status', encoding='ascii')\n"
+        "os.open(os.devnull, os.O_RDWR)\n"
+        "open('asset')\n"
+        "os.open('asset', os.O_RDONLY)\n"
+    )
+    path = SOURCE_ROOT / "millrace/adapters/pi_rpc_supervisor.py"
+    calls, attributes = _call_names(
+        tree, reviewed_calls=_reviewed_pi_supervisor_calls(path, tree)
+    )
+    assert calls == ["open"]
+    assert attributes == ["open"]
 
 
 def test_runner_adapters_still_do_not_import_prompt_materializer_or_package_assets(
@@ -521,6 +659,25 @@ def test_millforge_adapter_uses_only_public_optional_millforge_imports() -> None
             or any(alias.name == "millforge" for alias in getattr(node, "names", ()))
         )
         for node in tree.body
+    )
+    assert set(
+        imported
+        for imported in imports
+        if imported == "millforge" or imported.startswith("millforge.")
+    ) == {"millforge", "millforge.pause_control"}
+    top_level = ast.Module(
+        body=[
+            node
+            for node in tree.body
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            )
+        ],
+        type_ignores=[],
+    )
+    assert not any(
+        imported == "millforge" or imported.startswith("millforge.")
+        for imported in _imported_modules(adapter_path, top_level)
     )
     source = adapter_path.read_text(encoding="utf-8")
     assert "self._live_runner" not in source

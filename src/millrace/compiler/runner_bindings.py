@@ -14,6 +14,7 @@ from millrace.compiler.source import is_non_empty_text, is_sequence, records
 from millrace.contracts import Diagnostic
 from millrace.contracts.diagnostics import DiagnosticContextValue
 
+PI_ADAPTER_KIND = "pi_rpc"
 CODEX_ADAPTER_KIND = "codex"
 MILLFORGE_ADAPTER_KIND = "millforge"
 DEFAULT_SELECTED_RUNNER_ADAPTER_KIND = MILLFORGE_ADAPTER_KIND
@@ -65,7 +66,7 @@ class SelectedRunnerAdapterPolicy:
     default_adapter_kind: str = DEFAULT_SELECTED_RUNNER_ADAPTER_KIND
     supported_adapter_kinds: frozenset[str] = field(
         default_factory=lambda: frozenset(
-            {CODEX_ADAPTER_KIND, DEFAULT_SELECTED_RUNNER_ADAPTER_KIND}
+            {PI_ADAPTER_KIND, CODEX_ADAPTER_KIND, DEFAULT_SELECTED_RUNNER_ADAPTER_KIND}
         ),
     )
     component_bound_adapter_kinds: frozenset[str] = field(
@@ -226,6 +227,28 @@ def normalize_selected_runner_bindings(
 
         adapter_kind = str(raw_adapter_kind)
         if adapter_kind in policy.supported_adapter_kinds:
+            if adapter_kind == PI_ADAPTER_KIND:
+                if _has_runner_component_authority(binding):
+                    diagnostics.append(
+                        compiler_error(
+                            code="pi_runner_component_unsupported",
+                            declaration_path=f"{path}.component_pin",
+                            message="Pi requires component-free selected authority.",
+                            context=base_context,
+                        )
+                    )
+                for capability_id in pi_capability_refusals(
+                    binding.get("required_capability_ids", ()),
+                    records(source, "capabilities"),
+                ):
+                    diagnostics.append(
+                        compiler_error(
+                            code="pi_runner_capability_unsupported",
+                            declaration_path=f"{path}.required_capability_ids",
+                            message="Pi requires every unrestricted tool effect grant.",
+                            context={**base_context, "capability_id": capability_id},
+                        )
+                    )
             if adapter_kind in policy.component_bound_adapter_kinds:
                 _append_component_bound_authority_diagnostics(
                     binding=normalized,
@@ -604,3 +627,43 @@ __all__ = (
     "SelectedRunnerAdapterPolicy",
     "normalize_selected_runner_bindings",
 )
+
+
+PI_REQUIRED_CAPABILITIES = frozenset(
+    {
+        "unrestricted.filesystem.read",
+        "unrestricted.filesystem.write",
+        "unrestricted.process.execute",
+    }
+)
+PI_ALLOWED_CAPABILITIES = PI_REQUIRED_CAPABILITIES | {
+    "capability.runner.invoke",
+    "terminal.intent",
+}
+
+
+def pi_capability_refusals(
+    required: object,
+    declarations: object,
+) -> tuple[str, ...]:
+    """Same complete-effect predicate for authored and trusted selected plans."""
+    if not is_sequence(required) or any(not isinstance(x, str) for x in required):
+        return ("invalid_required_capability_ids",)
+    names = tuple(str(x) for x in required)
+    refused = set(PI_REQUIRED_CAPABILITIES - set(names))
+    refused.update(set(names) - PI_ALLOWED_CAPABILITIES)
+    rows = declarations if is_sequence(declarations) else ()
+    for name in names:
+        matches = [d for d in rows if isinstance(d, Mapping) and d.get("id") == name]
+        if names.count(name) != 1 or len(matches) != 1:
+            refused.add(name)
+            continue
+        d = matches[0]
+        if (
+            d.get("capability_kind", d.get("kind")),
+            d.get("support_status"),
+            d.get("grant_status"),
+            d.get("approval_policy_id"),
+        ) != ("runner.invoke", "supported", "granted", None):
+            refused.add(name)
+    return tuple(sorted(refused))

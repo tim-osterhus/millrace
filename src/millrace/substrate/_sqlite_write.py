@@ -1692,16 +1692,22 @@ def _candidate_runtime_signature(
         "traces": trace_rows,
         "refusals": refusal_rows,
     }
-    return tuple(
-        (
-            table_name,
-            tuple(
-                tuple(getattr(row, column) for column in columns)
-                for row in row_groups[table_name]
-            ),
+    signature: list[tuple[str, tuple[tuple[object, ...], ...]]] = []
+    for table_name, columns, order_column in _RUNTIME_TABLE_SIGNATURE_COLUMNS:
+        rows = row_groups[table_name]
+        # Match the durable query order; singleton rows can use implicit keys.
+        if len(rows) > 1:
+            rows = tuple(sorted(rows, key=lambda row: getattr(row, order_column)))
+        signature.append(
+            (
+                table_name,
+                tuple(
+                    tuple(getattr(row, column) for column in columns)
+                    for row in rows
+                ),
+            )
         )
-        for table_name, columns, _order_column in _RUNTIME_TABLE_SIGNATURE_COLUMNS
-    )
+    return tuple(signature)
 
 
 def _validate_candidate_runtime_rows(

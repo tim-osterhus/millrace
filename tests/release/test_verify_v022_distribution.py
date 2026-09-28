@@ -590,9 +590,11 @@ def test_bundle_composition_reuses_compatible_unchanged_members() -> None:
 def test_all_release_workflows_require_exact_project_version_tag() -> None:
     for project in _release_projects():
         version = verifier.project_version(project)
+        assert version == "0.22.4"
         workflow = project / ".github" / "workflows" / "publish-to-pypi.yml"
         cases = {
             f"refs/tags/v{version}": True,
+            "refs/tags/v0.22.3": False,
             f"v{version}": False,
             f"refs/tags/{version}": False,
             f"refs/tags/release-v{version}": False,

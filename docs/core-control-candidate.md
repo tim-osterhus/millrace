@@ -32,9 +32,13 @@ a real four-second interruption boundary and bounded SQLite work. Uncertain
 commit delivery, host suspension or uninterruptible storage still requires
 same-key reconciliation. Control transactions and operation reads use a 100 ms
 SQLite busy timeout to leave scheduling headroom; it is a requested sleep budget,
-not a wall-clock guarantee. Sustained contention may therefore return storage
-unknown earlier, requiring the same-key reconciliation path. The prior connection
-timeout is restored. No control transaction spans a provider/native wait.
+not a wall-clock guarantee. In the private `0.22.4.dev1+rr01.c01` candidate,
+transactions with an explicit caller deadline retry `SQLITE_BUSY` only while
+acquiring the initial writer reservation, within that existing deadline. Authority
+reads and effects execute once after acquisition. Callers without an explicit
+deadline retain the single short wait. Exhausted or uncertain storage still
+requires same-key reconciliation. The prior connection timeout is restored. No
+control transaction spans a provider/native wait. Store 11 and plan 18 are unchanged.
 
 ## Run holds and budgets
 
@@ -273,3 +277,8 @@ not establish compatibility with unreleased snapshots. Native regression covers 
 pending, held, resumed and completed states, exact witness reconstruction, and
 unchanged state. Completion/application success remains separate from unqualified
 native aftermath or unknown descendant evidence.
+
+
+## Private Pi candidate
+
+Pi is an optional external stage adapter, not native-control qualification. The existing profile=None scheduler path supports eligible unstarted Pi runs. Active pause/resume, PID-only recovery and descendant containment remain unsupported; no RR01 or OS gate is promoted. See `pi-runner.md`.

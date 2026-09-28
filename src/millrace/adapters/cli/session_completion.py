@@ -23,6 +23,7 @@ from millrace.adapters.cli.session_diagnostics import (
     _completion_diagnostic_bytes,
     _completion_diagnostic_bytes_for_dispatch,
     _context_writeback_refusal_diagnostic_bytes,
+    _orphan_cleanup_facts,
     _signal_digest,
 )
 from millrace.adapters.runner_contract import (
@@ -74,7 +75,6 @@ __all__ = (
     "build_dispatch_envelope_for_run",
 )
 _RUNTIME_SESSION_EVENT_POLICY = RedactionPolicy(policy_id="runtime-session-events")
-
 
 @dataclass(frozen=True, slots=True)
 class SessionExecutionResult:
@@ -399,6 +399,7 @@ def _persist_error_completion(
             diagnostic={
                 "cleanup_disposition": "orphan_risk",
                 "adapter_outcome_present": True,
+                "cleanup": _orphan_cleanup_facts(cleanup),
             },
         )
     diagnostic_digest = runtime.cas_store.put_bytes(raw_diagnostic_bytes)
@@ -437,6 +438,7 @@ def _persist_success_completion(
             diagnostic={
                 "cleanup_disposition": "orphan_risk",
                 "adapter_outcome_present": True,
+                "cleanup": _orphan_cleanup_facts(cleanup),
             },
         )
     evidence_digest = runtime.cas_store.put_bytes(

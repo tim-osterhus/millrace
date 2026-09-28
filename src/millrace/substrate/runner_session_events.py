@@ -7,7 +7,7 @@ import os
 import sqlite3
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -105,12 +105,17 @@ class RunnerSessionEventStoreStats:
 
 
 class RunnerSessionEventStore:
-    """Synchronous WAL store; readers never participate in session execution."""
+    """Bounded event store; ordinary filesystem connections use SQLite WAL."""
 
     def __init__(
-        self, connection: sqlite3.Connection, path: Path | None = None
+        self,
+        connection: sqlite3.Connection,
+        path: Path | None = None,
+        *,
+        snapshot_writer: Callable[[bytes], None] | None = None,
     ) -> None:
         self._connection = connection
+        self._snapshot_writer = snapshot_writer
         self._snapshot_path = None if path is None else public_snapshot_path(path)
 
     @classmethod
@@ -120,6 +125,17 @@ class RunnerSessionEventStore:
         connection = sqlite3.connect(db_path, timeout=0.1)
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = NORMAL")
+        return cls.from_connection(connection, path=db_path)
+
+    @classmethod
+    def from_connection(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        path: Path | None = None,
+        snapshot_writer: Callable[[bytes], None] | None = None,
+    ) -> RunnerSessionEventStore:
+        """Use the same event schema on a caller-owned durable connection."""
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS session_event_metadata (
@@ -180,7 +196,7 @@ class RunnerSessionEventStore:
                 connection.close()
                 raise ValueError("invalid runner-session event store schema shape")
         connection.commit()
-        return cls(connection, db_path)
+        return cls(connection, path, snapshot_writer=snapshot_writer)
 
     @classmethod
     def open(cls, path: str | Path) -> RunnerSessionEventStore:
@@ -195,7 +211,7 @@ class RunnerSessionEventStore:
         return RunnerSessionEventSnapshot(public_snapshot_path(Path(path)))
 
     def _publish_snapshot(self) -> None:
-        if self._snapshot_path is None:
+        if self._snapshot_path is None and self._snapshot_writer is None:
             return
         temporary: str | None = None
         try:
@@ -216,6 +232,10 @@ class RunnerSessionEventStore:
             wrapped = _canonical_json(
                 {"payload": payload, "sha256": sha256(raw).hexdigest()}
             ).encode()
+            if self._snapshot_writer is not None:
+                self._snapshot_writer(wrapped)
+                return
+            assert self._snapshot_path is not None
             fd, temporary = tempfile.mkstemp(
                 prefix=".runner-snapshot-", dir=self._snapshot_path.parent
             )
@@ -227,6 +247,8 @@ class RunnerSessionEventStore:
             temporary = None
         except (OSError, sqlite3.Error, ValueError):
             # Committed telemetry remains lossy; failed capture is explicitly absent.
+            if self._snapshot_writer is not None:
+                raise
             if self._snapshot_path is not None:
                 self._snapshot_path.unlink(missing_ok=True)
         finally:
@@ -587,6 +609,16 @@ class RunnerSessionEventSnapshot:
     def __init__(self, path: Path) -> None:
         with path.open("rb") as stream:
             raw = stream.read(2 * 1024 * 1024 + 1)
+        self._load(raw)
+
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> RunnerSessionEventSnapshot:
+        """Validate a snapshot captured by an owning filesystem consumer."""
+        snapshot = cls.__new__(cls)
+        snapshot._load(raw)
+        return snapshot
+
+    def _load(self, raw: bytes) -> None:
         if len(raw) > 2 * 1024 * 1024:
             raise ValueError("history_corrupt")
         try:

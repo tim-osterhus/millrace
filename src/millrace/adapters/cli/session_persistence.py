@@ -111,16 +111,12 @@ def _record_session_event(
     """Best-effort projection after durable state; never session authority."""
 
     from millrace.substrate.runner_session_events import (
-        RunnerSessionEventStore,
         RunnerSessionEventWriter,
-        runner_session_event_store_path,
     )
 
     store = None
     try:
-        store = RunnerSessionEventStore.initialize(
-            runner_session_event_store_path(runtime.paths.db_path)
-        )
+        store = runtime.open_session_event_store()
         RunnerSessionEventWriter(
             store,
             session_id=session.session_id,

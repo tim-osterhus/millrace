@@ -211,3 +211,8 @@ between packages, selected plans, runners, runtime transitions, and operator
 commands. See [Runner-session architecture](runner-session-architecture.md)
 and [Daemon lifecycle](daemon-lifecycle.md) for cancellation, restart, and
 signal behavior.
+
+For the unpublished S02 candidate's zero-key first-use route, follow
+[the exact candidate installation and demo steps](demo.md). OS, tmux, a Factory
+backend and model credentials are optional for that route. Public-index and
+coordinated release qualification remain separate gates.

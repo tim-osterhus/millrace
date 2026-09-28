@@ -1199,7 +1199,7 @@ def test_restarted_active_millforge_run_uses_exact_persisted_component_pin(
         "millforge-base",
         "2",
         "millforge",
-        "0.1.0",
+        "0.1.1",
         "application/json",
         _MILLFORGE_DESCRIPTOR_SHA256,
         _MILLFORGE_CAPABILITIES,

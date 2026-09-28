@@ -257,3 +257,20 @@ terminal results, readiness refusal, budget return and exceptions without anothe
 stop read. Repeated received signals coalesce once. These normal-code checks do
 not change the first accepted completion/cancellation result or perform SQLite
 work in the signal handler.
+
+## Candidate lock-contention correction
+
+The private `0.22.4.dev1+rr01.c01` candidate preserves the two-second stop
+caller contract and exact target fencing. The owner and independent listener
+can wait through transient SQLite writer contention within their existing
+explicit transaction deadlines. Only initial reservation acquisition retries;
+no authority decision, receipt, effect or transaction body is replayed.
+A target that became stale while waiting still receives `rejected_no_effect`.
+Accepted stop, process exit and substantiated session cleanup remain separate
+observations. Unknown cleanup still blocks relaunch. This correction does not
+expand native containment or qualify OS/provider release gates.
+
+
+## Private Pi candidate
+
+For explicitly selected `pi_rpc`, the daemon retains existing claim/session fences and cancellation escalation. Restart reconciliation is Unsupported, preserving uncertain effects and operator intervention. Only eligible unstarted scheduling can pause/resume without a native profile. See `pi-runner.md` for cleanup and provider-usage limits.

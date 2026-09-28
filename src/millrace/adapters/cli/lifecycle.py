@@ -11,10 +11,16 @@ from millrace.adapters.cli.context import (
     transition_context,
 )
 from millrace.adapters.cli.run import BoundedExecutionUnitResult
-from millrace.contracts.state import CooldownWaitRecord
+from millrace.contracts.state import CooldownWaitRecord, RuntimeState
 from millrace.contracts.transition import TimerDue
 from millrace.kernel import apply, decide
 from millrace.kernel.lifecycle import project_next_lifecycle_transition
+
+
+def lifecycle_has_pending_work(state: RuntimeState) -> bool:
+    """Read selected lifecycle completion, treating diagnostics as unfinished."""
+    projection = project_next_lifecycle_transition(state)
+    return projection.candidate is not None or bool(projection.diagnostics)
 
 
 def run_lifecycle_transition_once(
@@ -129,8 +135,7 @@ def _next_due_cooldown_wait(
     candidates = [
         wait
         for wait in waits
-        if wait.consumed_input_id is None
-        and wait.due_at <= observed_at
+        if wait.consumed_input_id is None and wait.due_at <= observed_at
     ]
     return min(candidates, key=lambda wait: (wait.due_at, wait.wait_id), default=None)
 
@@ -157,4 +162,4 @@ def _diagnostic_payload(diagnostic: object) -> Mapping[str, object]:
     return payload
 
 
-__all__ = ("run_lifecycle_transition_once",)
+__all__ = ("run_lifecycle_transition_once", "lifecycle_has_pending_work")

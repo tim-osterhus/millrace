@@ -139,11 +139,12 @@ wheels = [
 
 [[package]]
 name = "millrace-ai"
-version = "0.22.3"
+version = "0.22.4"
 source = { editable = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "millrace-plus" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -153,9 +154,19 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "millrace-plus", specifier = "==0.22.3" },
     { name = "mypy", specifier = ">=1.15" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.11" },
+]
+
+[[package]]
+name = "millrace-plus"
+version = "0.22.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/8c/68948164c8f574f0f9533694e0ff1e3c04c85060cf8dfac57197250772f6/millrace_plus-0.22.3.tar.gz", hash = "sha256:bb7de1f610885bd6c258ca9c1f8f88d219bc64bd41e6341b15cabd524b26db14", size = 238265, upload-time = "2026-09-12T09:29:12.379Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/82/4b/ce2096326ab98641589b618f7b9b4b04a92b6acf6056bf88d7a932fa9ae6/millrace_plus-0.22.3-py3-none-any.whl", hash = "sha256:8a36188ded6445be1657e4cd327a34a88b7bf9ac2fe2a4942e0eda67b7ef6f7c", size = 232521, upload-time = "2026-09-12T09:29:10.951Z" },
 ]
 
 [[package]]

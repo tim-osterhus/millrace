@@ -14,13 +14,18 @@
 
 Millrace is a durable runtime for compiler-validated agent workflows.
 
-**Millrace v0.22.3** provides governed context and durable public controls.
+**Published Millrace v0.22.3** provides governed context and durable public controls.
 Install the exact `millrace==0.22.3` bundle on Python 3.12 or newer; see
 [Getting Started](docs/getting-started.md).
 Existing v0.22.2 workspaces use store schema 8; this release requires fresh
 schema-11 state and provides **no in-place migration**. Finish or retire old
 work with its matching runtime, preserve its workspace, and initialize a new
 one. See [compatibility](docs/v0.22-compatibility.md).
+
+The unpublished **v0.22.4** source adds an opt-in [Pi runner](docs/pi-runner.md)
+and consent-bound [setup/demo](docs/demo.md). Its package versions are prepared
+for a matched release; real-model qualification and final artifact validation
+remain open. See [v0.22.4 status](docs/releases/v0.22.4.md).
 
 Ever find yourself doing the same thing over and over with AI agents?
 
@@ -140,6 +145,7 @@ These are package data, not hard-coded kernel behavior.
 [Workflow packages](https://github.com/tim-osterhus/millrace/blob/main/docs/workflow-packages.md) ·
 [Millforge runner](https://github.com/tim-osterhus/millrace/blob/main/docs/millforge-runner.md) ·
 [Codex runner](https://github.com/tim-osterhus/millrace/blob/main/docs/codex-runner.md) ·
+[Pi runner candidate](docs/pi-runner.md) ·
 [Errors](https://github.com/tim-osterhus/millrace/blob/main/docs/errors.md) ·
 [Migrating from v0.21](https://github.com/tim-osterhus/millrace/blob/main/docs/migrating-from-v0.21.md) ·
 [v0.22 support](https://github.com/tim-osterhus/millrace/blob/main/docs/v0.22-compatibility.md)

@@ -1,0 +1,142 @@
+{
+  "adapter_kind": "pi_rpc",
+  "credential_env_names": [
+    "PI_RPC_API_KEY"
+  ],
+  "discovery": {
+    "context_files": false,
+    "extensions": false,
+    "packages": [],
+    "project_trust": false,
+    "prompt_templates": false,
+    "skills": false,
+    "system_prompt_files": "absent",
+    "themes": false
+  },
+  "files": {
+    "auth": {
+      "path": "/absolute/pi/templates/auth.json",
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+    },
+    "models": {
+      "path": "/absolute/pi/templates/models.json",
+      "sha256": "ac6b14d5ebba08ce8718cdf532d470aa03c40505cba018addf23685b7937bef9"
+    },
+    "settings": {
+      "path": "/absolute/pi/templates/settings.json",
+      "sha256": "eea1e2a8830451ab8011b275f53d1afd1046b809788d64bdba728c8dd6f7c720"
+    }
+  },
+  "installation": {
+    "archive_sha256": "9a6733c0e6a31d592b53dc60df43dd0c26fa793ccf2384ed123fc17b0448866a",
+    "loader": {
+      "path": "/absolute/pi/package/dist/bundle/cli.js",
+      "sha256": "e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774"
+    },
+    "node": {
+      "path": "/absolute/node-v24.18.0-darwin-arm64/bin/node",
+      "sha256": "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a"
+    },
+    "node_origin": "existing-host-read-only",
+    "node_version": "v24.18.0",
+    "package_json": {
+      "path": "/absolute/pi/package/package.json",
+      "sha256": "9bb655451e850a8593ba87f563c26d3d2af2f503b76318e2f1bbe53eb28c9180"
+    },
+    "package_manifest": {
+      "path": "/absolute/pi/package-manifest.json",
+      "sha256": "4166903ec074bff90682dfb3cde9c5ddb68956723f1431fcabacdd599bfb8fa2"
+    },
+    "package_name": "@earendil-works/pi-coding-agent",
+    "package_root": "/absolute/pi/package",
+    "package_version": "0.87.0",
+    "runtime": {
+      "path": "/absolute/pi/package/dist/bundle/cli-runtime.js",
+      "sha256": "afaec240d4a30b956abdb2540500176c2da469993c859143b8e61a0c3773ccf6"
+    },
+    "shrinkwrap": {
+      "path": "/absolute/pi/package/npm-shrinkwrap.json",
+      "sha256": "3b5bdc0a158f6440d0836faa0953bece98b0bc1771407b64d127260744b891da"
+    }
+  },
+  "managed_args": [
+    "--mode",
+    "rpc",
+    "--no-session",
+    "--provider",
+    "local",
+    "--model",
+    "probe-model",
+    "--thinking",
+    "xhigh",
+    "--no-context-files",
+    "--no-skills",
+    "--no-extensions",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-approve",
+    "--tools",
+    "read,bash,edit,write"
+  ],
+  "model": {
+    "api": "openai-completions",
+    "context_window": 32000,
+    "endpoint": "http://127.0.0.1:43187/v1",
+    "id": "probe-model",
+    "input": [
+      "text"
+    ],
+    "max_output_tokens": 256,
+    "provider": "local",
+    "sampling": "no-overrides-provider-default-unqualified",
+    "thinking": "xhigh"
+  },
+  "persistence": "in-memory-no-continuation",
+  "protocol": "pi-0.87.0-jsonl.v1",
+  "qualification_scope": "loopback-scripted-openai-completions",
+  "schema_version": "pi-rpc-profile.v1",
+  "settings": {
+    "cacheWarming": "off",
+    "compaction": {
+      "enabled": true,
+      "keepRecentTokens": 20000,
+      "reserveTokens": 16384
+    },
+    "defaultProjectTrust": "never",
+    "defaultTools": [
+      "read",
+      "bash",
+      "edit",
+      "write"
+    ],
+    "enableAnalytics": false,
+    "enableInstallTelemetry": false,
+    "extensions": [],
+    "httpIdleTimeoutMs": 300000,
+    "packages": [],
+    "prompts": [],
+    "retry": {
+      "baseDelayMs": 2000,
+      "enabled": true,
+      "maxAgentDelayMs": 60000,
+      "maxRetries": 3,
+      "provider": {
+        "maxRetries": 0,
+        "maxRetryDelayMs": 60000,
+        "timeoutMs": 300000
+      }
+    },
+    "shellPath": "/bin/bash",
+    "skills": [],
+    "themes": [],
+    "transport": "auto"
+  },
+  "template_dir": "/absolute/pi/templates",
+  "tool_boundary": "unrestricted-no-sandbox-no-tool-approval",
+  "tools": [
+    "read",
+    "bash",
+    "edit",
+    "write"
+  ]
+}

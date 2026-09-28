@@ -357,7 +357,7 @@ def _execute_control(
         return runtime.store.execute_run_control(
             request,
             runtime.cas_store,
-            supported_adapter_kinds=frozenset({"codex", "millforge"}),
+            supported_adapter_kinds=frozenset({"codex", "pi_rpc", "millforge"}),
             deadline=deadline,
         )
     from millrace.adapters.cli.daemon_listener import endpoint_path, exchange

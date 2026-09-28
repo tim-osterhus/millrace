@@ -780,15 +780,27 @@ def test_lifecycle_stop_is_bounded_while_native_admission_and_database_contend()
         elapsed = time.monotonic() - start
         writer.join(1)
         assert elapsed < 2
-        assert stopped.returncode == 0, (stopped.stdout, stopped.stderr)
+        # The concurrent owner can advance the inspected source revision.
+        # Exact stale-target refusal is required and must not stop the daemon.
+        if stopped.returncode == 3:
+            response = json.loads(stopped.stderr)
+            assert response["code"] == "daemon_target_mismatch", response
+            assert response["details"]["receipt"]["disposition"] == "rejected_no_effect"
+            observed = inspect_daemon(case.paths, deadline=time.monotonic() + 1.5)
+            assert observed["stop_key"] is None
+            assert observed["daemon_process"] == "live"
+        else:
+            assert stopped.returncode == 0, (stopped.stdout, stopped.stderr)
+            response = json.loads(stopped.stdout)
+            assert response["data"]["receipt"]["accepted"] is True
         assert not (case.root / "admission-release").exists()
-        (case.root / "admission-release").write_text("release after stop accepted")
+        (case.root / "admission-release").write_text("release after bounded stop reply")
         stdout, stderr = client.communicate(timeout=6)
         (case.root / "contention-evidence.json").write_text(
             json.dumps(
                 {
                     "stop_seconds": elapsed,
-                    "stop": json.loads(stopped.stdout),
+                    "stop": response,
                     "native_stdout": stdout,
                     "native_stderr": stderr,
                 },

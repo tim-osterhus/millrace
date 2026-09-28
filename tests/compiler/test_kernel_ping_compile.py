@@ -200,7 +200,7 @@ def test_fresh_runner_adapter_policy_selects_configured_millforge_default() -> N
     policy = SelectedRunnerAdapterPolicy()
 
     assert policy.default_adapter_kind == "millforge"
-    assert policy.supported_adapter_kinds == frozenset({"codex", "millforge"})
+    assert policy.supported_adapter_kinds == frozenset({"codex", "millforge", "pi_rpc"})
     assert policy.component_bound_adapter_kinds == frozenset({"millforge"})
 
 

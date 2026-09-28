@@ -20,6 +20,7 @@ from millrace.compiler.runner_bindings import (
     DEFAULT_SELECTED_RUNNER_ADAPTER_POLICY,
     RUNNER_ADAPTER_KIND_DEFAULTED,
     SelectedRunnerAdapterPolicy,
+    pi_capability_refusals,
 )
 
 __all__ = (
@@ -39,4 +40,5 @@ __all__ = (
     "compiled_plan_export_record",
     "verify_compiled_plan_export_bytes",
     "verify_compiled_plan_export_record",
+    "pi_capability_refusals",
 )

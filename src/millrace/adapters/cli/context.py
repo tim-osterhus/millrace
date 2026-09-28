@@ -19,6 +19,10 @@ if TYPE_CHECKING:
         TransitionInput,
     )
     from millrace.substrate.cas import ContentAddressedByteStore
+    from millrace.substrate.runner_session_events import (
+        RunnerSessionEventSnapshot,
+        RunnerSessionEventStore,
+    )
     from millrace.substrate.sqlite import SQLiteRuntimeStore
 
 
@@ -52,6 +56,46 @@ class OpenRuntimeContext:
     paths: CliWorkspacePaths
     store: SQLiteRuntimeStore
     cas_store: ContentAddressedByteStore
+
+    def open_session_event_store(
+        self, *, create: bool = True
+    ) -> RunnerSessionEventStore:
+        from millrace.substrate.runner_session_events import (
+            RunnerSessionEventStore,
+            runner_session_event_store_path,
+        )
+
+        path = runner_session_event_store_path(self.paths.db_path)
+        return (
+            RunnerSessionEventStore.initialize(path)
+            if create
+            else RunnerSessionEventStore.open(path)
+        )
+
+    def session_event_store_exists(self) -> bool:
+        from millrace.substrate.runner_session_events import (
+            runner_session_event_store_path,
+        )
+
+        return runner_session_event_store_path(self.paths.db_path).is_file()
+
+    def session_event_header(self) -> bytes:
+        from millrace.substrate.runner_session_events import (
+            runner_session_event_store_path,
+        )
+
+        with runner_session_event_store_path(self.paths.db_path).open("rb") as stream:
+            return stream.read(16)
+
+    def session_event_snapshot(self) -> RunnerSessionEventSnapshot:
+        from millrace.substrate.runner_session_events import (
+            RunnerSessionEventStore,
+            runner_session_event_store_path,
+        )
+
+        return RunnerSessionEventStore.open_readonly(
+            runner_session_event_store_path(self.paths.db_path)
+        )
 
     def close(self) -> None:
         close = getattr(self.store, "close", None)

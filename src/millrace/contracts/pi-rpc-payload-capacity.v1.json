@@ -1,0 +1,1 @@
+{"adapter_kind":"pi_rpc","contract_id":"millrace.pi-rpc.payload.v1","max_work_item_payload_bytes":1048576,"payload_encoding":"canonical_authority_mapping_bytes","record_kind":"runner_payload_capacity_descriptor","schema_version":1}

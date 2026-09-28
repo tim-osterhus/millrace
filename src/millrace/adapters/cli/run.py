@@ -35,6 +35,8 @@ from millrace.adapters.millforge import (
     MillforgeAdapter,
     MillforgeAdapterConfig,
 )
+from millrace.adapters.pi_rpc import PI_ADAPTER_KIND, PiRpcAdapter
+from millrace.adapters.pi_rpc_config import PiRpcConfig, regular_bytes, strict_json
 from millrace.adapters.runner_contract import (
     AdapterInvocationRequest,
     AdapterLocalConfig,
@@ -42,7 +44,10 @@ from millrace.adapters.runner_contract import (
     RedactionPolicy,
     resolve_adapter,
 )
-from millrace.compiler import DEFAULT_SELECTED_RUNNER_ADAPTER_POLICY
+from millrace.compiler import (
+    DEFAULT_SELECTED_RUNNER_ADAPTER_POLICY,
+    pi_capability_refusals,
+)
 from millrace.contracts.compiled_plan import (
     ArtifactSchemaDeclaration,
     RunnerBindingDeclaration,
@@ -53,6 +58,10 @@ from millrace.contracts.compiled_plan import (
     context_binding_authority_refusal,
 )
 from millrace.contracts.runner import RunnerDispatchEnvelope
+from millrace.contracts.runner_payload_capacity import (
+    completion_capacity,
+    validate_payload_capacity_binding,
+)
 from millrace.contracts.state import (
     Activation,
     RunnerSessionRecord,
@@ -297,9 +306,18 @@ def classify_daemon_startup(
     if admitted is None or not admitted.selected_plan.runner_bindings:
         return "not_ready"
     config = local_config or AdapterLocalConfig()
+    verified_adapter_kinds: set[str] = set()
     for binding in admitted.selected_plan.runner_bindings:
-        if binding.component_pin is None:
+        if binding.adapter_kind == PI_ADAPTER_KIND:
+            try:
+                _require_pi_selected_authority(admitted.selected_plan, str(binding.id))
+            except ValueError:
+                return "not_ready"
+        elif binding.component_pin is None:
             return "not_ready"
+        # Configuration is shared by adapter kind; authority remains per binding.
+        if binding.adapter_kind in verified_adapter_kinds:
+            continue
         if (
             _preclaim_adapter_refusal(
                 requested_adapter_kind=adapter_kind,
@@ -309,6 +327,7 @@ def classify_daemon_startup(
             is not None
         ):
             return "not_ready"
+        verified_adapter_kinds.add(binding.adapter_kind)
     for session in state.runner_sessions.values():
         if session.state in {
             "starting",
@@ -516,10 +535,19 @@ def _runner_reconciliation_blocker_priority(code: str | None) -> int:
 def load_adapter_local_config(path: Path) -> AdapterLocalConfig:
     config_path = Path(path)
     try:
-        raw = config_path.read_text(encoding="utf-8")
+        # Shared 64 KiB file limit precedes decoding/parsing. Resolve the local
+        # path first to preserve legacy relative-path and symlink inputs.
+        try:
+            config_path = config_path.resolve()
+        except RuntimeError as exc:
+            # Python 3.12 reports symlink cycles as a resolution RuntimeError.
+            raise ValueError("adapter config path cannot resolve") from exc
+        raw = regular_bytes(config_path, 65536).decode("utf-8")
         if not raw.strip():
             raise ValueError("adapter config JSON cannot be blank")
         parsed = json.loads(raw)
+        if isinstance(parsed, Mapping) and PI_ADAPTER_KIND in parsed:
+            parsed = strict_json(raw)
         if not isinstance(parsed, Mapping):
             raise ValueError("adapter config JSON must be an object")
         adapters: dict[str, object] = {}
@@ -528,6 +556,10 @@ def load_adapter_local_config(path: Path) -> AdapterLocalConfig:
                 adapters[CODEX_ADAPTER_KIND] = CodexAdapter(
                     _codex_config_from_json(adapter_config),
                 )
+            elif adapter_kind == PI_ADAPTER_KIND:
+                adapters[PI_ADAPTER_KIND] = PiRpcAdapter(
+                    PiRpcConfig.from_json(adapter_config, config_path=config_path),
+                )
             elif adapter_kind == MILLFORGE_ADAPTER_KIND:
                 adapters[MILLFORGE_ADAPTER_KIND] = MillforgeAdapter(
                     _millforge_config_from_json(adapter_config),
@@ -535,7 +567,13 @@ def load_adapter_local_config(path: Path) -> AdapterLocalConfig:
             else:
                 raise ValueError("unsupported adapter config kind")
         return AdapterLocalConfig(adapters=cast(Mapping[str, Any], adapters))
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (
+        OSError,
+        TypeError,
+        ValueError,
+        RecursionError,
+        json.JSONDecodeError,
+    ) as exc:
         raise CliCommandError(
             command=_COMMAND,
             code="invalid_adapter_config",
@@ -589,7 +627,7 @@ def _session_invocation_request(
     selected_component_pin, selected_terminal_mappings, selected_schemas = (
         _selected_runner_authority_for_request(active.selected_plan, dispatch)
     )
-    return AdapterInvocationRequest(
+    request = AdapterInvocationRequest(
         adapter_id=_adapter_id_for_request(selected_kind, effective_config),
         selected_runner_binding_id=dispatch.runner_binding_id,
         selected_adapter_kind=selected_kind,
@@ -609,10 +647,38 @@ def _session_invocation_request(
         selected_asset_material=selected_asset_material,
         local_config_ref="cli-local-adapter-config",
         cancellation_token=session_cancellation_token(session),
+        selected_payload_capacity_pin=getattr(
+            _selected_runner_binding(active.selected_plan, dispatch.runner_binding_id),
+            "payload_capacity_pin", None,
+        ),
         selected_component_pin=selected_component_pin,
         selected_terminal_result_mappings=selected_terminal_mappings,
         selected_artifact_schemas=selected_schemas,
     )
+
+    if selected_kind == PI_ADAPTER_KIND:
+        _require_pi_selected_authority(active.selected_plan, dispatch.runner_binding_id)
+        adapter = resolve_adapter(selected_kind, effective_config)
+        if not isinstance(adapter, PiRpcAdapter):
+            raise ValueError("Pi requires its typed adapter")
+        for behavior in active.selected_plan.completion_behaviors:
+            if (
+                str(behavior.runner_binding_id) == dispatch.runner_binding_id
+                and str(behavior.target_stage_kind_id) == dispatch.stage_kind_id
+                and dispatch.work_item_payload.get("request_kind")
+                == behavior.request_kind
+            ):
+                from millrace.contracts.transition import (
+                    canonical_authority_mapping_bytes,
+                )
+
+                if (
+                    len(canonical_authority_mapping_bytes(dispatch.work_item_payload))
+                    > behavior.request_payload_byte_limit
+                ):
+                    raise ValueError("closure_request_payload_limit_exceeded")
+        adapter.admit_request(request)
+    return request
 
 
 def _prepare_created_session_callback(
@@ -805,6 +871,16 @@ def _active_or_claimed_activation(
                 ),
                 active,
             )
+        if active.adapter_kind == PI_ADAPTER_KIND:
+            try:
+                _require_pi_selected_authority(
+                    active.selected_plan, str(active.activation.runner_binding_id)
+                )
+            except ValueError:
+                return BoundedExecutionUnitResult(
+                    code="adapter_failure",
+                    adapter_error_kind="selected_authority_refused",
+                )
         refusal = _preclaim_adapter_refusal(
             requested_adapter_kind=requested_adapter_kind,
             selected_adapter_kind=active.adapter_kind,
@@ -943,7 +1019,7 @@ def _bound_codex_cwd_refusal(
     selected_kind: str,
     adapter: object,
 ) -> BoundedExecutionUnitResult | None:
-    if selected_kind != CODEX_ADAPTER_KIND:
+    if selected_kind not in {CODEX_ADAPTER_KIND, PI_ADAPTER_KIND}:
         return None
     if (
         _context_binding_for_stage(
@@ -965,7 +1041,7 @@ def _bound_codex_cwd_refusal(
     if not isinstance(configured_cwd, Path):
         return BoundedExecutionUnitResult(
             code="adapter_failure",
-            diagnostics=({"reason": "bound_codex_cwd_unresolvable"},),
+            diagnostics=({"reason": f"bound_{selected_kind}_cwd_unresolvable"},),
         )
     try:
         configured_cwd = configured_cwd.resolve(strict=False)
@@ -973,12 +1049,12 @@ def _bound_codex_cwd_refusal(
     except (OSError, RuntimeError, TypeError, ValueError):
         return BoundedExecutionUnitResult(
             code="adapter_failure",
-            diagnostics=({"reason": "bound_codex_cwd_unresolvable"},),
+            diagnostics=({"reason": f"bound_{selected_kind}_cwd_unresolvable"},),
         )
     if configured_cwd != workspace_root:
         return BoundedExecutionUnitResult(
             code="adapter_failure",
-            diagnostics=({"reason": "bound_codex_cwd_mismatch"},),
+            diagnostics=({"reason": f"bound_{selected_kind}_cwd_mismatch"},),
         )
     return None
 
@@ -1038,6 +1114,24 @@ def _preclaim_adapter_refusal(
         adapter = resolve_adapter(selected_adapter_kind, local_config)
     except (AdapterResolverError, TypeError, ValueError):
         return BoundedExecutionUnitResult(code="adapter_failure")
+    if selected_adapter_kind == PI_ADAPTER_KIND:
+        if not isinstance(adapter, PiRpcAdapter):
+            return BoundedExecutionUnitResult(
+                code="adapter_failure", adapter_error_kind="missing_opt_in_config"
+            )
+        try:
+            credential = os.environ.get("PI_RPC_API_KEY", "")
+            if (
+                not credential
+                or len(credential.encode()) > 4096
+                or "\x00" in credential
+            ):
+                raise ValueError("missing or invalid Pi credential")
+            adapter.config.verify()
+        except (OSError, ValueError, TypeError, KeyError):
+            return BoundedExecutionUnitResult(
+                code="adapter_failure", adapter_error_kind="missing_opt_in_config"
+            )
     if selected_adapter_kind == CODEX_ADAPTER_KIND and isinstance(
         adapter,
         CodexAdapter,
@@ -1060,10 +1154,12 @@ def _adapter_kind_for_activation(state: RuntimeState, activation_id: str) -> str
     admitted = state.admitted_plans.get(activation.plan_ref.authority_fingerprint)
     if admitted is None:
         raise ValueError("admitted plan is missing")
-    return _selected_runner_binding(
-        admitted.selected_plan,
-        str(activation.runner_binding_id),
-    ).adapter_kind
+    binding = _selected_runner_binding(
+        admitted.selected_plan, str(activation.runner_binding_id)
+    )
+    if binding.adapter_kind == PI_ADAPTER_KIND:
+        _require_pi_selected_authority(admitted.selected_plan, str(binding.id))
+    return binding.adapter_kind
 
 
 def _selected_runner_binding(
@@ -1089,7 +1185,13 @@ def _selected_runner_authority_for_request(
     tuple[ArtifactSchemaDeclaration, ...],
 ]:
     binding = _selected_runner_binding(selected_plan, dispatch.runner_binding_id)
-    if binding.component_pin is None and not binding.terminal_result_mappings:
+    if binding.adapter_kind == PI_ADAPTER_KIND:
+        _require_pi_selected_authority(selected_plan, dispatch.runner_binding_id)
+    if (
+        binding.adapter_kind != PI_ADAPTER_KIND
+        and binding.component_pin is None
+        and not binding.terminal_result_mappings
+    ):
         return None, (), ()
     mappings = tuple(
         mapping
@@ -1457,3 +1559,27 @@ __all__ = (
     "load_adapter_local_config",
     "run_bounded_execution_unit",
 )
+
+
+def _require_pi_selected_authority(plan: SelectedCompiledPlan, binding_id: str) -> None:
+    binding = _selected_runner_binding(plan, binding_id)
+    validate_payload_capacity_binding(binding)
+    for behavior in plan.completion_behaviors:
+        if behavior.runner_binding_id == binding.id:
+            completion_capacity(binding, behavior.request_payload_byte_limit)
+    if binding.component_pin is not None or binding.terminal_result_mappings:
+        raise ValueError("pi_runner_component_unsupported")
+    declarations = tuple(
+        {
+            "id": str(d.id),
+            "capability_kind": d.capability_kind,
+            "support_status": d.support_status,
+            "grant_status": d.grant_status,
+            "approval_policy_id": d.approval_policy_id,
+        }
+        for d in plan.capabilities
+    )
+    if pi_capability_refusals(
+        tuple(str(x) for x in binding.required_capability_ids), declarations
+    ):
+        raise ValueError("pi_runner_capability_unsupported")

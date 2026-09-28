@@ -1,15 +1,65 @@
 # Changelog
 
-All notable user-facing changes to Millrace are documented in this file.
+## [0.22.4] - Unreleased
 
-This changelog is written for people first. It uses newest-first release order,
-ISO `YYYY-MM-DD` dates, and change categories inspired by
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version tags follow
-SemVer-style numbering per [Semantic Versioning](https://semver.org/) while
-Millrace is still in the pre-1.0 stabilization period; compatibility notes call
-out operator-visible contract changes when they matter.
+Release preparation is in progress. The private candidates below contain the
+opt-in Pi runner, component-free completion capacity, enqueue replay repairs,
+and consent-bound setup/demo journey. Real-model qualification, matched final
+Core/Plus/bundle identities, final installed validation and publication remain
+release gates. Scripted-provider proofs do not establish Bonsai/Qwen model
+support. The following private-candidate notes preserve their original scope.
 
-This file starts at `0.13.0`, the current documented public baseline.
+## 0.22.4.dev6+pi.local01 (private local candidate)
+
+- Integrate reviewed RR01 and PI-B02 capacity/adapter changes. The component-free
+  Pi completion-capacity contract retains its exact 1,048,576 canonical payload
+  byte limit and RunnerBinding v3/v4 compatibility.
+- Correct public enqueue replay after completed multi-session work: compare
+  reconstructed SQLite rows in the same canonical order as durable rows, while
+  preserving stale and divergent state refusals.
+- Verify each shared adapter configuration once during daemon readiness while
+  retaining every selected binding authority check and per-launch verification.
+- Add explicit Pi profile v2 foreground accounting through a pinned stock-Pi
+  observer and private pipe. Numeric test failures can be repaired; uncertain
+  command groups, signals, timeouts and cancellation cannot become accepted work.
+- Ordinary wheel and sdist installs execute the five-stage coding LAD route with
+  a real fail-edit-pass sequence and independent Checker. Generic foreground
+  acceptance, public enqueue replay, daemon reload and rejection cases are checked.
+  Maximum ordinary permissions and no tool approvals are the profile default.
+  Escaped descendants remain outside the trusted-workspace group guarantee.
+  One pinned Ubuntu 24.04 x86_64 installation also passed the five-stage
+  scripted-provider LAD route. Historical comparison, real-model qualification
+  and other Linux installations remain separate; this is not a public release.
+
+## 0.22.4.dev4+pi.b01.q01 (private candidate)
+
+- Permit explicitly selected, granted and configured component-free Pi bindings
+  through macOS daemon readiness; retain other adapters and unresolved-session
+  refusals. I01-R03 completion capacity remains blocked.
+
+# Private 0.22.4.dev3+pi.b01
+
+Adds an explicitly selected Pi 0.87.0 RPC adapter with strict local profile, selected authority, bounded interactive lifecycle and candidate evidence. Supports qualified text/file-operation cleanup; shell/image/recovery paths remain uncertain. Existing defaults, Codex/native behavior and durable schemas are unchanged. At that time, installed qualification remained PI-Q01 work; this is not a public release.
+
+## [0.22.4.dev0+s02mac01] - Unpublished candidate
+
+- Enforce current scoped demo trust before creating or acquiring demo state.
+  Text terminals can accept the disclosure inline when verified wheel evidence
+  exists; JSON/noninteractive calls require prior explicit consent. `--auto-confirm`
+  only resolves the later workflow wait. Stale scope, corrupt receipts and
+  uncertain setup actions cannot authorize entry or resume.
+- Keep the ordinary-install, default-offline one-command identity decision open;
+  missing complete-wheel evidence still requires explicit setup acquisition.
+
+- Add ordinary dependency-resolving bundle installation followed by explicit
+  interactive setup. Core verifies and retains exact wheel evidence only after
+  scoped consent; read-only inspection and JSON automation share the typed owner.
+- Add an isolated zero-key demo with an operator wait, confirm/revise paths and
+  receipt-bound recovery. OS, tmux, model keys and a backend are optional.
+- Retain unknown setup outcomes without automatic retry, preserve exact receipts,
+  and refuse stale selections, unsafe artifacts and conflicting evidence.
+- Preserve store 11/plan 18 and the published v0.22.3 publication workflow.
+  This candidate does not qualify public release or OS/provider gates.
 
 ## [0.22.3] - 2026-09-11
 

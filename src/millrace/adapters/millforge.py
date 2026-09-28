@@ -893,7 +893,9 @@ class _CorrelationCancellationResolver:
 
 def _optional_provider() -> object | None:
     try:
-        import millforge  # type: ignore[import-not-found]
+        from importlib import import_module
+
+        millforge = import_module("millforge")
     except ImportError:
         return None
     return cast(object, millforge)

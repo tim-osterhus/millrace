@@ -14,8 +14,10 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DIST_INFO = "millrace_ai-0.22.3.dist-info"
-SDIST_ROOT = "millrace_ai-0.22.3"
+CANDIDATE_VERSION = "0.22.4"
+RELEASE_VERSION = "0.22.4"
+DIST_INFO = f"millrace_ai-{CANDIDATE_VERSION}.dist-info"
+SDIST_ROOT = f"millrace_ai-{CANDIDATE_VERSION}"
 DONOR_WORKFLOWS = {
     "lad_execution.py",
     "lad_learning.py",
@@ -37,6 +39,14 @@ PUBLIC_DOCS = {
     "docs/workflow-packages.md",
     "docs/millforge-runner.md",
     "docs/codex-runner.md",
+}
+SDIST_EXTRA_DOCS = {
+    "docs/setup.md",
+    "docs/demo.md",
+    "docs/demo-recovery.md",
+    "docs/pi-runner.md",
+    "docs/examples/pi-adapters.json",
+    "docs/examples/pi-profile.json",
 }
 FORBIDDEN_ARTIFACT_TEXT = (
     "millrace" + "-rewrite",
@@ -65,10 +75,7 @@ def test_planning_lad_review_is_absent_from_millrace() -> None:
             ".json",
         }:
             continue
-        if any(
-            part in {".git", ".venv", "dist", "__pycache__"}
-            for part in path.parts
-        ):
+        if any(part in {".git", ".venv", "dist", "__pycache__"} for part in path.parts):
             continue
         if prohibited in path.read_text(encoding="utf-8"):
             offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
@@ -85,9 +92,9 @@ def test_runner_session_release_docs_cover_public_and_compatibility_contracts() 
     architecture_text = architecture.read_text(encoding="utf-8")
     daemon_text = daemon.read_text(encoding="utf-8")
     errors_text = (PROJECT_ROOT / "docs" / "errors.md").read_text(encoding="utf-8")
-    compatibility_text = (
-        PROJECT_ROOT / "docs" / "v0.22-compatibility.md"
-    ).read_text(encoding="utf-8")
+    compatibility_text = (PROJECT_ROOT / "docs" / "v0.22-compatibility.md").read_text(
+        encoding="utf-8"
+    )
     readme_text = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
     for required in (
@@ -162,17 +169,20 @@ def _expected_runtime_members(*, prefix: str = "") -> set[str]:
             and path.name in DONOR_WORKFLOWS
         ):
             continue
-        if path.suffix not in {".py", ".typed"}:
+        if path.suffix not in {".py", ".typed"} and relative not in {
+            "millrace/contracts/pi-rpc-payload-capacity.v1.json",
+            "millrace/adapters/pi_group_bridge.mjs",
+        }:
             continue
         members.add(f"{prefix}{relative}")
     return members
 
 
-def _metadata_contract(raw: bytes) -> None:
+def _metadata_contract(raw: bytes, *, version: str = CANDIDATE_VERSION) -> None:
     headers, body = raw.split(b"\n\n", 1)
     message = BytesParser(policy=default).parsebytes(headers + b"\n\n")
     assert message["Name"] == "millrace-ai"
-    assert message["Version"] == "0.22.3"
+    assert message["Version"] == version
     assert message["Requires-Python"] == ">=3.11"
     assert message["License-Expression"] == "Apache-2.0"
     assert message.get_all("License-File") == ["LICENSE"]
@@ -213,19 +223,20 @@ def _assert_wheel_contract(wheel: Path) -> None:
         for name in names:
             _assert_clean_artifact_text(name, archive.read(name))
         _metadata_contract(archive.read(f"{DIST_INFO}/METADATA"))
-        assert archive.read(f"{DIST_INFO}/licenses/LICENSE") == (
-            PROJECT_ROOT / "LICENSE"
-        ).read_bytes()
+        assert (
+            archive.read(f"{DIST_INFO}/licenses/LICENSE")
+            == (PROJECT_ROOT / "LICENSE").read_bytes()
+        )
 
 
-def test_release_metadata_is_final_and_complete() -> None:
+def test_release_metadata_is_candidate_and_complete() -> None:
     project = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]
 
     assert project == {
         "name": "millrace-ai",
-        "version": "0.22.3",
+        "version": CANDIDATE_VERSION,
         "description": (
             "A governed runtime for compiler-validated, durable agent workflows."
         ),
@@ -244,33 +255,46 @@ def test_release_metadata_is_final_and_complete() -> None:
     }
 
 
-def test_publish_workflow_matches_package_version_and_artifact_hashes() -> None:
+def test_publish_workflow_targets_exact_v024_release_artifacts() -> None:
     version = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]["version"]
     workflow = (
         PROJECT_ROOT / ".github" / "workflows" / "publish-to-pypi.yml"
     ).read_text(encoding="utf-8")
-    tag = f"v{version}"
+    tag = f"v{RELEASE_VERSION}"
     artifacts = {
-        f"millrace_ai-{version}-py3-none-any.whl",
-        f"millrace_ai-{version}.tar.gz",
+        f"millrace_ai-{RELEASE_VERSION}-py3-none-any.whl",
+        f"millrace_ai-{RELEASE_VERSION}.tar.gz",
     }
 
+    assert version == CANDIDATE_VERSION
+    assert RELEASE_VERSION == CANDIDATE_VERSION
     assert set(re.findall(r"\bv\d+\.\d+\.\d+\b", workflow)) == {tag}
     assert re.findall(r"(?m)^\s+- (v\d+\.\d+\.\d+)$", workflow) == [tag]
     assert workflow.count(f"github.ref == 'refs/tags/{tag}'") == 2
-    assert set(
-        re.findall(
-            r"millrace_ai-\d+\.\d+\.\d+(?:-py3-none-any\.whl|\.tar\.gz)",
-            workflow,
+    assert (
+        set(
+            re.findall(
+                r"millrace_ai-\d+\.\d+\.\d+(?:-py3-none-any\.whl|\.tar\.gz)",
+                workflow,
+            )
         )
-    ) == artifacts
+        == artifacts
+    )
 
     hash_entries = re.findall(
         r"(?m)^\s+([0-9a-f]{64})  dist/(millrace_ai-\S+)$",
         workflow,
     )
+    expected_hashes = {
+        f"millrace_ai-{RELEASE_VERSION}-py3-none-any.whl": (
+            "828ca3b41f4f5dcc11c495001443a86b1e4438ee7256e154f0edf435305cb9fd"
+        ),
+        f"millrace_ai-{RELEASE_VERSION}.tar.gz": (
+            "828007e31bdd978b9898aa5830f90ebc0da0746dd1c0ab44ac18591ea0b8eb23"
+        ),
+    }
     assert {artifact for _digest, artifact in hash_entries} == artifacts
     for artifact in artifacts:
         digests = [
@@ -278,6 +302,7 @@ def test_publish_workflow_matches_package_version_and_artifact_hashes() -> None:
         ]
         assert len(digests) == 2
         assert len(set(digests)) == 1
+        assert digests[0] == expected_hashes[artifact]
 
 
 def test_release_builds_pin_exact_uv_backend_and_force_pep517() -> None:
@@ -287,9 +312,9 @@ def test_release_builds_pin_exact_uv_backend_and_force_pep517() -> None:
     assert build_requirements == ["uv_build==0.11.30"]
 
     for workflow_name in ("ci.yml", "publish-to-pypi.yml"):
-        workflow = (
-            PROJECT_ROOT / ".github" / "workflows" / workflow_name
-        ).read_text(encoding="utf-8")
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / workflow_name).read_text(
+            encoding="utf-8"
+        )
         assert "--force-pep517" in workflow
         versions = re.findall(
             r"(?m)^\s+version:\s*[\"']?(\d+\.\d+\.\d+)[\"']?\s*$",
@@ -352,9 +377,7 @@ def test_public_docs_are_self_contained_and_links_are_release_safe() -> None:
     assert "e2e-live-smoke" not in readme
     assert "e2e-live-smoke" not in millforge_guide
 
-    codex_guide = (PROJECT_ROOT / "docs/codex-runner.md").read_text(
-        encoding="utf-8"
-    )
+    codex_guide = (PROJECT_ROOT / "docs/codex-runner.md").read_text(encoding="utf-8")
     required_contract_terms = {
         "codex_adapter_invocation_bundle",
         "schema_version == 3",
@@ -463,30 +486,34 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         ],
         cwd=PROJECT_ROOT,
     )
-    wheel = build_dir / "millrace_ai-0.22.3-py3-none-any.whl"
-    sdist = build_dir / "millrace_ai-0.22.3.tar.gz"
+    wheel = build_dir / f"millrace_ai-{CANDIDATE_VERSION}-py3-none-any.whl"
+    sdist = build_dir / f"millrace_ai-{CANDIDATE_VERSION}.tar.gz"
     assert wheel.is_file()
     assert sdist.is_file()
     _assert_wheel_contract(wheel)
 
     with tarfile.open(sdist, "r:gz") as archive:
         names = {member.name for member in archive.getmembers() if member.isfile()}
-        expected = {
-            f"{SDIST_ROOT}/{relative_path}" for relative_path in PUBLIC_DOCS
-        } | {
-            f"{SDIST_ROOT}/LICENSE",
-            f"{SDIST_ROOT}/pyproject.toml",
-            f"{SDIST_ROOT}/PKG-INFO",
-        } | _expected_runtime_members(prefix=f"{SDIST_ROOT}/src/")
+        expected = (
+            {f"{SDIST_ROOT}/{relative_path}" for relative_path in PUBLIC_DOCS}
+            | {f"{SDIST_ROOT}/{relative_path}" for relative_path in SDIST_EXTRA_DOCS}
+            | {
+                f"{SDIST_ROOT}/LICENSE",
+                f"{SDIST_ROOT}/pyproject.toml",
+                f"{SDIST_ROOT}/PKG-INFO",
+            }
+            | _expected_runtime_members(prefix=f"{SDIST_ROOT}/src/")
+        )
         assert names == expected
         for name in names:
             member = archive.extractfile(name)
             assert member is not None
             _assert_clean_artifact_text(name, member.read())
         _metadata_contract(archive.extractfile(f"{SDIST_ROOT}/PKG-INFO").read())
-        assert archive.extractfile(f"{SDIST_ROOT}/LICENSE").read() == (
-            PROJECT_ROOT / "LICENSE"
-        ).read_bytes()
+        assert (
+            archive.extractfile(f"{SDIST_ROOT}/LICENSE").read()
+            == (PROJECT_ROOT / "LICENSE").read_bytes()
+        )
 
     rebuilt_dir = tmp_path / "rebuilt"
     _run(
@@ -502,7 +529,7 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         ],
         cwd=tmp_path,
     )
-    rebuilt_wheel = rebuilt_dir / "millrace_ai-0.22.3-py3-none-any.whl"
+    rebuilt_wheel = rebuilt_dir / f"millrace_ai-{CANDIDATE_VERSION}-py3-none-any.whl"
     assert rebuilt_wheel.is_file()
     _assert_wheel_contract(rebuilt_wheel)
 
@@ -532,7 +559,7 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
                 (
                     "from importlib.metadata import version;"
                     "import importlib, millrace;"
-                    "assert version('millrace-ai') == '0.22.3';"
+                    f"assert version('millrace-ai') == '{CANDIDATE_VERSION}';"
                     "\ntry: importlib.import_module('millrace.testing')\n"
                     "except ModuleNotFoundError: pass\n"
                     "else: raise AssertionError('millrace.testing shipped')"
@@ -542,4 +569,4 @@ def test_fresh_artifacts_match_the_release_contract(tmp_path: Path) -> None:
         )
         assert smoke.stdout == ""
         version_result = _run([str(millrace), "--version"], cwd=tmp_path)
-        assert version_result.stdout == "millrace 0.22.3\n"
+        assert version_result.stdout == f"millrace {CANDIDATE_VERSION}\n"

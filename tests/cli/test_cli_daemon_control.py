@@ -93,7 +93,12 @@ def write_config(root, paths, delay=0):
             "live_test_opt_in_env_flags",
         )
     }
-    payload["env_allowlist"] = {}
+    payload["env_allowlist"] = {
+        "HOME": str(root),
+        "TMPDIR": str(root),
+        "XDG_CACHE_HOME": str(root),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
     payload["redaction_policy"] = {
         "policy_id": cfg.redaction_policy.policy_id,
         "secret_tokens": [],
@@ -114,6 +119,7 @@ def launch(paths, config, *, hold_exit=False, max_ticks=None):
     code += "sys.exit(result)"
     args = [
         sys.executable,
+        "-B",
         "-c",
         code,
         "--json",

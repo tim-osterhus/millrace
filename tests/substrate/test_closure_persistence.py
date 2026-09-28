@@ -877,3 +877,59 @@ def test_persistence_rejects_invalid_closure_creator_relation(
 
     with pytest.raises(StorageIntegrityError):
         persist_runtime_state(db_path, cas_root, state)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "request_over",
+        "request_bool",
+        "pin_null",
+        "pin_bool",
+        "pin_digest",
+        "pin_contract",
+        "pin_version",
+        "adapter",
+    ],
+)
+def test_v4_capacity_reconstruction_refuses_export_and_admission(mutation):
+    from tests.compiler.test_completion_capacity import capacity_source
+    plan = compile_workflow(capacity_source()).plan
+    assert plan is not None
+    runner = plan.runner_bindings[0]
+    if mutation.startswith('request_'):
+        object.__setattr__(
+            plan.completion_behaviors[0],
+            "request_payload_byte_limit",
+            True if mutation == "request_bool" else 1048577,
+        )
+    elif mutation == 'pin_null':
+        object.__setattr__(runner, 'payload_capacity_pin', None)
+    elif mutation == 'adapter':
+        object.__setattr__(runner, 'adapter_kind', 'codex')
+    elif mutation == 'pin_version':
+        from millrace.contracts.runner_payload_capacity import (
+            payload_capacity_pin_record,
+        )
+        pin = payload_capacity_pin_record(runner.payload_capacity_pin)
+        pin['schema_version'] = 2
+        object.__setattr__(runner, 'payload_capacity_pin', pin)
+    else:
+        field, value = {
+            "pin_bool": ("max_work_item_payload_bytes", True),
+            "pin_digest": ("descriptor_sha256", "0" * 64),
+            "pin_contract": ("contract_id", "local"),
+        }[mutation]
+        object.__setattr__(runner.payload_capacity_pin, field, value)
+    with pytest.raises(CompiledPlanExportError):
+        verify_compiled_plan_export_record(compiled_plan_export_record(plan))
+    decision = decide(
+        empty_runtime_state(),
+        AdmitPlan(
+            "admit-hostile-v4",
+            selected_plan=plan,
+            authority_fingerprint=authority_fingerprint(plan),
+        ),
+        deterministic_context(),
+    )
+    assert not decision.accepted

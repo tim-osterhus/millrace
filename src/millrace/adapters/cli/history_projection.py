@@ -8,10 +8,6 @@ from typing import Any, cast
 
 from millrace.adapters.cli.output import json_ready
 from millrace.contracts.public_projections import decode_cursor, encode_cursor, wire
-from millrace.substrate.runner_session_events import (
-    RunnerSessionEventStore,
-    runner_session_event_store_path,
-)
 
 
 def runner_history(
@@ -112,20 +108,17 @@ def runner_history(
     }
     store = None
     try:
-        event_path = runner_session_event_store_path(runtime.paths.db_path)
-        with event_path.open("rb") as backing:
-            data["backing_store"]["presence"] = "present"
-            if backing.read(16) != b"SQLite format 3\x00":
-                data["backing_store"].update(
-                    validation="invalid_header", health="corrupt"
-                )
-                raise ValueError("history_corrupt")
+        header = runtime.session_event_header()
+        data["backing_store"]["presence"] = "present"
+        if header != b"SQLite format 3\x00":
+            data["backing_store"].update(validation="invalid_header", health="corrupt")
+            raise ValueError("history_corrupt")
         data["backing_store"] = {
             "presence": "present",
             "validation": "header_only",
             "health": "unknown",
         }
-        store = RunnerSessionEventStore.open_readonly(event_path)
+        store = runtime.session_event_snapshot()
         data["capture"] = {
             "captured_at_ns": store.captured_at_ns,
             "age_seconds": (time.time_ns() - store.captured_at_ns) / 1_000_000_000,

@@ -214,6 +214,7 @@ EXPECTED_PUBLIC_COMPILER_API = (
     "compiled_plan_export_record",
     "verify_compiled_plan_export_bytes",
     "verify_compiled_plan_export_record",
+    "pi_capability_refusals",
 )
 
 EXPECTED_COMPILER_EXPORT_API = (

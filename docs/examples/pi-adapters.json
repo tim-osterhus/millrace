@@ -1,0 +1,42 @@
+{
+  "pi_rpc": {
+    "adapter_id": "pi-loopback",
+    "argv": [
+      "/absolute/pi/package/dist/bundle/cli.js"
+    ],
+    "attempt_root": "/absolute/pi-attempts",
+    "credential_env_names": [
+      "PI_RPC_API_KEY"
+    ],
+    "cwd": "/absolute/workspace",
+    "env_allowlist": {
+      "LANG": "C",
+      "LC_ALL": "C",
+      "NODE_DISABLE_COMPILE_CACHE": "1",
+      "NO_COLOR": "1",
+      "PATH": "/bin",
+      "PI_OFFLINE": "1",
+      "PI_SKIP_VERSION_CHECK": "1",
+      "SHELL": "/bin/bash",
+      "TERM": "dumb"
+    },
+    "executable": "/absolute/node-v24.18.0-darwin-arm64/bin/node",
+    "max_event_bytes": 1048576,
+    "max_event_count": 10000,
+    "max_input_bundle_bytes": 262144,
+    "max_result_bytes": 262144,
+    "max_stderr_bytes": 1048576,
+    "max_stderr_diagnostic_bytes": 4096,
+    "max_stdout_bytes": 16777216,
+    "profile": {
+      "path": "/absolute/pi/pi-profile.json",
+      "sha256": "9198d3fffeb5e87aad399afc90e80956b08c2a48b9b6cb46ce6513e65fb264f1"
+    },
+    "redaction_policy": {
+      "redact_credentials": true,
+      "retain_raw_events": false
+    },
+    "schema_version": "pi-rpc-local-config.v1",
+    "timeout_seconds": 60
+  }
+}

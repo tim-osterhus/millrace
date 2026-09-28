@@ -863,3 +863,76 @@ def test_progress_session_presence_uses_capture_history_not_current_session(
         runtime.store.daemon_snapshot()
     assert runtime.paths.db_path.read_bytes() == corrupted
     runtime.close()
+
+
+def test_current_stop_waits_for_real_contention_inside_existing_deadline(tmp_path):
+    """A short SQLite busy wait is not the whole control admission deadline."""
+    runtime, _ = runtime_with_run(tmp_path)
+    scope = registered(runtime)
+    request = stop_request(runtime, scope)
+    locked = threading.Event()
+
+    def contend():
+        connection = sqlite3.connect(runtime.paths.db_path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            locked.set()
+            time.sleep(0.3)
+            connection.rollback()
+        finally:
+            connection.close()
+
+    writer = threading.Thread(target=contend)
+    writer.start()
+    try:
+        assert locked.wait(1)
+        started = time.monotonic()
+        result = accept(runtime, scope, request)
+        assert time.monotonic() - started < 1
+        assert result["receipt"]["accepted"] is True
+        assert runtime.store.show_operation(request)["receipt"] == result["receipt"]
+        assert accept(runtime, scope, request)["receipt"] == result["receipt"]
+    finally:
+        writer.join(1)
+        runtime.close()
+    assert not writer.is_alive()
+
+
+def test_stop_contention_deadline_does_not_admit_or_leave_transaction(tmp_path):
+    runtime, _ = runtime_with_run(tmp_path)
+    scope = registered(runtime)
+    request = stop_request(runtime, scope)
+    other = sqlite3.connect(runtime.paths.db_path)
+    other.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        with pytest.raises(ControlOperationError, match="control_deadline_unknown"):
+            runtime.store.accept_daemon_stop(
+                scope, request, deadline=started + 0.2
+            )
+        assert time.monotonic() - started < 0.5
+        assert not runtime.store._connection.in_transaction
+    finally:
+        other.rollback()
+        other.close()
+    assert runtime.store.daemon_records()[-1]["stop_key"] is None
+    assert runtime.store.show_operation(request)["receipt"] is None
+    runtime.close()
+
+
+def test_control_body_busy_is_not_replayed(tmp_path):
+    from millrace.substrate._sqlite_controls import control_transaction
+
+    connection = sqlite3.connect(tmp_path / "body.db")
+    calls = 0
+    error = sqlite3.OperationalError("body busy")
+    error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+    try:
+        with pytest.raises(ControlOperationError, match="control_storage_unknown"):
+            with control_transaction(connection, deadline=time.monotonic() + 0.3):
+                calls += 1
+                raise error
+        assert calls == 1
+        assert not connection.in_transaction
+    finally:
+        connection.close()

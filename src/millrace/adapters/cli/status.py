@@ -143,8 +143,7 @@ def _attribution_projection(
         "status": "available",
         "final": record.final,
         "metrics": {
-            name: metric.public_projection()
-            for name, metric in record.metrics.items()
+            name: metric.public_projection() for name, metric in record.metrics.items()
         },
     }
 
@@ -467,8 +466,6 @@ def _runs_cancel(namespace: object) -> CliSuccess:
 def _runs_follow(namespace: object) -> CliSuccess:
     from millrace.substrate.runner_session_events import (
         RUNNER_SESSION_EVENT_READ_MAX_RECORDS,
-        RunnerSessionEventStore,
-        runner_session_event_store_path,
     )
 
     command = "runs.follow"
@@ -512,12 +509,15 @@ def _runs_follow(namespace: object) -> CliSuccess:
             if run.current_session_id is None
             else state.runner_sessions.get(run.current_session_id)
         )
-        event_path = runner_session_event_store_path(runtime.paths.db_path)
         events: list[dict[str, object]]
         gap: object | None
-        if event_path.is_file() and max_events > 0 and session is not None:
+        if (
+            runtime.session_event_store_exists()
+            and max_events > 0
+            and session is not None
+        ):
             try:
-                event_store = RunnerSessionEventStore.open(event_path)
+                event_store = runtime.open_session_event_store(create=False)
                 page = event_store.read(
                     run_id,
                     after_sequence=after_sequence,
@@ -808,9 +808,7 @@ def _status_projection(
         ],
         "joins": [json_ready(item) for item in getattr(status, "joins")],
         "pause": json_ready(getattr(status, "pause")),
-        "dispatch_suspension": json_ready(
-            getattr(status, "dispatch_suspension")
-        ),
+        "dispatch_suspension": json_ready(getattr(status, "dispatch_suspension")),
         "queue_closures": json_ready(getattr(status, "queue_closures")),
         "quarantines": [json_ready(item) for item in getattr(status, "quarantines")],
         "recovery_attempts": [
@@ -1128,8 +1126,7 @@ def completion_diagnostic_projection(
         or getattr(completion, "run_id", None) != run_ref_id
         or getattr(completion, "dispatch_generation", None)
         != session_dispatch_generation
-        or getattr(completion, "session_fencing_token", None)
-        != session_fencing_token
+        or getattr(completion, "session_fencing_token", None) != session_fencing_token
     ):
         projection["diagnostic_status"] = "corrupt"
         return projection
@@ -1338,8 +1335,7 @@ def runner_session_projection(
         _zero_hydration_totals()
         if hydration_totals is None
         else {
-            key: int(hydration_totals.get(key, 0))
-            for key in _zero_hydration_totals()
+            key: int(hydration_totals.get(key, 0)) for key in _zero_hydration_totals()
         }
     )
     return {
@@ -1371,19 +1367,15 @@ def runner_session_projection(
         ),
         "cleanup_disposition": session.cleanup_disposition,
         "orphan_risk": (
-            session.state == "lost"
-            or session.cleanup_disposition == "orphan_risk"
+            session.state == "lost" or session.cleanup_disposition == "orphan_risk"
         ),
         "completion_persisted": completion is not None,
         "completion_terminal_state": (
             None if completion is None else completion.terminal_state
         ),
-        "completion_exit_kind": (
-            None if completion is None else completion.exit_kind
-        ),
+        "completion_exit_kind": (None if completion is None else completion.exit_kind),
         "application_persisted": (
-            completion is not None
-            and completion.application_input_id in state.receipts
+            completion is not None and completion.application_input_id in state.receipts
         ),
         "application_status": application_status,
         "cooperative_cancel_grace_seconds": cooperative_cancel_grace_seconds,
@@ -1395,9 +1387,7 @@ def _selected_adapter_kind(state: RuntimeState, run_id: str) -> str | None:
     run = state.runs.get(run_id)
     if run is None:
         return None
-    admitted = state.admitted_plans.get(
-        run.run_ref.plan_ref.authority_fingerprint
-    )
+    admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
     if admitted is None:
         return None
     matches = tuple(

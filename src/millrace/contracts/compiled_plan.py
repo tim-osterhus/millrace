@@ -39,6 +39,11 @@ from millrace.contracts.ids import (
     WorkflowId,
     WorkflowVersion,
 )
+from millrace.contracts.runner_payload_capacity import (
+    PayloadCapacityError,
+    RunnerPayloadCapacityPin,
+    validate_payload_capacity_binding,
+)
 from millrace.contracts.workflow_package_paths import (
     WorkflowPackagePathPolicyError,
     validate_package_path,
@@ -579,6 +584,16 @@ class RunnerBindingDeclaration:
             "presentation",
             freeze_authority_mapping(cast(Mapping[str, object], self.presentation)),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RunnerBindingWithPayloadCapacityDeclaration(RunnerBindingDeclaration):
+    schema_version: ClassVar[int] = 4
+    payload_capacity_pin: RunnerPayloadCapacityPin
+
+    def __post_init__(self) -> None:
+        RunnerBindingDeclaration.__post_init__(self)
+        validate_payload_capacity_binding(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1359,7 +1374,10 @@ def context_binding_authority_refusal(
         if stage_runner_id is None or len(runner_by_id.get(stage_runner_id, ())) != 1:
             return f"context_binding_runner:{binding_id}"
         runner = runner_by_id[stage_runner_id][0]
-        if typed_authority and type(runner) is not RunnerBindingDeclaration:
+        if typed_authority and type(runner) not in (
+            RunnerBindingDeclaration,
+            RunnerBindingWithPayloadCapacityDeclaration,
+        ):
             return f"context_binding_runner_record:{binding_id}"
         runner_stage_ids = _context_authority_collection(
             runner,
@@ -2135,6 +2153,10 @@ def runner_component_authority_refusal(
     for capability in selected_plan.capabilities:
         capability_counts[capability.id] = capability_counts.get(capability.id, 0) + 1
     for binding in selected_plan.runner_bindings:
+        try:
+            validate_payload_capacity_binding(binding)
+        except PayloadCapacityError as exc:
+            return f"runner_payload_capacity:{binding.id}:{exc}"
         if any(
             capability_counts.get(capability_id, 0) != 1
             for capability_id in binding.required_capability_ids
