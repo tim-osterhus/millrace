@@ -680,7 +680,9 @@ def test_unmanaged_lock_refuses_public_takeover_without_private_pid_fallback(
 
 
 def test_public_unsupported_long_endpoint_has_typed_lifecycle_refusal(tmp_path):
-    paths, config = prepared(tmp_path)
+    long_root = tmp_path / ("x" * 104)
+    long_root.mkdir()
+    paths, config = prepared(long_root)
     child = launch(paths, config, max_ticks=1)
     try:
         out, err = child.communicate(timeout=3)
