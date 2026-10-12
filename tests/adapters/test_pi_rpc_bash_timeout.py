@@ -12,10 +12,7 @@ from millrace.adapters.pi_rpc_config import PiRpcConfig
 from millrace.adapters.pi_rpc_groups import bridge_identity, supervisor_identity
 from tests.adapters.test_pi_rpc_config import filesystem_config
 
-GUARD = (
-    Path(__file__).resolve().parents[4]
-    / "experiment/harness/d-timeout/bash_timeout.mjs"
-)
+GUARD = Path(__file__).resolve().parents[1] / "fixtures/pi_bash_timeout.mjs"
 GUARD_SHA256 = "09a688ec90c18afb52aa7a028a3ec02a0ae74cb374df962e0f133d802483d775"
 
 
