@@ -45,6 +45,7 @@ from millrace.contracts.transition import (
     RunnerResultObserved,
     artifact_payload_digest,
 )
+from millrace.kernel import run_is_settled
 from millrace.operator.dispatch import (
     DispatchSuspensionProjection,
     artifact_provenance_for_status,
@@ -1048,9 +1049,6 @@ def _resolve_status_coherence(
         if work_item.ref.plan_ref.authority_fingerprint == selected_fingerprint
     }
     closed_work_item_ids = set(state.closed_work_items)
-    observed_run_ids = {
-        observation.run_id for observation in state.runner_observations.values()
-    }
     active_work_item_ids: set[str] = set()
     active_runs: list[ActiveRunStatus] = []
     for _run_id, run in sorted(state.runs.items()):
@@ -1065,10 +1063,10 @@ def _resolve_status_coherence(
         if activation is None:
             continue
         if not _is_coherent_live_run(
+            state,
             run,
             activation,
             work_item,
-            observed_run_ids,
         ):
             continue
         active_work_item_ids.add(work_item.ref.work_item_id)
@@ -1107,14 +1105,13 @@ def _is_coherent_unclaimed_activation(
 
 
 def _is_coherent_live_run(
+    state: RuntimeState,
     run: RunRecord,
     activation: Activation,
     work_item: WorkItem,
-    observed_run_ids: set[str],
 ) -> bool:
     return (
-        run.run_ref.run_id not in observed_run_ids
-        and run.run_ref.work_item_id == run.work_item_id
+        run.run_ref.work_item_id == run.work_item_id
         and run.work_item_id == work_item.ref.work_item_id
         and run.activation_id == activation.activation_id
         and run.run_ref.plan_ref == work_item.ref.plan_ref
@@ -1127,6 +1124,7 @@ def _is_coherent_live_run(
         and activation.runner_binding_id == run.runner_binding_id
         and activation.lineage_id == work_item.lineage_id
         and activation.queue_family_id == work_item.queue_family_id
+        and not run_is_settled(state, run.run_ref.run_id)
     )
 
 

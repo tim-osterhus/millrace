@@ -369,6 +369,7 @@ def _startup_fixture(tmp_path):
             "argv": [],
         },
         profile={"managed_args": [], "model": MODEL},
+        managed_args=(),
         adapter_id=r.adapter_id,
         redaction_policy=r.redaction_policy,
         cwd=tmp_path,

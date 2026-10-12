@@ -227,7 +227,7 @@ def _reviewed_pi_config_calls(path: Path, tree: ast.AST) -> set[ast.Call]:
                 for child in node.body
                 if isinstance(child, ast.FunctionDef) and child.name == "materialize"
             )
-    return {
+    reviewed = {
         call
         for function in functions
         for call in ast.walk(function)
@@ -237,6 +237,16 @@ def _reviewed_pi_config_calls(path: Path, tree: ast.AST) -> set[ast.Call]:
         and call.func.value.id == "os"
         and call.func.attr == "open"
     }
+    # The qualified v3 guard checks an explicitly selected append-only audit
+    # descriptor. Approve only this exact no-follow/nonblocking read-only call.
+    reviewed.update(
+        call
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and ast.unparse(call)
+        == "os.open(audit, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)"
+    )
+    return reviewed
 
 
 def _reviewed_pi_supervisor_calls(path: Path, tree: ast.AST) -> set[ast.Call]:

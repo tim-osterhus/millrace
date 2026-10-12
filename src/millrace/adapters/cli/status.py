@@ -33,7 +33,18 @@ from millrace.contracts.runner import (
     runner_session_completion_diagnostic_bytes,
     runner_session_completion_diagnostic_from_payload,
 )
-from millrace.contracts.state import DaemonBudgetEpochRecord, RuntimeState
+from millrace.contracts.runtime_failures import (
+    runtime_failure_action_for,
+    runtime_failure_applied,
+    runtime_failure_authority_refusal,
+    runtime_failure_eligible,
+    runtime_failure_input,
+)
+from millrace.contracts.state import (
+    DaemonBudgetEpochRecord,
+    RunnerSessionCompletionRecord,
+    RuntimeState,
+)
 from millrace.operator.dispatch import (
     list_ready_dispatch_candidates,
     run_may_start_while_dispatch_suspended,
@@ -1006,9 +1017,20 @@ def rejected_result_projection(
         and completion.adapter_error_kind is not None
         and completion.primary_cancellation_request_id is None
     ):
+        runtime_failure_status = _runtime_failure_application_status(
+            state,
+            run_id,
+            completion,
+        )
+        if runtime_failure_status == "applied":
+            return None
         rejection_kind = "adapter_error"
-        application_status = "not_applicable"
-        application_input_id = None
+        application_status = runtime_failure_status or "not_applicable"
+        application_input_id = (
+            completion.application_input_id
+            if runtime_failure_status in {"pending", "refused"}
+            else None
+        )
         adapter_error_kind = completion.adapter_error_kind
         kernel_refusal_reason = None
     else:
@@ -1322,7 +1344,14 @@ def runner_session_projection(
     application_status = "not_completed"
     if completion is not None:
         if completion.runner_result_evidence_digest is None:
-            application_status = "not_applicable"
+            application_status = (
+                _runtime_failure_application_status(
+                    state,
+                    run_id,
+                    completion,
+                )
+                or "not_applicable"
+            )
         else:
             receipt = state.receipts.get(completion.application_input_id)
             if receipt is None:
@@ -1381,6 +1410,41 @@ def runner_session_projection(
         "cooperative_cancel_grace_seconds": cooperative_cancel_grace_seconds,
         "terminate_grace_seconds": terminate_grace_seconds,
     }
+
+
+def _runtime_failure_application_status(
+    state: RuntimeState,
+    run_id: str,
+    completion: RunnerSessionCompletionRecord,
+) -> str | None:
+    if not runtime_failure_eligible(state, completion):
+        return None
+    run = state.runs.get(run_id)
+    if run is None or run.current_session_id != completion.session_id:
+        return "refused"
+    admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
+    if admitted is None:
+        return "refused"
+    if runtime_failure_action_for(
+        admitted.selected_plan,
+        run.stage_kind_id,
+        run.runner_binding_id,
+        "timeout",
+    ) is None:
+        return None
+    if runtime_failure_applied(state, run_id):
+        return "applied"
+    try:
+        command = runtime_failure_input(state, completion)
+    except ValueError:
+        return "refused"
+    if runtime_failure_authority_refusal(state, command) is not None:
+        return "refused"
+    return (
+        "pending"
+        if completion.application_input_id not in state.receipts
+        else "refused"
+    )
 
 
 def _selected_adapter_kind(state: RuntimeState, run_id: str) -> str | None:

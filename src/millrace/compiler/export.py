@@ -13,6 +13,7 @@ from millrace.contracts.compiled_plan import (
     CompletionBehaviorDeclaration,
     RunnerBindingDeclaration,
     RunnerComponentPin,
+    RunnerRuntimeFailureMapping,
     RunnerTerminalResultMapping,
     SelectedCompiledPlan,
     SelectedWorkflowPackageAssetPin,
@@ -554,6 +555,22 @@ def _validate_runner_bindings(values: Sequence[object]) -> None:
     for item in values:
         if not isinstance(item, Mapping):
             raise CompiledPlanExportError("runner_bindings must contain objects")
+        has_payload_capacity = "payload_capacity_pin" in item
+        has_runtime_failure_mappings = "runtime_failure_mappings" in item
+        expected_schema_version = (
+            6
+            if has_payload_capacity and has_runtime_failure_mappings
+            else 5
+            if has_runtime_failure_mappings
+            else 4
+            if has_payload_capacity
+            else 3
+        )
+        optional_fields = set()
+        if has_payload_capacity:
+            optional_fields.add("payload_capacity_pin")
+        if has_runtime_failure_mappings:
+            optional_fields.add("runtime_failure_mappings")
         _require_exact_keys(
             item,
             frozenset(
@@ -568,11 +585,7 @@ def _validate_runner_bindings(values: Sequence[object]) -> None:
                     "component_pin",
                     "terminal_result_mappings",
                 }
-                | (
-                    {"payload_capacity_pin"}
-                    if item.get("schema_version") == 4
-                    else set()
-                )
+                | optional_fields
             ),
             label="runner binding",
         )
@@ -585,7 +598,7 @@ def _validate_runner_bindings(values: Sequence[object]) -> None:
         _require_exact_value(
             item,
             "schema_version",
-            4 if "payload_capacity_pin" in item else 3,
+            expected_schema_version,
             label="runner binding",
         )
         try:
@@ -610,6 +623,71 @@ def _validate_runner_bindings(values: Sequence[object]) -> None:
             mappings,
             legal_result_ids=legal_result_ids,
         )
+        if has_runtime_failure_mappings:
+            _validate_runner_runtime_failure_mappings(
+                _require_sequence(item, "runtime_failure_mappings")
+            )
+
+
+def _validate_runner_runtime_failure_mappings(
+    values: Sequence[object],
+) -> None:
+    if not values:
+        raise CompiledPlanExportError(
+            "runtime_failure_mappings must be a nonempty array"
+        )
+    mapping_keys: list[tuple[str, str, str]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    expected_fields = frozenset(
+        {
+            "record_kind",
+            "schema_version",
+            "stage_kind_id",
+            "failure_kind",
+            "action_id",
+        }
+    )
+    for item in values:
+        if not isinstance(item, Mapping):
+            raise CompiledPlanExportError(
+                "runtime_failure_mappings must contain objects"
+            )
+        _require_exact_keys(item, expected_fields, label="runtime failure mapping")
+        _require_exact_value(
+            item,
+            "record_kind",
+            RunnerRuntimeFailureMapping.record_kind,
+            label="runtime failure mapping",
+        )
+        _require_exact_value(
+            item,
+            "schema_version",
+            RunnerRuntimeFailureMapping.schema_version,
+            label="runtime failure mapping",
+        )
+        stage_kind_id = _require_non_empty_string(
+            item, "stage_kind_id", label="runtime failure mapping"
+        )
+        failure_kind = _require_non_empty_string(
+            item, "failure_kind", label="runtime failure mapping"
+        )
+        action_id = _require_non_empty_string(
+            item, "action_id", label="runtime failure mapping"
+        )
+        if failure_kind != "timeout":
+            raise CompiledPlanExportError(
+                "runtime failure mapping uses an unsupported failure kind"
+            )
+        key = (stage_kind_id, failure_kind, action_id)
+        pair = key[:2]
+        if pair in seen_pairs:
+            raise CompiledPlanExportError(
+                "runtime failure mapping stage and failure kind are duplicated"
+            )
+        seen_pairs.add(pair)
+        mapping_keys.append(key)
+    if mapping_keys != sorted(mapping_keys):
+        raise CompiledPlanExportError("runtime failure mappings are not canonical")
 
 
 def _validate_runner_component_pin(

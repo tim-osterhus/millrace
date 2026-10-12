@@ -146,6 +146,7 @@ def session_projection(
     from millrace.adapters.cli.status import (
         _attribution_projection,
         _cleanup_projection,
+        _runtime_failure_application_status,
         _usage_evidence_projection,
     )
 
@@ -187,6 +188,19 @@ def session_projection(
             }
         )
     completion_input = _completion_input_id(state, completion)
+    runtime_failure_status = (
+        None
+        if completion is None or completion.runner_result_evidence_digest is not None
+        else _runtime_failure_application_status(state, session.run_id, completion)
+    )
+    if completion is None:
+        application_status = "not_completed"
+    elif completion.runner_result_evidence_digest is None:
+        application_status = runtime_failure_status or "not_applicable"
+    elif receipt is None:
+        application_status = "pending"
+    else:
+        application_status = "applied" if receipt.accepted else "refused"
     fields = (
         "session_id",
         "run_id",
@@ -228,15 +242,7 @@ def session_projection(
         else completion.application_input_id,
         "completion_persisted": completion is not None,
         "application_persisted": receipt is not None,
-        "application_status": "not_completed"
-        if completion is None
-        else "not_applicable"
-        if completion.runner_result_evidence_digest is None
-        else "pending"
-        if receipt is None
-        else "applied"
-        if receipt.accepted
-        else "refused",
+        "application_status": application_status,
         "completion_terminal_state": None
         if completion is None
         else completion.terminal_state,

@@ -4,6 +4,16 @@ This roadmap is directional. Shipped behavior belongs in `CHANGELOG.md`.
 Millrace remains in pre-1.0 stabilization and keeps runtime authority compiled,
 durable, inspectable, and workflow-neutral.
 
+## Private v0.22.4 runner qualification
+
+- Verify generic compiler-selected timeout recovery through real continuation,
+  restart, bounded cooldown/quarantine and exact installed artifacts.
+- Qualify completed file-error feedback followed by valid agent completion,
+  preserving malformed-result and unsafe-process closure refusals. Source
+  regressions do not identify the unavailable historical C22 tool event.
+- Qualify the repaired artifacts on the actual Linux/model deployment before
+  a successor evaluation launch. Deterministic local fixtures are not that proof.
+
 ## v0.22.3 Release Line
 
 ### Runtime Integrity And Public Controls

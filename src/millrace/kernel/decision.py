@@ -59,6 +59,17 @@ from millrace.contracts.runner_payload_capacity import (
     PayloadCapacityError,
     completion_capacity,
 )
+from millrace.contracts.runtime_failure_history import (
+    current_recovery_return_matches,
+    recorded_source_return_origin,
+    recovery_attempt_history_matches,
+)
+from millrace.contracts.runtime_failures import (
+    runtime_failure_action_for,
+    runtime_failure_applied,
+    runtime_failure_authority_refusal,
+    runtime_failure_mapping_refusal,
+)
 from millrace.contracts.schema import (
     validate_closure_verdict_schema_declaration,
 )
@@ -98,6 +109,7 @@ from millrace.contracts.transition import (
     AdmitPlanRef,
     AdvanceRunnerSession,
     AdvanceRunnerSessionRecord,
+    ApplyRunnerRuntimeFailure,
     AttachRunnerSessionContext,
     AttachRunnerSessionContextRecord,
     CancelQueuedLineage,
@@ -201,7 +213,7 @@ from millrace.kernel.lookups import (
     operator_wait_scope_key,
     plan_ref_for,
     route_contract_supported,
-    run_has_observation,
+    run_is_settled,
     runner_binding_for,
     stage_kind_for,
     terminal_action_for,
@@ -575,6 +587,8 @@ def decide(
             context,
             digest,
         )
+    if isinstance(transition_input, ApplyRunnerRuntimeFailure):
+        return _decide_runner_runtime_failure(state, transition_input, context, digest)
     if isinstance(transition_input, RunnerResultObserved):
         return _decide_runner_result(state, transition_input, context, digest)
     if isinstance(transition_input, OperatorResumeLineage):
@@ -619,9 +633,7 @@ def decide(
 
 
 def _invalid_context_admit_plan_digest(transition_input: AdmitPlan) -> str:
-    _invalid_context_check_unrelated_serialization(
-        transition_input.selected_plan
-    )
+    _invalid_context_check_unrelated_serialization(transition_input.selected_plan)
     _invalid_context_check_serializable(transition_input.authority_fingerprint)
     serialized = json.dumps(
         _invalid_context_canonical_value(_transition_input_payload(transition_input)),
@@ -853,8 +865,7 @@ def _invalid_context_canonical_value(
                 "__invalid_context_kind__": "sequence",
                 "type": _invalid_context_type_name(value),
                 "items": [
-                    _invalid_context_canonical_value(item, _seen=seen)
-                    for item in value
+                    _invalid_context_canonical_value(item, _seen=seen) for item in value
                 ],
             }
         if isinstance(value, Mapping):
@@ -974,6 +985,16 @@ def _idempotency_decision(
                 governance_events=(),
                 trace_records=(),
             )
+        if isinstance(
+            transition_input, ApplyRunnerRuntimeFailure
+        ) and not runtime_failure_applied(state, transition_input.run_id):
+            return _refused_decision(
+                transition_input=transition_input,
+                context=context,
+                digest=digest,
+                reason="runtime_failure_replay_relations_invalid",
+                record_receipt=False,
+            )
         if isinstance(transition_input, EnqueueWork):
             replay_detail = _closure.closure_enqueue_creator_refusal(
                 state, transition_input, require_default_plan=True
@@ -1091,8 +1112,7 @@ def _closure_replay_invalid_detail(
             transition_input.closure_target_id != _closure.closure_target_id(key)
             or open_target.opened_by_input_id != transition_input.input_id
             or open_target.request_kind != transition_input.request_kind
-            or open_target.target_graph_node_id
-            != transition_input.target_graph_node_id
+            or open_target.target_graph_node_id != transition_input.target_graph_node_id
             or open_target.evidence_window != transition_input.evidence_window
         ):
             return "closure_identity_noncanonical"
@@ -1295,6 +1315,9 @@ def _selected_authority_refusal(selected_plan: SelectedCompiledPlan) -> str | No
     component_refusal = runner_component_authority_refusal(selected_plan)
     if component_refusal is not None:
         return component_refusal
+    failure_mapping_refusal = runtime_failure_mapping_refusal(selected_plan)
+    if failure_mapping_refusal is not None:
+        return failure_mapping_refusal
     for capability in selected_plan.capabilities:
         capability_refusal = _capability_authority_refusal(capability)
         if capability_refusal is not None:
@@ -1759,8 +1782,7 @@ def _operator_wait_authority_refusal(
                 if (
                     action.artifact_schema_id is None
                     or target_stage is None
-                    or action.artifact_schema_id
-                    not in target_stage.artifact_schema_ids
+                    or action.artifact_schema_id not in target_stage.artifact_schema_ids
                 ):
                     return f"operator_wait_projection:{operator_wait.id}"
 
@@ -2669,6 +2691,7 @@ def _non_blank_text(value: object) -> bool:
 
 def _activation_authority_refusal(
     *,
+    state: RuntimeState,
     selected_plan: SelectedCompiledPlan,
     activation: Activation,
     work_item: WorkItem,
@@ -2676,6 +2699,23 @@ def _activation_authority_refusal(
 ) -> str | None:
     if activation.queue_family_id != work_item.queue_family_id:
         return f"activation_queue_family:{activation.activation_id}"
+    return_action_ids = {
+        action.id for action in selected_plan.terminal_actions
+        if action.action_kind == "return_to_recorded_source"
+    }
+    is_return = any(
+        route.target_activation_id == activation.activation_id
+        and route.action_id in return_action_ids
+        for route in state.activation_routes
+    ) or any(
+        event.input_id == activation.created_by_input_id
+        and event.action_id in return_action_ids
+        for event in state.governance_events
+    )
+    if is_return and recorded_source_return_origin(
+        state, selected_plan, activation.activation_id
+    ) is None:
+        return f"activation_route_target:{activation.activation_id}"
     graph_node_ids = {
         node_id for graph in selected_plan.graphs for node_id in graph.node_ids
     }
@@ -2689,6 +2729,7 @@ def _activation_authority_refusal(
     )
     if activation_route_target not in _selected_route_targets(selected_plan):
         if _is_selected_recovery_activation(
+            state=state,
             selected_plan=selected_plan,
             activation=activation,
             recovery_attempt=recovery_attempt,
@@ -2700,6 +2741,7 @@ def _activation_authority_refusal(
 
 def _is_selected_recovery_activation(
     *,
+    state: RuntimeState,
     selected_plan: SelectedCompiledPlan,
     activation: Activation,
     recovery_attempt: RecoveryAttemptRecord | None,
@@ -2724,6 +2766,18 @@ def _is_selected_recovery_activation(
     )
     if policy is None or action is None:
         return False
+    if recovery_attempt.latest_return_action_id is not None:
+        return (
+            activation.stage_kind_id == policy.recovery_stage_kind_id
+            and recovery_attempt_history_matches(state, recovery_attempt, policy)
+            and current_recovery_return_matches(
+                state, selected_plan, recovery_attempt, policy
+            )
+            and recorded_source_return_origin(
+                state, selected_plan, activation.activation_id,
+                source_run_id=recovery_attempt.source_run_id,
+            ) is not None
+        )
     return (
         _recovery_action_matches_policy_source(
             selected_plan,
@@ -3006,9 +3060,7 @@ def _fanout_source_context(
                 else source_run.run_ref.plan_ref.authority_fingerprint
             ),
             event_work_item_id=(
-                None
-                if source_work_item is None
-                else source_work_item.ref.work_item_id
+                None if source_work_item is None else source_work_item.ref.work_item_id
             ),
             event_run_id=None if source_run is None else source_run.run_ref.run_id,
         )
@@ -3332,9 +3384,7 @@ def _decide_claim(
             context=context,
             digest=digest,
             reason="dispatch_suspended",
-            event_plan_fingerprint=(
-                suspension.selected_plan_ref.authority_fingerprint
-            ),
+            event_plan_fingerprint=(suspension.selected_plan_ref.authority_fingerprint),
         )
 
     activation = state.activations.get(transition_input.activation_id)
@@ -3435,6 +3485,7 @@ def _decide_claim(
         )
     recovery_attempt = _recovery_attempt_for_activation(state, activation)
     activation_authority_refusal = _activation_authority_refusal(
+        state=state,
         selected_plan=admitted.selected_plan,
         activation=activation,
         work_item=work_item,
@@ -3574,8 +3625,7 @@ def _decide_suspend_dispatch(
     selected_plan_ref = state.default_plan_ref
     if (
         selected_plan_ref is None
-        or selected_plan_ref.authority_fingerprint
-        != transition_input.plan_fingerprint
+        or selected_plan_ref.authority_fingerprint != transition_input.plan_fingerprint
     ):
         return _refused_decision(
             transition_input=transition_input,
@@ -3707,8 +3757,7 @@ def _decide_queue_closure(
     selected_plan_ref = state.default_plan_ref
     if (
         selected_plan_ref is None
-        or selected_plan_ref.authority_fingerprint
-        != transition_input.plan_fingerprint
+        or selected_plan_ref.authority_fingerprint != transition_input.plan_fingerprint
     ):
         return _refused_decision(
             transition_input=transition_input,
@@ -3752,9 +3801,7 @@ def _decide_queue_closure(
                 reason="queued_lineage_not_found",
             )
 
-    if any(
-        work_item.ref.plan_ref != selected_plan_ref for work_item in work_items
-    ):
+    if any(work_item.ref.plan_ref != selected_plan_ref for work_item in work_items):
         return _queue_closure_refusal(
             transition_input,
             context,
@@ -3766,9 +3813,7 @@ def _decide_queue_closure(
             ),
         )
 
-    work_item_ids = tuple(
-        work_item.ref.work_item_id for work_item in work_items
-    )
+    work_item_ids = tuple(work_item.ref.work_item_id for work_item in work_items)
     if any(work_item_id in state.closed_work_items for work_item_id in work_item_ids):
         return _queue_closure_refusal(
             transition_input,
@@ -3789,11 +3834,7 @@ def _decide_queue_closure(
     )
     runs = tuple(
         sorted(
-            (
-                run
-                for run in state.runs.values()
-                if run.work_item_id in work_item_ids
-            ),
+            (run for run in state.runs.values() if run.work_item_id in work_item_ids),
             key=lambda run: run.run_ref.run_id,
         )
     )
@@ -3807,8 +3848,7 @@ def _decide_queue_closure(
         )
 
     closure_id = (
-        "queue-closure:"
-        + sha256(transition_input.input_id.encode("utf-8")).hexdigest()
+        "queue-closure:" + sha256(transition_input.input_id.encode("utf-8")).hexdigest()
     )
     record = QueueClosureRecord(
         closure_id=closure_id,
@@ -3871,8 +3911,7 @@ def _decide_queue_closure(
             for activation in activations
         },
         expected_activation_plan_refs={
-            activation.activation_id: activation.plan_ref
-            for activation in activations
+            activation.activation_id: activation.plan_ref for activation in activations
         },
         expected_activation_claims={
             activation.activation_id: activation.claimed_by_run_id
@@ -3934,7 +3973,7 @@ def _queue_closure_session_refusal(
     sessions_by_id = {session.session_id: session for session in sessions}
     for run in runs:
         if run.current_session_id is None:
-            if not run_has_observation(state, run.run_ref.run_id):
+            if not run_is_settled(state, run.run_ref.run_id):
                 return "queued_work_claimed"
             continue
         if run.current_session_id not in sessions_by_id:
@@ -3983,11 +4022,16 @@ def _is_superseded_cooldown_activation(
             or wait.lineage_id != work_item.lineage_id
             or wait.source_work_item_id != activation.work_item_id
             or activation.queue_family_id != work_item.queue_family_id
-            or (activation.graph_node_id, activation.stage_kind_id,
-                activation.runner_binding_id) != (
-                    wait.target_graph_node_id, wait.target_stage_kind_id,
-                    wait.target_runner_binding_id,
-                )
+            or (
+                activation.graph_node_id,
+                activation.stage_kind_id,
+                activation.runner_binding_id,
+            )
+            != (
+                wait.target_graph_node_id,
+                wait.target_stage_kind_id,
+                wait.target_runner_binding_id,
+            )
             or _cooldown_wait_action(selected_plan, wait) is None
         ):
             continue
@@ -4110,7 +4154,7 @@ def _active_unobserved_runs_for_plan(
 ) -> tuple[RunRecord, ...]:
     active: list[RunRecord] = []
     for run in state.runs.values():
-        if run.run_ref.plan_ref != plan_ref or run_has_observation(
+        if run.run_ref.plan_ref != plan_ref or run_is_settled(
             state,
             run.run_ref.run_id,
         ):
@@ -5899,6 +5943,104 @@ def _run_for_claim(
     )
 
 
+def _decide_runner_runtime_failure(
+    state: RuntimeState,
+    transition_input: ApplyRunnerRuntimeFailure,
+    context: TransitionContext,
+    digest: str,
+) -> TransitionDecision:
+    run = state.runs.get(transition_input.run_id)
+    refusal = runtime_failure_authority_refusal(state, transition_input)
+    if run is None or refusal is not None:
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="runtime_failure_authority_mismatch",
+            record_receipt=False,
+            event_run_id=transition_input.run_id,
+        )
+    work = state.work_items[run.work_item_id]
+    activation = state.activations[run.activation_id]
+    plan = state.admitted_plans[
+        run.run_ref.plan_ref.authority_fingerprint
+    ].selected_plan
+    action = runtime_failure_action_for(
+        plan, run.stage_kind_id, run.runner_binding_id, transition_input.failure_kind
+    )
+    reason = run_hold_refusal(state, run.run_ref.run_id)
+    if reason is None and action is None:
+        reason = "runtime_failure_unmapped"
+    if reason is None and run_is_settled(state, run.run_ref.run_id):
+        reason = "duplicate_runtime_failure_application"
+    if reason is None and run.work_item_id in state.closed_work_items:
+        reason = "work_item_closed"
+    if (
+        reason is None
+        and active_lineage_quarantine_for(
+            state, work.lineage_id, plan_ref=work.ref.plan_ref
+        )
+        is not None
+    ):
+        reason = "lineage_quarantined"
+    if (
+        reason is None
+        and active_operator_wait_for(state, work.lineage_id, plan_ref=work.ref.plan_ref)
+        is not None
+    ):
+        reason = "operator_wait_active"
+    if reason is not None:
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason=reason,
+            record_receipt=False,
+            event_plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
+            event_work_item_id=run.work_item_id,
+            event_run_id=run.run_ref.run_id,
+            event_action_id=None if action is None else action.id,
+            event_authority_source=None
+            if action is None
+            else AUTHORITY_SOURCE_TERMINAL_ACTION,
+        )
+    assert action is not None
+    result = resolve_terminal_action(
+        transition_input=transition_input,
+        context=context,
+        selected_plan=plan,
+        state=state,
+        run=run,
+        activation=activation,
+        work_item=work,
+        action=action,
+        observation_payload=None,
+    )
+    if isinstance(result, TerminalActionRefusal):
+        return _refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason=result.reason,
+            record_receipt=False,
+            event_plan_fingerprint=run.run_ref.plan_ref.authority_fingerprint,
+            event_work_item_id=run.work_item_id,
+            event_run_id=run.run_ref.run_id,
+            event_action_id=action.id,
+            event_authority_source=AUTHORITY_SOURCE_TERMINAL_ACTION,
+        )
+    decision = _accepted_terminal_action_decision(
+        transition_input=transition_input, context=context, digest=digest, result=result
+    )
+    session = state.runner_sessions[transition_input.session_id]
+    return replace(
+        decision,
+        expected_runner_session_snapshots={
+            session.session_id: (session.state, session.cleanup_disposition),
+        },
+    )
+
+
 def _decide_runner_result(
     state: RuntimeState,
     transition_input: RunnerResultObserved,
@@ -6045,7 +6187,7 @@ def _decide_runner_result(
             action=action,
         )
 
-    if run_has_observation(state, run.run_ref.run_id):
+    if run_is_settled(state, run.run_ref.run_id):
         action = _terminal_action_for_marker(
             admitted.selected_plan,
             run,
@@ -6842,7 +6984,7 @@ def _terminal_action_for_marker(
 
 def _accepted_terminal_action_decision(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: RunnerResultObserved | ApplyRunnerRuntimeFailure,
     context: TransitionContext,
     digest: str,
     result: TerminalActionResolution,
@@ -6858,6 +7000,11 @@ def _accepted_terminal_action_decision(
         expected_run_generations=result.expected_run_generations,
         expected_run_fencing_tokens=result.expected_run_fencing_tokens,
         expected_run_unobserved=result.expected_run_unobserved,
+        expected_run_current_session_ids=(
+            {transition_input.run_id: transition_input.session_id}
+            if isinstance(transition_input, ApplyRunnerRuntimeFailure)
+            else {}
+        ),
         expected_lineage_quarantine_absent=result.expected_lineage_quarantine_absent,
         expected_operator_wait_absent=result.expected_operator_wait_absent,
         expected_work_item_open=result.expected_work_item_open,

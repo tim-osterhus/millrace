@@ -17,6 +17,15 @@ from millrace.contracts.compiled_plan import (
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId, RunnerBindingId, StageKindId
 from millrace.contracts.runner import RunnerDispatchEnvelope
+from millrace.contracts.runtime_failure_history import (
+    current_recovery_return_matches,
+    recovery_attempt_history_matches,
+    selected_activation_targets,
+)
+from millrace.contracts.runtime_failures import (
+    recovery_activation_origin_matches,
+    runtime_failure_applied,
+)
 from millrace.contracts.selected_plan_lookups import runner_selectable_outcome_ids
 from millrace.contracts.state import (
     Activation,
@@ -54,7 +63,8 @@ READY_DIAGNOSTIC_SEVERITIES = (
 
 
 def artifact_provenance_for_status(
-    state: RuntimeState, artifact: ArtifactRecord,
+    state: RuntimeState,
+    artifact: ArtifactRecord,
 ) -> AuthenticatedArtifactProvenance | None:
     """Expose authenticated provenance through the privileged projection seam."""
     result = authenticate_artifact_provenance(state, artifact)
@@ -80,6 +90,7 @@ def join_evidence_progress_for_status(
     if isinstance(projection, PolicyAssessment):
         return None
     return projection.observed_schema_ids, projection.ready
+
 
 _POLICY_REFUSALS = {
     "dispatch_suspended",
@@ -313,12 +324,24 @@ def build_dispatch_envelope_for_run(
         )
     if stage.runner_binding_id != run.runner_binding_id:
         raise _dispatch_error("graph_stage_runner_drift", run_id=run_id)
-    if (
-        activation.queue_family_id,
-        activation.stage_kind_id,
-        activation.graph_node_id,
-        activation.runner_binding_id,
-    ) not in _selected_route_targets(selected_plan):
+    ordinary_target = (
+        activation.queue_family_id in stage.input_queue_family_ids
+        and (
+            activation.queue_family_id,
+            activation.stage_kind_id,
+            activation.graph_node_id,
+            activation.runner_binding_id,
+        ) in _selected_route_targets(selected_plan)
+    )
+    if not ordinary_target and not (
+        _current_recovery_run_matches(state, selected_plan, run, activation, work_item)
+        and recovery_activation_origin_matches(
+            state,
+            selected_plan,
+            activation.activation_id,
+            selected_activation_targets(selected_plan),
+        )
+    ):
         raise _dispatch_error("graph_stage_runner_drift", run_id=run_id)
 
     context_checkout = _context_checkout_for_dispatch(
@@ -332,8 +355,7 @@ def build_dispatch_envelope_for_run(
         raise _dispatch_error("missing_selected_asset", run_id=run_id)
     artifact_schema_ids = {schema.id for schema in selected_plan.artifact_schemas}
     if any(
-        schema_id not in artifact_schema_ids
-        for schema_id in stage.artifact_schema_ids
+        schema_id not in artifact_schema_ids for schema_id in stage.artifact_schema_ids
     ):
         raise _dispatch_error("missing_selected_schema", run_id=run_id)
 
@@ -414,6 +436,34 @@ def build_dispatch_envelope_for_run(
         selected_wait_evidence=selected_wait_evidence,
         context_checkout=context_checkout,
     )
+
+
+def _current_recovery_run_matches(
+    state: RuntimeState,
+    selected_plan: SelectedCompiledPlan,
+    run: RunRecord,
+    activation: Activation,
+    work_item: WorkItem,
+) -> bool:
+    matches = [
+        (attempt, policy)
+        for attempt in state.recovery_attempts.values()
+        for policy in selected_plan.recovery_policies
+        if attempt.policy_id == policy.id
+        and attempt.plan_ref == run.run_ref.plan_ref
+        and attempt.lineage_id == work_item.lineage_id
+        and attempt.source_work_item_id == work_item.ref.work_item_id
+        and attempt.latest_recovery_run_id == run.run_ref.run_id
+        and attempt.latest_recovery_activation_id == activation.activation_id
+        and attempt.phase in {"active_recovery", "quarantine_eligible"}
+        and policy.recovery_stage_kind_id == run.stage_kind_id
+    ]
+    if len(matches) != 1:
+        return False
+    attempt, policy = matches[0]
+    return recovery_attempt_history_matches(
+        state, attempt, policy
+    ) and current_recovery_return_matches(state, selected_plan, attempt, policy)
 
 
 def _context_checkout_for_dispatch(
@@ -631,9 +681,7 @@ def _ready_projection_for_activation(
             work_item,
         ), None
     reason = (
-        "transition_refused"
-        if decision.refusal is None
-        else decision.refusal.reason
+        "transition_refused" if decision.refusal is None else decision.refusal.reason
     )
     detail = None if decision.refusal is None else decision.refusal.detail
     return None, _diagnostic_for_refusal(
@@ -812,7 +860,7 @@ def _dispatch_error(reason: str, **details: object) -> DispatchProjectionError:
 
 
 def _run_has_observation(state: RuntimeState, run_id: str) -> bool:
-    return any(
+    return runtime_failure_applied(state, run_id) or any(
         observation.run_id == run_id
         for observation in state.runner_observations.values()
     )
@@ -1247,9 +1295,7 @@ def _counter_contexts_for_dispatch(
             ),
             0,
         )
-        next_increment_reaches_threshold = (
-            current_value + 1 >= counter.threshold_count
-        )
+        next_increment_reaches_threshold = current_value + 1 >= counter.threshold_count
         derives_recovery = _counter_increment_derives_recovery_threshold(
             plan=selected_plan,
             increment_action_id=str(counter.increment_action_id),
@@ -1343,9 +1389,10 @@ def _counter_context_for_action(
     if admitted is None or work_item.lineage_id is None:
         return {}
     for counter in admitted.selected_plan.counters:
-        if str(counter.increment_action_id) != action_id and str(
-            counter.threshold_action_id
-        ) != action_id:
+        if (
+            str(counter.increment_action_id) != action_id
+            and str(counter.threshold_action_id) != action_id
+        ):
             continue
         current_value = next(
             (

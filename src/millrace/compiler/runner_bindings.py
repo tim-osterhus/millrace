@@ -404,6 +404,41 @@ def _normalize_runner_component_authority(
         )
         changed = changed or canonical_mappings != raw_mappings
         normalized["terminal_result_mappings"] = canonical_mappings
+
+    raw_runtime_failure_mappings = binding.get("runtime_failure_mappings")
+    if is_sequence(raw_runtime_failure_mappings) and raw_runtime_failure_mappings:
+        mapping_fields = frozenset(
+            {"stage_kind_id", "failure_kind", "action_id"}
+        )
+        if all(
+            isinstance(item, Mapping)
+            and frozenset(item) == mapping_fields
+            and all(
+                is_non_empty_text(item.get(field_name))
+                for field_name in mapping_fields
+            )
+            for item in raw_runtime_failure_mappings
+        ):
+            runtime_failure_mappings = tuple(
+                dict(item)
+                for item in raw_runtime_failure_mappings
+                if isinstance(item, Mapping)
+            )
+            canonical_runtime_failure_mappings = tuple(
+                sorted(
+                    runtime_failure_mappings,
+                    key=lambda item: (
+                        str(item["stage_kind_id"]).encode("utf-8"),
+                        str(item["failure_kind"]).encode("utf-8"),
+                        str(item["action_id"]).encode("utf-8"),
+                    ),
+                )
+            )
+            changed = (
+                changed
+                or canonical_runtime_failure_mappings != raw_runtime_failure_mappings
+            )
+            normalized["runtime_failure_mappings"] = canonical_runtime_failure_mappings
     return normalized, changed
 
 

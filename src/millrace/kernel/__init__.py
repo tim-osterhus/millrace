@@ -1,5 +1,6 @@
-"""Kernel transition API."""
+"""Kernel transition API and authenticated run-settlement query."""
 
+from millrace.kernel.lookups import run_is_settled
 from millrace.kernel.state import empty_runtime_state
 from millrace.kernel.transition import (
     StateConcurrencyError,
@@ -14,4 +15,5 @@ __all__ = (
     "apply",
     "decide",
     "empty_runtime_state",
+    "run_is_settled",
 )

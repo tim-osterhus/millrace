@@ -89,8 +89,7 @@ def _require_runner_session_text(field_name: str, value: object) -> None:
     assert isinstance(value, str)
     if len(value.encode("utf-8")) > RUNNER_SESSION_TEXT_MAX_BYTES:
         raise ValueError(
-            f"{field_name} must be at most "
-            f"{RUNNER_SESSION_TEXT_MAX_BYTES} UTF-8 bytes"
+            f"{field_name} must be at most {RUNNER_SESSION_TEXT_MAX_BYTES} UTF-8 bytes"
         )
 
 
@@ -549,6 +548,46 @@ class RecordRunnerSessionCompletion(KernelCommand):
 
 
 @dataclass(frozen=True, slots=True)
+class ApplyRunnerRuntimeFailure(KernelCommand):
+    """Apply selected recovery from an exact durable failed session."""
+
+    input_kind: ClassVar[str] = "workflow.apply_runner_runtime_failure"
+
+    run_ref: RunRef
+    session_id: str
+    dispatch_generation: int
+    session_fencing_token: str
+    completion_id: str
+    diagnostic_digest: str
+    failure_kind: str
+    observed_at: int
+
+    def __post_init__(self) -> None:
+        TransitionInput.__post_init__(self)
+        for name in ("session_id", "session_fencing_token", "completion_id"):
+            _require_runner_session_text(name, getattr(self, name))
+        _require_durable_positive_integer(
+            "dispatch_generation", self.dispatch_generation
+        )
+        _require_runner_session_digest("diagnostic_digest", self.diagnostic_digest)
+        _require_durable_timestamp("observed_at", self.observed_at)
+        if self.failure_kind != "timeout":
+            raise ValueError("unsupported runtime failure kind")
+
+    @property
+    def run_id(self) -> str:
+        return self.run_ref.run_id
+
+    @property
+    def payload(self) -> Mapping[str, AuthorityValue]:
+        return {
+            "failure_kind": self.failure_kind,
+            "completion_id": self.completion_id,
+            "diagnostic_digest": self.diagnostic_digest,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class FanoutFromArtifact(KernelCommand):
     input_kind: ClassVar[str] = "workflow.fanout_from_artifact"
 
@@ -898,9 +937,7 @@ class TransitionDecision:
     expected_activation_plan_refs: Mapping[str, PlanRef] = field(default_factory=dict)
     expected_work_item_open: tuple[str, ...] = ()
     expected_operator_wait_absent: tuple[str, ...] = ()
-    expected_activation_claims: Mapping[str, str | None] = field(
-        default_factory=dict
-    )
+    expected_activation_claims: Mapping[str, str | None] = field(default_factory=dict)
     expected_run_current_session_ids: Mapping[str, str | None] = field(
         default_factory=dict
     )
@@ -1085,9 +1122,7 @@ class RecordRunnerSessionCancellationAttemptRecord:
     record: RunnerSessionCancellationAttemptRecord
     expected_run_ref: RunRef
     expected_session_state: str
-    mutation_kind: ClassVar[str] = (
-        "mutation.record_runner_session_cancellation_attempt"
-    )
+    mutation_kind: ClassVar[str] = "mutation.record_runner_session_cancellation_attempt"
     mutation_schema_version: ClassVar[int] = 1
 
 
@@ -1568,9 +1603,7 @@ def _transition_input_payload(
             "result": transition_input.result,
             "started_at": transition_input.started_at,
             "completed_at": transition_input.completed_at,
-            "bounded_diagnostic_digest": (
-                transition_input.bounded_diagnostic_digest
-            ),
+            "bounded_diagnostic_digest": (transition_input.bounded_diagnostic_digest),
         }
     if isinstance(transition_input, RecordRunnerSessionCompletion):
         return {
@@ -1578,6 +1611,18 @@ def _transition_input_payload(
             "run_ref": transition_input.run_ref,
             "expected_state": transition_input.expected_state,
             "completion": transition_input.completion,
+        }
+    if isinstance(transition_input, ApplyRunnerRuntimeFailure):
+        return {
+            "input_kind": input_kind(transition_input),
+            "run_ref": transition_input.run_ref,
+            "session_id": transition_input.session_id,
+            "dispatch_generation": transition_input.dispatch_generation,
+            "session_fencing_token": transition_input.session_fencing_token,
+            "completion_id": transition_input.completion_id,
+            "diagnostic_digest": transition_input.diagnostic_digest,
+            "failure_kind": transition_input.failure_kind,
+            "observed_at": transition_input.observed_at,
         }
     if isinstance(transition_input, FanoutFromArtifact):
         return {
@@ -1732,6 +1777,7 @@ __all__ = (
     "AdmitPlanRef",
     "AdvanceRunnerSession",
     "AdvanceRunnerSessionRecord",
+    "ApplyRunnerRuntimeFailure",
     "AttachRunnerSessionContext",
     "AttachRunnerSessionContextRecord",
     "CancelQueuedLineage",

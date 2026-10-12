@@ -84,7 +84,7 @@ from millrace.kernel.lookups import (
     active_operator_wait_for,
     active_operator_wait_scope_keys,
     external_enqueue_routes,
-    run_has_observation,
+    run_is_settled,
 )
 from millrace.kernel.run_controls import run_hold_refusal
 
@@ -1009,7 +1009,7 @@ def _recheck_expectations(
     # Runner observations are accepted once per run; stale duplicate decisions
     # must fail before a second observation mutation is attempted.
     for run_id in decision.expected_run_unobserved:
-        if run_has_observation(state, run_id):
+        if run_is_settled(state, run_id):
             raise StateConcurrencyError("run observation state changed")
 
     for work_item_id in decision.expected_work_item_open:
@@ -1433,7 +1433,7 @@ def _apply_record_runner_observation(
         raise UnsupportedMutationError("runner observation record is missing")
     if observation.observation_id in state.runner_observations:
         raise StateConcurrencyError("runner observation already exists")
-    if run_has_observation(state, observation.run_id):
+    if run_is_settled(state, observation.run_id):
         raise StateConcurrencyError("run observation already exists")
     return replace(
         state,

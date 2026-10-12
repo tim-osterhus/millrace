@@ -18,6 +18,11 @@ from millrace.contracts.ids import (
     StageKindId,
 )
 from millrace.contracts.runner import runner_session_locator_from_bytes
+from millrace.contracts.runtime_failures import (
+    runtime_failure_action_for,
+    runtime_failure_diagnostic_matches,
+    runtime_failure_eligible,
+)
 from millrace.contracts.state import (
     APPROVED_ATTRIBUTION_METRIC_NAMES,
     Activation,
@@ -357,13 +362,9 @@ def _context_hydration_receipt_from_row(
             selected_path=decoded.selected_path,
         )
     except (TypeError, ValueError, AttributeError) as exc:
-        raise StorageIntegrityError(
-            "invalid context hydration receipt row"
-        ) from exc
+        raise StorageIntegrityError("invalid context hydration receipt row") from exc
     if record.receipt_id != context_hydration_receipt_id(record):
-        raise StorageIntegrityError(
-            "context hydration receipt_id is not deterministic"
-        )
+        raise StorageIntegrityError("context hydration receipt_id is not deterministic")
     return record
 
 
@@ -395,9 +396,7 @@ def _load_context_hydration_receipt_records(
     query += " ORDER BY dispatch_generation, catalog_path, receipt_id"
     records: list[ContextHydrationReceipt] = []
     for raw_row in connection.execute(query, params).fetchall():
-        record = _context_hydration_receipt_from_row(
-            cast(tuple[object, ...], raw_row)
-        )
+        record = _context_hydration_receipt_from_row(cast(tuple[object, ...], raw_row))
         _validate_loaded_context_evidence_authority(
             session_id=record.session_id,
             dispatch_generation=record.dispatch_generation,
@@ -498,9 +497,7 @@ def _runner_session_attribution_from_row(
             metrics=_attribution_metrics_from_json(decoded.metrics_json),
         )
     except (TypeError, ValueError, AttributeError) as exc:
-        raise StorageIntegrityError(
-            "invalid runner session attribution row"
-        ) from exc
+        raise StorageIntegrityError("invalid runner session attribution row") from exc
 
 
 def _load_runner_session_attribution_record(
@@ -609,9 +606,7 @@ def _context_cleanup_receipt_from_row(
     except (TypeError, ValueError, AttributeError) as exc:
         raise StorageIntegrityError("invalid context cleanup receipt row") from exc
     if record.receipt_id != context_cleanup_receipt_id(record):
-        raise StorageIntegrityError(
-            "context cleanup receipt_id is not deterministic"
-        )
+        raise StorageIntegrityError("context cleanup receipt_id is not deterministic")
     return record
 
 
@@ -858,6 +853,23 @@ def _validate_runner_session_evidence_authority(
     for completion in state.runner_session_completions.values():
         if completion.session_id == excluded_completion_session_id:
             continue
+        if runtime_failure_eligible(state, completion):
+            run = state.runs[completion.run_id]
+            plan = state.admitted_plans[
+                run.run_ref.plan_ref.authority_fingerprint
+            ].selected_plan
+            if (
+                runtime_failure_action_for(
+                    plan, run.stage_kind_id, run.runner_binding_id, "timeout"
+                )
+                is not None
+            ):
+                if not runtime_failure_diagnostic_matches(
+                    state, completion, cas_store.get_bytes(completion.diagnostic_digest)
+                ):
+                    raise StorageIntegrityError(
+                        "runtime failure diagnostic authority invalid"
+                    )
         evidence_digest = completion.runner_result_evidence_digest
         if evidence_digest is not None:
             validate_completed_runner_evidence(
@@ -1214,9 +1226,7 @@ def _load_runner_sessions(
                 context_manifest_digest=row.context_manifest_digest,
             )
         except ValueError as exc:
-            raise StorageIntegrityError(
-                f"invalid runner_sessions row: {exc}"
-            ) from exc
+            raise StorageIntegrityError(f"invalid runner_sessions row: {exc}") from exc
         records[record.session_id] = record
     return records
 
@@ -1270,9 +1280,7 @@ def _load_runner_session_cancellation_attempts(
     connection: sqlite3.Connection,
 ) -> dict[str, RunnerSessionCancellationAttemptRecord]:
     rows = tuple(
-        decode_runner_session_cancellation_attempt_row(
-            cast(tuple[object, ...], row)
-        )
+        decode_runner_session_cancellation_attempt_row(cast(tuple[object, ...], row))
         for row in connection.execute(
             """
             SELECT
@@ -1361,9 +1369,7 @@ def _load_runner_session_completions(
                 adapter_outcome_kind=row.adapter_outcome_kind,
                 adapter_error_kind=row.adapter_error_kind,
                 runner_result_evidence_digest=row.runner_result_evidence_digest,
-                primary_cancellation_request_id=(
-                    row.primary_cancellation_request_id
-                ),
+                primary_cancellation_request_id=(row.primary_cancellation_request_id),
                 cleanup_disposition=row.cleanup_disposition,
                 started_at=row.started_at,
                 cancel_requested_at=row.cancel_requested_at,
@@ -1510,10 +1516,7 @@ def _load_effect_proposals(
             """
         ).fetchall()
     )
-    return {
-        row.effect_id: effect_proposal_from_row(row)
-        for row in rows
-    }
+    return {row.effect_id: effect_proposal_from_row(row) for row in rows}
 
 
 def _load_effect_reconciliations(
@@ -1541,10 +1544,7 @@ def _load_effect_reconciliations(
             """
         ).fetchall()
     )
-    return {
-        row.reconciliation_id: effect_reconciliation_from_row(row)
-        for row in rows
-    }
+    return {row.reconciliation_id: effect_reconciliation_from_row(row) for row in rows}
 
 
 def _load_activation_routes(
@@ -1603,10 +1603,7 @@ def _load_fanout_records(
             """
         ).fetchall()
     )
-    return {
-        row.record_id: fanout_from_row(row)
-        for row in rows
-    }
+    return {row.record_id: fanout_from_row(row) for row in rows}
 
 
 def _load_work_dependencies(
@@ -1632,10 +1629,7 @@ def _load_work_dependencies(
             """
         ).fetchall()
     )
-    return {
-        row.dependency_id: work_dependency_from_row(row)
-        for row in rows
-    }
+    return {row.dependency_id: work_dependency_from_row(row) for row in rows}
 
 
 def _load_closure_targets(
@@ -1706,10 +1700,7 @@ def _load_closure_evaluations(
             """
         ).fetchall()
     )
-    return {
-        row.record_id: closure_evaluation_from_row(row)
-        for row in rows
-    }
+    return {row.record_id: closure_evaluation_from_row(row) for row in rows}
 
 
 def _load_closure_terminal_records(
@@ -1738,10 +1729,7 @@ def _load_closure_terminal_records(
             """
         ).fetchall()
     )
-    return {
-        row.record_id: closure_terminal_from_row(row)
-        for row in rows
-    }
+    return {row.record_id: closure_terminal_from_row(row) for row in rows}
 
 
 def _load_remediation_work_records(
@@ -1772,10 +1760,7 @@ def _load_remediation_work_records(
             """
         ).fetchall()
     )
-    return {
-        row.record_id: remediation_work_from_row(row)
-        for row in rows
-    }
+    return {row.record_id: remediation_work_from_row(row) for row in rows}
 
 
 def _load_closure_blocked_records(
@@ -1803,10 +1788,7 @@ def _load_closure_blocked_records(
             """
         ).fetchall()
     )
-    return {
-        row.record_id: closure_blocked_from_row(row)
-        for row in rows
-    }
+    return {row.record_id: closure_blocked_from_row(row) for row in rows}
 
 
 def _load_closed_work_items(
@@ -2014,10 +1996,7 @@ def _load_recovery_attempts(
             """
         ).fetchall()
     )
-    return {
-        row.record_id: recovery_attempt_from_row(row)
-        for row in rows
-    }
+    return {row.record_id: recovery_attempt_from_row(row) for row in rows}
 
 
 def _load_operator_interventions(
@@ -2059,10 +2038,7 @@ def _load_operator_interventions(
             """
         ).fetchall()
     )
-    return {
-        row.record_id: operator_intervention_from_row(row)
-        for row in rows
-    }
+    return {row.record_id: operator_intervention_from_row(row) for row in rows}
 
 
 def _load_operator_waits(
@@ -2107,10 +2083,7 @@ def _load_operator_waits(
             """
         ).fetchall()
     )
-    return {
-        row.wait_id: operator_wait_from_row(row)
-        for row in rows
-    }
+    return {row.wait_id: operator_wait_from_row(row) for row in rows}
 
 
 def _load_cooldown_waits(
@@ -2148,10 +2121,7 @@ def _load_cooldown_waits(
             """
         ).fetchall()
     )
-    return {
-        row.wait_id: cooldown_wait_from_row(row)
-        for row in rows
-    }
+    return {row.wait_id: cooldown_wait_from_row(row) for row in rows}
 
 
 def _load_counters(
@@ -2176,10 +2146,7 @@ def _load_counters(
             """
         ).fetchall()
     )
-    return {
-        row.record_id: counter_from_row(row)
-        for row in rows
-    }
+    return {row.record_id: counter_from_row(row) for row in rows}
 
 
 def _records_by_work_item_id(
@@ -2189,9 +2156,7 @@ def _records_by_work_item_id(
     records_by_work_item_id: dict[str, TWorkStateRecord] = {}
     for record in records:
         if record.work_item_id in records_by_work_item_id:
-            raise StorageIntegrityError(
-                f"{table_name}.work_item_id must be unique"
-            )
+            raise StorageIntegrityError(f"{table_name}.work_item_id must be unique")
         records_by_work_item_id[record.work_item_id] = record
     return records_by_work_item_id
 

@@ -31,6 +31,34 @@ from millrace.adapters.runner_contract import RedactionPolicy
 
 _BONSAI_SCOPE = "loopback-bonsai2-openai-completions"
 _BONSAI_SAMPLING = "bonsai2-pinned-1.0-0.95-20"
+_BASH_TIMEOUT_SHA256 = (
+    "09a688ec90c18afb52aa7a028a3ec02a0ae74cb374df962e0f133d802483d775"
+)
+_BASH_TIMEOUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["extension", "audit_path"],
+    "properties": {
+        "extension": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 4096,
+                    "pattern": "^/",
+                },
+                "sha256": {"const": _BASH_TIMEOUT_SHA256},
+            },
+        },
+        "audit_path": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 4096,
+            "pattern": "^/",
+        },
+    },
+}
 
 
 def strict_json(raw: str | bytes) -> Any:
@@ -152,19 +180,21 @@ def _validate(schema: dict[str, Any], value: Any) -> None:
 
 
 def _validate_profile(profile: Any) -> None:
-    if (
-        isinstance(profile, dict)
-        and profile.get("schema_version") in {"pi-rpc-profile.v2", "pi-rpc-profile.v3"}
-    ):
+    if isinstance(profile, dict) and profile.get("schema_version") in {
+        "pi-rpc-profile.v2",
+        "pi-rpc-profile.v3",
+    }:
         legacy = dict(profile)
+        if "bash_timeout" in legacy:
+            if profile["schema_version"] != "pi-rpc-profile.v3":
+                raise ValueError("Bash timeout requires Linux v3 profile")
+            _validate(_BASH_TIMEOUT_SCHEMA, legacy.pop("bash_timeout"))
         accounting = legacy.pop("foreground_accounting", None)
         platform = accounting.get("platform") if isinstance(accounting, dict) else None
         supervised = profile["schema_version"] == "pi-rpc-profile.v3"
         expected = dict(
             kind=(
-                "trusted-linux-subreaper-v1"
-                if supervised
-                else "trusted-posix-group-v1"
+                "trusted-linux-subreaper-v1" if supervised else "trusted-posix-group-v1"
             ),
             platform=platform,
             bridge=bridge_identity(),
@@ -227,6 +257,18 @@ class PiRpcConfig:
         return float(self.data["timeout_seconds"])
 
     @property
+    def managed_args(self) -> tuple[str, ...]:
+        args = tuple(self.profile["managed_args"])
+        guard = self.profile.get("bash_timeout")
+        if guard is not None:
+            args += ("-e", guard["extension"]["path"])
+        return args
+
+    def _bash_timeout_env(self) -> dict[str, str]:
+        guard = self.profile.get("bash_timeout")
+        return {"D_TIMEOUT_AUDIT_PATH": guard["audit_path"]} if guard else {}
+
+    @property
     def group_profile(self) -> GroupProfile | None:
         if self.profile["schema_version"] not in {
             "pi-rpc-profile.v2",
@@ -246,6 +288,7 @@ class PiRpcConfig:
             supervised=supervised,
             supervisor=Path(supervisor["path"]) if supervisor else None,
             supervisor_sha256=supervisor["sha256"] if supervisor else None,
+            bash_timeout="bash_timeout" in self.profile,
         )
 
     @property
@@ -310,6 +353,25 @@ class PiRpcConfig:
             except (OSError, ValueError) as exc:
                 raise ValueError("group bundle identity") from exc
         protected = [template, package, self.cwd, Path(c["profile"]["path"])]
+        guard = p.get("bash_timeout")
+        if guard is not None:
+            _identity(guard["extension"], 65536)
+            audit = Path(guard["audit_path"])
+            if not audit.is_absolute() or audit.resolve() != audit:
+                raise ValueError("Bash timeout audit path")
+            # No read is needed: the extension appends evidence during a run.
+            fd = os.open(audit, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                info = os.fstat(fd)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600
+                ):
+                    raise ValueError("Bash timeout audit identity")
+            finally:
+                os.close(fd)
+            protected.extend((Path(guard["extension"]["path"]), audit))
         if self.config_path:
             protected.append(self.config_path)
         if any(
@@ -538,6 +600,7 @@ class PiRpcConfig:
                 with os.fdopen(fd, "wb") as stream:
                     stream.write(data)
             attempt.env.update(self.data["env_allowlist"])
+            attempt.env.update(self._bash_timeout_env())
             attempt.env.update(
                 HOME=str(path / "home"),
                 TMPDIR=str(path / "tmp"),
@@ -554,6 +617,7 @@ class PiRpcConfig:
     def prespawn(self, attempt: PiAttempt) -> None:
         templates = self.verify()
         expected_env = dict(self.data["env_allowlist"])
+        expected_env.update(self._bash_timeout_env())
         expected_env.update(
             HOME=str(attempt.path / "home"),
             TMPDIR=str(attempt.path / "tmp"),

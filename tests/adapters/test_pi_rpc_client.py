@@ -254,6 +254,9 @@ def test_legal_intrinsic_retry_has_two_runs_but_one_settlement_and_sticky_risk()
     # Second agent run carries only its newly generated assistant messages.
     second = second[:2] + second[4:]
     second[-2]["messages"] = second[-2]["messages"][1:]
+    # Pi 0.87 emits retry success immediately after assistant message_end,
+    # before this continued run's turn_end and agent_end.
+    second.insert(4, dict(type="auto_retry_end", success=True, attempt=1))
     events = (
         first
         + [
@@ -265,8 +268,7 @@ def test_legal_intrinsic_retry_has_two_runs_but_one_settlement_and_sticky_risk()
                 errorMessage="retry",
             )
         ]
-        + second[:-1]
-        + [dict(type="auto_retry_end", success=True, attempt=1), second[-1]]
+        + second
     )
     parser = PiLifecycle(MODEL, "prompt")
     for event in events:

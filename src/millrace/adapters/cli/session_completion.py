@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
 
 from millrace.adapters.cli import (
     context_retention,
@@ -25,6 +24,12 @@ from millrace.adapters.cli.session_diagnostics import (
     _context_writeback_refusal_diagnostic_bytes,
     _orphan_cleanup_facts,
     _signal_digest,
+)
+from millrace.adapters.cli.session_runtime_failures import (
+    SessionExecutionResult as SessionExecutionResult,
+)
+from millrace.adapters.cli.session_runtime_failures import (
+    apply_persisted_runtime_failure,
 )
 from millrace.adapters.runner_contract import (
     AdapterErrorResult,
@@ -75,15 +80,6 @@ __all__ = (
     "build_dispatch_envelope_for_run",
 )
 _RUNTIME_SESSION_EVENT_POLICY = RedactionPolicy(policy_id="runtime-session-events")
-
-@dataclass(frozen=True, slots=True)
-class SessionExecutionResult:
-    code: str
-    accepted: bool = False
-    adapter_error_kind: str | None = None
-    observation_refusal_reason: str | None = None
-    transition_disposition: str | None = None
-
 
 def _persist_orphan_risk(
     runtime: OpenRuntimeContext,
@@ -154,6 +150,7 @@ def _persist_completion(
     cleanup: RunnerCleanupResult,
     primary: RunnerSessionCancellationRecord | None = None,
     adapter_error_terminal_state: str = "failed",
+    daemon_stop_requested: Callable[[], bool] | None = None,
 ) -> SessionExecutionResult:
     refusal = _authenticate_completion(
         runtime,
@@ -223,6 +220,7 @@ def _persist_completion(
             cleanup=cleanup,
             primary=primary,
             terminal_state=adapter_error_terminal_state,
+            daemon_stop_requested=daemon_stop_requested,
         )
     else:
         result = _persist_success_completion(
@@ -246,19 +244,6 @@ def _persist_completion(
         event_redaction_policy=_RUNTIME_SESSION_EVENT_POLICY,
     )
     return result
-
-
-def _completion_refusal(
-    runtime: OpenRuntimeContext,
-    *,
-    run_ref: RunRef,
-    session: RunnerSessionRecord,
-    request: AdapterInvocationRequest,
-    outcome: AdapterInvocationOutcome,
-) -> SessionExecutionResult | None:
-    return _authenticate_completion(
-        runtime, run_ref=run_ref, session=session, request=request, outcome=outcome
-    )
 
 
 def _authenticate_completion(
@@ -382,6 +367,7 @@ def _persist_error_completion(
     cleanup: RunnerCleanupResult,
     primary: RunnerSessionCancellationRecord | None,
     terminal_state: str,
+    daemon_stop_requested: Callable[[], bool] | None,
 ) -> SessionExecutionResult:
     raw_diagnostic_bytes = adapter_error_diagnostic_bytes(
         outcome,
@@ -400,6 +386,7 @@ def _persist_error_completion(
                 "cleanup_disposition": "orphan_risk",
                 "adapter_outcome_present": True,
                 "cleanup": _orphan_cleanup_facts(cleanup),
+                "adapter_error": json.loads(raw_diagnostic_bytes),
             },
         )
     diagnostic_digest = runtime.cas_store.put_bytes(raw_diagnostic_bytes)
@@ -414,6 +401,7 @@ def _persist_error_completion(
         primary=primary,
         redaction_policy=request.redaction_policy,
         request=request,
+        daemon_stop_requested=daemon_stop_requested,
     )
 
 
@@ -509,6 +497,7 @@ def _persist_adapter_error(
     primary: RunnerSessionCancellationRecord | None = None,
     redaction_policy: RedactionPolicy,
     request: AdapterInvocationRequest | None = None,
+    daemon_stop_requested: Callable[[], bool] | None = None,
 ) -> SessionExecutionResult:
     refusal = _context_writeback_refusal(
         runtime,
@@ -560,9 +549,10 @@ def _persist_adapter_error(
         is None
     ):
         return SessionExecutionResult("completion_refused")
-    return SessionExecutionResult(
-        "adapter_failure",
-        adapter_error_kind=outcome.error_kind,
+    return _apply_persisted_completion(
+        runtime,
+        completion,
+        daemon_stop_requested=daemon_stop_requested,
     )
 
 
@@ -607,13 +597,17 @@ def _persist_completion_record(
 def _apply_persisted_completion(
     runtime: OpenRuntimeContext,
     completion: RunnerSessionCompletionRecord,
+    *,
+    daemon_stop_requested: Callable[[], bool] | None = None,
 ) -> SessionExecutionResult:
-    if completion.terminal_state != "completed":
-        return SessionExecutionResult(
-            "adapter_failure",
-            adapter_error_kind=completion.adapter_error_kind,
-        )
     state = _load(runtime)
+    if completion.terminal_state != "completed":
+        return _apply_persisted_runtime_failure(
+            runtime,
+            state,
+            completion,
+            daemon_stop_requested=daemon_stop_requested,
+        )
     run = state.runs.get(completion.run_id)
     session = state.runner_sessions.get(completion.session_id)
     if (
@@ -693,6 +687,21 @@ def _apply_persisted_completion(
         "observation_accepted",
         accepted=True,
         transition_disposition=decision.disposition,
+    )
+
+
+def _apply_persisted_runtime_failure(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+    completion: RunnerSessionCompletionRecord,
+    *,
+    daemon_stop_requested: Callable[[], bool] | None,
+) -> SessionExecutionResult:
+    return apply_persisted_runtime_failure(
+        runtime,
+        state,
+        completion,
+        daemon_stop_requested=daemon_stop_requested,
     )
 
 

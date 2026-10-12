@@ -45,6 +45,7 @@ source-include = [
     "docs/errors.md",
     "docs/how-millrace-works.md",
     "docs/runner-session-architecture.md",
+    "docs/runtime-failure-recovery.md",
     "docs/daemon-lifecycle.md",
     "docs/core-control-candidate.md",
     "docs/workflow-packages.md",

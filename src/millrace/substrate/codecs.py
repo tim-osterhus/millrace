@@ -31,7 +31,10 @@ from millrace.contracts.compiled_plan import (
     RemediationPolicyDeclaration,
     RunnerBindingDeclaration,
     RunnerBindingWithPayloadCapacityDeclaration,
+    RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration,
+    RunnerBindingWithRuntimeFailuresDeclaration,
     RunnerComponentPin,
+    RunnerRuntimeFailureMapping,
     RunnerTerminalResultMapping,
     SelectedCompiledPlan,
     SelectedWorkflowPackageAssetPin,
@@ -75,6 +78,7 @@ from millrace.contracts.runner_payload_capacity import (
     payload_capacity_pin_record,
     validate_payload_capacity_binding,
 )
+from millrace.contracts.runtime_failures import runtime_failure_mapping_refusal
 from millrace.substrate.errors import (
     CasObjectKindMismatch,
     InvalidCasObject,
@@ -223,9 +227,7 @@ _TERMINAL_ACTION_KEYS = frozenset(
         "artifact_field_conditions",
     }
 )
-_TERMINAL_ACTION_LEGACY_KEYS = _TERMINAL_ACTION_KEYS - {
-    "artifact_field_conditions"
-}
+_TERMINAL_ACTION_LEGACY_KEYS = _TERMINAL_ACTION_KEYS - {"artifact_field_conditions"}
 _EFFECT_DECLARATION_KEYS = frozenset(
     {
         "record_kind",
@@ -640,9 +642,7 @@ def _encode_selected_compiled_plan(
         "schema_version": SelectedCompiledPlan.schema_version,
         "workflow": _encode_workflow_identity(plan.workflow),
         "compatibility_profile": plan.compatibility_profile,
-        "workflow_package_pin": _encode_workflow_package_pin(
-            plan.workflow_package_pin
-        ),
+        "workflow_package_pin": _encode_workflow_package_pin(plan.workflow_package_pin),
         "required_extensions": tuple(plan.required_extensions),
         "graphs": tuple(_encode_graph(item) for item in plan.graphs),
         "partitions": tuple(_encode_partition(item) for item in plan.partitions),
@@ -654,8 +654,7 @@ def _encode_selected_compiled_plan(
             for item in plan.external_enqueue_routes
         ),
         "generated_work_routes": tuple(
-            _encode_generated_work_route(item)
-            for item in plan.generated_work_routes
+            _encode_generated_work_route(item) for item in plan.generated_work_routes
         ),
         "artifact_schemas": tuple(
             _encode_artifact_schema(item) for item in plan.artifact_schemas
@@ -678,8 +677,7 @@ def _encode_selected_compiled_plan(
             _encode_join(item) for item in plan.join_declarations
         ),
         "concurrency_policies": tuple(
-            _encode_concurrency_policy(item)
-            for item in plan.concurrency_policies
+            _encode_concurrency_policy(item) for item in plan.concurrency_policies
         ),
         "recovery_policies": tuple(
             _encode_recovery_policy(item) for item in plan.recovery_policies
@@ -687,12 +685,10 @@ def _encode_selected_compiled_plan(
         "wait_states": tuple(_encode_wait_state(item) for item in plan.wait_states),
         "counters": tuple(_encode_counter(item) for item in plan.counters),
         "completion_behaviors": tuple(
-            _encode_completion_behavior(item)
-            for item in plan.completion_behaviors
+            _encode_completion_behavior(item) for item in plan.completion_behaviors
         ),
         "remediation_policies": tuple(
-            _encode_remediation_policy(item)
-            for item in plan.remediation_policies
+            _encode_remediation_policy(item) for item in plan.remediation_policies
         ),
         "lineage_policy": plan.lineage_policy,
         "runner_bindings": tuple(
@@ -704,9 +700,7 @@ def _encode_selected_compiled_plan(
         "operator_waits": tuple(
             _encode_operator_wait(item) for item in plan.operator_waits
         ),
-        "capabilities": tuple(
-            _encode_capability(item) for item in plan.capabilities
-        ),
+        "capabilities": tuple(_encode_capability(item) for item in plan.capabilities),
         "context_bindings": tuple(
             _encode_stage_context_binding(item) for item in plan.context_bindings
         ),
@@ -831,6 +825,11 @@ def _decode_selected_compiled_plan(record: Record) -> SelectedCompiledPlan:
         raise InvalidCasObject(
             f"selected runner component authority is invalid: {component_refusal}"
         )
+    failure_mapping_refusal = runtime_failure_mapping_refusal(selected_plan)
+    if failure_mapping_refusal is not None:
+        raise InvalidCasObject(
+            f"selected runtime failure authority is invalid: {failure_mapping_refusal}"
+        )
     context_refusal = context_binding_authority_refusal(selected_plan)
     if context_refusal is not None:
         raise InvalidCasObject(
@@ -915,8 +914,7 @@ def _encode_stage_context_binding(
             _encode_context_source(source) for source in binding.required_sources
         ),
         "discoverable_sources": tuple(
-            _encode_context_source(source)
-            for source in binding.discoverable_sources
+            _encode_context_source(source) for source in binding.discoverable_sources
         ),
         "max_hydrated_files": binding.max_hydrated_files,
         "max_hydrated_bytes": binding.max_hydrated_bytes,
@@ -1014,8 +1012,7 @@ def _encode_workflow_package_pin(
         "workflow_version": pin.workflow_version,
         "entrypoint": pin.entrypoint,
         "selected_asset_pins": tuple(
-            _encode_workflow_package_asset_pin(item)
-            for item in pin.selected_asset_pins
+            _encode_workflow_package_asset_pin(item) for item in pin.selected_asset_pins
         ),
         "selected_dependency_pins": tuple(
             _encode_workflow_package_dependency_pin(item)
@@ -1905,9 +1902,7 @@ def _decode_remediation_policy(record: Record) -> RemediationPolicyDeclaration:
         target_runner_binding_id=RunnerBindingId(
             _expect_string(record, "target_runner_binding_id")
         ),
-        payload_schema_id=ArtifactSchemaId(
-            _expect_string(record, "payload_schema_id")
-        ),
+        payload_schema_id=ArtifactSchemaId(_expect_string(record, "payload_schema_id")),
         guidance_source=_expect_string(record, "guidance_source"),
         dedupe_key=_expect_string(record, "dedupe_key"),
         duplicate_policy=_expect_string(record, "duplicate_policy"),
@@ -2021,8 +2016,7 @@ def _decode_operator_wait(record: Record) -> OperatorWaitDeclaration:
     return OperatorWaitDeclaration(
         id=OperatorWaitId(_expect_string(record, "id")),
         source_action_ids=tuple(
-            ActionId(item)
-            for item in _expect_string_tuple(record, "source_action_ids")
+            ActionId(item) for item in _expect_string_tuple(record, "source_action_ids")
         ),
         wait_scope=_expect_string(record, "wait_scope"),
         source_work_item_behavior=_expect_string(record, "source_work_item_behavior"),
@@ -2085,9 +2079,26 @@ def _encode_runner_binding(
         ),
     }
 
-    if type(runner_binding) is RunnerBindingWithPayloadCapacityDeclaration:
+    if isinstance(runner_binding, RunnerBindingWithPayloadCapacityDeclaration):
         result["payload_capacity_pin"] = cast(
             JsonValue, payload_capacity_pin_record(runner_binding.payload_capacity_pin)
+        )
+    if isinstance(
+        runner_binding,
+        (
+            RunnerBindingWithRuntimeFailuresDeclaration,
+            RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration,
+        ),
+    ):
+        result["runtime_failure_mappings"] = tuple(
+            {
+                "record_kind": RunnerRuntimeFailureMapping.record_kind,
+                "schema_version": RunnerRuntimeFailureMapping.schema_version,
+                "stage_kind_id": str(item.stage_kind_id),
+                "failure_kind": item.failure_kind,
+                "action_id": str(item.action_id),
+            }
+            for item in runner_binding.runtime_failure_mappings
         )
     return result
 
@@ -2128,58 +2139,101 @@ def _encode_runner_terminal_result_mapping(
 
 
 def _decode_runner_binding(record: Record) -> RunnerBindingDeclaration:
+    version = record.get("schema_version")
+    constructors = {
+        3: RunnerBindingDeclaration,
+        4: RunnerBindingWithPayloadCapacityDeclaration,
+        5: RunnerBindingWithRuntimeFailuresDeclaration,
+        6: RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration,
+    }
+    if type(version) is not int or version not in constructors:
+        raise UnsupportedSchemaVersion(f"unsupported runner binding version: {version}")
     _ensure_record_header(
         record,
         RunnerBindingDeclaration.record_kind,
-        4 if record.get("schema_version") == 4 else 3,
+        version,
         _RUNNER_BINDING_KEYS
-        | ({"payload_capacity_pin"} if record.get("schema_version") == 4 else set()),
+        | ({"payload_capacity_pin"} if version in (4, 6) else set())
+        | ({"runtime_failure_mappings"} if version in (5, 6) else set()),
     )
     try:
-        return (
-            RunnerBindingWithPayloadCapacityDeclaration
-            if record.get("schema_version") == 4
-            else RunnerBindingDeclaration
-        )(
-            **(
-                {
-                    "payload_capacity_pin": decode_payload_capacity_pin(
-                        record["payload_capacity_pin"]
-                    )
-                }
-                if record.get("schema_version") == 4
-                else {}
-            ),
-            id=RunnerBindingId(_expect_string(record, "id")),
-            adapter_kind=_expect_string(record, "adapter_kind"),
-            stage_kind_ids=tuple(
-                StageKindId(item)
-                for item in _expect_string_tuple(record, "stage_kind_ids")
-            ),
-            invocation_timeout_seconds=_expect_positive_int(
-                record,
-                "invocation_timeout_seconds",
-            ),
-            presentation=_expect_authority_mapping(record, "presentation"),
-            required_capability_ids=tuple(
-                CapabilityId(item)
-                for item in _expect_string_tuple(record, "required_capability_ids")
-            ),
-            component_pin=_decode_runner_component_pin(
-                _required_value(record, "component_pin")
-            ),
-            terminal_result_mappings=tuple(
-                _decode_runner_terminal_result_mapping(item)
-                for item in _expect_record_tuple(
+        return cast(
+            RunnerBindingDeclaration,
+            constructors[version](
+                **(
+                    {
+                        "payload_capacity_pin": decode_payload_capacity_pin(
+                            record["payload_capacity_pin"]
+                        )
+                    }
+                    if version in (4, 6)
+                    else {}
+                ),
+                **(
+                    {
+                        "runtime_failure_mappings": tuple(
+                            _decode_runtime_failure_mapping(item)
+                            for item in _expect_record_tuple(
+                                record, "runtime_failure_mappings"
+                            )
+                        )
+                    }
+                    if version in (5, 6)
+                    else {}
+                ),
+                id=RunnerBindingId(_expect_string(record, "id")),
+                adapter_kind=_expect_string(record, "adapter_kind"),
+                stage_kind_ids=tuple(
+                    StageKindId(item)
+                    for item in _expect_string_tuple(record, "stage_kind_ids")
+                ),
+                invocation_timeout_seconds=_expect_positive_int(
                     record,
-                    "terminal_result_mappings",
-                )
+                    "invocation_timeout_seconds",
+                ),
+                presentation=_expect_authority_mapping(record, "presentation"),
+                required_capability_ids=tuple(
+                    CapabilityId(item)
+                    for item in _expect_string_tuple(record, "required_capability_ids")
+                ),
+                component_pin=_decode_runner_component_pin(
+                    _required_value(record, "component_pin")
+                ),
+                terminal_result_mappings=tuple(
+                    _decode_runner_terminal_result_mapping(item)
+                    for item in _expect_record_tuple(
+                        record,
+                        "terminal_result_mappings",
+                    )
+                ),
             ),
         )
     except (InvalidCasObject, UnsupportedRecordKind, UnsupportedSchemaVersion):
         raise
     except (TypeError, ValueError) as exc:
         raise InvalidCasObject(f"CAS object runner binding is invalid: {exc}") from exc
+
+
+def _decode_runtime_failure_mapping(record: Record) -> RunnerRuntimeFailureMapping:
+    _ensure_record_header(
+        record,
+        RunnerRuntimeFailureMapping.record_kind,
+        RunnerRuntimeFailureMapping.schema_version,
+        frozenset(
+            {
+                "record_kind",
+                "schema_version",
+                "stage_kind_id",
+                "failure_kind",
+                "action_id",
+            }
+        ),
+    )
+    return RunnerRuntimeFailureMapping(
+        stage_kind_id=StageKindId(_expect_string(record, "stage_kind_id")),
+        failure_kind=_expect_string(record, "failure_kind"),
+        action_id=ActionId(_expect_string(record, "action_id")),
+    )
 
 
 def _decode_runner_component_pin(value: JsonValue) -> RunnerComponentPin | None:

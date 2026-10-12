@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import cast
+from typing import TypeAlias, cast
 
 from millrace.contracts.compiled_plan import (
     ArtifactSchemaDeclaration,
@@ -50,6 +50,7 @@ from millrace.contracts.state import (
     WorkItemRef,
 )
 from millrace.contracts.transition import (
+    ApplyRunnerRuntimeFailure,
     CloseWorkItem,
     CreateActivation,
     CreateWorkItem,
@@ -86,6 +87,8 @@ from millrace.kernel.lookups import (
 )
 from millrace.kernel.projection import evaluate_projection, projection_context_for_run
 from millrace.kernel.schema import validate_schema
+
+TerminalActionInput: TypeAlias = RunnerResultObserved | ApplyRunnerRuntimeFailure
 
 _ARTIFACT_FIELD = "artifact_payload"
 _ACTION_KIND_ROUTE = "route"
@@ -164,7 +167,7 @@ TerminalActionResult = TerminalActionResolution | TerminalActionRefusal
 
 def resolve_terminal_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     state: RuntimeState,
@@ -174,6 +177,23 @@ def resolve_terminal_action(
     action: TerminalActionDeclaration,
     observation_payload: Mapping[str, object] | None,
 ) -> TerminalActionResult:
+    if isinstance(transition_input, ApplyRunnerRuntimeFailure):
+        if action.action_kind != _ACTION_KIND_RECOVERY_ROUTE:
+            return TerminalActionRefusal(
+                reason="unsupported_runtime_failure_action", action=action
+            )
+        # The mapped mechanical failure consumes its selected recovery policy,
+        # not counters for agent-produced terminal outcomes.
+        return _resolve_recovery_route_action(
+            transition_input=transition_input,
+            context=context,
+            selected_plan=selected_plan,
+            state=state,
+            run=run,
+            activation=activation,
+            work_item=work_item,
+            action=action,
+        )
     # Branching on compiled action_kind interprets compiler-validated
     # terminal-action authority; runner marker text never selects behavior here.
     runtime_threshold_action = _runtime_owned_threshold_action_if_due(
@@ -420,7 +440,7 @@ def resolve_terminal_action(
 
 def _resolve_threshold_recovery_route_if_due(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     state: RuntimeState,
@@ -454,7 +474,7 @@ def _resolve_threshold_recovery_route_if_due(
 
 def _resolve_route_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     run: RunRecord,
@@ -481,9 +501,7 @@ def _resolve_route_action(
         emitted_queue_family_id,
         runner_binding_id,
     ) = target_fields
-    if (
-        artifact_schema_id is None or payload_projection is None
-    ):
+    if artifact_schema_id is None or payload_projection is None:
         return TerminalActionRefusal(
             reason="unsupported_terminal_route",
             action=action,
@@ -569,7 +587,7 @@ def _resolve_route_action(
 
 def _resolve_projected_route_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     run: RunRecord,
@@ -596,9 +614,7 @@ def _resolve_projected_route_action(
         emitted_queue_family_id,
         runner_binding_id,
     ) = target_fields
-    if (
-        artifact_schema_id is None or payload_projection is None
-    ):
+    if artifact_schema_id is None or payload_projection is None:
         return TerminalActionRefusal(
             reason="unsupported_terminal_route",
             action=action,
@@ -836,7 +852,7 @@ def _non_blank_text(value: object) -> bool:
 
 def _accepted_route_resolution(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     run: RunRecord,
     activation: Activation,
@@ -927,7 +943,7 @@ def _accepted_route_resolution(
 
 def _declared_artifact_mutations_or_refusal(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     action: TerminalActionDeclaration,
@@ -1028,7 +1044,7 @@ def _artifact_payload_matches_plan_ref(
 
 def _resolve_close_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     run: RunRecord,
@@ -1093,7 +1109,7 @@ def _resolve_close_action(
 
 def _effect_proposal_mutations_or_refusal(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     run: RunRecord,
@@ -1179,7 +1195,7 @@ def _optional_payload_text(
 
 def _resolve_pause_quarantine_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     run: RunRecord,
@@ -1242,7 +1258,7 @@ def _resolve_pause_quarantine_action(
 
 def _resolve_recovery_route_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     state: RuntimeState,
@@ -1267,9 +1283,7 @@ def _resolve_recovery_route_action(
 
     target_stage = stage_kind_for(selected_plan, str(target_stage_kind_id))
     runner_binding = runner_binding_for(selected_plan, str(runner_binding_id))
-    known_stage = _known_graph_node_stage_owner(selected_plan).get(
-        target_graph_node_id
-    )
+    known_stage = _known_graph_node_stage_owner(selected_plan).get(target_graph_node_id)
     if (
         target_stage is None
         or runner_binding is None
@@ -1330,13 +1344,21 @@ def _resolve_recovery_route_action(
     phase = _recovery_attempt_phase(policy, attempt_count)
     should_quarantine = attempt_count >= policy.quarantine_threshold_attempt
     should_schedule = phase == "active_recovery"
-    observation_record = RunnerObservationRecord(
-        observation_id=f"{context.transition_id}:observation",
-        run_id=run.run_ref.run_id,
-        payload=transition_input.payload,
-        created_by_input_id=transition_input.input_id,
-        observed_at=transition_input.observed_at,
-    )
+    observation_mutations: tuple[TransitionMutation, ...] = ()
+    if isinstance(transition_input, RunnerResultObserved):
+        observation_record = RunnerObservationRecord(
+            observation_id=f"{context.transition_id}:observation",
+            run_id=run.run_ref.run_id,
+            payload=transition_input.payload,
+            created_by_input_id=transition_input.input_id,
+            observed_at=transition_input.observed_at,
+        )
+        observation_mutations = (
+            RecordRunnerObservation(
+                record_id=observation_record.observation_id,
+                observation=observation_record,
+            ),
+        )
     recovery_activation_id = context.activation_id if should_schedule else None
     attempt = _recorded_recovery_attempt(
         existing_attempt=existing_attempt,
@@ -1406,10 +1428,7 @@ def _resolve_recovery_route_action(
                 work_item=work_item,
                 action=action,
                 mutations=(
-                    RecordRunnerObservation(
-                        record_id=observation_record.observation_id,
-                        observation=observation_record,
-                    ),
+                    *observation_mutations,
                     attempt_mutation,
                     RecordLineageQuarantine(
                         record_id=quarantine.quarantine_id,
@@ -1455,10 +1474,7 @@ def _resolve_recovery_route_action(
             work_item=work_item,
             action=action,
             mutations=(
-                RecordRunnerObservation(
-                    record_id=observation_record.observation_id,
-                    observation=observation_record,
-                ),
+                *observation_mutations,
                 attempt_mutation,
                 RecordCooldownWait(record_id=wait.wait_id, wait=wait),
             ),
@@ -1491,10 +1507,7 @@ def _resolve_recovery_route_action(
         work_item=work_item,
         action=action,
         mutations=(
-            RecordRunnerObservation(
-                record_id=observation_record.observation_id,
-                observation=observation_record,
-            ),
+            *observation_mutations,
             CreateActivation(target_activation),
             RouteActivation(record_id=route_record.record_id, route=route_record),
             attempt_mutation,
@@ -1537,7 +1550,7 @@ def _known_graph_node_stage_owner(
 
 def _resolve_return_to_recorded_source_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     state: RuntimeState,
@@ -1546,11 +1559,11 @@ def _resolve_return_to_recorded_source_action(
     work_item: WorkItem,
     action: TerminalActionDeclaration,
 ) -> TerminalActionResult:
-    resolved = _return_policy_and_attempt_for_action(
+    resolved = _recovery_policy_and_attempt_for_action(
         selected_plan=selected_plan,
         state=state,
         plan_ref=run.run_ref.plan_ref,
-        action_id=action.id,
+        action=action,
         lineage_id=work_item.lineage_id,
         run_id=run.run_ref.run_id,
     )
@@ -1612,6 +1625,16 @@ def _resolve_return_to_recorded_source_action(
     )
     updated_attempt = replace(
         attempt,
+        latest_recovery_activation_id=(
+            target_activation.activation_id
+            if target_activation.stage_kind_id == policy.recovery_stage_kind_id
+            else attempt.latest_recovery_activation_id
+        ),
+        latest_recovery_run_id=(
+            None
+            if target_activation.stage_kind_id == policy.recovery_stage_kind_id
+            else attempt.latest_recovery_run_id
+        ),
         latest_return_action_id=action.id,
         updated_by_input_id=transition_input.input_id,
     )
@@ -1638,7 +1661,7 @@ def _resolve_return_to_recorded_source_action(
 
 def _resolve_quarantine_lineage_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     state: RuntimeState,
@@ -1647,19 +1670,21 @@ def _resolve_quarantine_lineage_action(
     work_item: WorkItem,
     action: TerminalActionDeclaration,
 ) -> TerminalActionResult:
-    policy = _quarantine_policy_for_action(selected_plan, action.id)
-    if policy is None:
+    resolved = _recovery_policy_and_attempt_for_action(
+        selected_plan=selected_plan,
+        state=state,
+        plan_ref=run.run_ref.plan_ref,
+        action=action,
+        lineage_id=work_item.lineage_id,
+        run_id=run.run_ref.run_id,
+    )
+    if resolved is None:
         return TerminalActionRefusal(
             reason="unsupported_runtime_terminal_action",
             action=action,
         )
-    attempt = _recovery_attempt_for(
-        state=state,
-        plan_ref=run.run_ref.plan_ref,
-        policy_id=policy.id,
-        lineage_id=work_item.lineage_id,
-    )
-    if attempt is None or attempt.phase not in {
+    policy, attempt = resolved
+    if attempt.phase not in {
         "active_recovery",
         "quarantine_eligible",
     }:
@@ -1779,7 +1804,7 @@ def _resolve_quarantine_lineage_action(
 
 def _resolve_operator_wait_action(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     context: TransitionContext,
     selected_plan: SelectedCompiledPlan,
     state: RuntimeState,
@@ -1934,8 +1959,7 @@ def _threshold_recovery_route_for_increment(
     for policy in selected_plan.recovery_policies:
         if (
             action.id in policy.source_recovery_action_ids
-            and threshold_action.target_stage_kind_id
-            == policy.recovery_stage_kind_id
+            and threshold_action.target_stage_kind_id == policy.recovery_stage_kind_id
         ):
             return threshold_action, policy
     return None
@@ -1990,11 +2014,7 @@ def _counter_by_id(
     counter_id: object,
 ) -> CounterDeclaration | None:
     return next(
-        (
-            counter
-            for counter in selected_plan.counters
-            if counter.id == counter_id
-        ),
+        (counter for counter in selected_plan.counters if counter.id == counter_id),
         None,
     )
 
@@ -2004,11 +2024,7 @@ def _terminal_action_by_id(
     action_id: ActionId,
 ) -> TerminalActionDeclaration | None:
     return next(
-        (
-            action
-            for action in selected_plan.terminal_actions
-            if action.id == action_id
-        ),
+        (action for action in selected_plan.terminal_actions if action.id == action_id),
         None,
     )
 
@@ -2027,19 +2043,25 @@ def _return_policy_for_action(
     )
 
 
-def _return_policy_and_attempt_for_action(
+def _recovery_policy_and_attempt_for_action(
     *,
     selected_plan: SelectedCompiledPlan,
     state: RuntimeState,
     plan_ref: PlanRef,
-    action_id: ActionId,
+    action: TerminalActionDeclaration,
     lineage_id: str | None,
     run_id: str,
 ) -> tuple[RecoveryPolicyDeclaration, RecoveryAttemptRecord] | None:
     if lineage_id is None:
         return None
+    matches: list[tuple[RecoveryPolicyDeclaration, RecoveryAttemptRecord]] = []
     for policy in selected_plan.recovery_policies:
-        if action_id not in policy.return_action_ids:
+        action_ids = (
+            policy.return_action_ids
+            if action.action_kind == "return_to_recorded_source"
+            else policy.quarantine_action_ids
+        )
+        if action.id not in action_ids:
             continue
         attempt = _recovery_attempt_for(
             state=state,
@@ -2049,22 +2071,8 @@ def _return_policy_and_attempt_for_action(
         )
         if attempt is None or attempt.latest_recovery_run_id != run_id:
             continue
-        return policy, attempt
-    return None
-
-
-def _quarantine_policy_for_action(
-    selected_plan: SelectedCompiledPlan,
-    action_id: ActionId,
-) -> RecoveryPolicyDeclaration | None:
-    return next(
-        (
-            policy
-            for policy in selected_plan.recovery_policies
-            if action_id in policy.quarantine_action_ids
-        ),
-        None,
-    )
+        matches.append((policy, attempt))
+    return matches[0] if len(matches) == 1 else None
 
 
 def _counter_record_or_refusal(
@@ -2234,7 +2242,7 @@ def _recorded_recovery_attempt(
 
 def _cooldown_wait_record(
     *,
-    transition_input: RunnerResultObserved,
+    transition_input: TerminalActionInput,
     policy: RecoveryPolicyDeclaration,
     plan_ref: PlanRef,
     attempt: RecoveryAttemptRecord,

@@ -17,6 +17,7 @@ from millrace.contracts.controls import (
     revision_field,
     uuid_field,
 )
+from millrace.contracts.runtime_failures import runtime_failure_applied
 from millrace.contracts.state import RunExecutionControl, RuntimeState
 from millrace.kernel.run_controls import (
     exact_run_target_refusal,
@@ -163,7 +164,8 @@ def _aftermath_event(
             "SELECT 1 FROM governance_events WHERE run_id=? AND input_kind IN "
             "('workflow.refuse_runner_session_signal', "
             "'workflow.record_runner_session_completion', "
-            "'workflow.runner_result_observed') LIMIT 1",
+            "'workflow.runner_result_observed', "
+            "'workflow.apply_runner_runtime_failure') LIMIT 1",
             (control.run_id,),
         ).fetchone()
     elif control.state == "superseded" and control.cause == "run_work_closed":
@@ -479,6 +481,7 @@ def guard_runtime_write(connection: sqlite3.Connection, state: RuntimeState) -> 
                 "workflow.refuse_runner_session_signal",
                 "workflow.record_runner_session_completion",
                 "workflow.runner_result_observed",
+                "workflow.apply_runner_runtime_failure",
             }
         ):
             continue
@@ -562,6 +565,7 @@ def guard_runtime_write(connection: sqlite3.Connection, state: RuntimeState) -> 
                 "workflow.refuse_runner_session_signal",
                 "workflow.record_runner_session_completion",
                 "workflow.runner_result_observed",
+                "workflow.apply_runner_runtime_failure",
             }
             for event in state.governance_events[event_count:]
         )
@@ -570,7 +574,7 @@ def guard_runtime_write(connection: sqlite3.Connection, state: RuntimeState) -> 
             record.session_id == run.current_session_id
             for record in state.runner_session_cancellation_requests.values()
         )
-        observed = any(
+        observed = runtime_failure_applied(state, run_id) or any(
             record.run_id == run_id for record in state.runner_observations.values()
         )
         if observed:

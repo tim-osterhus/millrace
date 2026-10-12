@@ -29,6 +29,9 @@ from millrace.adapters.cli.session_coordinator import (
     session_cancellation_token,
     session_correlation_id,
 )
+from millrace.adapters.cli.session_runtime_failures import (
+    runtime_failure_replay_candidate as _runtime_failure_replay_candidate,
+)
 from millrace.adapters.codex import CODEX_ADAPTER_KIND, CodexAdapter, CodexAdapterConfig
 from millrace.adapters.millforge import (
     MILLFORGE_ADAPTER_KIND,
@@ -404,8 +407,12 @@ def reconcile_pending_runner_sessions(
             and completion.terminal_state == "completed"
             and completion.application_input_id not in state.receipts
         )
+        needs_runtime_failure_replay = (
+            completion is not None
+            and _runtime_failure_replay_candidate(state, run.run_ref.run_id, completion)
+        )
         candidate = (run.run_ref.run_id, run.activation_id)
-        if needs_replay:
+        if needs_replay or needs_runtime_failure_replay:
             terminal_replays.append(candidate)
         elif (
             session.state == "created"
@@ -490,8 +497,17 @@ def reconcile_pending_runner_completions(
         completion = state.runner_session_completions.get(session_id)
         if (
             completion is not None
-            and completion.terminal_state == "completed"
-            and completion.application_input_id not in state.receipts
+            and (
+                (
+                    completion.terminal_state == "completed"
+                    and completion.application_input_id not in state.receipts
+                )
+                or _runtime_failure_replay_candidate(
+                    state,
+                    run.run_ref.run_id,
+                    completion,
+                )
+            )
         ):
             terminal_replays.append((run.run_ref.run_id, run.activation_id))
     if not terminal_replays:
@@ -521,6 +537,7 @@ def _runner_reconciliation_blocker_priority(code: str | None) -> int:
     if code in {
         None,
         "observation_accepted",
+        "runtime_failure_recovery_applied",
         "adapter_failure",
         "runner_session_waiting",
     }:

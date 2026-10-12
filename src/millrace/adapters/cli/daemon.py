@@ -1554,6 +1554,7 @@ def _non_idle_stop_reason(result: BoundedExecutionUnitResult) -> str | None:
         "runner_session_waiting",
         "runner_session_retained",
         "observation_accepted",
+        "runtime_failure_recovery_applied",
     }:
         return None
     return result.code

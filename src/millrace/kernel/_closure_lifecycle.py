@@ -12,6 +12,7 @@ from millrace.contracts.compiled_plan import (
     verify_authority_fingerprint,
 )
 from millrace.contracts.ids import ActionId, ArtifactSchemaId
+from millrace.contracts.runtime_failures import runtime_failure_applied
 from millrace.contracts.state import (
     Activation,
     ArtifactRecord,
@@ -483,6 +484,7 @@ def _readiness_witness(
                 run.activation_id,
                 run.run_ref.generation,
                 observations,
+                runtime_failure_applied(state, run.run_ref.run_id),
                 run.current_session_id,
                 session.state if session is not None else None,
                 session.cleanup_disposition if session is not None else None,
@@ -689,6 +691,8 @@ def _activation_status(
         for item in state.runner_observations.values()
         if item.run_id == run.run_ref.run_id
     )
+    if not observations and runtime_failure_applied(state, run.run_ref.run_id):
+        return "settled"
     if len(observations) != 1:
         return "pending" if not closed and not observations else "corrupt"
     if isinstance(
@@ -735,8 +739,14 @@ def _evaluation_parts(
             behavior.id,
             behavior.request_kind,
         )
-        or len({evaluation.created_by_input_id, work.created_by_input_id,
-                activation.created_by_input_id}) != 1
+        or len(
+            {
+                evaluation.created_by_input_id,
+                work.created_by_input_id,
+                activation.created_by_input_id,
+            }
+        )
+        != 1
         or activation.work_item_id != evaluation.target_work_item_id
         or (work.ref.plan_ref, activation.plan_ref) != (plan, plan)
         or (work.lineage_id, activation.lineage_id) != (lineage, lineage)

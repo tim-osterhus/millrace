@@ -20,6 +20,7 @@ from millrace.contracts.compiled_plan import (
 )
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId
+from millrace.contracts.runtime_failures import runtime_failure_applied
 from millrace.contracts.selected_plan_lookups import (
     counter_artifact_contract_mismatch,
     runner_binding_for,
@@ -152,11 +153,7 @@ def join_for(
     join_id: str,
 ) -> JoinDeclaration | None:
     return next(
-        (
-            join
-            for join in selected_plan.join_declarations
-            if str(join.id) == join_id
-        ),
+        (join for join in selected_plan.join_declarations if str(join.id) == join_id),
         None,
     )
 
@@ -231,6 +228,10 @@ def run_has_observation(state: RuntimeState, run_id: str) -> bool:
         for observation in state.runner_observations.values()
         if isinstance(observation, RunnerObservationRecord)
     )
+
+
+def run_is_settled(state: RuntimeState, run_id: str) -> bool:
+    return run_has_observation(state, run_id) or runtime_failure_applied(state, run_id)
 
 
 def active_lineage_quarantine_for(
@@ -333,6 +334,7 @@ __all__ = (
     "plan_ref_for",
     "route_contract_supported",
     "run_has_observation",
+    "run_is_settled",
     "runner_binding_for",
     "stage_kind_for",
     "terminal_action_for",

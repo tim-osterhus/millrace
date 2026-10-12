@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,6 +58,7 @@ class GroupProfile:
     supervised: bool = False
     supervisor: Path | None = None
     supervisor_sha256: str | None = None
+    bash_timeout: bool = False
 
     def argv(
         self, argv: tuple[str, ...], fd: int, limits: dict[str, Any]
@@ -153,6 +156,7 @@ class _Spawn:
     ends: set[str] = field(default_factory=set)
     close: tuple[int | None, str | None] | None = None
     retired: bool = False
+    timeout_control: bool = False
 
 
 class PiGroups:
@@ -284,8 +288,25 @@ class PiGroups:
                 raise ValueError("unqualified stock spawn")
             self.calls[call] = pid
         elif kind == "control":
-            self.control_causes.add(self._cause(p["frames"]))
-            self.uncertain.add("process control observed")
+            cause = self._cause(p["frames"])
+            self.control_causes.add(cause)
+            child = self.spawns.get(-p["pid"])
+            if (
+                self.profile.bash_timeout
+                and self.profile.supervised
+                and self.profile.platform == "linux"
+                and p["pid"] < 0
+                and p["signal"] == "SIGKILL"
+                and cause == "timeout"
+                and child is not None
+                and child.call not in self.ends
+                and child.root is None
+                and not child.timeout_control
+            ):
+                # Retain the per-call fact; finish must still prove settlement.
+                child.timeout_control = True
+            else:
+                self.uncertain.add("process control observed")
         elif kind == "fault":
             self.uncertain.add("group observer fault")
         elif kind == "end":
@@ -315,7 +336,10 @@ class PiGroups:
                 if p["group"] not in {"absent", "present", "unknown"}:
                     raise ValueError("group probe state")
                 if (
-                    p["signal"] is not None
+                    (
+                        p["signal"] is not None
+                        and not (child.timeout_control and p["signal"] == "SIGKILL")
+                    )
                     or p["group"] == "unknown"
                     or (p["group"] == "present" and not self.profile.supervised)
                 ):
@@ -418,10 +442,39 @@ class PiGroups:
                 != (command_digest(args.get("command", "")), args.get("timeout"))
                 or child is None
                 or child.root is None
-                or child.root[0] is None
-                or child.root[1] is not None
                 or child.close != child.root
                 or child.ends != {"stdout", "stderr"}
+            ):
+                valid = False
+                continue
+            if child.timeout_control:
+                seconds = args.get("timeout")
+                if (
+                    not isinstance(seconds, (int, float))
+                    or isinstance(seconds, bool)
+                    or not math.isfinite(seconds)
+                    or seconds <= 0
+                    or seconds > 1800
+                ):
+                    seconds = 1800
+                content = end.get("result", {}).get("content", [])
+                text = content[0].get("text") if len(content) == 1 else None
+                suffix = text.rsplit("\n\n", 1)[-1] if isinstance(text, str) else ""
+                timeout = re.fullmatch(
+                    r"Command timed out after "
+                    r"([0-9]+(?:\.[0-9]+)?(?:e[+-]?[0-9]+)?) seconds",
+                    suffix,
+                )
+                if (
+                    child.root != (None, "SIGKILL")
+                    or end.get("isError") is not True
+                    or timeout is None
+                    or float(timeout.group(1)) != seconds
+                ):
+                    valid = False
+            elif (
+                child.root[0] is None
+                or child.root[1] is not None
                 or end.get("isError") is not (child.root[0] != 0)
             ):
                 valid = False

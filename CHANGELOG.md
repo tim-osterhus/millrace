@@ -2,6 +2,48 @@
 
 ## [0.22.4] - Unreleased
 
+- Treat completed stock Pi read/edit/write errors as truthful text feedback
+  under explicit group accounting. Later valid completion can qualify after
+  missing-file, edit-mismatch, permission or native validation errors, while
+  preserving the original error bit/text and all lifecycle, candidate and
+  owned-process closure checks. Legacy file-error behavior remains unchanged.
+
+- Include fixed process-observer refusal codes in Pi invocation diagnostics
+  and count unclassified uncertainties without retaining their text. This
+  corrects diagnostic omissions; tool-result qualification and process closure
+  retain their existing refusals.
+
+- Qualify a successful stock Pi edit containing both `edits[]` and a legacy
+  `oldText`/`newText` pair under explicit group accounting. The pinned tool
+  appends the pair to its prepared copy; the adapter now checks the resulting
+  replacement count. Malformed successful tool results and incomplete process
+  closure retain their existing refusals.
+
+- Keep nested recorded-source recovery returns dispatchable. Returning to a
+  recovery stage tracks the fresh activation and its next claim, preserving
+  the recorded queue, graph node and runner. Accepted return provenance survives
+  reload, later returns and bounded timeout recurrence; forged or stale return
+  effects are refused. Ordinary source returns retain their existing tracking.
+
+- Use the kernel's authenticated settlement check in public status. Applied
+  timeout recovery no longer leaves the failed source active or hides coherent
+  returned work from ready counts. Pending or unauthenticated failures retain
+  their existing logical status.
+
+- Authenticate inherited recovery activations through their accepted source
+  routes and cooldown timers, preserving timeout recurrence and historical
+  replay. Mechanical timeout recovery uses its selected recovery policy without
+  consuming counters for agent-produced terminal outcomes.
+
+- Add explicit compiler-selected recovery mappings for clean runner timeouts.
+  Persist failed completion facts and authenticate diagnostic CAS, claim and
+  selected authority before applying the existing bounded recovery policy.
+  Durable recovery releases the failed source's concurrency slot and progresses
+  through ordinary recovery work without inventing agent output. Unmapped,
+  cancelled, lost and unclean failures retain their existing refusals. New
+  mapped runner-binding schemas 5/6 retain schema 3/4 compatibility for unmapped
+  plans. Public release and actual Linux/model qualification remain separate.
+
 Release preparation is in progress. The private candidates below contain the
 opt-in Pi runner, component-free completion capacity, enqueue replay repairs,
 and consent-bound setup/demo journey. Real-model qualification, matched final

@@ -21,6 +21,7 @@ from millrace.adapters.cli.context import (
 from millrace.adapters.cli.run_controls import (
     validate_effective_timeout as _validate_effective_timeout,
 )
+from millrace.adapters.cli.session_runtime_failures import resume_persisted_completion
 from millrace.adapters.cli.session_supervision import (
     _persist_indeterminate_start,
     _persist_refused_start,
@@ -145,7 +146,11 @@ def _step_retained_owner(
     owner.session = session
     completion = state.runner_session_completions.get(session.session_id)
     if completion is not None:
-        return complete._apply_persisted_completion(runtime, completion)
+        return complete._apply_persisted_completion(
+            runtime,
+            completion,
+            daemon_stop_requested=lambda: stop_requested,
+        )
     drive_native_control(runtime, session, owner.handle)
     if stop_requested:
         _request_daemon_cancellation(runtime, owner.run_ref, session)
@@ -168,7 +173,12 @@ def _step_retained_owner(
         )
     _poll_retained_owner(owner)
     if owner.outcome is not None:
-        return _finish_retained_owner(runtime, owner, session)
+        return _finish_retained_owner(
+            runtime,
+            owner,
+            session,
+            stop_requested=stop_requested,
+        )
     if _monotonic() >= owner.deadline:
         cancel._request_cancellation(
             runtime,
@@ -201,9 +211,11 @@ def _finish_retained_owner(
     runtime: OpenRuntimeContext,
     owner: _RetainedOwner,
     session: RunnerSessionRecord,
+    *,
+    stop_requested: bool,
 ) -> SessionExecutionResult:
     assert owner.outcome is not None
-    refusal = complete._completion_refusal(
+    refusal = complete._authenticate_completion(
         runtime,
         run_ref=owner.run_ref,
         session=session,
@@ -226,6 +238,7 @@ def _finish_retained_owner(
         outcome=owner.outcome,
         cleanup=owner.cleanup,
         primary=primary,
+        daemon_stop_requested=lambda: stop_requested,
     )
 
 
@@ -326,16 +339,13 @@ def _resume_current_session(
     state = complete._load(runtime)
     stored_completion = state.runner_session_completions.get(current.session_id)
     if stored_completion is not None:
-        if stored_completion.terminal_state == "completed":
-            return complete._apply_persisted_completion(runtime, stored_completion)
-        if stored_completion.terminal_state == "lost":
-            return SessionExecutionResult("runner_session_orphan_risk")
-        if not explicit_retry_intent:
-            return SessionExecutionResult(
-                "adapter_failure",
-                adapter_error_kind=stored_completion.adapter_error_kind,
-            )
-        return None
+        return resume_persisted_completion(
+            runtime,
+            stored_completion,
+            explicit_retry_intent=explicit_retry_intent,
+            daemon_stop_requested=daemon_stop_requested,
+            apply_completion=complete._apply_persisted_completion,
+        )
     if current.state in {
         "starting",
         "running",
@@ -811,7 +821,7 @@ def _drive_running_session(
                     signal_digest=complete._signal_digest(outcome),
                 )
                 return SessionExecutionResult("session_reconciliation_required"), None
-            refusal = complete._completion_refusal(
+            refusal = complete._authenticate_completion(
                 runtime,
                 run_ref=run_ref,
                 session=session,
@@ -829,6 +839,7 @@ def _drive_running_session(
                     request=request,
                     outcome=outcome,
                     cleanup=cleanup,
+                    daemon_stop_requested=daemon_stop_requested,
                 ),
                 cleanup.disposition,
             )

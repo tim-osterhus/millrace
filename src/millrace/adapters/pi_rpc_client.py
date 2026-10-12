@@ -1,7 +1,7 @@
 """Bounded interactive client for the pinned Pi JSONL protocol.
 
-The lifecycle parser validates evidence before deriving the conservative
-filesystem-only cleanup predicate. It never interprets terminal markers.
+The lifecycle parser validates native result evidence independently of owned
+disposal. It never interprets terminal markers.
 """
 
 from __future__ import annotations
@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any, BinaryIO, cast
 
 from millrace.adapters.pi_rpc_config import strict_json
+from millrace.adapters.pi_rpc_event_diagnostics import PiEventHistory
 from millrace.adapters.pi_rpc_groups import GroupProfile, PiGroups
+from millrace.adapters.pi_rpc_recovery import PiRecoveryEvidence
 from millrace.adapters.pi_rpc_supervision import PiSupervisor
 from millrace.adapters.runner_contract import AdapterTokenUsage
 
@@ -121,7 +123,14 @@ class PiLifecycle:
     """One prompt; low-level runs may continue only through intrinsic recovery."""
 
     def __init__(
-        self, model: dict[str, Any], prompt: str, *, group_accounting: bool = False
+        self,
+        model: dict[str, Any],
+        prompt: str,
+        *,
+        group_accounting: bool = False,
+        recovery_accounting: bool = False,
+        recovery_limit: int = 1000,
+        recovery_bytes: int = 65536,
     ) -> None:
         self.group_accounting = group_accounting
         self.model = model
@@ -143,6 +152,15 @@ class PiLifecycle:
         self.usage_complete = True
         self.turn_assistant = False
         self.recovery: str | None = None
+        self.retry_attempt = self.retry_max = 0
+        self.compaction_reason: str | None = None
+        self.overflow_retry = False
+        self.summary_attempt = self.summary_max = 0
+        self.summary_waiting = False
+        self.event_history = PiEventHistory()
+        self.recovery_evidence = PiRecoveryEvidence(
+            recovery_accounting, recovery_limit, recovery_bytes, model
+        )
 
     def _message(self, value: Any, *, final: bool) -> dict[str, Any]:
         m = _object(value)
@@ -178,7 +196,208 @@ class PiLifecycle:
             _boolean(m.get("isError"))
         return m
 
+    @staticmethod
+    def _retry_fields(event: dict[str, Any]) -> tuple[int, int]:
+        for key in ("attempt", "maxAttempts", "delayMs"):
+            if type(event.get(key)) is not int or not 0 <= event[key] <= 2**53 - 1:
+                raise PiRpcError("retry numeric field")
+        attempt, maximum = event["attempt"], event["maxAttempts"]
+        if not 1 <= attempt <= maximum:
+            raise PiRpcError("retry attempt")
+        if not isinstance(event.get("errorMessage"), str):
+            raise PiRpcError("retry error message")
+        return attempt, maximum
+
+    def _recovery_event(self, kind: str, event: dict[str, Any]) -> None:
+        self.auxiliary = True
+        if not self.recovery_evidence.enabled or not (
+            kind in {"auto_retry_start", "auto_retry_end"}
+            or (
+                kind in {"compaction_start", "compaction_end"}
+                and event.get("reason") == "threshold"
+            )
+        ):
+            self.uncertain.add("intrinsic recovery")
+        idle_turn = not (self.turn or self.message is not None or self.tools)
+        if kind == "auto_retry_start":
+            attempt, maximum = self._retry_fields(event)
+            # AgentSession prepares transient retries after the failed agent_end.
+            if not idle_turn or self.run:
+                raise PiRpcError("recovery boundary")
+            if (
+                not self.runs
+                or not self.will_retry
+                or self.last is None
+                or self.last["stopReason"] != "error"
+                or self.recovery not in (None, "retry")
+                or self.continuation
+            ):
+                raise PiRpcError("retry boundary")
+            if attempt != self.retry_attempt + 1 or (
+                self.retry_attempt and maximum != self.retry_max
+            ):
+                raise PiRpcError("retry sequence")
+            self.recovery = "retry"
+            self.retry_attempt, self.retry_max = attempt, maximum
+            self.continuation = True
+        elif kind == "auto_retry_end":
+            success = _boolean(event.get("success"))
+            if type(event.get("attempt")) is not int or event["attempt"] < 1:
+                raise PiRpcError("retry attempt")
+            if self.recovery != "retry" or event["attempt"] != self.retry_attempt:
+                raise PiRpcError("retry sequence")
+            # A successful end follows assistant message_end *inside* the turn.
+            # Exhaustion/cancel closes the cycle outside the low-level agent run.
+            if (
+                self.message is not None
+                or self.tools
+                or (
+                    success
+                    and (
+                        not self.run
+                        or not self.turn
+                        or not self.turn_assistant
+                        or self.last is None
+                        or self.last["stopReason"] == "error"
+                    )
+                )
+                or (not success and (self.run or self.turn))
+                or (
+                    not success
+                    and (self.last is None or self.last["stopReason"] != "error")
+                )
+            ):
+                raise PiRpcError("retry outcome")
+            if "finalError" in event and not isinstance(event["finalError"], str):
+                raise PiRpcError("retry error message")
+            self.recovery = None
+            self.retry_attempt = self.retry_max = 0
+            self.will_retry = self.continuation = False
+        elif kind == "compaction_start":
+            reason = event.get("reason")
+            if reason not in ("manual", "threshold", "overflow"):
+                raise PiRpcError("compaction reason")
+            # prepareNextTurn compacts after turn_end, before turn_start, while
+            # the same agent run remains open. Only threshold uses that path.
+            if not idle_turn or (self.run and reason != "threshold"):
+                raise PiRpcError("recovery boundary")
+            if (
+                not self.runs
+                or self.last is None
+                or self.recovery
+                or self.continuation
+                or self.will_retry
+                or (reason == "overflow" and self.overflow_retry)
+            ):
+                raise PiRpcError("compaction boundary")
+            self.recovery, self.compaction_reason = "compaction", reason
+        elif kind == "compaction_end":
+            reason = event.get("reason")
+            if reason not in ("manual", "threshold", "overflow"):
+                raise PiRpcError("compaction reason")
+            aborted = _boolean(event.get("aborted"))
+            retry = _boolean(event.get("willRetry"))
+            if "errorMessage" in event and not isinstance(event["errorMessage"], str):
+                raise PiRpcError("compaction result")
+            failed = aborted or "errorMessage" in event
+            if (
+                retry and (failed or reason != "overflow" or self.run)
+            ) or not idle_turn:
+                raise PiRpcError("compaction outcome")
+            if "result" in event:
+                _object(event["result"])
+                if failed:
+                    raise PiRpcError("compaction result")
+            elif not failed:
+                raise PiRpcError("compaction result")
+            if self.recovery is None:
+                # Pi reports exhausted overflow recovery with a second *end*
+                # and no new start after the single compact-and-retry attempt.
+                if not (
+                    self.overflow_retry
+                    and reason == "overflow"
+                    and not self.run
+                    and not aborted
+                    and not retry
+                    and failed
+                    and self.last is not None
+                    and self.last["stopReason"] in ("error", "length")
+                ):
+                    raise PiRpcError("compaction boundary")
+                self.overflow_retry = False
+            elif (
+                self.recovery != "compaction"
+                or reason != self.compaction_reason
+                or self.summary_attempt
+            ):
+                raise PiRpcError("compaction boundary")
+            self.recovery = self.compaction_reason = None
+            self.continuation = retry
+            if retry:
+                self.overflow_retry = True
+        elif kind == "summarization_retry_scheduled":
+            attempt, maximum = self._retry_fields(event)
+            if self.recovery != "compaction" or self.summary_waiting:
+                raise PiRpcError("summary boundary")
+            if attempt != self.summary_attempt + 1 or (
+                self.summary_attempt and maximum != self.summary_max
+            ):
+                raise PiRpcError("summary sequence")
+            self.summary_attempt, self.summary_max = attempt, maximum
+            self.summary_waiting = True
+        elif kind == "summarization_retry_attempt_start":
+            if (
+                event.get("source") != "compaction"
+                or event.get("reason") != self.compaction_reason
+            ):
+                raise PiRpcError("summary source")
+            if self.recovery != "compaction" or not self.summary_waiting:
+                raise PiRpcError("summary boundary")
+            self.summary_waiting = False
+        else:  # summarization_retry_finished, including an aborted backoff.
+            if self.recovery != "compaction" or not self.summary_attempt:
+                raise PiRpcError("summary boundary")
+            self.summary_attempt = self.summary_max = 0
+            self.summary_waiting = False
+
     def event(self, event: dict[str, Any]) -> None:
+        try:
+            self._event(event)
+            self.recovery_evidence.observe(event, run_open=self.run)
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            UnicodeError,
+            OverflowError,
+            RecursionError,
+        ):
+            self.recovery_evidence.taint()
+            raise
+
+    def _event(self, event: dict[str, Any]) -> None:
+        self.event_history.record(
+            event,
+            {
+                "run": self.run,
+                "turn": self.turn,
+                "message_open": self.message is not None,
+                "tools_active": bool(self.tools),
+                "continuation": self.continuation,
+                "will_retry": self.will_retry,
+                "auxiliary": self.auxiliary,
+                "runs": self.runs,
+                "users": self.users,
+                "settled": self.settled,
+                "recovery": self.recovery or "none",
+                "retry_attempt": self.retry_attempt,
+                "retry_max": self.retry_max,
+                "summary_attempt": self.summary_attempt,
+                "summary_max": self.summary_max,
+                "summary_waiting": self.summary_waiting,
+                "overflow_retry": self.overflow_retry,
+            },
+        )
         kind = _text(event.get("type"))
         if self.settled:
             raise PiRpcError("event after settlement")
@@ -187,6 +406,7 @@ class PiLifecycle:
                 self.run
                 or self.turn
                 or self.message
+                or self.recovery == "compaction"
                 or (self.runs and not self.continuation)
             ):
                 raise PiRpcError("agent start boundary")
@@ -195,7 +415,12 @@ class PiLifecycle:
             self.messages = []
             self.continuation = False
         elif kind == "turn_start":
-            if not self.run or self.turn or self.message:
+            if (
+                not self.run
+                or self.turn
+                or self.message
+                or self.recovery == "compaction"
+            ):
                 raise PiRpcError("turn start boundary")
             self.turn = True
             self.turn_results = []
@@ -258,6 +483,8 @@ class PiLifecycle:
                     raise PiRpcError("multiple assistants in turn")
                 self.turn_assistant = True
                 self.last = m
+                if m["stopReason"] not in ("error", "length"):
+                    self.overflow_retry = False
                 usage = token_usage(
                     m.get("usage"), total_key="totalTokens", allow_zero=True
                 )
@@ -265,7 +492,9 @@ class PiLifecycle:
                     self.usage_complete = False
                 else:
                     self.usages.append(usage)
-                if m["stopReason"] not in ("stop", "toolUse"):
+                if m["stopReason"] not in ("stop", "toolUse") and not (
+                    self.recovery_evidence.enabled and m["stopReason"] == "error"
+                ):
                     self.uncertain.add("assistant error/abort")
                 for block in m["content"]:
                     if block["type"] == "toolCall":
@@ -315,7 +544,11 @@ class PiLifecycle:
             args = tool_start[1]
             safe = not error and len(content) == 1 and content[0]["type"] == "text"
             text = content[0].get("text", "") if safe else ""
-            if name == "read":
+            if self.group_accounting and error and name in {"read", "edit", "write"}:
+                # Stock file errors are completed feedback, like numeric Bash
+                # errors. Lifecycle and owned closure still qualify the result.
+                safe = len(content) == 1 and content[0]["type"] == "text"
+            elif name == "read":
                 safe = (
                     safe
                     and isinstance(args.get("path"), str)
@@ -336,6 +569,16 @@ class PiLifecycle:
                     "newText",
                 }:
                     edits = [{"oldText": args["oldText"], "newText": args["newText"]}]
+                elif (
+                    self.group_accounting
+                    and set(args) == {"path", "edits", "oldText", "newText"}
+                    and isinstance(edits, list)
+                ):
+                    # Pinned Pi appends the legacy pair to its prepared copy.
+                    edits = [
+                        *edits,
+                        {"oldText": args["oldText"], "newText": args["newText"]},
+                    ]
                 safe = (
                     safe
                     and isinstance(args.get("path"), str)
@@ -391,6 +634,7 @@ class PiLifecycle:
                 or self.turn
                 or self.message
                 or self.tools
+                or self.recovery == "compaction"
                 or event.get("messages") != self.messages
             ):
                 raise PiRpcError("agent end snapshot")
@@ -404,6 +648,8 @@ class PiLifecycle:
                 or self.tools
                 or not self.runs
                 or self.will_retry
+                or self.recovery is not None
+                or self.continuation
                 or self.users != 1
                 or set(self.declared) != self.results
             ):
@@ -418,32 +664,7 @@ class PiLifecycle:
             "summarization_retry_attempt_start",
             "summarization_retry_finished",
         }:
-            self.auxiliary = True
-            self.uncertain.add("intrinsic recovery")
-            if kind in ("auto_retry_start", "summarization_retry_scheduled"):
-                for key in ("attempt", "maxAttempts", "delayMs"):
-                    if type(event.get(key)) is not int or event[key] < 0:
-                        raise PiRpcError("retry numeric field")
-                if not isinstance(event.get("errorMessage"), str):
-                    raise PiRpcError("retry error message")
-            if kind == "auto_retry_end":
-                _boolean(event.get("success"))
-                if type(event.get("attempt")) is not int or event["attempt"] < 0:
-                    raise PiRpcError("retry attempt")
-            if kind.startswith("compaction_"):
-                if event.get("reason") not in ("manual", "threshold", "overflow"):
-                    raise PiRpcError("compaction reason")
-                if kind == "compaction_end":
-                    _boolean(event.get("aborted"))
-                    _boolean(event.get("willRetry"))
-            if kind in ("auto_retry_start", "compaction_start"):
-                if self.run or self.turn or self.message:
-                    raise PiRpcError("recovery boundary")
-                self.continuation = True
-            if kind == "summarization_retry_attempt_start" and event.get(
-                "source"
-            ) not in ("branchSummary", "compaction"):
-                raise PiRpcError("summary source")
+            self._recovery_event(kind, event)
         elif kind == "queue_update":
             self.uncertain.add("unqualified queue event")
             if event.get("steering") != [] or event.get("followUp") != []:
@@ -455,11 +676,40 @@ class PiLifecycle:
         elif kind in {"entry_appended", "session_info_changed"}:
             if kind == "entry_appended":
                 _object(event.get("entry"))
+                if self.recovery_evidence.context_edit(event):
+                    return
             elif event.get("name") is not None and not isinstance(event["name"], str):
                 raise PiRpcError("session name")
             self.uncertain.add("unqualified session event")
         else:
             raise PiRpcError("unknown or forbidden event")
+
+    def bind_recovery_entries(self, data: Any) -> None:
+        if self.settled != 1:
+            self.recovery_evidence.taint("binding_failed")
+            return
+        self.recovery_evidence.bind_entries(data)
+
+    def recovery_qualified(self) -> bool:
+        if not self.recovery_evidence.qualified():
+            return False
+        if not self.recovery_evidence.observed:
+            return True
+        return bool(
+            self.settled == 1
+            and self.users == 1
+            and not self.run
+            and not self.turn
+            and self.message is None
+            and not self.tools
+            and self.recovery is None
+            and not self.continuation
+            and not self.will_retry
+            and set(self.declared) == self.results
+            and self.last is not None
+            and self.last["stopReason"] == "stop"
+            and not any(c["type"] == "toolCall" for c in self.last["content"])
+        )
 
     def final_text(self) -> str:
         if not self.settled or self.last is None or self.last["stopReason"] != "stop":
@@ -503,7 +753,16 @@ class PiRpcClient:
         self.limits, self.model, self.prompt = limits, model, prompt
         self.deadline = time.monotonic() + timeout if deadline is None else deadline
         self.lifecycle = PiLifecycle(
-            model, prompt, group_accounting=group_profile is not None
+            model,
+            prompt,
+            group_accounting=group_profile is not None,
+            recovery_accounting=(
+                group_profile is not None
+                and group_profile.supervised
+                and group_profile.platform == "linux"
+            ),
+            recovery_limit=limits["max_event_count"],
+            recovery_bytes=limits.get("max_stdout_bytes", 0),
         )
         self.groups: PiGroups | None = None
         self.supervisor: PiSupervisor | None = None
@@ -533,6 +792,7 @@ class PiRpcClient:
         self.usage: AdapterTokenUsage | None = None
         self.stderr = bytearray()
         self.closed = False
+        self.close_failed = False
         self.cleanup_draining = False
         self.pi_session_id: str | None = None
         if time.monotonic() >= self.deadline:
@@ -655,6 +915,7 @@ class PiRpcClient:
                 if len(buffer) > self.limits["max_event_bytes"]:
                     raise PiRpcError("unterminated event bound", "output_too_large")
         except (ValueError, UnicodeError, OSError, queue.Full) as exc:
+            self.lifecycle.recovery_evidence.taint()
             reason = str(exc) if isinstance(exc, PiRpcError) else ""
             self.stream_error_codes[name] = {
                 "partial final line": "partial_final_line",
@@ -711,6 +972,7 @@ class PiRpcClient:
         if self.errors:
             raise self.errors[0]
         if not self.cleanup_draining and time.monotonic() >= self.deadline:
+            self.lifecycle.recovery_evidence.taint("deadline")
             raise PiRpcError("deadline", "timeout")
 
     def signal_pi(self, operation: str) -> None:
@@ -724,7 +986,11 @@ class PiRpcClient:
 
     def consume(self) -> None:
         with self.consume_lock:
-            self._consume()
+            try:
+                self._consume()
+            except (ValueError, TypeError, OSError, KeyError):
+                self.lifecycle.recovery_evidence.taint()
+                raise
 
     def _consume(self) -> None:
         self.check()
@@ -822,6 +1088,13 @@ class PiRpcClient:
             raise PiRpcError("nonfresh session")
 
     def run(self) -> str:
+        try:
+            return self._run()
+        except (ValueError, TypeError, OSError, KeyError):
+            self.close_failed = True
+            raise
+
+    def _run(self) -> str:
         ident = self.send("prompt", message=self.prompt)
         while not self.lifecycle.settled or ident not in self.responses:
             self.consume()
@@ -833,9 +1106,25 @@ class PiRpcClient:
             raise PiRpcError("Pi statistics session drift")
         self.usage = token_usage(stats.get("tokens"))
         fallback = self.lifecycle.fallback_usage()
-        observed_total = sum(u.total_tokens for u in self.lifecycle.usages)
+        recovery_input, recovery_output, recovery_total = (
+            self.lifecycle.recovery_evidence.usage_floor()
+        )
+        observed_total = (
+            sum(u.total_tokens for u in self.lifecycle.usages) + recovery_total
+        )
         if self.usage is not None and (
             self.usage.total_tokens < observed_total
+            or (
+                self.lifecycle.recovery_evidence.observed
+                and (
+                    self.usage.input_tokens
+                    < sum(u.input_tokens for u in self.lifecycle.usages)
+                    + recovery_input
+                    or self.usage.output_tokens
+                    < sum(u.output_tokens for u in self.lifecycle.usages)
+                    + recovery_output
+                )
+            )
             or (fallback is not None and self.usage != fallback)
         ):
             self.usage = None
@@ -843,26 +1132,86 @@ class PiRpcClient:
         final = self.lifecycle.final_text()
         if text != final:
             raise PiRpcError("final text conflict")
+        if self.lifecycle.recovery_evidence.observed and self.usage is None:
+            raise PiRpcError("incomplete recovery evidence")
+        if self.lifecycle.recovery_evidence.needs_entries():
+            data = self.query("get_entries")
+            try:
+                self.lifecycle.bind_recovery_entries(data)
+            finally:
+                # Only digests and binding facts survive validation. The raw
+                # transcript is neither a retained response nor a diagnostic.
+                for response in self.responses.values():
+                    if response.get("command") == "get_entries":
+                        response["data"] = {}
+                del data
+        if not self.lifecycle.recovery_qualified():
+            raise PiRpcError("incomplete recovery evidence")
         if not self.close():
             raise PiRpcError("incomplete process closure")
         return final
 
     def close(self) -> bool:
-        if self.closed:
-            return (
-                self.process.returncode == 0
-                and all(self.eof.values())
-                and not self.errors
-                and (self.supervisor is None or self.supervisor.finish())
-                and (
+        try:
+            return self._close()
+        except (ValueError, TypeError, OSError, KeyError):
+            self.close_failed = True
+            raise
+
+    def _closure_result(self, eligible: bool) -> bool:
+        supervisor_complete = self.supervisor is None or self.supervisor.finish()
+        if self.supervisor is not None and self.groups is not None:
+            self.groups.supervisor_disposed = supervisor_complete
+        group_complete = self.groups is None or self.groups.finish(
+            self.lifecycle.declared, self.lifecycle.completed, self.lifecycle.results
+        )
+        result = bool(
+            eligible
+            and self.lifecycle.recovery_qualified()
+            and (
+                not self.lifecycle.uncertain
+                or (
                     self.groups is None
-                    or self.groups.finish(
-                        self.lifecycle.declared,
-                        self.lifecycle.completed,
-                        self.lifecycle.results,
-                    )
+                    and not self.lifecycle.recovery_evidence.observed
                 )
             )
+            and self.process.returncode == 0
+            and all(self.eof.values())
+            and not any(thread.is_alive() for thread in self.threads)
+            and not self.errors
+            and not self.pending
+            and supervisor_complete
+            and group_complete
+        )
+        self.close_failed = self.close_failed or not result
+        return result
+
+    def _close(self) -> bool:
+        # Freeze execution eligibility before the finite disposal tail. That
+        # tail cannot supply model work, recovery completion or usage evidence.
+        eligible = bool(
+            isinstance(getattr(self, "lifecycle", None), PiLifecycle)
+            and not getattr(self, "close_failed", False)
+            and time.monotonic() < self.deadline
+            and not self.errors
+            and not self.pending
+            and not self.cancel_requested.is_set()
+            and (
+                not self.lifecycle.uncertain
+                or (
+                    self.groups is None
+                    and not self.lifecycle.recovery_evidence.observed
+                )
+            )
+            and self.lifecycle.recovery_qualified()
+            and (
+                not self.lifecycle.recovery_evidence.observed or self.usage is not None
+            )
+        )
+        if not eligible:
+            self.close_failed = True
+        if self.closed:
+            return self._closure_result(eligible)
         if self.process.stdin and not self.process.stdin.closed:
             self.process.stdin.close()
         until = (
@@ -880,14 +1229,19 @@ class PiRpcClient:
                 time.sleep(0.01)
             while not self.events.empty():
                 self.consume()
+        except (ValueError, TypeError, OSError, KeyError):
+            self.close_failed = True
+            raise
         finally:
             self.cleanup_draining = False
         if self.process.poll() is None or not all(self.eof.values()):
+            self.close_failed = True
             return False
         self.stop.set()
         for thread in self.threads:
             thread.join(0.2)
         if any(thread.is_alive() for thread in self.threads):
+            self.close_failed = True
             return False
         for stream in (
             self.process.stdin,
@@ -898,22 +1252,12 @@ class PiRpcClient:
             if stream:
                 stream.close()
         self.closed = True
-        supervisor_complete = self.supervisor is None or self.supervisor.finish()
-        if self.supervisor is not None and self.groups is not None:
-            self.groups.supervisor_disposed = supervisor_complete
-        group_complete = self.groups is None or self.groups.finish(
-            self.lifecycle.declared, self.lifecycle.completed, self.lifecycle.results
-        )
-        return (
-            self.process.returncode == 0
-            and supervisor_complete
-            and not self.errors
-            and not self.pending
-            and group_complete
-        )
+        return self._closure_result(eligible)
 
     def dispose(self) -> bool:
         """Finite owned parent/reader disposal; never a descendant assertion."""
+        if not self.closed:
+            self.close_failed = True
         if self.process.poll() is None:
             if self.supervisor is None or not self.supervisor.startup_failed:
                 try:

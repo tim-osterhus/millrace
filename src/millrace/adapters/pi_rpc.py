@@ -16,6 +16,7 @@ from millrace.adapters.pi_rpc_client import (
     parse_candidate,
 )
 from millrace.adapters.pi_rpc_config import PiAttempt, PiRpcConfig
+from millrace.adapters.pi_rpc_diagnostics import native_failure_diagnostics
 from millrace.adapters.runner_contract import (
     REVIEWED_TOKEN_USAGE_MAPPING,
     AdapterErrorResult,
@@ -23,6 +24,7 @@ from millrace.adapters.runner_contract import (
     AdapterInvocationRequest,
     AdapterSuccessResult,
     DispatchEcho,
+    RedactionPolicy,
     RunnerCancellationOperationResult,
     RunnerCleanupResult,
     RunnerSessionReconcileRequest,
@@ -31,6 +33,7 @@ from millrace.adapters.runner_contract import (
     StartIndeterminate,
     StartRefusedBeforeExternalWork,
     Unsupported,
+    canonicalize_redaction_policy,
     runner_cancellation_diagnostic_digest,
     start_refusal_diagnostic_digest,
 )
@@ -39,6 +42,84 @@ from millrace.contracts.runner_payload_capacity import validate_payload_capacity
 from millrace.contracts.transition import canonical_authority_mapping_bytes
 
 PI_ADAPTER_KIND = "pi_rpc"
+_FAILURE_CANDIDATE_MAX_BYTES = 4096
+_CANDIDATE_FAILURE_REASONS = {
+    "duplicate JSON key": "duplicate_json_key",
+    "nonfinite JSON number": "nonfinite_json_number",
+    "JSON nesting bound": "json_nesting_bound",
+    "candidate envelope": "invalid_envelope",
+    "candidate marker": "invalid_marker",
+    "candidate payload": "invalid_payload",
+    "runner_report must be text": "invalid_runner_report",
+}
+
+
+def _failure_reason(phase: str, exc: Exception) -> str:
+    """Project only known codes; exception-local contents are never retained."""
+    if isinstance(exc, PiRpcError) and exc.kind == "output_too_large":
+        return "result_byte_limit"
+    if phase == "evidence_normalization":
+        return (
+            "redacted_mapping_key_collision"
+            if type(exc) is ValueError and str(exc) == "redacted mapping keys collide"
+            else "evidence_normalization_failed"
+        )
+    if isinstance(exc, json.JSONDecodeError):
+        return "invalid_json"
+    if isinstance(exc, UnicodeError):
+        return "invalid_text_encoding"
+    return (
+        _CANDIDATE_FAILURE_REASONS.get(str(exc), "candidate_parse_failed")
+        if type(exc) is ValueError
+        else "candidate_parse_failed"
+    )
+
+
+def _redacted_candidate_text(text: str, policy: RedactionPolicy) -> str:
+    """Decode string literals so JSON escapes cannot hide configured secrets.
+
+    Retain text, including duplicate keys and invalid outer structure, rather
+    than normalizing it into a candidate mapping. Ambiguous string encodings
+    are omitted by the caller.
+    """
+    if any(secret in "[REDACTED]" for secret in policy.secret_tokens):
+        # Downstream diagnostic codecs reapply redaction. An unstable mask can
+        # expand past the bound or itself contain a configured secret.
+        raise ValueError("unstable candidate redaction mask")
+    text = policy.redact_text(text)
+    parts: list[str] = []
+    decoder = json.JSONDecoder()
+    cursor = 0
+    while cursor < len(text):
+        quote = text.find('"', cursor)
+        end = len(text) if quote == -1 else quote
+        outside = text[cursor:end]
+        if "\\" in outside:
+            raise ValueError("ambiguous candidate text encoding")
+        parts.append(policy.redact_text(outside))
+        if quote == -1:
+            break
+        value, cursor = decoder.raw_decode(text, quote)
+        parts.append(json.dumps(policy.redact_text(value), ensure_ascii=True))
+    redacted = "".join(parts)
+    redacted.encode("utf-8")
+    return redacted
+
+
+def _bounded_candidate_text(text: str) -> tuple[str, str]:
+    def size(end: int) -> int:
+        return len(json.dumps(text[:end], ensure_ascii=True).encode("utf-8"))
+
+    if size(len(text)) <= _FAILURE_CANDIDATE_MAX_BYTES:
+        return text, "complete"
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if size(middle) <= _FAILURE_CANDIDATE_MAX_BYTES:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low], "truncated"
 
 
 def _plain(value: Any) -> Any:
@@ -168,20 +249,49 @@ class PiRpcAdapter:
         return True
 
     def error(
-        self, request: AdapterInvocationRequest, kind: str, *, usage: Any = None
+        self,
+        request: AdapterInvocationRequest,
+        kind: str,
+        *,
+        usage: Any = None,
+        diagnostics: Mapping[str, object] | None = None,
     ) -> AdapterErrorResult:
-        return AdapterErrorResult.from_unredacted(
-            adapter_id=self.config.adapter_id,
-            error_kind=kind,
-            redaction_policy=request.redaction_policy,
-            dispatch_echo=DispatchEcho.from_dispatch_envelope(
-                request.dispatch_envelope,
-                correlation_id=request.correlation_id,
-                selected_adapter_kind=request.selected_adapter_kind,
-            ),
-            diagnostics={"protocol": "pi-0.87.0-jsonl.v1"},
-            token_usage=usage,
-        )
+        values: Mapping[str, object] = {
+            "protocol": "pi-0.87.0-jsonl.v1",
+            **(diagnostics or {}),
+        }
+
+        def build(values: Mapping[str, object]) -> AdapterErrorResult:
+            return AdapterErrorResult.from_unredacted(
+                adapter_id=self.config.adapter_id,
+                error_kind=kind,
+                redaction_policy=request.redaction_policy,
+                dispatch_echo=DispatchEcho.from_dispatch_envelope(
+                    request.dispatch_envelope,
+                    correlation_id=request.correlation_id,
+                    selected_adapter_kind=request.selected_adapter_kind,
+                ),
+                token_usage=usage,
+                diagnostics=values,
+            )
+
+        try:
+            return build(values)
+        except ValueError:
+            if diagnostics is None:
+                raise
+            # A policy can redact different fixed field names to the same key.
+            # Keep content-free codes in one list; do not strand the session or
+            # retain candidate text when diagnostic redaction cannot be built.
+            return build(
+                {
+                    "result_failure": (
+                        diagnostics["failure_phase"],
+                        diagnostics["failure_reason"],
+                        "omitted_redaction_failed",
+                    )
+                }
+            )
 
     def start_session(
         self, request: AdapterInvocationRequest
@@ -262,7 +372,7 @@ class PiRpcAdapter:
                     [
                         self.config.data["executable"],
                         *self.config.data["argv"],
-                        *self.config.profile["managed_args"],
+                        *self.config.managed_args,
                     ]
                 ),
                 self.config.cwd,
@@ -366,14 +476,18 @@ class PiSession:
 
     def _run(self) -> None:
         kind = "invocation_failed"
+        phase = "invocation"
+        text: str | None = None
         try:
             text = self.client.run()
             kind = "result_parse_failed"
+            phase = "candidate_parse"
             candidate = parse_candidate(
                 text, self.adapter.config.data["max_result_bytes"]
             )
             if self.cancelled.is_set():
                 raise PiRpcError("cancelled", "cancelled")
+            phase = "evidence_normalization"
             self.outcome = AdapterSuccessResult.from_unredacted(
                 adapter_id=self.adapter.config.adapter_id,
                 dispatch_echo=DispatchEcho.from_dispatch_envelope(
@@ -400,7 +514,55 @@ class PiSession:
                 self.request,
                 kind,
                 usage=self.client.usage or self.client.lifecycle.fallback_usage(),
+                diagnostics=(
+                    self._failure_diagnostics(text, phase, exc)
+                    if text is not None
+                    and kind in {"result_parse_failed", "output_too_large"}
+                    else native_failure_diagnostics(self.client, exc)
+                    if phase == "invocation"
+                    else None
+                ),
             )
+
+    def _failure_diagnostics(
+        self,
+        text: str,
+        phase: str,
+        exc: Exception,
+    ) -> Mapping[str, object]:
+        diagnostic: dict[str, object] = {
+            "failure_phase": phase,
+            "failure_reason": _failure_reason(phase, exc),
+        }
+        if isinstance(exc, PiRpcError) and exc.kind == "output_too_large":
+            diagnostic["candidate_evidence_status"] = "omitted_result_bound"
+            return diagnostic
+        try:
+            request_policy = canonicalize_redaction_policy(
+                self.request.redaction_policy
+            )
+            config_policy = canonicalize_redaction_policy(
+                self.adapter.config.redaction_policy
+            )
+            credential = self.attempt.env.get("PI_RPC_API_KEY", "")
+            policy = RedactionPolicy(
+                request_policy.policy_id,
+                tuple(
+                    set(
+                        request_policy.secret_tokens
+                        + config_policy.secret_tokens
+                        + ((credential,) if credential else ())
+                    )
+                ),
+            )
+            redacted = _redacted_candidate_text(text, policy)
+            excerpt, status = _bounded_candidate_text(redacted)
+        except (TypeError, ValueError):
+            diagnostic["candidate_evidence_status"] = "omitted_unsafe_text"
+            return diagnostic
+        diagnostic["candidate_text"] = excerpt
+        diagnostic["candidate_evidence_status"] = status
+        return diagnostic
 
     def poll_completion(self) -> AdapterInvocationOutcome | None:
         return self.outcome

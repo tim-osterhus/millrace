@@ -28,6 +28,7 @@ from millrace.compiler.source import (
     text_tuple,
 )
 from millrace.contracts import Diagnostic
+from millrace.contracts.diagnostics import DiagnosticContextValue
 from millrace.contracts.runner_payload_capacity import (
     PayloadCapacityError,
     completion_capacity,
@@ -99,6 +100,10 @@ _LEGACY_RUNNER_COMPONENT_PIN_FIELDS = _RUNNER_COMPONENT_PIN_FIELDS - {
 _RUNNER_TERMINAL_RESULT_MAPPING_FIELDS = frozenset(
     {"stage_kind_id", "runner_result_id", "outcome_id"}
 )
+_RUNNER_RUNTIME_FAILURE_MAPPING_FIELDS = frozenset(
+    {"stage_kind_id", "failure_kind", "action_id"}
+)
+_SUPPORTED_RUNNER_RUNTIME_FAILURE_KINDS = frozenset({"timeout"})
 
 INTERVENTION_OPTION_FIELDS = frozenset(
     {
@@ -861,9 +866,7 @@ def validate_join_references(
     diagnostics: list[Diagnostic],
 ) -> None:
     stage_schema_ids = {
-        str(record["id"]): frozenset(
-            text_tuple(record.get("artifact_schema_ids", ()))
-        )
+        str(record["id"]): frozenset(text_tuple(record.get("artifact_schema_ids", ())))
         for record in records(source, "stage_kinds")
         if is_non_empty_text(record.get("id"))
     }
@@ -1096,12 +1099,10 @@ def validate_completion_remediation_references(
     graph_node_ids = _declared_graph_node_ids(source)
     graph_node_stage_pairs = _declared_graph_node_stage_pairs(source)
     artifact_schema_records = {
-        str(record.get("id")): record
-        for record in records(source, "artifact_schemas")
+        str(record.get("id")): record for record in records(source, "artifact_schemas")
     }
     runner_records = {
-        str(record.get("id")): record
-        for record in records(source, "runner_bindings")
+        str(record.get("id")): record for record in records(source, "runner_bindings")
     }
     for index, record in enumerate(records(source, "remediation_policies")):
         referrer_path = f"remediation_policies[{index}]"
@@ -1602,10 +1603,8 @@ def _validate_completion_actions(
             )
     for field_name, _expected_kinds in action_fields:
         action = actions.get(str(record.get(field_name, "")))
-        if (
-            action is not None
-            and action.get("artifact_schema_id")
-            != record.get("verdict_artifact_schema_id")
+        if action is not None and action.get("artifact_schema_id") != record.get(
+            "verdict_artifact_schema_id"
         ):
             diagnostics.append(
                 _completion_behavior_diagnostic(
@@ -2217,10 +2216,7 @@ def validate_effect_declarations(
                     field_name="terminal_action_id",
                     effect_id=effect_id,
                     terminal_action_id=terminal_action_id,
-                    message=(
-                        "Effect declarations must be unique per terminal "
-                        "action."
-                    ),
+                    message=("Effect declarations must be unique per terminal action."),
                 )
             )
         else:
@@ -2233,8 +2229,7 @@ def validate_effect_declarations(
                     effect_id=effect_id,
                     terminal_action_id=terminal_action_id,
                     message=(
-                        "Effect declarations must attach to closing terminal "
-                        "actions."
+                        "Effect declarations must attach to closing terminal actions."
                     ),
                 )
             )
@@ -2361,6 +2356,256 @@ def validate_runner_binding_references(
             referrer_path=referrer_path,
             diagnostics=diagnostics,
         )
+        _validate_runner_runtime_failure_mappings(
+            source=source,
+            record=record,
+            referrer_path=referrer_path,
+            diagnostics=diagnostics,
+        )
+
+
+def _validate_runner_runtime_failure_mappings(
+    *,
+    source: Mapping[str, object],
+    record: SourceRecord,
+    referrer_path: str,
+    diagnostics: list[Diagnostic],
+) -> None:
+    if "runtime_failure_mappings" not in record:
+        return
+    raw_mappings = record["runtime_failure_mappings"]
+    declaration_path = f"{referrer_path}.runtime_failure_mappings"
+    if not is_sequence(raw_mappings):
+        _append_runner_runtime_failure_mapping_error(
+            diagnostics,
+            declaration_path=declaration_path,
+            message="Runtime failure mappings must be an array.",
+        )
+        return
+    if not raw_mappings:
+        return
+
+    binding_id = record.get("id")
+    binding_stage_ids = set(text_tuple(record.get("stage_kind_ids", ())))
+    stages = {
+        str(stage.get("id")): stage
+        for stage in records(source, "stage_kinds")
+        if is_non_empty_text(stage.get("id"))
+    }
+    actions = {
+        str(action.get("id")): action
+        for action in records(source, "terminal_actions")
+        if is_non_empty_text(action.get("id"))
+    }
+    outcomes = {
+        str(outcome.get("id")): outcome
+        for outcome in records(source, "terminal_outcomes")
+        if is_non_empty_text(outcome.get("id"))
+    }
+    seen_keys: dict[tuple[str, str], str] = {}
+    for index, raw_mapping in enumerate(raw_mappings):
+        mapping_path = f"{declaration_path}[{index}]"
+        if (
+            not isinstance(raw_mapping, Mapping)
+            or frozenset(raw_mapping) != _RUNNER_RUNTIME_FAILURE_MAPPING_FIELDS
+        ):
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=mapping_path,
+                message=(
+                    "Runtime failure mapping must contain exactly "
+                    "stage_kind_id, failure_kind, and action_id."
+                ),
+            )
+            continue
+
+        stage_value = raw_mapping.get("stage_kind_id")
+        failure_value = raw_mapping.get("failure_kind")
+        action_value = raw_mapping.get("action_id")
+        if not all(
+            is_non_empty_text(value)
+            for value in (stage_value, failure_value, action_value)
+        ):
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=mapping_path,
+                message="Runtime failure mapping fields must be non-empty strings.",
+            )
+            continue
+
+        stage_kind_id = str(stage_value)
+        failure_kind = str(failure_value)
+        action_id = str(action_value)
+        key = (stage_kind_id, failure_kind)
+        previous_path = seen_keys.get(key)
+        if previous_path is not None:
+            diagnostics.append(
+                compiler_error(
+                    code="duplicate_runner_runtime_failure_mapping",
+                    declaration_path=mapping_path,
+                    related_declaration_path=previous_path,
+                    message=(
+                        "Runtime failure mapping stage and failure kind are duplicated."
+                    ),
+                    context={
+                        "stage_kind_id": stage_kind_id,
+                        "failure_kind": failure_kind,
+                    },
+                    hint="Declare each stage and failure kind pair at most once.",
+                )
+            )
+            continue
+        seen_keys[key] = mapping_path
+
+        if failure_kind not in _SUPPORTED_RUNNER_RUNTIME_FAILURE_KINDS:
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.failure_kind",
+                message="Runtime failure mapping kind is not supported.",
+                context={"failure_kind": failure_kind},
+            )
+            continue
+
+        stage = stages.get(stage_kind_id)
+        action = actions.get(action_id)
+        if stage is None:
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.stage_kind_id",
+                message="Runtime failure mapping stage is not selected.",
+                context={"stage_kind_id": stage_kind_id},
+            )
+            continue
+        if (
+            stage_kind_id not in binding_stage_ids
+            or stage.get("runner_binding_id") != binding_id
+        ):
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.stage_kind_id",
+                message=(
+                    "Runtime failure mapping stage is not owned by this runner binding."
+                ),
+                context={
+                    "stage_kind_id": stage_kind_id,
+                    "runner_binding_id": str(binding_id or ""),
+                },
+            )
+            continue
+        if action is None:
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.action_id",
+                message="Runtime failure mapping action is not selected.",
+                context={"action_id": action_id},
+            )
+            continue
+        if action.get("stage_kind_id") != stage_kind_id:
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.action_id",
+                message="Runtime failure mapping action belongs to another stage.",
+                context={
+                    "stage_kind_id": stage_kind_id,
+                    "action_id": action_id,
+                },
+            )
+            continue
+        if action.get("kind") != "recovery_route":
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.action_id",
+                message="Runtime failure mapping action must be a recovery route.",
+                context={"action_id": action_id},
+            )
+            continue
+        outcome_value = action.get("outcome_id")
+        outcome_id = str(outcome_value) if is_non_empty_text(outcome_value) else ""
+        outcome = outcomes.get(outcome_id)
+        if (
+            outcome is None
+            or outcome.get("stage_kind_id") != stage_kind_id
+            or outcome_id not in text_tuple(stage.get("declared_outcome_ids", ()))
+        ):
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.action_id",
+                message=(
+                    "Runtime failure recovery action must use an outcome "
+                    "declared by its source stage."
+                ),
+                context={"action_id": action_id, "outcome_id": outcome_id},
+            )
+            continue
+
+        policy_source_count = sum(
+            action_id in text_tuple(policy.get("source_recovery_action_ids", ()))
+            for policy in records(source, "recovery_policies")
+        )
+        if policy_source_count != 1:
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.action_id",
+                message=(
+                    "Runtime failure recovery action must belong to exactly "
+                    "one selected recovery policy."
+                ),
+                context={
+                    "action_id": action_id,
+                    "selected_policy_source_count": policy_source_count,
+                },
+            )
+            continue
+        for counter in records(source, "counters"):
+            if counter.get("increment_action_id") != action_id:
+                continue
+            threshold = actions.get(str(counter.get("threshold_action_id")))
+            if threshold is not None and runtime_owned_threshold_for_outcomes(
+                threshold_action_kind=str(threshold.get("kind")),
+                threshold_outcome_id=str(threshold.get("outcome_id")),
+                runner_selectable_outcome_ids=_runner_selectable_outcome_ids_for_source(
+                    record, stage_kind_id=stage_kind_id
+                ),
+            ):
+                _append_runner_runtime_failure_mapping_error(
+                    diagnostics,
+                    declaration_path=f"{mapping_path}.action_id",
+                    message=(
+                        "Runtime failure recovery cannot select a counter action with "
+                        "a runtime-owned non-recovery threshold redirect."
+                    ),
+                    context={"action_id": action_id},
+                )
+        if action.get("artifact_schema_id") is not None:
+            _append_runner_runtime_failure_mapping_error(
+                diagnostics,
+                declaration_path=f"{mapping_path}.action_id",
+                message=(
+                    "Runtime failure recovery actions cannot declare an artifact "
+                    "schema because timeout recovery cannot manufacture a candidate."
+                ),
+                context={"action_id": action_id},
+            )
+
+
+def _append_runner_runtime_failure_mapping_error(
+    diagnostics: list[Diagnostic],
+    *,
+    declaration_path: str,
+    message: str,
+    context: Mapping[str, DiagnosticContextValue] | None = None,
+) -> None:
+    diagnostics.append(
+        compiler_error(
+            code="invalid_runner_runtime_failure_mapping",
+            declaration_path=declaration_path,
+            message=message,
+            context=context or {},
+            hint=(
+                "Select a stage-owned recovery action declared by one recovery policy."
+            ),
+        )
+    )
 
 
 def _validate_runner_component_authority(
@@ -2374,8 +2619,10 @@ def _validate_runner_component_authority(
         validate_payload_capacity_binding(record)
     except PayloadCapacityError as exc:
         _append_runner_component_error(
-            diagnostics, code="invalid_runner_payload_capacity_pin",
-            declaration_path=f"{referrer_path}.payload_capacity_pin", message=str(exc),
+            diagnostics,
+            code="invalid_runner_payload_capacity_pin",
+            declaration_path=f"{referrer_path}.payload_capacity_pin",
+            message=str(exc),
         )
     raw_pin = record.get("component_pin")
     raw_mappings = record.get("terminal_result_mappings", ())
@@ -2467,9 +2714,7 @@ def _validate_runner_component_authority(
         duplicate_code="duplicate_runner_terminal_result",
         diagnostics=diagnostics,
     )
-    binding_capability_ids = set(
-        text_tuple(record.get("required_capability_ids", ()))
-    )
+    binding_capability_ids = set(text_tuple(record.get("required_capability_ids", ())))
     for capability_id in component_capability_ids or ():
         if capability_id in binding_capability_ids:
             continue
@@ -2508,9 +2753,10 @@ def _validate_runner_component_authority(
     seen_mapping_outcomes: dict[tuple[str, str], str] = {}
     for index, raw_mapping in enumerate(raw_mappings):
         mapping_path = f"{referrer_path}.terminal_result_mappings[{index}]"
-        if not isinstance(raw_mapping, Mapping) or set(
-            raw_mapping
-        ) != _RUNNER_TERMINAL_RESULT_MAPPING_FIELDS:
+        if (
+            not isinstance(raw_mapping, Mapping)
+            or set(raw_mapping) != _RUNNER_TERMINAL_RESULT_MAPPING_FIELDS
+        ):
             _append_runner_component_error(
                 diagnostics,
                 code="invalid_runner_terminal_result_mapping",
@@ -2561,9 +2807,7 @@ def _validate_runner_component_authority(
                 compiler_error(
                     code="duplicate_runner_terminal_result_outcome",
                     declaration_path=f"{mapping_path}.outcome_id",
-                    related_declaration_path=(
-                        f"{previous_outcome_path}.outcome_id"
-                    ),
+                    related_declaration_path=(f"{previous_outcome_path}.outcome_id"),
                     message=(
                         "Runner terminal outcome is mapped from multiple results."
                     ),
@@ -2816,9 +3060,8 @@ def validate_recovery_policy_references(
     }
     counters_by_increment_action: dict[str, SourceRecord] = {}
     for counter in records(source, "counters"):
-        if (
-            is_non_empty_text(counter.get("increment_action_id"))
-            and is_non_empty_text(counter.get("threshold_action_id"))
+        if is_non_empty_text(counter.get("increment_action_id")) and is_non_empty_text(
+            counter.get("threshold_action_id")
         ):
             counters_by_increment_action.setdefault(
                 str(counter["increment_action_id"]),
@@ -2999,9 +3242,7 @@ def validate_counter_references(
     counter_action_owner: dict[str, tuple[str, str, str]] = {}
     for index, record in enumerate(records(source, "counters")):
         referrer_path = f"counters[{index}]"
-        counter_id = (
-            str(record["id"]) if is_non_empty_text(record.get("id")) else ""
-        )
+        counter_id = str(record["id"]) if is_non_empty_text(record.get("id")) else ""
         counter_kind = record.get("kind")
         if counter_kind != "lineage_terminal_action_counter":
             diagnostics.append(
@@ -3092,7 +3333,7 @@ def validate_counter_references(
                     },
                     hint="Declare the escalation threshold as a positive count.",
                 )
-        )
+            )
         stage_id = record.get("stage_kind_id")
         for field_name in ("increment_action_id", "threshold_action_id"):
             counter_action_id = record.get(field_name)
@@ -3118,8 +3359,7 @@ def validate_counter_references(
                             ),
                         },
                         hint=(
-                            "Reference terminal actions declared on the counter "
-                            "stage."
+                            "Reference terminal actions declared on the counter stage."
                         ),
                     )
                 )
@@ -3136,13 +3376,11 @@ def validate_counter_references(
             and threshold_action.get("kind") == "recovery_route"
         ):
             recovery_stage_id = threshold_action.get("target_stage_kind_id")
-            if (
-                not is_non_empty_text(recovery_stage_id)
-                or str(increment_action_id)
-                not in policy_sources_by_recovery_stage.get(
-                    str(recovery_stage_id),
-                    set(),
-                )
+            if not is_non_empty_text(recovery_stage_id) or str(
+                increment_action_id
+            ) not in policy_sources_by_recovery_stage.get(
+                str(recovery_stage_id),
+                set(),
             ):
                 diagnostics.append(
                     compiler_error(
@@ -3262,17 +3500,14 @@ def validate_counter_artifact_contracts(
                     "counter_id": str(counter.get("id", "")),
                     "increment_action_id": str(increment_action_id),
                     "threshold_action_id": str(threshold_action_id),
-                    "threshold_outcome_id": str(
-                        threshold_action.get("outcome_id", "")
-                    ),
+                    "threshold_outcome_id": str(threshold_action.get("outcome_id", "")),
                     "runner_selectable_outcome_ids": tuple(
                         sorted(selectable_outcomes or ())
                     ),
                     "mismatch": mismatch,
                 },
                 hint=(
-                    "Declare matching artifact schema IDs for the counter "
-                    "actions."
+                    "Declare matching artifact schema IDs for the counter actions."
                     if mismatch == "schema"
                     else "Declare threshold conditions as an exact key/value "
                     "subset of increment conditions."
@@ -3342,8 +3577,7 @@ def validate_lineage_policy_references(
                 code="lineage_policy_conflict",
                 declaration_path=selected_key,
                 message=(
-                    "Lineage-dependent authority cannot be selected without "
-                    "lineage."
+                    "Lineage-dependent authority cannot be selected without lineage."
                 ),
                 context={
                     "lineage_policy": "none",
@@ -3372,8 +3606,7 @@ def validate_intervention_option_references(
                         "field_name": field_name,
                     },
                     hint=(
-                        "Use only fields declared by the intervention option "
-                        "contract."
+                        "Use only fields declared by the intervention option contract."
                     ),
                 )
             )
@@ -3667,16 +3900,16 @@ def _validate_revise_target_contract(
     runner_stage_ids = _runner_stage_ids(source)
     stage_id = str(target_stage_kind_id)
     queue_id = str(target_queue_family_id)
-    graph_node_id = str(target_graph_node_id) if is_non_empty_text(
-        target_graph_node_id
-    ) else ""
+    graph_node_id = (
+        str(target_graph_node_id) if is_non_empty_text(target_graph_node_id) else ""
+    )
     runner_id = str(target_runner_binding_id)
     if stage_id not in stage_contracts:
         return
-    if (
-        graph_node_id
-        and (stage_id, graph_node_id) not in _declared_graph_node_stage_pairs(source)
-    ):
+    if graph_node_id and (
+        stage_id,
+        graph_node_id,
+    ) not in _declared_graph_node_stage_pairs(source):
         diagnostics.append(
             compiler_error(
                 code="intervention_target_graph_node_stage_mismatch",
@@ -3740,17 +3973,16 @@ def _validate_revise_target_contract(
                     context={
                         "referrer_path": referrer_path,
                         "payload_schema_id": str(payload_schema_id),
-                        "target_payload_schema_id": sorted(
-                            target_payload_schema_ids
-                        )[0],
+                        "target_payload_schema_id": sorted(target_payload_schema_ids)[
+                            0
+                        ],
                         "queue_family_id": queue_id,
                         "stage_kind_id": stage_id,
                         "target_graph_node_id": graph_node_id,
                         "runner_binding_id": runner_id,
                     },
                     hint=(
-                        "Use the payload schema selected by the declared target "
-                        "route."
+                        "Use the payload schema selected by the declared target route."
                     ),
                 )
             )
@@ -3761,8 +3993,7 @@ def _validate_revise_target_contract(
                 code="intervention_target_stage_input_mismatch",
                 declaration_path=f"{referrer_path}.target_queue_family_id",
                 message=(
-                    "Revise target queue family is not an input for the "
-                    "target stage."
+                    "Revise target queue family is not an input for the target stage."
                 ),
                 context={
                     "referrer_path": referrer_path,
@@ -3890,9 +4121,7 @@ def _validate_recovery_policy_action_list(
                             "",
                         ),
                         "action_kind": action_kind,
-                        "expected_action_kind": (
-                            "recovery_route_or_counter_increment"
-                        ),
+                        "expected_action_kind": ("recovery_route_or_counter_increment"),
                     },
                     hint=(
                         "Reference the selected counter increment action; the "
@@ -3901,10 +4130,7 @@ def _validate_recovery_policy_action_list(
                 )
             )
             continue
-        if (
-            expected_action_kind == "recovery_route"
-            and action_kind != "recovery_route"
-        ):
+        if expected_action_kind == "recovery_route" and action_kind != "recovery_route":
             counter = counters_by_increment_action.get(action_id)
             threshold_action_id = (
                 str(counter.get("threshold_action_id", ""))
@@ -3933,9 +4159,7 @@ def _validate_recovery_policy_action_list(
                         "reference_kind": "terminal_action",
                         "referenced_id": action_id,
                         "action_kind": action_kind,
-                        "expected_action_kind": (
-                            "recovery_route_or_counter_increment"
-                        ),
+                        "expected_action_kind": ("recovery_route_or_counter_increment"),
                     },
                     hint=(
                         "Reference a recovery route or a selected counter "

@@ -4589,7 +4589,7 @@ def test_daemon_refuses_exact_fake_local_selected_authority_without_remap(
         (_codex_mismatch_config(), "adapter_failure"),
     ),
 )
-def test_daemon_adapter_failures_stop_without_runtime_evidence(
+def test_daemon_nonrecoverable_adapter_failures_stop_without_runtime_evidence(
     tmp_path: Path,
     local_config: AdapterLocalConfig,
     stopped_reason: str,

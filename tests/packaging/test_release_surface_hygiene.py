@@ -45,6 +45,7 @@ SDIST_EXTRA_DOCS = {
     "docs/demo.md",
     "docs/demo-recovery.md",
     "docs/pi-runner.md",
+    "docs/runtime-failure-recovery.md",
     "docs/examples/pi-adapters.json",
     "docs/examples/pi-profile.json",
 }

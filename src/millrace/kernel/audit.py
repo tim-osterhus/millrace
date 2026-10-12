@@ -15,6 +15,7 @@ from millrace.contracts.state import (
     TransitionRecord,
 )
 from millrace.contracts.transition import (
+    ApplyRunnerRuntimeFailure,
     RunnerResultObserved,
     TransitionContext,
     TransitionInput,
@@ -84,7 +85,9 @@ def idempotency_conflict_event_context(
     transition_input: TransitionInput,
 ) -> tuple[AuthorityFingerprint | None, str | None, str | None]:
     empty = (None, None, None)
-    if not isinstance(transition_input, RunnerResultObserved):
+    if not isinstance(
+        transition_input, (RunnerResultObserved, ApplyRunnerRuntimeFailure)
+    ):
         return empty
     run = state.runs.get(transition_input.run_id)
     if run is None:
@@ -92,9 +95,7 @@ def idempotency_conflict_event_context(
     work_item = state.work_items.get(run.work_item_id)
     return (
         run.run_ref.plan_ref.authority_fingerprint,
-        (
-            work_item.ref.work_item_id if work_item is not None else run.work_item_id
-        ),
+        (work_item.ref.work_item_id if work_item is not None else run.work_item_id),
         run.run_ref.run_id,
     )
 

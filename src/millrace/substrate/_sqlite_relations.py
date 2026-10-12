@@ -34,6 +34,11 @@ from millrace.contracts.runner import (
     runner_result_evidence_digest,
     runner_result_evidence_from_payload,
 )
+from millrace.contracts.runtime_failure_history import (
+    current_recovery_return_matches,
+    recorded_source_return_origin,
+)
+from millrace.contracts.runtime_failures import runtime_failure_applied
 from millrace.contracts.schema import validate_schema
 from millrace.contracts.selected_plan_lookups import (
     terminal_action_for,
@@ -68,6 +73,7 @@ from millrace.contracts.state import (
     WorkItem,
 )
 from millrace.contracts.transition import (
+    ApplyRunnerRuntimeFailure,
     AttachRunnerSessionContext,
     CancelQueuedLineage,
     CancelQueuedWork,
@@ -115,6 +121,7 @@ from millrace.substrate.errors import StorageIntegrityError, SubstrateError
 class _CasByteReader(Protocol):
     def get_bytes(self, digest: str) -> bytes: ...
 
+
 _TERMINAL_CLOSING_ACTION_KINDS = frozenset(
     (
         "close",
@@ -155,9 +162,7 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             )
         run = state.runs.get(session.run_id)
         if run is None:
-            raise StorageIntegrityError(
-                "runner_sessions.run_id must reference runs"
-            )
+            raise StorageIntegrityError("runner_sessions.run_id must reference runs")
         run_generation = (session.run_id, session.dispatch_generation)
         if run_generation in seen_run_generations:
             raise StorageIntegrityError(
@@ -178,10 +183,7 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
     for run_id, run in state.runs.items():
         sessions = sessions_by_run.get(run_id, [])
         if not sessions:
-            if (
-                run.current_session_id is not None
-                or run.last_dispatch_generation != 0
-            ):
+            if run.current_session_id is not None or run.last_dispatch_generation != 0:
                 raise StorageIntegrityError(
                     "runs runner session pointer requires durable session"
                 )
@@ -191,9 +193,7 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             raise StorageIntegrityError(
                 "runs.current_session_id must reference session for same run"
             )
-        generations = sorted(
-            session.dispatch_generation for session in sessions
-        )
+        generations = sorted(session.dispatch_generation for session in sessions)
         if generations != list(range(1, len(sessions) + 1)):
             raise StorageIntegrityError(
                 "runner session dispatch generation must be monotonic"
@@ -207,18 +207,14 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
                 "runs session pointer and dispatch generation must be current"
             )
         active = [
-            session
-            for session in sessions
-            if session.state not in terminal_states
+            session for session in sessions if session.state not in terminal_states
         ]
         if len(active) > 1:
             raise StorageIntegrityError(
                 "run may have at most one nonterminal runner session"
             )
         if active and active[0].session_id != run.current_session_id:
-            raise StorageIntegrityError(
-                "nonterminal runner session must be current"
-            )
+            raise StorageIntegrityError("nonterminal runner session must be current")
 
     requests_by_session: dict[str, list[RunnerSessionCancellationRecord]] = {}
     for request_id, request in state.runner_session_cancellation_requests.items():
@@ -264,9 +260,7 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             raise StorageIntegrityError(
                 "runner session cancellation request order must be monotonic"
             )
-        if not ordered[0].primary or any(
-            record.primary for record in ordered[1:]
-        ):
+        if not ordered[0].primary or any(record.primary for record in ordered[1:]):
             raise StorageIntegrityError(
                 "runner session cancellation primary request is contradictory"
             )
@@ -287,10 +281,7 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             raise StorageIntegrityError(
                 "runner session cancellation history contradicts session state"
             )
-        if (
-            session.state in {"cancellation_requested", "terminating"}
-            and not requests
-        ):
+        if session.state in {"cancellation_requested", "terminating"} and not requests:
             raise StorageIntegrityError(
                 "active runner session cancellation requires primary request"
             )
@@ -349,20 +340,16 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             )
         completion_session = state.runner_sessions.get(session_id)
         if completion_session is None:
-            raise StorageIntegrityError(
-                "runner session completion session is missing"
-            )
+            raise StorageIntegrityError("runner session completion session is missing")
         if (
             completion.run_id != completion_session.run_id
-            or completion.dispatch_generation
-            != completion_session.dispatch_generation
+            or completion.dispatch_generation != completion_session.dispatch_generation
             or completion.session_fencing_token
             != completion_session.session_fencing_token
             or completion.terminal_state != completion_session.state
             or completion.started_at != completion_session.started_at
             or completion.completed_at != completion_session.ended_at
-            or completion.cleanup_disposition
-            != completion_session.cleanup_disposition
+            or completion.cleanup_disposition != completion_session.cleanup_disposition
         ):
             raise StorageIntegrityError(
                 "runner session completion started or terminal facts contradict session"
@@ -381,8 +368,7 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
             )
             if (
                 completion_request_id != primary_request.request_id
-                or completion.cancel_requested_at
-                != primary_request.requested_at
+                or completion.cancel_requested_at != primary_request.requested_at
             ):
                 raise StorageIntegrityError(
                     "interrupted runner session completion must link "
@@ -396,8 +382,7 @@ def _validate_runner_session_relations(state: RuntimeState) -> None:
                 completion_request is None
                 or completion_request.session_id != session_id
                 or not completion_request.primary
-                or completion.cancel_requested_at
-                != completion_request.requested_at
+                or completion.cancel_requested_at != completion_request.requested_at
             ):
                 raise StorageIntegrityError(
                     "runner session completion cancellation link is invalid"
@@ -430,9 +415,7 @@ def runner_session_cas_references(
     for completion in state.runner_session_completions.values():
         if completion.session_id == excluded_completion_session_id:
             continue
-        references.append(
-            ("completion_diagnostic", completion.diagnostic_digest)
-        )
+        references.append(("completion_diagnostic", completion.diagnostic_digest))
         if completion.runner_result_evidence_digest is not None:
             references.append(
                 (
@@ -451,9 +434,7 @@ def validate_runner_session_context_cas(
         run = state.runs.get(session.run_id)
         if run is None:
             continue
-        admitted = state.admitted_plans.get(
-            run.run_ref.plan_ref.authority_fingerprint
-        )
+        admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
         if admitted is None or admitted.plan_ref != run.run_ref.plan_ref:
             continue
         bindings = tuple(
@@ -462,9 +443,7 @@ def validate_runner_session_context_cas(
             if binding.stage_kind_id == run.stage_kind_id
         )
         if len(bindings) > 1:
-            raise StorageIntegrityError(
-                "runner session context binding is not unique"
-            )
+            raise StorageIntegrityError("runner session context binding is not unique")
         context_digest = session.context_manifest_digest
         if not bindings:
             if context_digest is not None:
@@ -473,10 +452,7 @@ def validate_runner_session_context_cas(
                 )
             continue
         if context_digest is None:
-            if (
-                session.start_intent_at is not None
-                or session.started_at is not None
-            ):
+            if session.start_intent_at is not None or session.started_at is not None:
                 raise StorageIntegrityError(
                     "bound runner session must attach context before starting"
                 )
@@ -661,8 +637,7 @@ def validate_completed_runner_evidence(
         or evidence.session_id != completion.session_id
         or evidence.dispatch_generation != completion.dispatch_generation
         or evidence.session_fencing_token != completion.session_fencing_token
-        or evidence.plan_fingerprint
-        != run.run_ref.plan_ref.authority_fingerprint
+        or evidence.plan_fingerprint != run.run_ref.plan_ref.authority_fingerprint
         or evidence.claim_id != run.run_ref.claim_id
         or evidence.generation != run.run_ref.generation
         or evidence.fencing_token != run.run_ref.fencing_token
@@ -702,8 +677,7 @@ def completion_diagnostic_matches_current_authority(
         and diagnostic.session_id == session.session_id
         and diagnostic.dispatch_generation == session.dispatch_generation
         and diagnostic.session_fencing_token == session.session_fencing_token
-        and diagnostic.plan_fingerprint
-        == run.run_ref.plan_ref.authority_fingerprint
+        and diagnostic.plan_fingerprint == run.run_ref.plan_ref.authority_fingerprint
         and diagnostic.claim_id == run.run_ref.claim_id
         and diagnostic.generation == run.run_ref.generation
         and diagnostic.fencing_token == run.run_ref.fencing_token
@@ -884,11 +858,7 @@ def _recovery_action_matches_policy_source(
 ) -> bool:
     selected_plan = admitted_plan.selected_plan
     action = next(
-        (
-            action
-            for action in selected_plan.terminal_actions
-            if action.id == action_id
-        ),
+        (action for action in selected_plan.terminal_actions if action.id == action_id),
         None,
     )
     if (
@@ -1321,9 +1291,7 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
                 "runs.work_item_id must match activation work_item_id"
             )
         if run.run_ref.plan_ref != activation.plan_ref:
-            raise StorageIntegrityError(
-                "runs PlanRef must match activations PlanRef"
-            )
+            raise StorageIntegrityError("runs PlanRef must match activations PlanRef")
         if run.stage_kind_id != activation.stage_kind_id:
             raise StorageIntegrityError(
                 "runs.stage_kind_id must match activations.stage_kind_id"
@@ -1334,6 +1302,22 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
             )
 
     _validate_runner_session_relations(state)
+    for transition in state.transitions:
+        if (
+            transition.accepted
+            and transition.input_kind == ApplyRunnerRuntimeFailure.input_kind
+        ):
+            completions = [
+                c
+                for c in state.runner_session_completions.values()
+                if c.application_input_id == transition.input_id
+            ]
+            if len(completions) != 1 or not runtime_failure_applied(
+                state, completions[0].run_id
+            ):
+                raise StorageIntegrityError(
+                    "runtime failure application authority invalid"
+                )
     _validate_dispatch_suspension(state)
     _validate_queue_closures(state)
 
@@ -1367,9 +1351,7 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
         authenticated = authenticate_runner_observation(state, observation)
         if not isinstance(authenticated, AuthenticatedRunnerObservation):
             detail = (
-                f":{authenticated.detail}"
-                if authenticated.detail is not None
-                else ""
+                f":{authenticated.detail}" if authenticated.detail is not None else ""
             )
             raise StorageIntegrityError(
                 "runner_observations accepted-input authority invalid: "
@@ -1433,8 +1415,28 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
         target_activation = state.activations[route.target_activation_id]
         if route.target_work_item_id != target_activation.work_item_id:
             raise StorageIntegrityError(
-                "activation_routes.target_work_item_id must match "
-                "target_activation_id"
+                "activation_routes.target_work_item_id must match target_activation_id"
+            )
+    for event in state.governance_events:
+        admitted = state.admitted_plans.get(event.plan_fingerprint or "")
+        if admitted is None:
+            continue
+        plan = admitted.selected_plan
+        return_ids = {
+            action.id for action in plan.terminal_actions
+            if action.action_kind == "return_to_recorded_source"
+        }
+        if event.disposition != "accepted" or event.action_id not in return_ids:
+            continue
+        targets = [
+            activation for activation in state.activations.values()
+            if activation.created_by_input_id == event.input_id
+        ]
+        if len(targets) != 1 or recorded_source_return_origin(
+            state, plan, targets[0].activation_id
+        ) is None:
+            raise StorageIntegrityError(
+                "activation_routes recorded-source return authority invalid"
             )
     _validate_fanout_records(
         state,
@@ -1703,8 +1705,7 @@ def _validate_static_route_action_authority(
         )
     if runner is None:
         raise StorageIntegrityError(
-            "selected terminal route runner_binding_id must reference "
-            "runner_bindings"
+            "selected terminal route runner_binding_id must reference runner_bindings"
         )
     if target_stage.runner_binding_id != action.runner_binding_id:
         raise StorageIntegrityError(
@@ -1745,9 +1746,7 @@ def _validate_selected_enqueue_route_authority(state: RuntimeState) -> None:
         )
         for route in routes:
             if route.id in seen_route_ids:
-                raise StorageIntegrityError(
-                    "selected enqueue route id must be unique"
-                )
+                raise StorageIntegrityError("selected enqueue route id must be unique")
             seen_route_ids.add(route.id)
             if route.queue_family_id not in queue_family_ids:
                 raise StorageIntegrityError(
@@ -1802,8 +1801,7 @@ def _validate_selected_concurrency_policy_authority(state: RuntimeState) -> None
         for policy in selected_plan.concurrency_policies:
             if policy.partition_id not in partition_ids:
                 raise StorageIntegrityError(
-                    "selected concurrency policy partition_id must reference "
-                    "partitions"
+                    "selected concurrency policy partition_id must reference partitions"
                 )
             if policy.partition_id in policies_by_partition:
                 raise StorageIntegrityError(
@@ -1818,8 +1816,7 @@ def _validate_selected_concurrency_policy_authority(state: RuntimeState) -> None
                 set(policy.coexist_partition_ids)
             ):
                 raise StorageIntegrityError(
-                    "selected concurrency policy coexist_partition_ids must be "
-                    "unique"
+                    "selected concurrency policy coexist_partition_ids must be unique"
                 )
             if policy.partition_id in policy.coexist_partition_ids:
                 raise StorageIntegrityError(
@@ -1833,8 +1830,7 @@ def _validate_selected_concurrency_policy_authority(state: RuntimeState) -> None
                     )
 
         policy_by_partition = {
-            policy.partition_id: policy
-            for policy in selected_plan.concurrency_policies
+            policy.partition_id: policy for policy in selected_plan.concurrency_policies
         }
         for policy in selected_plan.concurrency_policies:
             for peer_partition_id in policy.coexist_partition_ids:
@@ -1885,9 +1881,7 @@ def _validate_selected_join_declaration_authority(state: RuntimeState) -> None:
                     or join.correlation_key
                     not in schema_property_ids.get(schema_id, frozenset())
                 ):
-                    raise StorageIntegrityError(
-                        "selected join declaration is invalid"
-        )
+                    raise StorageIntegrityError("selected join declaration is invalid")
 
 
 def _validate_selected_lifecycle_aftermath(state: RuntimeState) -> None:
@@ -1942,9 +1936,7 @@ def _validate_selected_lifecycle_aftermath(state: RuntimeState) -> None:
                 )
                 if assessment.status == "partial_or_corrupt":
                     if assessment.detail == "duplicate_completion":
-                        raise StorageIntegrityError(
-                            "duplicate logical join aftermath"
-                        )
+                        raise StorageIntegrityError("duplicate logical join aftermath")
                     if assessment.detail == "target_route":
                         raise StorageIntegrityError(
                             "join-created activation route target must match "
@@ -2487,8 +2479,7 @@ def _validate_plan_concurrency_policy_state(
     selected_plan: SelectedCompiledPlan,
 ) -> None:
     policies_by_partition = {
-        policy.partition_id: policy
-        for policy in selected_plan.concurrency_policies
+        policy.partition_id: policy for policy in selected_plan.concurrency_policies
     }
     active_by_partition: dict[PartitionId, list[RunRecord]] = {}
     for run in state.runs.values():
@@ -2496,7 +2487,7 @@ def _validate_plan_concurrency_policy_state(
             continue
         if run.work_item_id in state.closed_work_items:
             continue
-        if any(
+        if runtime_failure_applied(state, run.run_ref.run_id) or any(
             observation.run_id == run.run_ref.run_id
             for observation in state.runner_observations.values()
         ):
@@ -2552,9 +2543,7 @@ def _validate_fanout_source(
         or artifact.source_run_id != record.source_run_id
         or artifact.source_action_id != record.source_action_id
     ):
-        raise StorageIntegrityError(
-            "fanout_records source fields must match artifact"
-        )
+        raise StorageIntegrityError("fanout_records source fields must match artifact")
     if source_run.work_item_id != record.source_work_item_id:
         raise StorageIntegrityError(
             "fanout_records source run must match source work item"
@@ -2617,9 +2606,7 @@ def _validate_fanout_target(
         target_work_item.ref.plan_ref != record.selected_plan_ref
         or target_activation.plan_ref != record.selected_plan_ref
     ):
-        raise StorageIntegrityError(
-            "fanout target PlanRef must match selected PlanRef"
-        )
+        raise StorageIntegrityError("fanout target PlanRef must match selected PlanRef")
     if (
         target_work_item.queue_family_id != record.target_queue_family_id
         or target_activation.queue_family_id != record.target_queue_family_id
@@ -2754,9 +2741,7 @@ def _validate_fanout_dependency_policy(
         return
     if selected_fanout.dependency_policy == "none":
         if dependencies:
-            raise StorageIntegrityError(
-                "fanout dependency policy forbids dependencies"
-            )
+            raise StorageIntegrityError("fanout dependency policy forbids dependencies")
         return
     raise StorageIntegrityError("fanout dependency policy is unsupported")
 
@@ -2920,15 +2905,18 @@ def _validate_closure_records(
             "activations",
         )
         work_item = state.work_items[activation.target_work_item_id]
-        if _closure.closure_creator_refusal(
-            state,
-            EvaluateCompletionBehavior(
-                activation.created_by_input_id,
-                activation.selected_plan_ref,
-                str(activation.completion_behavior_id),
-                activation.closure_target_id,
-            ),
-        ) is not None:
+        if (
+            _closure.closure_creator_refusal(
+                state,
+                EvaluateCompletionBehavior(
+                    activation.created_by_input_id,
+                    activation.selected_plan_ref,
+                    str(activation.completion_behavior_id),
+                    activation.closure_target_id,
+                ),
+            )
+            is not None
+        ):
             raise StorageIntegrityError("closure creator payload digest is invalid")
         if (
             _closure._evaluation_parts(state, activation, target, behavior)[2]
@@ -3045,22 +3033,25 @@ def _validate_closure_target_authority(
     target_key = _closure.closure_target_key_for(target)
     if target.closure_target_id != _closure.closure_target_id(target_key):
         raise StorageIntegrityError("closure_targets.closure_target_id is noncanonical")
-    if _closure.closure_creator_refusal(
-        state,
-        OpenClosureTarget(
-            target.opened_by_input_id,
-            target.selected_plan_ref,
-            str(target.completion_behavior_id),
-            target.closure_target_id,
-            target.lineage_id,
-            target.root_source_kind,
-            target.root_source_id,
-            target.closure_root_work_item_id,
-            target.request_kind,
-            target.target_graph_node_id,
-            target.evidence_window,
-        ),
-    ) is not None:
+    if (
+        _closure.closure_creator_refusal(
+            state,
+            OpenClosureTarget(
+                target.opened_by_input_id,
+                target.selected_plan_ref,
+                str(target.completion_behavior_id),
+                target.closure_target_id,
+                target.lineage_id,
+                target.root_source_kind,
+                target.root_source_id,
+                target.closure_root_work_item_id,
+                target.request_kind,
+                target.target_graph_node_id,
+                target.evidence_window,
+            ),
+        )
+        is not None
+    ):
         raise StorageIntegrityError("closure creator payload digest is invalid")
     return behavior
 
@@ -3365,9 +3356,7 @@ def _selected_completion_behavior(
     completion_behavior_id: object,
     column: str,
 ) -> CompletionBehaviorDeclaration:
-    selected_plan = state.admitted_plans[
-        plan_ref.authority_fingerprint
-    ].selected_plan
+    selected_plan = state.admitted_plans[plan_ref.authority_fingerprint].selected_plan
     behavior = next(
         (
             candidate
@@ -3433,8 +3422,7 @@ def _validate_closed_work_item_runner_observation(
         )
     if observation.created_by_input_id != closed.created_by_input_id:
         raise StorageIntegrityError(
-            "closed_work_items.created_by_input_id must match source runner "
-            "observation"
+            "closed_work_items.created_by_input_id must match source runner observation"
         )
     event = next(
         (
@@ -3575,6 +3563,12 @@ def _validate_recovery_attempts(
             activation_ids=activation_ids,
             run_ids=run_ids,
         )
+        if not current_recovery_return_matches(
+            state, admitted_plan.selected_plan, attempt, policy
+        ):
+            raise StorageIntegrityError(
+                "recovery_attempts current recorded-source return tracking invalid"
+            )
 
 
 def _validate_recovery_attempt_source_links(
@@ -3690,8 +3684,7 @@ def _validate_recovery_attempt_latest_links(
             )
         if run.stage_kind_id != policy_recovery_stage_kind_id:
             raise StorageIntegrityError(
-                "recovery_attempts latest recovery run must match policy "
-                "recovery stage"
+                "recovery_attempts latest recovery run must match policy recovery stage"
             )
 
 
@@ -4151,9 +4144,8 @@ def _validate_operator_waits(
                 )
         else:
             raise StorageIntegrityError("operator_waits.status is unsupported")
-        if (
-            wait.resolution_kind is not None
-            and wait.resolution_kind not in set(selected_wait.allowed_resolution_kinds)
+        if wait.resolution_kind is not None and wait.resolution_kind not in set(
+            selected_wait.allowed_resolution_kinds
         ):
             raise StorageIntegrityError(
                 "operator_waits.resolution_kind must be selected"
@@ -4175,9 +4167,7 @@ def _validate_operator_wait_source_state(
         return
     source_is_closed = wait.source_work_item_id in closed_work_item_ids
     if selected_wait.source_work_item_behavior == "leave_open" and source_is_closed:
-        raise StorageIntegrityError(
-            "operator_waits leave_open source must remain open"
-        )
+        raise StorageIntegrityError("operator_waits leave_open source must remain open")
     if (
         selected_wait.source_work_item_behavior == "close_on_create"
         and not source_is_closed
@@ -4204,10 +4194,14 @@ def _validate_operator_wait_resolution_source_state(
                 closed=state.closed_work_items[wait.source_work_item_id],
             )
         return
-    if wait.resolution_kind in {
-        "close_recorded_source",
-        "revise_recorded_source",
-    } and not source_is_closed:
+    if (
+        wait.resolution_kind
+        in {
+            "close_recorded_source",
+            "revise_recorded_source",
+        }
+        and not source_is_closed
+    ):
         raise StorageIntegrityError(
             "operator_waits resolved source must be closed by resolution"
         )
@@ -4851,9 +4845,7 @@ def _validate_lineage_quarantine_attempt_context(
     original_work_item = state.work_items[quarantine.original_source_work_item_id]
     original_activation = state.activations[quarantine.original_source_activation_id]
     emitting_run = state.runs[quarantine.emitting_recovery_run_id]
-    emitting_activation = state.activations[
-        quarantine.emitting_recovery_activation_id
-    ]
+    emitting_activation = state.activations[quarantine.emitting_recovery_activation_id]
     if (
         original_run.work_item_id != original_work_item.ref.work_item_id
         or original_run.activation_id != original_activation.activation_id
@@ -5054,9 +5046,10 @@ def _validate_operator_resume_intervention(
         raise StorageIntegrityError(
             "operator_interventions resume target must match recorded source"
         )
-    if activation.created_by_input_id != state.operator_interventions[
-        intervention_record_id
-    ].created_by_input_id:
+    if (
+        activation.created_by_input_id
+        != state.operator_interventions[intervention_record_id].created_by_input_id
+    ):
         raise StorageIntegrityError(
             "operator_interventions resume target must be created by intervention"
         )
@@ -5278,9 +5271,7 @@ def validate_audit_transition_rows(
     seen_orders: set[int] = set()
     for row in rows:
         if row.transition_order in seen_orders:
-            raise StorageIntegrityError(
-                f"{table_name}.transition_order must be unique"
-            )
+            raise StorageIntegrityError(f"{table_name}.transition_order must be unique")
         seen_orders.add(row.transition_order)
         transition = transition_rows_by_order.get(row.transition_order)
         if transition is None:
@@ -5355,7 +5346,7 @@ def _validate_audit_disposition(
     if row.disposition != expected_disposition:
         raise StorageIntegrityError(
             f"{table_name}.disposition must match transition accepted flag"
-            )
+        )
 
 
 def _validate_artifact_source_context(
@@ -5365,11 +5356,7 @@ def _validate_artifact_source_context(
 ) -> None:
     authenticated = authenticate_artifact_provenance(state, artifact)
     if not isinstance(authenticated, AuthenticatedArtifactProvenance):
-        detail = (
-            f":{authenticated.detail}"
-            if authenticated.detail is not None
-            else ""
-        )
+        detail = f":{authenticated.detail}" if authenticated.detail is not None else ""
         raise StorageIntegrityError(
             "artifacts runner-observation provenance invalid: "
             f"{authenticated.reason_code}{detail}"
@@ -5383,9 +5370,7 @@ def _validate_reference(
     referenced_table: str,
 ) -> None:
     if value not in valid_values:
-        raise StorageIntegrityError(
-            f"{column} must reference {referenced_table}"
-        )
+        raise StorageIntegrityError(f"{column} must reference {referenced_table}")
 
 
 __all__ = (

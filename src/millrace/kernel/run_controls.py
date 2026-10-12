@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from millrace.contracts.runtime_failures import runtime_failure_applied
 from millrace.contracts.state import RunRecord, RuntimeState
 
 
@@ -32,7 +33,9 @@ def run_eligibility_refusal(state: RuntimeState, run: RunRecord) -> str | None:
     session = state.runner_sessions.get(run.current_session_id or "")
     if session is not None and session.state == "lost":
         return "run_aftermath_unknown"
-    if any(item.run_id == run_id for item in state.runner_observations.values()):
+    if runtime_failure_applied(state, run_id) or any(
+        item.run_id == run_id for item in state.runner_observations.values()
+    ):
         return "run_observed"
     if run.work_item_id in state.closed_work_items:
         return "run_work_closed"

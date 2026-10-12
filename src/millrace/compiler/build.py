@@ -7,7 +7,8 @@ catalog data.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from typing import cast
 
 from millrace.compiler.source import (
     SourceRecord,
@@ -73,6 +74,9 @@ from millrace.contracts.compiled_plan import (
     ContextSourceDeclaration,
     ContextWriteRule,
     RunnerBindingWithPayloadCapacityDeclaration,
+    RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration,
+    RunnerBindingWithRuntimeFailuresDeclaration,
+    RunnerRuntimeFailureMapping,
     StageContextBindingDeclaration,
     freeze_authority_value,
 )
@@ -421,41 +425,7 @@ def build_selected_plan(
         ),
         lineage_policy=str(source["lineage_policy"]),
         runner_bindings=tuple(
-            (
-                RunnerBindingWithPayloadCapacityDeclaration
-                if "payload_capacity_pin" in record
-                else RunnerBindingDeclaration
-            )(
-                **(
-                    {
-                        "payload_capacity_pin": decode_payload_capacity_pin(
-                            record["payload_capacity_pin"]
-                        )
-                    }
-                    if "payload_capacity_pin" in record
-                    else {}
-                ),
-                id=RunnerBindingId(str(record["id"])),
-                adapter_kind=str(record.get("adapter_kind", "")),
-                stage_kind_ids=tuple(
-                    StageKindId(value)
-                    for value in text_tuple(record.get("stage_kind_ids", ()))
-                ),
-                invocation_timeout_seconds=_required_int(
-                    record["invocation_timeout_seconds"]
-                ),
-                presentation=authority_mapping(record.get("presentation")),
-                required_capability_ids=tuple(
-                    CapabilityId(value)
-                    for value in text_tuple(record.get("required_capability_ids", ()))
-                ),
-                component_pin=_optional_runner_component_pin(
-                    record.get("component_pin")
-                ),
-                terminal_result_mappings=_runner_terminal_result_mappings(
-                    record.get("terminal_result_mappings", ())
-                ),
-            )
+            _build_runner_binding(record)
             for record in _records_by_id(source, "runner_bindings")
         ),
         intervention_options=tuple(
@@ -560,6 +530,51 @@ def _records_by_id(source: Mapping[str, object], key: str) -> tuple[SourceRecord
     return tuple(sorted(records(source, key), key=lambda record: str(record["id"])))
 
 
+def _build_runner_binding(record: SourceRecord) -> RunnerBindingDeclaration:
+    has_payload_capacity = "payload_capacity_pin" in record
+    runtime_failure_mappings = _runner_runtime_failure_mappings(
+        record.get("runtime_failure_mappings", ())
+    )
+    binding_type: type[RunnerBindingDeclaration]
+    if has_payload_capacity and runtime_failure_mappings:
+        binding_type = RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration
+    elif runtime_failure_mappings:
+        binding_type = RunnerBindingWithRuntimeFailuresDeclaration
+    elif has_payload_capacity:
+        binding_type = RunnerBindingWithPayloadCapacityDeclaration
+    else:
+        binding_type = RunnerBindingDeclaration
+
+    constructor = cast(Callable[..., RunnerBindingDeclaration], binding_type)
+    arguments: dict[str, object] = {
+        "id": RunnerBindingId(str(record["id"])),
+        "adapter_kind": str(record.get("adapter_kind", "")),
+        "stage_kind_ids": tuple(
+            StageKindId(value)
+            for value in text_tuple(record.get("stage_kind_ids", ()))
+        ),
+        "invocation_timeout_seconds": _required_int(
+            record["invocation_timeout_seconds"]
+        ),
+        "presentation": authority_mapping(record.get("presentation")),
+        "required_capability_ids": tuple(
+            CapabilityId(value)
+            for value in text_tuple(record.get("required_capability_ids", ()))
+        ),
+        "component_pin": _optional_runner_component_pin(record.get("component_pin")),
+        "terminal_result_mappings": _runner_terminal_result_mappings(
+            record.get("terminal_result_mappings", ())
+        ),
+    }
+    if has_payload_capacity:
+        arguments["payload_capacity_pin"] = decode_payload_capacity_pin(
+            record["payload_capacity_pin"]
+        )
+    if runtime_failure_mappings:
+        arguments["runtime_failure_mappings"] = runtime_failure_mappings
+    return constructor(**arguments)
+
+
 def _optional_runner_component_pin(value: object) -> RunnerComponentPin | None:
     if value is None:
         return None
@@ -595,6 +610,21 @@ def _runner_terminal_result_mappings(
             stage_kind_id=StageKindId(str(record["stage_kind_id"])),
             runner_result_id=str(record["runner_result_id"]),
             outcome_id=OutcomeId(str(record["outcome_id"])),
+        )
+        for record in (mapping(item) for item in value)
+    )
+
+
+def _runner_runtime_failure_mappings(
+    value: object,
+) -> tuple[RunnerRuntimeFailureMapping, ...]:
+    if not is_sequence(value):
+        return ()
+    return tuple(
+        RunnerRuntimeFailureMapping(
+            stage_kind_id=StageKindId(str(record["stage_kind_id"])),
+            failure_kind=str(record["failure_kind"]),
+            action_id=ActionId(str(record["action_id"])),
         )
         for record in (mapping(item) for item in value)
     )

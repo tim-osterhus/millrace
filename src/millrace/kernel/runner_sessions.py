@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from millrace.contracts.compiled_plan import StageContextBindingDeclaration
+from millrace.contracts.runtime_failures import runtime_failure_applied
 from millrace.contracts.state import (
     RunnerSessionCancellationAttemptRecord,
     RunnerSessionCancellationRecord,
@@ -63,7 +64,7 @@ def _runner_session_retry_refusal(
 ) -> str | None:
     if not transition_input.explicit_retry_intent:
         return "runner_session_retry_forbidden"
-    if any(
+    if runtime_failure_applied(state, prior.run_id) or any(
         observation.run_id == prior.run_id
         for observation in state.runner_observations.values()
     ):

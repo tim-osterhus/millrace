@@ -196,11 +196,12 @@ def test_verified_live_handoff_is_the_only_transport_bundle() -> None:
     }
     rank = {
         "session_persistence": 0,
-        "session_completion": 1,
-        "session_cancellation": 2,
-        "session_reconciliation": 3,
-        "session_supervision": 4,
-        "session_coordinator": 5,
+        "session_runtime_failures": 1,
+        "session_completion": 2,
+        "session_cancellation": 3,
+        "session_reconciliation": 4,
+        "session_supervision": 5,
+        "session_coordinator": 6,
     }
     for source, targets in graph.items():
         assert source == "session_coordinator" or "session_coordinator" not in targets

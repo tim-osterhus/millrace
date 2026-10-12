@@ -103,8 +103,7 @@ def freeze_authority_mapping(
         if not isinstance(key, str):
             raise UnsupportedAuthorityValueError("authority map keys must be strings")
     frozen = {
-        key: freeze_authority_value(nested_value)
-        for key, nested_value in value.items()
+        key: freeze_authority_value(nested_value) for key, nested_value in value.items()
     }
     return MappingProxyType(frozen)
 
@@ -594,6 +593,65 @@ class RunnerBindingWithPayloadCapacityDeclaration(RunnerBindingDeclaration):
     def __post_init__(self) -> None:
         RunnerBindingDeclaration.__post_init__(self)
         validate_payload_capacity_binding(self)
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerRuntimeFailureMapping:
+    record_kind: ClassVar[str] = "runner_runtime_failure_mapping"
+    schema_version: ClassVar[int] = 1
+
+    stage_kind_id: StageKindId
+    failure_kind: str
+    action_id: ActionId
+
+    def __post_init__(self) -> None:
+        if self.failure_kind != "timeout":
+            raise ValueError("unsupported runtime failure kind")
+        if (
+            type(self.stage_kind_id) is not StageKindId
+            or type(self.action_id) is not ActionId
+        ):
+            raise TypeError("runtime failure mapping requires typed stage/action ids")
+
+
+def _require_runtime_failure_mappings(
+    binding: RunnerBindingDeclaration,
+    mappings: tuple[RunnerRuntimeFailureMapping, ...],
+) -> None:
+    if not isinstance(mappings, tuple) or not mappings:
+        raise ValueError("runtime failure mappings must be a nonempty tuple")
+    if any(type(item) is not RunnerRuntimeFailureMapping for item in mappings):
+        raise TypeError("runtime failure mappings require typed mapping records")
+    keys = [
+        (str(item.stage_kind_id), item.failure_kind, str(item.action_id))
+        for item in mappings
+    ]
+    if keys != sorted(keys) or len({key[:2] for key in keys}) != len(keys):
+        raise ValueError("runtime failure mappings must be canonical and unique")
+    if any(item.stage_kind_id not in binding.stage_kind_ids for item in mappings):
+        raise ValueError("runtime failure mapping stage must belong to the binding")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RunnerBindingWithRuntimeFailuresDeclaration(RunnerBindingDeclaration):
+    schema_version: ClassVar[int] = 5
+    runtime_failure_mappings: tuple[RunnerRuntimeFailureMapping, ...]
+
+    def __post_init__(self) -> None:
+        RunnerBindingDeclaration.__post_init__(self)
+        _require_runtime_failure_mappings(self, self.runtime_failure_mappings)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration(
+    RunnerBindingWithPayloadCapacityDeclaration
+):
+    schema_version: ClassVar[int] = 6
+    runtime_failure_mappings: tuple[RunnerRuntimeFailureMapping, ...]
+
+    def __post_init__(self) -> None:
+        RunnerBindingWithPayloadCapacityDeclaration.__post_init__(self)
+        _require_runtime_failure_mappings(self, self.runtime_failure_mappings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1272,9 +1330,7 @@ def context_binding_authority_refusal(
             return f"context_binding_stage_duplicate_id:{record_id}"
 
     for index, binding in _context_authority_sorted(bindings, "id"):
-        binding_id = _context_authority_id(
-            _context_authority_field(binding, "id")
-        )
+        binding_id = _context_authority_id(_context_authority_field(binding, "id"))
         if binding_id is None:
             return f"context_binding_id:{index}"
 
@@ -1309,8 +1365,7 @@ def context_binding_authority_refusal(
             if router_asset_id_status == "missing":
                 return f"context_binding_router_asset:{binding_id}"
             return (
-                f"context_binding_router_asset_id_{router_asset_id_status}:"
-                f"{binding_id}"
+                f"context_binding_router_asset_id_{router_asset_id_status}:{binding_id}"
             )
         router_asset_id = _context_authority_id(router_asset_value)
         assert router_asset_id is not None
@@ -1320,12 +1375,15 @@ def context_binding_authority_refusal(
         router_asset = router_assets[0]
         if typed_authority and type(router_asset) is not AssetDeclaration:
             return f"context_binding_router_asset_record:{binding_id}"
-        if _context_authority_string(
-            _context_router_asset_kind(
-                router_asset,
-                serialized_authority=serialized_authority,
+        if (
+            _context_authority_string(
+                _context_router_asset_kind(
+                    router_asset,
+                    serialized_authority=serialized_authority,
+                )
             )
-        ) != "template":
+            != "template"
+        ):
             return f"context_binding_router_asset_kind:{binding_id}"
         router_body = _context_authority_field(router_asset, "body")
         if not isinstance(router_body, str):
@@ -1377,6 +1435,8 @@ def context_binding_authority_refusal(
         if typed_authority and type(runner) not in (
             RunnerBindingDeclaration,
             RunnerBindingWithPayloadCapacityDeclaration,
+            RunnerBindingWithRuntimeFailuresDeclaration,
+            RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration,
         ):
             return f"context_binding_runner_record:{binding_id}"
         runner_stage_ids = _context_authority_collection(
@@ -1386,9 +1446,7 @@ def context_binding_authority_refusal(
         )
         if runner_stage_ids is None or stage_id not in {
             item
-            for item in (
-                _context_authority_id(value) for value in runner_stage_ids
-            )
+            for item in (_context_authority_id(value) for value in runner_stage_ids)
             if item is not None
         }:
             return f"context_binding_runner_stage:{binding_id}"
@@ -1473,34 +1531,34 @@ def context_binding_authority_refusal(
                     )
                 source_pair = (source_kind, source_ref)
                 if source_pair in seen_source_pairs:
-                    return (
-                        f"context_binding_source_overlap:{binding_id}:{source_ref}"
-                    )
+                    return f"context_binding_source_overlap:{binding_id}:{source_ref}"
                 seen_source_pairs.add(source_pair)
-                if source_pair not in {
-                    ("dispatch_material", "current"),
-                    ("selected_artifacts", "direct_predecessors"),
-                    ("selected_artifacts", "current_lineage"),
-                    (
-                        "selected_attempts",
-                        "since_last_accepted_transition",
-                    ),
-                    ("selected_attempts", "current_lineage"),
-                } and source_kind != "workspace_relative_root":
+                if (
+                    source_pair
+                    not in {
+                        ("dispatch_material", "current"),
+                        ("selected_artifacts", "direct_predecessors"),
+                        ("selected_artifacts", "current_lineage"),
+                        (
+                            "selected_attempts",
+                            "since_last_accepted_transition",
+                        ),
+                        ("selected_attempts", "current_lineage"),
+                    }
+                    and source_kind != "workspace_relative_root"
+                ):
                     return f"context_binding_source_kind:{binding_id}:{source_index}"
                 if source_kind == "workspace_relative_root":
                     if not _context_safe_workspace_path(source_ref):
                         return (
-                            f"context_binding_source_path:{binding_id}:"
-                            f"{source_index}"
+                            f"context_binding_source_path:{binding_id}:{source_index}"
                         )
                     if any(
                         _context_paths_overlap(source_ref, previous)
                         for previous in workspace_source_roots
                     ):
                         return (
-                            f"context_binding_source_overlap:{binding_id}:"
-                            f"{source_ref}"
+                            f"context_binding_source_overlap:{binding_id}:{source_ref}"
                         )
                     workspace_source_roots.append(source_ref)
                     if source_field == "required_sources":
@@ -1529,9 +1587,7 @@ def context_binding_authority_refusal(
             )
         if write_rules is None:
             return f"context_binding_write_rules:{binding_id}"
-        if (
-            mutation_policy == "forbid_selected_roots" and write_rules
-        ) or (
+        if (mutation_policy == "forbid_selected_roots" and write_rules) or (
             mutation_policy == "reconcile_selected_writes" and not write_rules
         ):
             return f"context_binding_mutation_write_rules:{binding_id}"
@@ -1542,9 +1598,7 @@ def context_binding_authority_refusal(
                 record_kind=ContextWriteRule.record_kind,
                 required_fields={"relative_root", "disposition"},
                 optional_fields=set(),
-                expected_record_type=(
-                    ContextWriteRule if typed_authority else None
-                ),
+                expected_record_type=(ContextWriteRule if typed_authority else None),
                 require_record_headers=serialized_authority,
             ):
                 return f"context_binding_write_shape:{binding_id}:{rule_index}"
@@ -1605,9 +1659,10 @@ def context_binding_authority_refusal(
         action = actions_for_id[0]
         if typed_authority and type(action) is not TerminalActionDeclaration:
             return f"context_binding_writeback_action_record:{binding_id}"
-        if _context_authority_id(
-            _context_authority_field(action, "stage_kind_id")
-        ) != stage_id:
+        if (
+            _context_authority_id(_context_authority_field(action, "stage_kind_id"))
+            != stage_id
+        ):
             return f"context_binding_writeback_action_stage:{binding_id}"
         action_outcome_id = _context_authority_id(
             _context_authority_field(action, "outcome_id")
@@ -1623,9 +1678,7 @@ def context_binding_authority_refusal(
             or action_outcome_id
             not in {
                 value
-                for value in (
-                    _context_authority_id(item) for item in declared_outcomes
-                )
+                for value in (_context_authority_id(item) for item in declared_outcomes)
                 if value is not None
             }
         ):
@@ -1637,9 +1690,13 @@ def context_binding_authority_refusal(
             and type(outcomes_for_id[0]) is not TerminalOutcomeDeclaration
         ):
             return f"context_binding_writeback_outcome_record:{binding_id}"
-        if len(outcomes_for_id) != 1 or _context_authority_id(
-            _context_authority_field(outcomes_for_id[0], "stage_kind_id")
-        ) != stage_id:
+        if (
+            len(outcomes_for_id) != 1
+            or _context_authority_id(
+                _context_authority_field(outcomes_for_id[0], "stage_kind_id")
+            )
+            != stage_id
+        ):
             return f"context_binding_writeback_action_outcome:{binding_id}"
 
         schemas_for_id = schema_by_id.get(schema_id, ())
@@ -1879,10 +1936,7 @@ def _context_closure_id_refusal(
         )
         if status is None or (allow_none and status == "missing"):
             return None
-        return (
-            f"context_binding_{collection_name}_{field_name}_{status}:"
-            f"{record_index}"
-        )
+        return f"context_binding_{collection_name}_{field_name}_{status}:{record_index}"
 
     def check_sequence(
         record: object,
@@ -2007,9 +2061,7 @@ def _context_authority_group_by_id(
 ) -> dict[str, tuple[object, ...]]:
     grouped: dict[str, list[object]] = {}
     for record in records:
-        record_id = _context_authority_id(
-            _context_authority_field(record, field_name)
-        )
+        record_id = _context_authority_id(_context_authority_field(record, field_name))
         if record_id is None:
             continue
         grouped.setdefault(record_id, []).append(record)
@@ -2024,9 +2076,7 @@ def _context_authority_sorted(
         sorted(
             enumerate(records),
             key=lambda item: (
-                _context_authority_id(
-                    _context_authority_field(item[1], field_name)
-                )
+                _context_authority_id(_context_authority_field(item[1], field_name))
                 or "",
                 item[0],
             ),
@@ -2063,9 +2113,10 @@ def _context_safe_workspace_path(value: object) -> bool:
 def _context_paths_overlap(left: str, right: str) -> bool:
     left_parts = tuple(left.split("/"))
     right_parts = tuple(right.split("/"))
-    return left_parts[: len(right_parts)] == right_parts or right_parts[
-        : len(left_parts)
-    ] == left_parts
+    return (
+        left_parts[: len(right_parts)] == right_parts
+        or right_parts[: len(left_parts)] == left_parts
+    )
 
 
 def _context_path_contains(root: str, path: str) -> bool:
@@ -2091,9 +2142,7 @@ def _context_is_generic_writeback_schema(value: object) -> bool:
                     ),
                     "properties": {
                         "path": {"type": "string"},
-                        "change_kind": {
-                            "enum": ("create", "modify", "delete")
-                        },
+                        "change_kind": {"enum": ("create", "modify", "delete")},
                         "before_sha256": {"type": "string"},
                         "after_sha256": {"type": "string"},
                         "evidence_refs": {
@@ -2146,9 +2195,7 @@ def runner_component_authority_refusal(
     selected_plan: SelectedCompiledPlan,
 ) -> str | None:
     stage_by_id = {stage.id: stage for stage in selected_plan.stage_kinds}
-    outcome_by_id = {
-        outcome.id: outcome for outcome in selected_plan.terminal_outcomes
-    }
+    outcome_by_id = {outcome.id: outcome for outcome in selected_plan.terminal_outcomes}
     capability_counts: dict[CapabilityId, int] = {}
     for capability in selected_plan.capabilities:
         capability_counts[capability.id] = capability_counts.get(capability.id, 0) + 1
@@ -2465,9 +2512,8 @@ def _canonical_record(value: object) -> dict[str, CanonicalValue]:
 
 
 def _is_string_backed_id(value: object) -> bool:
-    return (
-        value.__class__.__module__ == "millrace.contracts.ids"
-        and isinstance(getattr(value, "value", None), str)
+    return value.__class__.__module__ == "millrace.contracts.ids" and isinstance(
+        getattr(value, "value", None), str
     )
 
 
@@ -2495,6 +2541,9 @@ __all__ = (
     "RecoveryPolicyDeclaration",
     "RemediationPolicyDeclaration",
     "RunnerBindingDeclaration",
+    "RunnerRuntimeFailureMapping",
+    "RunnerBindingWithRuntimeFailuresDeclaration",
+    "RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration",
     "SelectedCompiledPlan",
     "StageContextBindingDeclaration",
     "SelectedWorkflowPackageAssetPin",

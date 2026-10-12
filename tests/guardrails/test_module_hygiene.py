@@ -41,6 +41,7 @@ ROOT_KERNEL_ALLOWED_API = {
     "apply",
     "decide",
     "empty_runtime_state",
+    "run_is_settled",
 }
 
 FANOUT_POLICY_HELPERS = {
@@ -253,6 +254,7 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
     "millrace.kernel": frozenset(
         {
             "millrace.kernel.lifecycle",
+            "millrace.kernel.lookups",
             "millrace.kernel.state",
             "millrace.kernel.transition",
         }

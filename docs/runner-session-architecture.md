@@ -118,17 +118,21 @@ not a filesystem sandbox.
 
 `adapters/cli/session_coordinator.py` is the stable orchestration facade. It
 owns session creation, external start, live-handle driving, and state routing.
-Four private modules own the remaining mechanics:
+Private modules own the remaining mechanics:
 
 - `session_reconciliation.py` owns restart reconciliation and locator checks.
 - `session_cancellation.py` owns cancellation, escalation, and cleanup.
 - `session_completion.py` owns completion persistence, replay, and diagnostics.
 - `session_persistence.py` owns CAS evidence loading and governed usage
   persistence.
+- `session_runtime_failures.py` owns mechanical timeout application and its
+  persisted proof, without creating agent output.
+- `session_supervision.py` owns live session driving and stop checks.
 
 The dependency graph is acyclic. The coordinator may use all four private
 modules. Reconciliation may use cancellation and completion. Cancellation may
-use completion. Completion may use persistence. Persistence does not use
+use completion. Completion may use persistence and runtime-failure application. The
+runtime-failure module does not import completion. Persistence does not use
 another session module.
 
 Reconciliation returns verified live state through one immutable record with
@@ -149,12 +153,22 @@ Completion follows one path:
 1. validate and bound adapter output;
 2. authenticate the complete run/session/plan/claim/generation/fence echo;
 3. persist one terminal session completion;
-4. for success only, replay the persisted evidence through the existing
-   runner-result transition;
-5. treat that transition's deterministic input receipt as application proof.
+4. for successful output, replay persisted evidence through the runner-result
+   transition; for an explicitly mapped clean timeout, authenticate the persisted
+   completion diagnostic and apply the selected recovery action;
+5. authenticate the deterministic receipt and durable effects as application
+   proof. Restart reconciliation applies a pending completion before dispatch.
 
-Adapter errors, cancellation, loss, and live events cannot create a workflow
-result, route, artifact, recovery attempt, terminal action, or closure.
+A mechanical timeout remains a failed session with no runner-result evidence,
+runner observation, or agent artifact. It can create recovery state only when
+its exact stage and binding select a `runtime_failure_mappings` entry. The
+compiler requires an existing recovery route and exactly one selected recovery
+policy; neither stage names nor terminal markers imply that mapping. Cancellation,
+loss, incomplete cleanup, non-timeout failures and unmapped timeouts remain
+excluded. Drain and work-budget cancellation do not authorize recovery.
+
+See `runtime-failure-recovery.md` for authoring and
+`maintainers/runtime-failure-recovery-invariant-matrix.md` for verification.
 
 For a bound run, the schema-7 dispatch envelope carries one compact
 `context_checkout` descriptor containing the manifest digest, binding ID,
@@ -243,8 +257,10 @@ runtime scope. The projection can include:
 - completion persistence and deterministic application-receipt status;
 - the effective mechanical grace constants.
 
-When the current session ends with an adapter error, `runs show RUN_ID` adds a
-bounded `rejected_result` projection. When a completed runner result has a
+When the current session ends with an unmapped or unapplied adapter error,
+`runs show RUN_ID` adds a bounded `rejected_result` projection. An authenticated
+mapped timeout instead reports `application_status: applied`, preserves the
+failed session, and omits `rejected_result`. When a completed runner result has a
 refused application receipt, it adds the same projection with
 `rejection_kind: observation_refusal` and the durable kernel refusal reason.
 The projection reports the session identity, application status, relevant

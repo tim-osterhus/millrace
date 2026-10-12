@@ -97,21 +97,25 @@ def validate_payload_capacity_binding(binding: object) -> None:
     from millrace.contracts.compiled_plan import (
         RunnerBindingDeclaration,
         RunnerBindingWithPayloadCapacityDeclaration,
+        RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration,
+        RunnerBindingWithRuntimeFailuresDeclaration,
     )
     if isinstance(binding, Mapping):
         present = "payload_capacity_pin" in binding
         version = binding.get("schema_version", 4 if present else 3)
-        if type(version) is not int or version not in (3, 4):
+        if type(version) is not int or version not in (3, 4, 5, 6):
             raise PayloadCapacityError("invalid_runner_binding_version")
     else:
         if type(binding) not in (
             RunnerBindingDeclaration,
             RunnerBindingWithPayloadCapacityDeclaration,
+            RunnerBindingWithRuntimeFailuresDeclaration,
+            RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration,
         ):
             raise PayloadCapacityError("invalid_runner_binding_type")
-        present = type(binding) is RunnerBindingWithPayloadCapacityDeclaration
+        present = isinstance(binding, RunnerBindingWithPayloadCapacityDeclaration)
         version = _field(binding, "schema_version")
-    if (version == 4) != present:
+    if (version in (4, 6)) != present:
         raise PayloadCapacityError("invalid_runner_binding_capacity_shape")
     if present:
         if (
