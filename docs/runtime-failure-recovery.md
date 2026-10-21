@@ -1,7 +1,7 @@
-# Selected recovery for runner timeouts
+# Selected recovery for terminal runner failures
 
 A runner invocation can fail before producing agent output. A workflow may
-explicitly map a clean adapter timeout to its selected recovery route:
+explicitly map a safely settled terminal failure to its selected recovery route:
 
 ```json
 "runtime_failure_mappings": [
@@ -17,7 +17,11 @@ The entry belongs inside that stage's runner binding. IDs in this example are
 illustrative; the selected workflow must declare the stage, outcome, recovery
 route, target binding and recovery policy. The compiler does not add any of them.
 A binding may map several of its own stages, but each stage/failure pair is
-unique and canonically sorted. `timeout` is the supported failure kind.
+unique and canonically sorted. The supported failure kinds are `timeout`,
+`invocation_failed`, `result_parse_failed`, `output_too_large` and
+`result_rejected`. The runtime never infers a recovery action for an unmapped
+failure. See the [classification matrix](maintainers/runtime-failure-classification.md)
+for exact triggers and refusal boundaries.
 
 Mapped bindings use runner-binding schema 5, or schema 6 when they also carry a
 payload-capacity pin. Bindings without mappings retain schema 3/4 and their
@@ -33,15 +37,82 @@ separate explicit recovery action when that threshold behavior is also needed.
 
 Millrace authenticates the run, session, current dispatch generation, session
 fence, claim, plan, stage, graph node, binding, completion and diagnostic digest.
-The failed session must have started, completed cleanup and have no cancellation
-history or runner-result evidence. The bounded canonical diagnostic must echo
-that exact authority and identify a timeout. Malformed or missing CAS bytes
-fail closed. Non-timeout failures, cancelled work, lost sessions, failed cleanup,
-unmapped failures and operator holds do not route automatically.
+Adapter-origin failures require a current failed/error completion, authenticated
+bounded canonical diagnostic, completed cleanup and no cancellation history or
+runner-result evidence. A proven refusal before external work may have no
+`started_at`, but must have accepted start intent and `not_required` cleanup.
+Missing or malformed CAS bytes, lost ownership, failed cleanup, unmapped
+failures and operator holds retain refusal.
 
-Recovery uses `workflow.apply_runner_runtime_failure`. It preserves the failed
-completion and creates no `RunnerResultObserved`, runner observation, runner
-result evidence or candidate artifact. The same selected recovery policy owns
+`result_rejected` covers an authenticated completed invocation whose selected
+marker, artifact, dynamic target, route projection, closure verdict, generated
+child payload or counter outcome was refused. The original completed session, candidate CAS and refused observation
+receipt remain unchanged. A distinct deterministic mechanical input ending in
+`:runtime-failure` applies recovery. Its exact original receipt, transition,
+refusal, trace, governance event and evidence digest must agree; identity,
+claim, fencing and state-integrity refusals never select this route. Malformed
+JSON remains a parse failure and never becomes a successful candidate.
+
+An ordinary route into a recovery stage does not create a recovery attempt.
+Dispatch therefore hides `return_to_recorded_source` and `quarantine_lineage`
+options unless one exact selected policy/attempt owns the current work item,
+lineage, run and activation, its phase permits the action, and its history
+authenticates. Shared action declarations may belong to several policies; only
+the current applicable attempt determines eligibility. The resolver repeats
+the same check. Ordinary BLOCKED/COMPLETE actions retain their selected routing
+and counters. Component-bound invocation requests include mappings only for the
+currently rendered eligible outcomes; the immutable binding remains unchanged.
+The compiler, export verifier and runtime admission refuse an
+ordinary ingress whose stage has only attempt-owned selectable exits.
+
+If an authentic completed ordinary invocation nevertheless emits an
+attempt-owned marker without any applicable attempt, the original observation
+is refused with `recovery_action_context_missing`. An explicit `result_rejected`
+mapping may start bounded recovery after complete owned cleanup. It does not
+accept the marker, invent prior recovery authority or quarantine the lineage.
+Ambiguous, stale, foreign and invalid-phase contexts remain safety refusals and
+cannot select candidate recovery.
+
+A returned closure evaluator keeps its original target, exact evidence snapshot
+and selected evaluation contract. Each return follows authenticated recorded
+source history, including repeated recovery. Missing or ambiguous evaluation,
+creator or return provenance refuses the result and durable load. Candidate
+verdict errors may route recovery; invalid durable target authority, missing
+selected remediation schema and stale authoritative evidence remain fatal.
+Valid pass, gap and blocked verdicts still apply their declared aftermath.
+
+A closure evaluator run can also receive a selected mechanical failure, such as
+a `timeout`, and route to its declared recovery. This is allowed even when the
+evaluator's queue, stage, node and binding tuple is not an ordinary selected
+route target. The authority is the claimed original evaluator activation, which
+must match one accepted evaluation creator and its single durable evaluation
+record. The static tuple alone grants nothing, and forged, duplicate, drifted or
+non-original provenance is refused on application and on reload. A returned
+pass, gap or blocked verdict after recovery resolves its evaluation through the
+authenticated recorded-source return chain, so a returned pass after the closed
+target remains a lawful closed-target outcome.
+
+A runtime-owned invocation deadline may select `timeout` only with one exact
+primary `runner_timeout` request and authenticated ordered cancellation
+operations ending in successful transport cleanup. Their bounded canonical CAS
+diagnostics, operation receipts and run/session/generation/fences are required
+for application and reload. A remaining campaign wall budget records
+`daemon_shutdown`, including in retained/reconciled sessions; operator
+cancellation, shutdown, drain and spent global budgets do not start recovery.
+
+Recovery dispatch includes `governance_context.runtime_failure_source` when its
+recorded source was a mechanical failure. The current selected recovery owner
+and source application authenticate the policy, attempt count, source
+run/session/stage/node/binding, failure kind, original refusal and diagnostic
+references. Invocation preparation loads the bounded already-redacted canonical
+diagnostic after CAS authentication. Pi and Codex pass this evidence to the
+recovery agent. A rejected candidate remains an evidence reference; the context
+adds no outcome, capability or stage authority.
+
+Recovery uses `workflow.apply_runner_runtime_failure`. It preserves the original completion and creates no accepted runner observation
+or candidate artifact. Adapter errors create no runner-result evidence;
+semantic failures preserve their original rejected evidence and refused
+`RunnerResultObserved` receipt. The same selected recovery policy owns
 immediate recovery, cooldown, return, successful reset and quarantine. Recovery
 is bounded by those declarations; this mechanism adds no retry allowance or
 stage timeout defaults.

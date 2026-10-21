@@ -20,6 +20,7 @@ from millrace.contracts.compiled_plan import (
     RecoveryPolicyDeclaration,
     RemediationPolicyDeclaration,
     SelectedCompiledPlan,
+    SiblingDependencyFanoutDeclaration,
     StageContextBindingDeclaration,
     TerminalActionDeclaration,
 )
@@ -27,23 +28,25 @@ from millrace.contracts.context_checkout import (
     context_checkout_manifest_digest,
     decode_context_checkout_manifest,
 )
+from millrace.contracts.fanout_dependencies import sibling_dependency_authority_refusal
+from millrace.contracts.observation_policy import observation_artifact_refusal
 from millrace.contracts.operator_waits import _operator_wait_record_id
 from millrace.contracts.runner import (
-    RunnerResultEvidence,
     RunnerSessionCompletionDiagnostic,
     runner_result_evidence_digest,
     runner_result_evidence_from_payload,
 )
+from millrace.contracts.runner_result_refusals import runner_result_refusal_chain
 from millrace.contracts.runtime_failure_history import (
     current_recovery_return_matches,
     recorded_source_return_origin,
 )
-from millrace.contracts.runtime_failures import runtime_failure_applied
-from millrace.contracts.schema import validate_schema
-from millrace.contracts.selected_plan_lookups import (
-    terminal_action_for,
-    terminal_outcome_for,
+from millrace.contracts.runtime_failures import (
+    formal_recovery_activation_authority_refusal,
+    runtime_failure_application_input_id,
+    runtime_failure_applied,
 )
+from millrace.contracts.schema import validate_schema
 from millrace.contracts.state import (
     Activation,
     AdmittedPlan,
@@ -72,6 +75,7 @@ from millrace.contracts.state import (
     WorkDependencyRecord,
     WorkItem,
 )
+from millrace.contracts.terminal_ingress import terminal_ingress_authority_refusal
 from millrace.contracts.transition import (
     ApplyRunnerRuntimeFailure,
     AttachRunnerSessionContext,
@@ -88,10 +92,12 @@ from millrace.contracts.transition import (
     input_payload_digest,
     operator_payload_digest,
 )
+from millrace.kernel.dependency_policy import has_unready_dependency
 from millrace.kernel.fanout_policy import (
     PolicyAssessment,
     artifact_relevant_to_fanout,
     assess_fanout,
+    expected_fanout_dependencies,
     fanout_items,
     fanout_target_payload,
     sorted_artifacts,
@@ -687,170 +693,6 @@ def completion_diagnostic_matches_current_authority(
     )
 
 
-def runner_result_refusal_chain(
-    state: RuntimeState,
-    *,
-    run_id: str,
-    session_id: str,
-    application_input_id: str,
-    evidence: RunnerResultEvidence | None,
-) -> tuple[bool, str | None]:
-    session = state.runner_sessions.get(session_id)
-    completion = state.runner_session_completions.get(session_id)
-    run = None if session is None else state.runs.get(run_id)
-    if (
-        session is None
-        or completion is None
-        or run is None
-        or run.current_session_id != session_id
-        or completion.application_input_id != application_input_id
-        or completion.run_id != run_id
-    ):
-        return False, None
-    receipt = state.receipts.get(application_input_id)
-    if (
-        receipt is None
-        or receipt.receipt_ref.input_id != application_input_id
-        or receipt.accepted
-        or receipt.refusal_reason is None
-    ):
-        return False, None
-    transitions = tuple(
-        transition
-        for transition in state.transitions
-        if transition.input_id == application_input_id
-    )
-    if len(transitions) != 1:
-        return False, None
-    transition = transitions[0]
-    if (
-        receipt.transition_id != transition.record_id
-        or transition.input_kind != RunnerResultObserved.input_kind
-        or transition.input_family != "workflow_observation"
-        or transition.accepted
-    ):
-        return False, None
-
-    if evidence is not None:
-        if (
-            evidence.run_id != run_id
-            or evidence.session_id != session_id
-            or evidence.dispatch_generation != session.dispatch_generation
-            or evidence.session_fencing_token != session.session_fencing_token
-        ):
-            return False, None
-        try:
-            expected_digest = input_payload_digest(
-                RunnerResultObserved(
-                    application_input_id,
-                    run_id=run_id,
-                    payload=evidence.payload(),
-                    observed_at=completion.completed_at // 1_000_000_000,
-                )
-            )
-        except (RecursionError, TypeError, ValueError):
-            return False, None
-        if receipt.receipt_ref.input_payload_digest != expected_digest:
-            return False, None
-
-    refusals = tuple(
-        refusal
-        for refusal in state.refusals
-        if refusal.input_id == application_input_id
-    )
-    traces = tuple(
-        trace for trace in state.traces if trace.input_id == application_input_id
-    )
-    events = tuple(
-        event
-        for event in state.governance_events
-        if event.input_id == application_input_id
-    )
-    if len(refusals) != 1 or len(traces) != 1 or len(events) != 1:
-        return False, None
-    refusal = refusals[0]
-    trace = traces[0]
-    event = events[0]
-    if (
-        refusal.record_id != f"{transition.record_id}:refusal"
-        or refusal.input_kind != transition.input_kind
-        or refusal.input_family != transition.input_family
-        or refusal.reason != receipt.refusal_reason
-        or trace.record_id != f"{transition.record_id}:trace"
-        or event.record_id != f"{transition.record_id}:governance"
-    ):
-        return False, None
-
-    expected_plan_fingerprint = run.run_ref.plan_ref.authority_fingerprint
-    expected_action_id = None
-    expected_authority_source = None
-    if evidence is not None:
-        admitted = state.admitted_plans.get(expected_plan_fingerprint)
-        if admitted is None:
-            return False, None
-        outcome = terminal_outcome_for(
-            admitted.selected_plan,
-            str(run.stage_kind_id),
-            evidence.marker,
-        )
-        action = (
-            None
-            if outcome is None
-            else terminal_action_for(
-                admitted.selected_plan,
-                str(run.stage_kind_id),
-                str(outcome.id),
-            )
-        )
-        if action is not None:
-            expected_action_id = action.id
-            expected_authority_source = "terminal_action"
-
-    common_audit_fields = (
-        application_input_id,
-        transition.input_kind,
-        transition.input_family,
-        "refused",
-        expected_plan_fingerprint,
-        run.work_item_id,
-        run_id,
-        receipt.refusal_reason,
-    )
-    trace_common = (
-        trace.input_id,
-        trace.input_kind,
-        trace.input_family,
-        trace.disposition,
-        trace.plan_fingerprint,
-        trace.work_item_id,
-        trace.run_id,
-        trace.refusal_reason,
-    )
-    event_common = (
-        event.input_id,
-        event.input_kind,
-        event.input_family,
-        event.disposition,
-        event.plan_fingerprint,
-        event.work_item_id,
-        event.run_id,
-        event.refusal_reason,
-    )
-    if trace_common != common_audit_fields or event_common != common_audit_fields:
-        return False, None
-    if (
-        trace.action_id != event.action_id
-        or trace.authority_source != event.authority_source
-    ):
-        return False, None
-    if evidence is not None and (
-        trace.action_id != expected_action_id
-        or trace.authority_source != expected_authority_source
-    ):
-        return False, None
-    return True, receipt.refusal_reason
-
-
 def _recovery_action_matches_policy_source(
     admitted_plan: AdmittedPlan,
     policy: RecoveryPolicyDeclaration,
@@ -1310,7 +1152,7 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
             completions = [
                 c
                 for c in state.runner_session_completions.values()
-                if c.application_input_id == transition.input_id
+                if runtime_failure_application_input_id(c) == transition.input_id
             ]
             if len(completions) != 1 or not runtime_failure_applied(
                 state, completions[0].run_id
@@ -1341,6 +1183,7 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
 
     _validate_concurrency_policy_state(state)
 
+    authenticated_observations: list[AuthenticatedRunnerObservation] = []
     for observation in state.runner_observations.values():
         _validate_reference(
             "runner_observations.run_id",
@@ -1357,6 +1200,7 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
                 "runner_observations accepted-input authority invalid: "
                 f"{authenticated.reason_code}{detail}"
             )
+        authenticated_observations.append(authenticated)
     _validate_unique(
         "runner_observations.run_id",
         (observation.run_id for observation in state.runner_observations.values()),
@@ -1373,6 +1217,16 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
             state,
             artifact=artifact,
         )
+
+    # Preserve the existing artifact corruption diagnostics before checking that
+    # every authenticated observation's emitted output remains in the inventory.
+    for authenticated in authenticated_observations:
+        artifact_refusal = observation_artifact_refusal(state, authenticated)
+        if artifact_refusal is not None:
+            raise StorageIntegrityError(
+                "runner_observations accepted artifact output invalid: "
+                f"{artifact_refusal.reason_code}"
+            )
 
     _validate_effect_records(
         state,
@@ -1423,18 +1277,22 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
             continue
         plan = admitted.selected_plan
         return_ids = {
-            action.id for action in plan.terminal_actions
+            action.id
+            for action in plan.terminal_actions
             if action.action_kind == "return_to_recorded_source"
         }
         if event.disposition != "accepted" or event.action_id not in return_ids:
             continue
         targets = [
-            activation for activation in state.activations.values()
+            activation
+            for activation in state.activations.values()
             if activation.created_by_input_id == event.input_id
         ]
-        if len(targets) != 1 or recorded_source_return_origin(
-            state, plan, targets[0].activation_id
-        ) is None:
+        if (
+            len(targets) != 1
+            or recorded_source_return_origin(state, plan, targets[0].activation_id)
+            is None
+        ):
             raise StorageIntegrityError(
                 "activation_routes recorded-source return authority invalid"
             )
@@ -1561,6 +1419,7 @@ def validate_loaded_runtime_state(state: RuntimeState) -> None:
             transition_ids,
             "transitions",
         )
+    _validate_formal_recovery_activation_origins(state)
 
 
 def _validate_selected_terminal_action_authority(state: RuntimeState) -> None:
@@ -1888,6 +1747,17 @@ def _validate_selected_lifecycle_aftermath(state: RuntimeState) -> None:
     artifacts = sorted_artifacts(state)
     for plan_fingerprint, admitted in sorted(state.admitted_plans.items()):
         selected_plan = admitted.selected_plan
+        dependency_refusal = sibling_dependency_authority_refusal(selected_plan)
+        if dependency_refusal is not None:
+            raise StorageIntegrityError(
+                "selected sibling dependency authority is invalid: "
+                f"{dependency_refusal}"
+            )
+        ingress_refusal = terminal_ingress_authority_refusal(selected_plan)
+        if ingress_refusal is not None:
+            raise StorageIntegrityError(
+                f"selected terminal ingress authority is invalid: {ingress_refusal}"
+            )
         for fanout in selected_plan.fanout_declarations:
             for artifact in artifacts:
                 if not artifact_relevant_to_fanout(artifact, fanout):
@@ -2728,6 +2598,20 @@ def _validate_fanout_dependency_policy(
     selected_fanout = _selected_fanout_for_record(state, record)
     if selected_fanout is None:
         return
+    if isinstance(selected_fanout, SiblingDependencyFanoutDeclaration):
+        expected = expected_fanout_dependencies(
+            state.artifacts[record.source_artifact_id], selected_fanout, record
+        )
+        actual = tuple(
+            d
+            for d in state.work_dependencies.values()
+            if d.fanout_record_id == record.record_id
+        )
+        if expected is None or set(expected) != set(actual):
+            raise StorageIntegrityError(
+                "selected sibling dependency graph must match complete fanout authority"
+            )
+        return
     dependencies = tuple(
         dependency
         for dependency in state.work_dependencies.values()
@@ -2804,7 +2688,29 @@ def _validate_work_dependencies(
             fanout=fanout,
             dependent=state.work_items[dependency.dependent_work_item_id],
             source=state.work_items[dependency.dependency_work_item_id],
+            sibling=isinstance(
+                _selected_fanout_for_record(state, fanout),
+                SiblingDependencyFanoutDeclaration,
+            ),
         )
+    for record in state.fanout_records.values():
+        if not isinstance(
+            _selected_fanout_for_record(state, record),
+            SiblingDependencyFanoutDeclaration,
+        ):
+            continue
+        for run in state.runs.values():
+            if (
+                run.activation_id == record.target_activation_id
+                and has_unready_dependency(
+                    state,
+                    state.work_items[record.target_work_item_id],
+                    before_input_id=run.created_by_input_id,
+                )
+            ):
+                raise StorageIntegrityError(
+                    "sibling dependency must be ready before accepted claim"
+                )
 
 
 def _validate_work_dependency_matches_fanout(
@@ -2813,12 +2719,12 @@ def _validate_work_dependency_matches_fanout(
     fanout: FanoutRecord,
     dependent: WorkItem,
     source: WorkItem,
+    sibling: bool = False,
 ) -> None:
     if dependency.selected_plan_ref != fanout.selected_plan_ref:
         raise StorageIntegrityError("dependency PlanRef must match fanout record")
-    if (
-        dependency.dependent_work_item_id != fanout.target_work_item_id
-        or dependency.dependency_work_item_id != fanout.source_work_item_id
+    if dependency.dependent_work_item_id != fanout.target_work_item_id or (
+        not sibling and dependency.dependency_work_item_id != fanout.source_work_item_id
     ):
         raise StorageIntegrityError("dependency work items must match fanout record")
     if (
@@ -2883,6 +2789,30 @@ def _validate_closure_records(
             )
         else:
             raise StorageIntegrityError("closure_targets.status is unsupported")
+
+    for work_item in state.work_items.values():
+        creator = next(
+            (
+                transition
+                for transition in state.transitions
+                if transition.input_id == work_item.created_by_input_id
+            ),
+            None,
+        )
+        if (
+            creator is not None
+            and creator.accepted
+            and creator.input_kind == EvaluateCompletionBehavior.input_kind
+            and sum(
+                evaluation.target_work_item_id == work_item.ref.work_item_id
+                and evaluation.created_by_input_id == work_item.created_by_input_id
+                for evaluation in state.closure_evaluations.values()
+            )
+            != 1
+        ):
+            raise StorageIntegrityError(
+                "closure evaluator creation requires exactly one evaluation record"
+            )
 
     evaluation_anchors: set[tuple[object, ...]] = set()
     for activation in state.closure_evaluations.values():
@@ -3234,15 +3164,15 @@ def _validate_closure_source_evaluator_link(
     selected_plan_ref: PlanRef,
     run: RunRecord,
 ) -> None:
-    if not any(
-        record.closure_target_id == target.closure_target_id
-        and record.completion_behavior_id == behavior.id
-        and record.request_kind == behavior.request_kind
-        and record.target_work_item_id == run.work_item_id
-        and record.target_activation_id == run.activation_id
-        and record.selected_plan_ref == selected_plan_ref
-        and record.lineage_id == target.lineage_id
-        for record in state.closure_evaluations.values()
+    record, refusal = _closure.closure_evaluation_for_run(state, run)
+    if (
+        record is None
+        or refusal is not None
+        or record.closure_target_id != target.closure_target_id
+        or record.completion_behavior_id != behavior.id
+        or record.request_kind != behavior.request_kind
+        or record.selected_plan_ref != selected_plan_ref
+        or record.lineage_id != target.lineage_id
     ):
         raise StorageIntegrityError(
             f"{table_name}.source_run_id must match closure evaluator activation"
@@ -3568,6 +3498,20 @@ def _validate_recovery_attempts(
         ):
             raise StorageIntegrityError(
                 "recovery_attempts current recorded-source return tracking invalid"
+            )
+
+
+def _validate_formal_recovery_activation_origins(state: RuntimeState) -> None:
+    for activation in state.activations.values():
+        admitted = state.admitted_plans.get(activation.plan_ref.authority_fingerprint)
+        if admitted is None:
+            continue
+        refusal = formal_recovery_activation_authority_refusal(
+            state, admitted.selected_plan, activation.activation_id
+        )
+        if refusal is not None:
+            raise StorageIntegrityError(
+                f"formal recovery creator authority invalid: {refusal}"
             )
 
 

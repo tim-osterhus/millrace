@@ -412,7 +412,13 @@ def test_provider_event_rate_is_bounded_per_kind_and_second(
         assert accepted == RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND
 
 
-def test_provider_event_rate_ceiling_is_aggregate_across_kinds(tmp_path) -> None:
+def test_provider_event_rate_ceiling_is_aggregate_across_kinds(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.substrate import runner_session_events
+
+    monkeypatch.setattr(runner_session_events, "_admission_second", lambda: 42)
     writer = _writer(tmp_path)
     for index in range(10):
         writer.record(
@@ -434,6 +440,54 @@ def test_provider_event_rate_ceiling_is_aggregate_across_kinds(tmp_path) -> None
             {"overflow": True},
             observed_at=2_000_000_000,
             replay_key="diagnostic-overflow",
+        )
+
+
+def test_provider_event_rate_ceiling_advances_with_admission_second(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from millrace.substrate import runner_session_events
+
+    admission_second = [42]
+    monkeypatch.setattr(
+        runner_session_events,
+        "_admission_second",
+        lambda: admission_second[0],
+    )
+    writer = _writer(tmp_path)
+
+    for index in range(RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND):
+        writer.record(
+            "tool_activity" if index % 2 else "usage_update",
+            {"index": index},
+            observed_at=index,
+            replay_key=f"bucket-42-{index}",
+        )
+
+    with pytest.raises(ValueError, match="update-rate ceiling"):
+        writer.record(
+            "diagnostic",
+            {"overflow": True},
+            observed_at=RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND,
+            replay_key="bucket-42-overflow",
+        )
+
+    admission_second[0] = 43
+    for index in range(RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND):
+        writer.record(
+            "tool_activity" if index % 2 else "usage_update",
+            {"index": index},
+            observed_at=RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND + index,
+            replay_key=f"bucket-43-{index}",
+        )
+
+    with pytest.raises(ValueError, match="update-rate ceiling"):
+        writer.record(
+            "diagnostic",
+            {"overflow": True},
+            observed_at=2 * RUNNER_SESSION_EVENT_UPDATE_RATE_PER_SECOND,
+            replay_key="bucket-43-overflow",
         )
 
 

@@ -24,6 +24,7 @@ TARGET_KERNEL_MODULES = {
     "_closure_lifecycle",
     "audit",
     "decision",
+    "dependency_policy",
     "errors",
     "fanout_policy",
     "join_policy",
@@ -128,6 +129,7 @@ PACKAGE_LOCAL_IMPLEMENTATION_MODULES = {
     "millrace.kernel._closure_lifecycle",
     "millrace.kernel.audit",
     "millrace.kernel.decision",
+    "millrace.kernel.dependency_policy",
     "millrace.kernel.errors",
     "millrace.kernel.fanout_policy",
     "millrace.kernel.joins",
@@ -265,6 +267,7 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
             "millrace.kernel.run_controls",
             "millrace.kernel._closure_lifecycle",
             "millrace.kernel.audit",
+            "millrace.kernel.dependency_policy",
             "millrace.kernel.fanout_policy",
             "millrace.kernel.joins",
             "millrace.kernel.lookups",
@@ -276,6 +279,14 @@ ALLOWED_KERNEL_INTERNAL_IMPORTS = {
         }
     ),
     "millrace.kernel.errors": frozenset[str](),
+    "millrace.kernel.dependency_policy": frozenset(
+        {
+            "millrace.kernel.fanout_policy",
+            "millrace.kernel.observation_policy",
+            "millrace.kernel.projection",
+            "millrace.kernel.terminal_actions",
+        }
+    ),
     "millrace.kernel.joins": frozenset(
         {
             "millrace.kernel.fanout_policy",
@@ -361,6 +372,7 @@ ALLOWED_COMPILER_INTERNAL_IMPORTS = {
         {
             "millrace.compiler.authority",
             "millrace.compiler.build",
+            "millrace.compiler.diagnostics",
             "millrace.compiler.identity",
             "millrace.compiler.operator_waits",
             "millrace.compiler.references",

@@ -19,6 +19,7 @@ from unicodedata import normalize
 from millrace.adapters.cli.context import CliWorkspacePaths
 from millrace.contracts.compiled_plan import (
     ContextSourceDeclaration,
+    RecoveryPolicyDeclaration,
     SelectedCompiledPlan,
     StageContextBindingDeclaration,
     TerminalActionDeclaration,
@@ -38,6 +39,14 @@ from millrace.contracts.context_checkout import (
     decode_context_checkout_manifest,
     encode_context_checkout_manifest,
     verify_context_checkout_manifest_digest,
+)
+from millrace.contracts.runtime_failure_history import (
+    current_recovery_return_matches,
+    recorded_source_return_origin,
+    recorded_source_return_source,
+    recovery_attempt_count_at_input,
+    recovery_attempt_history_matches,
+    recovery_source_policies,
 )
 from millrace.contracts.state import (
     Activation,
@@ -1849,6 +1858,211 @@ def _replay_counter_records(
     return replay_counters
 
 
+def _historical_recovery_attempt_before_result(
+    *,
+    state: RuntimeState,
+    artifact: ArtifactRecord,
+    run: RunRecord,
+    activation: Activation,
+    work_item: WorkItem,
+    selected_plan: SelectedCompiledPlan,
+    return_policies: tuple[RecoveryPolicyDeclaration, ...],
+) -> RecoveryAttemptRecord:
+    """Rebuild the attempt at the emitting claim for historical result replay."""
+    routes = tuple(
+        route
+        for route in state.activation_routes
+        if route.created_by_input_id == artifact.created_by_input_id
+    )
+    if len(routes) != 1:
+        _refuse("relevant artifact recovery return history is invalid")
+    route = routes[0]
+    emitter = recorded_source_return_origin(
+        state,
+        selected_plan,
+        route.target_activation_id,
+    )
+    source = recorded_source_return_source(
+        state,
+        selected_plan,
+        route.target_activation_id,
+    )
+    if (
+        emitter is None
+        or emitter.run_ref.run_id != run.run_ref.run_id
+        or source is None
+    ):
+        _refuse("relevant artifact recovery return history is invalid")
+
+    transition_indices: dict[str, int] = {}
+    for index, transition in enumerate(state.transitions):
+        if transition.input_id in transition_indices:
+            _refuse("relevant artifact recovery transition history is ambiguous")
+        transition_indices[transition.input_id] = index
+    result_index = transition_indices.get(artifact.created_by_input_id)
+    claim_index = transition_indices.get(run.created_by_input_id)
+    if (
+        result_index is None
+        or claim_index is None
+        or claim_index >= result_index
+    ):
+        _refuse("relevant artifact recovery transition history is invalid")
+
+    source_events = tuple(
+        event
+        for event in state.governance_events
+        if event.disposition == "accepted"
+        and event.authority_source == "terminal_action"
+        and event.plan_fingerprint == run.run_ref.plan_ref.authority_fingerprint
+        and event.work_item_id == source.work_item_id
+        and event.run_id == source.run_ref.run_id
+        and event.action_id is not None
+        and (event_index := transition_indices.get(event.input_id)) is not None
+        and event_index < claim_index
+    )
+    if len(source_events) != 1:
+        _refuse("relevant artifact recovery source history is invalid")
+    source_event = source_events[0]
+    source_action_id = source_event.action_id
+    if source_action_id is None:
+        _refuse("relevant artifact recovery source history is invalid")
+    policies = tuple(
+        policy
+        for policy in return_policies
+        if policy in recovery_source_policies(selected_plan, source_action_id)
+    )
+    if len(policies) != 1:
+        _refuse("relevant artifact recovery policy history is ambiguous")
+    policy = policies[0]
+
+    start_index = transition_indices.get(source_event.input_id)
+    if start_index is None:
+        _refuse("relevant artifact recovery source history is invalid")
+    attempts = []
+    for record_id, attempt in state.recovery_attempts.items():
+        if (
+            attempt.plan_ref != run.run_ref.plan_ref
+            or attempt.policy_id != policy.id
+            or attempt.lineage_id != work_item.lineage_id
+        ):
+            continue
+        attempt_index = transition_indices.get(attempt.created_by_input_id)
+        if attempt_index is None:
+            _refuse("relevant artifact recovery attempt authority is ambiguous")
+        if attempt_index <= start_index and attempt_index < result_index:
+            if record_id != attempt.record_id:
+                _refuse("relevant artifact recovery attempt mapping key is invalid")
+            attempts.append((attempt_index, attempt))
+    if not attempts:
+        _refuse("relevant artifact recovery attempt history is missing")
+    latest_creation_index = max(index for index, _attempt in attempts)
+    latest_attempts = tuple(
+        attempt
+        for index, attempt in attempts
+        if index == latest_creation_index
+    )
+    if len(latest_attempts) != 1:
+        _refuse("relevant artifact recovery attempt history is ambiguous")
+    attempt = latest_attempts[0]
+
+    _validate_recovery_attempt(
+        _RecoveryAttemptRelation(
+            state=state,
+            run=run,
+            work_item=work_item,
+            selected_plan=selected_plan,
+        ),
+        attempt,
+        require_latest_recovery=(
+            attempt.updated_by_input_id == artifact.created_by_input_id
+        ),
+    )
+    current_history_matches = recovery_attempt_history_matches(
+        state,
+        attempt,
+        policy,
+    ) and current_recovery_return_matches(state, selected_plan, attempt, policy)
+    if not current_history_matches:
+        if attempt.phase == "resolved":
+            _refuse("relevant artifact recovery attempt authority is resolved")
+        if attempt.phase not in policy.return_allowed_phases:
+            _refuse(
+                "relevant artifact recovery attempt phase is not return-allowed"
+            )
+        _refuse("relevant artifact recovery attempt history is invalid")
+
+    source_activation = state.activations.get(source.activation_id)
+    source_work = state.work_items.get(source.work_item_id)
+    count = recovery_attempt_count_at_input(
+        state,
+        attempt,
+        policy,
+        run.created_by_input_id,
+    )
+    if (
+        source_activation is None
+        or source_work is None
+        or count is None
+        or source.run_ref.plan_ref != run.run_ref.plan_ref
+        or source_work.lineage_id != work_item.lineage_id
+    ):
+        _refuse("relevant artifact recovery source history is invalid")
+
+    source_index = transition_indices[source_event.input_id]
+    prior_return = max(
+        (
+            (transition_indices[event.input_id], event)
+            for event in state.governance_events
+            if event.disposition == "accepted"
+            and event.authority_source == "terminal_action"
+            and event.plan_fingerprint
+            == run.run_ref.plan_ref.authority_fingerprint
+            and event.work_item_id == work_item.ref.work_item_id
+            and event.action_id in policy.return_action_ids
+            and event.input_id in transition_indices
+            and source_index < transition_indices[event.input_id] < claim_index
+        ),
+        default=None,
+        key=lambda indexed_event: indexed_event[0],
+    )
+    historical = replace(
+        attempt,
+        attempt_count=count,
+        source_run_id=source.run_ref.run_id,
+        source_work_item_id=source.work_item_id,
+        source_activation_id=source.activation_id,
+        source_graph_node_id=source_activation.graph_node_id,
+        source_stage_kind_id=source.stage_kind_id,
+        source_runner_binding_id=source.runner_binding_id,
+        source_queue_family_id=source_work.queue_family_id,
+        recovery_action_id=source_action_id,
+        latest_recovery_activation_id=activation.activation_id,
+        latest_recovery_run_id=run.run_ref.run_id,
+        latest_return_action_id=(
+            None if prior_return is None else prior_return[1].action_id
+        ),
+        updated_by_input_id=run.created_by_input_id,
+    )
+    matches = tuple(
+        replace(historical, phase=phase)
+        for phase in policy.return_allowed_phases
+        if recovery_attempt_history_matches(
+            state,
+            replace(historical, phase=phase),
+            policy,
+        )
+        and current_recovery_return_matches(
+            state,
+            selected_plan,
+            replace(historical, phase=phase),
+            policy,
+        )
+    )
+    if len(matches) != 1:
+        _refuse("relevant artifact recovery attempt history is invalid")
+    return matches[0]
+
+
 def _authenticate_artifact_source(
     state: RuntimeState,
     artifact: ArtifactRecord,
@@ -1946,47 +2160,26 @@ def _authenticate_artifact_source(
             _refuse("relevant artifact recovery policy authority is invalid")
         if work_item.lineage_id is None:
             _refuse("relevant artifact recovery attempt lineage is missing")
-        matching_attempts = tuple(
-            (record_id, policy, attempt)
-            for policy in return_policies
-            for record_id, attempt in state.recovery_attempts.items()
-            if (
-                attempt.plan_ref == run.run_ref.plan_ref
-                and attempt.policy_id == policy.id
-                and attempt.lineage_id == work_item.lineage_id
-            )
-        )
-        if not matching_attempts:
+        if not any(
+            attempt.plan_ref == run.run_ref.plan_ref
+            and attempt.policy_id in {policy.id for policy in return_policies}
+            and attempt.lineage_id == work_item.lineage_id
+            for attempt in state.recovery_attempts.values()
+        ):
             _refuse("relevant artifact recovery attempt authority is missing")
-        if len(matching_attempts) != 1:
-            _refuse("relevant artifact recovery attempt authority is ambiguous")
-        record_id, policy, attempt = matching_attempts[0]
-        if record_id != attempt.record_id:
-            _refuse("relevant artifact recovery attempt mapping key is invalid")
-        if attempt.phase == "resolved":
-            _refuse("relevant artifact recovery attempt authority is resolved")
-        if attempt.phase not in policy.return_allowed_phases:
-            _refuse(
-                "relevant artifact recovery attempt phase is not return-allowed"
-            )
         source_activation = state.activations.get(run.activation_id)
         if source_activation is None:
             _refuse("relevant artifact source authority is incomplete")
-        _validate_recovery_attempt(
-            _RecoveryAttemptRelation(
-                state=state,
-                run=run,
-                work_item=work_item,
-                selected_plan=admitted.selected_plan,
-            ),
-            attempt,
-            require_latest_recovery=True,
+        historical_attempt = _historical_recovery_attempt_before_result(
+            state=state,
+            artifact=artifact,
+            run=run,
+            activation=source_activation,
+            work_item=work_item,
+            selected_plan=admitted.selected_plan,
+            return_policies=return_policies,
         )
-        replay_recovery_attempts[record_id] = replace(
-            attempt,
-            latest_recovery_activation_id=run.activation_id,
-            latest_recovery_run_id=run.run_ref.run_id,
-        )
+        replay_recovery_attempts[historical_attempt.record_id] = historical_attempt
     replay_state = replace(
         state,
         receipts={

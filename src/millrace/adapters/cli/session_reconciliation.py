@@ -13,6 +13,7 @@ from millrace.adapters.cli import session_completion as complete
 from millrace.adapters.cli.context import (
     OpenRuntimeContext,
 )
+from millrace.adapters.cli.recovery_context import materialize_recovery_failure_context
 from millrace.adapters.runner_contract import (
     AdapterErrorResult,
     AdapterInvocationRequest,
@@ -514,9 +515,13 @@ def _request_matches_current_authority(
     if not isinstance(request, AdapterInvocationRequest):
         return False
     try:
+        state = complete._load(runtime)
         expected_dispatch = build_dispatch_envelope_for_run(
-            state=complete._load(runtime),
+            state=state,
             run_id=session.run_id,
+        )
+        expected_dispatch = materialize_recovery_failure_context(
+            runtime, state, expected_dispatch
         )
     except (DispatchProjectionError, TypeError, ValueError):
         return False

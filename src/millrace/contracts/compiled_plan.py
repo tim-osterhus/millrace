@@ -39,6 +39,7 @@ from millrace.contracts.ids import (
     WorkflowId,
     WorkflowVersion,
 )
+from millrace.contracts.runner_failure_kinds import RUNNER_RUNTIME_FAILURE_KINDS
 from millrace.contracts.runner_payload_capacity import (
     PayloadCapacityError,
     RunnerPayloadCapacityPin,
@@ -605,7 +606,7 @@ class RunnerRuntimeFailureMapping:
     action_id: ActionId
 
     def __post_init__(self) -> None:
-        if self.failure_kind != "timeout":
+        if self.failure_kind not in RUNNER_RUNTIME_FAILURE_KINDS:
             raise ValueError("unsupported runtime failure kind")
         if (
             type(self.stage_kind_id) is not StageKindId
@@ -798,6 +799,120 @@ class CompletionBehaviorDeclaration:
         )
 
 
+CLOSURE_REQUEST_OVERFLOW_POLICY = "materialized_evidence_pages"
+CLOSURE_REQUEST_OVERFLOW_KEYS = frozenset(
+    {
+        "policy",
+        "materialization_root",
+        "page_byte_limit",
+        "max_snapshot_bytes",
+        "max_page_count",
+    }
+)
+CLOSURE_REQUEST_OVERFLOW_MIN_PAGE_BYTES = 4096
+CLOSURE_REQUEST_OVERFLOW_MAX_PAGE_BYTES = 1024 * 1024
+CLOSURE_REQUEST_OVERFLOW_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
+CLOSURE_REQUEST_OVERFLOW_MAX_PAGE_COUNT = 16384
+
+
+@dataclass(frozen=True, slots=True)
+class ClosureRequestOverflowDeclaration:
+    """Selected evidence-page route for closure requests above the inline limit."""
+
+    record_kind: ClassVar[str] = "closure_request_overflow_declaration"
+    schema_version: ClassVar[int] = 1
+
+    policy: str
+    materialization_root: str
+    page_byte_limit: int
+    max_snapshot_bytes: int
+    max_page_count: int
+
+
+def closure_request_overflow_refusal(
+    overflow: object,
+    *,
+    request_payload_byte_limit: object,
+) -> str | None:
+    """Shared compiler/export/codec/admission predicate for selected overflow."""
+    if isinstance(overflow, Mapping):
+        if set(overflow) != CLOSURE_REQUEST_OVERFLOW_KEYS:
+            return "request_overflow_fields"
+        values = {key: overflow[key] for key in CLOSURE_REQUEST_OVERFLOW_KEYS}
+    elif type(overflow) is ClosureRequestOverflowDeclaration:
+        values = {key: getattr(overflow, key) for key in CLOSURE_REQUEST_OVERFLOW_KEYS}
+    else:
+        return "request_overflow_shape"
+    if values["policy"] != CLOSURE_REQUEST_OVERFLOW_POLICY:
+        return "request_overflow_policy"
+    if not _context_safe_workspace_path(values["materialization_root"]):
+        return "request_overflow_materialization_root"
+    if type(request_payload_byte_limit) is not int or request_payload_byte_limit <= 0:
+        return "request_overflow_request_limit"
+    page_limit = values["page_byte_limit"]
+    if (
+        type(page_limit) is not int
+        or page_limit < CLOSURE_REQUEST_OVERFLOW_MIN_PAGE_BYTES
+        or page_limit > CLOSURE_REQUEST_OVERFLOW_MAX_PAGE_BYTES
+        or page_limit > request_payload_byte_limit
+    ):
+        return "request_overflow_page_byte_limit"
+    snapshot_limit = values["max_snapshot_bytes"]
+    if (
+        type(snapshot_limit) is not int
+        or snapshot_limit <= request_payload_byte_limit
+        or snapshot_limit > CLOSURE_REQUEST_OVERFLOW_MAX_SNAPSHOT_BYTES
+    ):
+        return "request_overflow_max_snapshot_bytes"
+    page_count = values["max_page_count"]
+    if (
+        type(page_count) is not int
+        or page_count < 1
+        or page_count > CLOSURE_REQUEST_OVERFLOW_MAX_PAGE_COUNT
+    ):
+        return "request_overflow_max_page_count"
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionBehaviorWithRequestOverflowDeclaration(CompletionBehaviorDeclaration):
+    """Opt-in schema 3: full durable snapshot plus selected evidence pages."""
+
+    schema_version: ClassVar[int] = 3
+    request_overflow: ClosureRequestOverflowDeclaration
+
+    def __post_init__(self) -> None:
+        CompletionBehaviorDeclaration.__post_init__(self)
+        refusal = closure_request_overflow_refusal(
+            self.request_overflow,
+            request_payload_byte_limit=self.request_payload_byte_limit,
+        )
+        if refusal is not None:
+            raise ValueError(refusal)
+
+    @classmethod
+    def from_behavior(
+        cls,
+        behavior: CompletionBehaviorDeclaration,
+        *,
+        request_overflow: ClosureRequestOverflowDeclaration,
+    ) -> CompletionBehaviorWithRequestOverflowDeclaration:
+        """Extend a validated base declaration without altering its authority."""
+        values = {
+            field.name: getattr(behavior, field.name)
+            for field in fields(CompletionBehaviorDeclaration)
+        }
+        return cls(**values, request_overflow=request_overflow)
+
+
+def completion_behavior_request_overflow(
+    behavior: CompletionBehaviorDeclaration,
+) -> ClosureRequestOverflowDeclaration | None:
+    if isinstance(behavior, CompletionBehaviorWithRequestOverflowDeclaration):
+        return behavior.request_overflow
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class RemediationPolicyDeclaration:
     record_kind: ClassVar[str] = "remediation_policy_declaration"
@@ -859,6 +974,53 @@ class FanoutDeclaration:
             freeze_authority_mapping(
                 cast(Mapping[str, object], self.target_payload_mapping)
             ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SiblingDependencyFanoutDeclaration(FanoutDeclaration):
+    """Opt-in same-batch dependencies released by selected final success."""
+
+    schema_version: ClassVar[int] = 3
+    item_dependency_key: str
+    dependency_success_action_ids: tuple[ActionId, ...]
+
+    def __post_init__(self) -> None:
+        FanoutDeclaration.__post_init__(self)
+        object.__setattr__(
+            self,
+            "dependency_success_action_ids",
+            _freeze_sequence(self.dependency_success_action_ids),
+        )
+
+    @classmethod
+    def from_fanout(
+        cls,
+        fanout: FanoutDeclaration,
+        *,
+        item_dependency_key: str,
+        dependency_success_action_ids: tuple[ActionId, ...],
+    ) -> SiblingDependencyFanoutDeclaration:
+        """Extend a validated base declaration without altering its authority."""
+        return cls(
+            fanout.id,
+            fanout.source_action_id,
+            fanout.source_artifact_schema_id,
+            fanout.item_source_path,
+            fanout.item_id_key,
+            fanout.target_route_id,
+            fanout.source_state_policy,
+            fanout.target_queue_family_id,
+            fanout.target_stage_kind_id,
+            fanout.target_graph_node_id,
+            fanout.target_runner_binding_id,
+            fanout.target_payload_schema_id,
+            fanout.target_payload_mapping,
+            fanout.duplicate_policy,
+            fanout.root_lineage_policy,
+            fanout.dependency_policy,
+            item_dependency_key,
+            dependency_success_action_ids,
         )
 
 
@@ -1575,6 +1737,12 @@ def context_binding_authority_refusal(
             for source_root in workspace_source_roots
         ):
             return f"context_binding_checkout_source_overlap:{binding_id}"
+        if any(
+            _context_paths_overlap(overflow_root, root)
+            for overflow_root in _overflow_materialization_roots(selected_plan)
+            for root in (checkout_root, *workspace_source_roots)
+        ):
+            return f"context_binding_overflow_root_overlap:{binding_id}"
 
         write_rules: tuple[object, ...] | None
         if isinstance(binding, Mapping) and "write_rules" not in binding:
@@ -2110,6 +2278,30 @@ def _context_safe_workspace_path(value: object) -> bool:
     return normalized == value and ".millrace" not in PurePosixPath(value).parts
 
 
+def _overflow_materialization_roots(
+    selected_plan: SelectedCompiledPlan | Mapping[str, object],
+) -> tuple[str, ...]:
+    if isinstance(selected_plan, SelectedCompiledPlan):
+        return tuple(
+            overflow.materialization_root
+            for behavior in selected_plan.completion_behaviors
+            if (overflow := completion_behavior_request_overflow(behavior)) is not None
+        )
+    behaviors = selected_plan.get("completion_behaviors")
+    if not isinstance(behaviors, (list, tuple)):
+        return ()
+    roots: list[str] = []
+    for behavior in behaviors:
+        if not isinstance(behavior, Mapping):
+            continue
+        overflow = behavior.get("request_overflow")
+        if isinstance(overflow, Mapping) and isinstance(
+            root := overflow.get("materialization_root"), str
+        ):
+            roots.append(root)
+    return tuple(roots)
+
+
 def _context_paths_overlap(left: str, right: str) -> bool:
     left_parts = tuple(left.split("/"))
     right_parts = tuple(right.split("/"))
@@ -2524,14 +2716,18 @@ __all__ = (
     "AuthorityValue",
     "CapabilityDeclaration",
     "CanonicalAuthorityError",
+    "CLOSURE_REQUEST_OVERFLOW_POLICY",
+    "ClosureRequestOverflowDeclaration",
     "CompiledPlanEnvelope",
     "CompletionBehaviorDeclaration",
+    "CompletionBehaviorWithRequestOverflowDeclaration",
     "ContextSourceDeclaration",
     "ContextWriteRule",
     "CounterDeclaration",
     "EffectDeclaration",
     "ExternalEnqueueRouteDeclaration",
     "FanoutDeclaration",
+    "SiblingDependencyFanoutDeclaration",
     "GraphDeclaration",
     "InterventionOptionDeclaration",
     "JoinDeclaration",
@@ -2557,6 +2753,8 @@ __all__ = (
     "WorkflowIdentity",
     "authority_fingerprint",
     "canonical_authority_bytes",
+    "closure_request_overflow_refusal",
+    "completion_behavior_request_overflow",
     "context_binding_authority_refusal",
     "freeze_authority_mapping",
     "freeze_authority_value",

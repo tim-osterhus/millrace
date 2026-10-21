@@ -6,7 +6,6 @@ from typing import cast
 from millrace.contracts.compiled_plan import CompletionBehaviorDeclaration
 from millrace.contracts.ids import QueueFamilyId
 from millrace.contracts.state import (
-    ClosureEvaluationRecord,
     ClosureTargetRecord,
     RuntimeState,
     WorkItem,
@@ -61,7 +60,14 @@ def _observe(
     summary: str,
 ) -> RuntimeState:
     run_id = f"run-{suffix}"
-    activation_id = f"activation-{suffix}"
+    activation_id = next(
+        (
+            evaluation.target_activation_id
+            for evaluation in state.closure_evaluations.values()
+            if evaluation.target_work_item_id == work.ref.work_item_id
+        ),
+        f"activation-{suffix}",
+    )
     target = next(iter(state.closure_targets.values()))
     root = state.work_items["work-origin"]
     root_digest = artifact_payload_digest(root.payload)
@@ -141,54 +147,14 @@ def test_first_closure_snapshot_contains_root_and_no_prior_verdict() -> None:
 def test_later_snapshot_reuses_prior_verdict_and_filters_post_anchor_evidence() -> None:
     behavior = _behavior()
     state, target, root = _base_state()
-    prior_work = _work_item(
-        "prior-work", {"closure_target_id": target.closure_target_id}
-    )
     pre_work = _work_item("pre-work", {"kind": "pre"})
     post_work = _work_item("post-work", {"kind": "post"})
-    root_snapshot, root_refusal = _build_closure_evidence_snapshot(
-        state=state,
-        target=target,
-        behavior=behavior,
-    )
-    assert root_refusal is None and root_snapshot is not None
-    prior_work = replace(
-        prior_work,
-        payload={
-            **prior_work.payload,
-            "closure_evidence_snapshot": root_snapshot,
-        },
-    )
-    evaluation = ClosureEvaluationRecord(
-        record_id="closure-evaluation-1",
-        closure_target_id=target.closure_target_id,
-        completion_behavior_id=behavior.id,
-        request_kind=behavior.request_kind,
-        target_work_item_id=prior_work.ref.work_item_id,
-        target_activation_id="activation-prior",
-        selected_plan_ref=_PLAN_REF,
-        lineage_id=_LINEAGE_ID,
-        created_by_input_id="evaluate-1",
-    )
-    state = replace(
-        state,
-        closure_evaluations={evaluation.record_id: evaluation},
-    )
     state = _observe(state, pre_work, "pre", "old evidence")
-    current_snapshot, current_refusal = _build_closure_evidence_snapshot(
-        state=state,
-        target=target,
-        behavior=behavior,
-    )
-    assert current_refusal is None and current_snapshot is not None
-    prior_work = replace(
-        prior_work,
-        payload={**prior_work.payload, "closure_evidence_snapshot": current_snapshot},
-    )
-    state = replace(
-        state,
-        work_items={prior_work.ref.work_item_id: prior_work, **state.work_items},
-    )
+    candidate = generic_lifecycle.project_next_lifecycle_transition(state).candidate
+    assert candidate is not None and candidate.kind == "evaluate"
+    state = generic_lifecycle.apply_candidate(state, candidate)
+    evaluation = next(iter(state.closure_evaluations.values()))
+    prior_work = state.work_items[evaluation.target_work_item_id]
     state = _observe(state, prior_work, "prior", "prior verdict")
     prior_artifact = next(
         item

@@ -10,7 +10,9 @@ from unicodedata import normalize
 
 from millrace.contracts.compiled_plan import (
     CanonicalAuthorityError,
+    ClosureRequestOverflowDeclaration,
     CompletionBehaviorDeclaration,
+    CompletionBehaviorWithRequestOverflowDeclaration,
     RunnerBindingDeclaration,
     RunnerComponentPin,
     RunnerRuntimeFailureMapping,
@@ -21,14 +23,18 @@ from millrace.contracts.compiled_plan import (
     SelectedWorkflowPackagePin,
     authority_fingerprint,
     canonical_authority_bytes,
+    closure_request_overflow_refusal,
     context_binding_authority_refusal,
 )
+from millrace.contracts.fanout_dependencies import sibling_dependency_authority_refusal
+from millrace.contracts.runner_failure_kinds import RUNNER_RUNTIME_FAILURE_KINDS
 from millrace.contracts.runner_payload_capacity import (
     PayloadCapacityError,
     completion_capacity,
     validate_payload_capacity_binding,
 )
 from millrace.contracts.schema import validate_closure_verdict_schema_declaration
+from millrace.contracts.terminal_ingress import terminal_ingress_authority_refusal
 
 COMPILED_PLAN_EXPORT_RECORD_KIND = "compiled_plan_export"
 COMPILED_PLAN_EXPORT_SCHEMA_VERSION = 1
@@ -234,9 +240,7 @@ def verify_compiled_plan_export_record(
         workflow_id=workflow_id,
         workflow_version=workflow_version,
     )
-    _validate_runner_bindings(
-        _require_sequence(selected_authority, "runner_bindings")
-    )
+    _validate_runner_bindings(_require_sequence(selected_authority, "runner_bindings"))
     _validate_completion_behaviors(
         _require_sequence(selected_authority, "completion_behaviors"),
         artifact_schemas=_require_sequence(selected_authority, "artifact_schemas"),
@@ -251,6 +255,16 @@ def verify_compiled_plan_export_record(
     if context_refusal is not None:
         raise CompiledPlanExportError(
             f"selected context binding authority is invalid: {context_refusal}"
+        )
+    dependency_refusal = sibling_dependency_authority_refusal(selected_authority)
+    if dependency_refusal is not None:
+        raise CompiledPlanExportError(
+            f"selected sibling dependency authority is invalid: {dependency_refusal}"
+        )
+    ingress_refusal = terminal_ingress_authority_refusal(selected_authority)
+    if ingress_refusal is not None:
+        raise CompiledPlanExportError(
+            f"selected terminal ingress authority is invalid: {ingress_refusal}"
         )
 
     expected_fingerprint = _require_string(record, "authority_fingerprint")
@@ -432,9 +446,10 @@ def _validate_workflow_package_pin(
         SelectedWorkflowPackagePin.schema_version,
         label="workflow_package_pin",
     )
-    if value.get("workflow_id") != workflow_id or value.get(
-        "workflow_version"
-    ) != workflow_version:
+    if (
+        value.get("workflow_id") != workflow_id
+        or value.get("workflow_version") != workflow_version
+    ):
         raise CompiledPlanExportError("workflow_package_pin workflow mismatch")
     for field in (
         "package_id",
@@ -674,7 +689,7 @@ def _validate_runner_runtime_failure_mappings(
         action_id = _require_non_empty_string(
             item, "action_id", label="runtime failure mapping"
         )
-        if failure_kind != "timeout":
+        if failure_kind not in RUNNER_RUNTIME_FAILURE_KINDS:
             raise CompiledPlanExportError(
                 "runtime failure mapping uses an unsupported failure kind"
             )
@@ -752,9 +767,7 @@ def _validate_runner_component_pin(
             "runner component descriptor_sha256 must be lowercase sha256 hex"
         )
     capacity = pin["max_work_item_payload_bytes"]
-    if capacity is not None and (
-        type(capacity) is not int or capacity <= 0
-    ):
+    if capacity is not None and (type(capacity) is not int or capacity <= 0):
         raise CompiledPlanExportError(
             "runner component max_work_item_payload_bytes must be a positive "
             "integer or null"
@@ -830,10 +843,15 @@ def _validate_completion_behaviors(
     }
     for item in values:
         if not isinstance(item, Mapping):
-            raise CompiledPlanExportError(
-                "completion_behaviors must contain objects"
-            )
-        _require_exact_keys(item, expected_keys, label="completion behavior")
+            raise CompiledPlanExportError("completion_behaviors must contain objects")
+        with_overflow = item.get("schema_version") == (
+            CompletionBehaviorWithRequestOverflowDeclaration.schema_version
+        )
+        _require_exact_keys(
+            item,
+            expected_keys | ({"request_overflow"} if with_overflow else set()),
+            label="completion behavior",
+        )
         _require_exact_value(
             item,
             "record_kind",
@@ -843,9 +861,13 @@ def _validate_completion_behaviors(
         _require_exact_value(
             item,
             "schema_version",
-            CompletionBehaviorDeclaration.schema_version,
+            CompletionBehaviorWithRequestOverflowDeclaration.schema_version
+            if with_overflow
+            else CompletionBehaviorDeclaration.schema_version,
             label="completion behavior",
         )
+        if with_overflow:
+            _validate_completion_request_overflow(item)
         schemas = _require_sequence(item, "evidence_artifact_schema_ids")
         if not schemas:
             raise CompiledPlanExportError(
@@ -932,6 +954,32 @@ def _validate_completion_behaviors(
             raise CompiledPlanExportError(message) from exc
 
 
+def _validate_completion_request_overflow(item: Mapping[str, object]) -> None:
+    overflow = item.get("request_overflow")
+    if not isinstance(overflow, Mapping):
+        raise CompiledPlanExportError("completion behavior request_overflow is invalid")
+    if (
+        overflow.get("record_kind") != ClosureRequestOverflowDeclaration.record_kind
+        or overflow.get("schema_version")
+        != ClosureRequestOverflowDeclaration.schema_version
+    ):
+        raise CompiledPlanExportError(
+            "completion behavior request_overflow record header is invalid"
+        )
+    refusal = closure_request_overflow_refusal(
+        {
+            key: value
+            for key, value in overflow.items()
+            if key not in {"record_kind", "schema_version"}
+        },
+        request_payload_byte_limit=item.get("request_payload_byte_limit"),
+    )
+    if refusal is not None:
+        raise CompiledPlanExportError(
+            f"completion behavior request_overflow is invalid: {refusal}"
+        )
+
+
 def _closure_verdict_schema_supported(schema: Mapping[str, object]) -> bool:
     raw_schema = schema.get("schema")
     return validate_closure_verdict_schema_declaration(raw_schema).accepted
@@ -998,15 +1046,11 @@ def _validate_runner_terminal_result_mappings(
         )
         key = (stage_kind_id, runner_result_id)
         if key in seen:
-            raise CompiledPlanExportError(
-                "duplicate runner terminal result mapping"
-            )
+            raise CompiledPlanExportError("duplicate runner terminal result mapping")
         seen.add(key)
         outcome_key = (stage_kind_id, outcome_id)
         if outcome_key in seen_outcomes:
-            raise CompiledPlanExportError(
-                "duplicate runner terminal outcome mapping"
-            )
+            raise CompiledPlanExportError("duplicate runner terminal outcome mapping")
         seen_outcomes.add(outcome_key)
         if runner_result_id not in legal_result_ids:
             raise CompiledPlanExportError(

@@ -11,6 +11,7 @@ from millrace.adapters.cli.context import (
     transition_context,
 )
 from millrace.adapters.cli.run import BoundedExecutionUnitResult
+from millrace.contracts.closure_request_overflow import parse_closure_capacity_block
 from millrace.contracts.state import CooldownWaitRecord, RuntimeState
 from millrace.contracts.transition import TimerDue
 from millrace.kernel import apply, decide
@@ -96,6 +97,28 @@ def run_lifecycle_transition_once(
             if decision.refusal is None
             else decision.refusal.reason
         )
+        capacity_block = (
+            None
+            if decision.refusal is None
+            else parse_closure_capacity_block(decision.refusal.detail)
+        )
+        if candidate.kind == "evaluate" and capacity_block is not None:
+            # Durable declared block: selected capacity cannot deliver this
+            # authentic evidence. Operator action is required; nothing retries.
+            return BoundedExecutionUnitResult(
+                code="lifecycle_closure_blocked",
+                observation_refusal_reason=reason,
+                transition_disposition=decision.disposition,
+                diagnostics=(
+                    {
+                        "kind": candidate.kind,
+                        "plan_fingerprint": candidate.plan_fingerprint,
+                        "declaration_id": candidate.declaration_id,
+                        "source_artifact_id": candidate.source_artifact_id,
+                        "closure_capacity_block": dict(capacity_block),
+                    },
+                ),
+            )
         return BoundedExecutionUnitResult(
             code="lifecycle_transition_refused",
             observation_refusal_reason=reason,

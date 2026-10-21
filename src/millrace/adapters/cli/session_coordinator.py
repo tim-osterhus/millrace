@@ -72,6 +72,7 @@ class _RetainedOwner:
     request: AdapterInvocationRequest
     handle: RunnerSessionHandle
     deadline: float
+    budget_deadline: bool = False
     outcome: AdapterSuccessResult | AdapterErrorResult | None = None
     cleanup: RunnerCleanupResult | None = None
     cancellation: supervision._CancellationCursor | None = None
@@ -180,13 +181,8 @@ def _step_retained_owner(
             stop_requested=stop_requested,
         )
     if _monotonic() >= owner.deadline:
-        cancel._request_cancellation(
-            runtime,
-            run_id=owner.run_ref.run_id,
-            request_id=f"runtime:runner-session-timeout:{session.session_id}",
-            reason="runner_timeout",
-            source_kind="runtime",
-            actor_id="runtime",
+        cancel._request_deadline_cancellation(
+            runtime, owner.run_ref, session, owner.budget_deadline
         )
         owner.held = False
         return None
@@ -254,6 +250,7 @@ def execute_runner_session(
     on_accepted_start: Callable[[RunnerSessionRecord], None] | None = None,
     daemon_stop_requested: Callable[[], bool] | None = None,
     effective_timeout_seconds: float | None = None,
+    budget_deadline: bool = False,
     driving_budget_id: str | None = None,
     driving_budget_clock: Callable[[], float] | None = None,
 ) -> SessionExecutionResult:
@@ -283,6 +280,7 @@ def execute_runner_session(
         effective_timeout_seconds,
         driving_budget_id,
         driving_budget_clock,
+        budget_deadline,
     )
     if resumed is not None:
         return resumed
@@ -314,6 +312,7 @@ def execute_runner_session(
         on_accepted_start=on_accepted_start,
         daemon_stop_requested=daemon_stop_requested,
         effective_timeout_seconds=effective_timeout_seconds,
+        budget_deadline=budget_deadline,
         driving_budget_id=driving_budget_id,
         driving_budget_clock=driving_budget_clock,
     )
@@ -333,6 +332,7 @@ def _resume_current_session(
     effective_timeout_seconds: float | None,
     driving_budget_id: str | None,
     driving_budget_clock: Callable[[], float] | None,
+    budget_deadline: bool = False,
 ) -> SessionExecutionResult | None:
     if current is None:
         return None
@@ -369,6 +369,7 @@ def _resume_current_session(
             request=reconciled.request,
             handle=reconciled.handle,
             deadline=reconciled.deadline,
+            budget_deadline=budget_deadline,
             daemon_stop_requested=daemon_stop_requested,
         )
     if current.state == "lost":
@@ -385,6 +386,7 @@ def _resume_current_session(
             on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
             effective_timeout_seconds=effective_timeout_seconds,
+            budget_deadline=budget_deadline,
             driving_budget_id=driving_budget_id,
             driving_budget_clock=driving_budget_clock,
         )
@@ -429,6 +431,7 @@ def _start_created_session(
     effective_timeout_seconds: float | None,
     driving_budget_id: str | None,
     driving_budget_clock: Callable[[], float] | None,
+    budget_deadline: bool = False,
 ) -> SessionExecutionResult:
     durable_session, cancellation = _pre_start_cancellation(
         runtime,
@@ -509,6 +512,7 @@ def _start_created_session(
         start_outcome,
         deadline,
         daemon_stop_requested,
+        budget_deadline,
     )
 
 
@@ -539,13 +543,8 @@ def _request_daemon_cancellation(
     run_ref: RunRef,
     session: RunnerSessionRecord,
 ) -> None:
-    cancel._request_cancellation(
-        runtime,
-        run_id=run_ref.run_id,
-        request_id=f"daemon:runner-session-cancel:{session.session_id}",
-        reason="daemon_shutdown",
-        source_kind="daemon",
-        actor_id="daemon",
+    cancel._request_deadline_cancellation(
+        runtime, run_ref, session, budget_deadline=True
     )
 
 
@@ -567,6 +566,7 @@ def _handle_start_outcome(
     start_outcome: object,
     deadline: float,
     daemon_stop_requested: Callable[[], bool] | None,
+    budget_deadline: bool = False,
 ) -> SessionExecutionResult:
     if isinstance(start_outcome, StartIndeterminate):
         return _persist_indeterminate_start(
@@ -601,6 +601,7 @@ def _handle_start_outcome(
         start_outcome,
         deadline,
         daemon_stop_requested,
+        budget_deadline,
     )
 
 
@@ -612,6 +613,7 @@ def _persist_started_session(
     outcome: StartedSession,
     deadline: float,
     daemon_stop_requested: Callable[[], bool] | None,
+    budget_deadline: bool = False,
 ) -> SessionExecutionResult:
     try:
         outcome.dispatch_echo.validate_against(
@@ -671,7 +673,7 @@ def _persist_started_session(
     owners = _RETAINED_OWNERS.get()
     if owners is not None:
         owners[running_session.session_id] = _RetainedOwner(
-            run_ref, running_session, request, outcome.handle, deadline
+            run_ref, running_session, request, outcome.handle, deadline, budget_deadline
         )
     persistence._record_session_event(
         runtime,
@@ -689,6 +691,7 @@ def _persist_started_session(
         request=request,
         handle=outcome.handle,
         deadline=deadline,
+        budget_deadline=budget_deadline,
         daemon_stop_requested=daemon_stop_requested,
     )
 
@@ -702,6 +705,7 @@ def _drive_owned_live_handle(
     handle: RunnerSessionHandle,
     deadline: float,
     daemon_stop_requested: Callable[[], bool] | None,
+    budget_deadline: bool = False,
 ) -> SessionExecutionResult:
     owners = _RETAINED_OWNERS.get()
     if owners is not None and session.session_id in owners:
@@ -716,6 +720,7 @@ def _drive_owned_live_handle(
             request=request,
             handle=handle,
             deadline=deadline,
+            budget_deadline=budget_deadline,
             daemon_stop_requested=daemon_stop_requested,
         )
     except Exception:
@@ -758,6 +763,7 @@ def _drive_running_session(
     handle: RunnerSessionHandle,
     deadline: float,
     daemon_stop_requested: Callable[[], bool] | None,
+    budget_deadline: bool = False,
 ) -> tuple[SessionExecutionResult, str | None]:
     while True:
         from millrace.adapters.cli.run_controls import drive_native_control
@@ -774,6 +780,7 @@ def _drive_running_session(
                     request=request,
                     handle=handle,
                     primary=primary,
+                    daemon_stop_requested=daemon_stop_requested,
                 ),
                 None,
             )
@@ -807,6 +814,7 @@ def _drive_running_session(
                     request=request,
                     handle=handle,
                     primary=primary,
+                    daemon_stop_requested=daemon_stop_requested,
                 ),
                 None,
             )
@@ -845,13 +853,8 @@ def _drive_running_session(
             )
         remaining = deadline - _monotonic()
         if remaining <= 0:
-            cancel._request_cancellation(
-                runtime,
-                run_id=run_ref.run_id,
-                request_id=(f"runtime:runner-session-timeout:{session.session_id}"),
-                reason="runner_timeout",
-                source_kind="runtime",
-                actor_id="runtime",
+            cancel._request_deadline_cancellation(
+                runtime, run_ref, session, budget_deadline
             )
             primary = cancel._primary_cancellation(complete._load(runtime), session)
             if primary is None:
@@ -864,6 +867,7 @@ def _drive_running_session(
                     request=request,
                     handle=handle,
                     primary=primary,
+                    daemon_stop_requested=daemon_stop_requested,
                 ),
                 None,
             )

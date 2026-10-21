@@ -34,7 +34,11 @@ AUTHORITY_VALUE_FIELDS: Mapping[str, tuple[str, ...]] = {
         "artifact_field_conditions",
     ),
     "effect_declarations": ("presentation",),
-    "completion_behaviors": ("evidence_window_policy", "presentation"),
+    "completion_behaviors": (
+        "evidence_window_policy",
+        "presentation",
+        "request_overflow",
+    ),
     "remediation_policies": ("presentation",),
     "fanout_declarations": ("target_payload_mapping",),
     "runner_bindings": ("presentation",),
@@ -61,6 +65,7 @@ AUTHORITY_TEXT_FIELDS: Mapping[str, tuple[str, ...]] = {
         "source_action_id",
         "source_artifact_schema_id",
         "item_id_key",
+        "item_dependency_key",
         "target_route_id",
         "source_state_policy",
         "target_payload_schema_id",
@@ -166,7 +171,7 @@ AUTHORITY_TEXT_SEQUENCE_FIELDS: Mapping[str, tuple[str, ...]] = {
         "declared_outcome_ids",
     ),
     "terminal_actions": ("asset_ids",),
-    "fanout_declarations": ("item_source_path",),
+    "fanout_declarations": ("item_source_path", "dependency_success_action_ids"),
     "join_declarations": ("required_artifact_schema_ids",),
     "concurrency_policies": ("coexist_partition_ids",),
     "intervention_options": ("audit_metadata_requirements",),
@@ -621,6 +626,7 @@ def _validate_canonical_source_value(
             value_kind="value",
         )
     )
+
 
 __all__ = (
     "UNSELECTED_CATALOG_COLLECTION",

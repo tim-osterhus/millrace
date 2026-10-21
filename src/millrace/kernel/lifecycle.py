@@ -9,6 +9,7 @@ from hashlib import sha256
 from typing import Literal
 
 import millrace.kernel._closure_lifecycle as _closure
+from millrace.contracts.closure_request_overflow import closure_capacity_blocked
 from millrace.contracts.compiled_plan import (
     CompletionBehaviorDeclaration,
     FanoutDeclaration,
@@ -209,6 +210,12 @@ def _project_closure(state: RuntimeState) -> LifecycleProjection:
                     target=target,
                     evidence_anchor=evidence_anchor,
                 )
+                if kind == "evaluate" and closure_capacity_blocked(
+                    state, candidate.transition_input.input_id
+                ):
+                    # Declared blocked_work_policy=suppress: this exact evidence
+                    # state already has a durable capacity block; do not retry it.
+                    continue
                 candidates.append(
                     (
                         (

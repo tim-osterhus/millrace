@@ -28,6 +28,10 @@ from millrace.contracts.ids import (
     StageKindId,
 )
 from millrace.contracts.operator_waits import _operator_wait_record_id
+from millrace.contracts.recovery_action_context import (
+    RecoveryActionContextRefusal,
+    recovery_action_context_for_terminal_action,
+)
 from millrace.contracts.state import (
     DURABLE_INT64_MAX,
     Activation,
@@ -1559,25 +1563,20 @@ def _resolve_return_to_recorded_source_action(
     work_item: WorkItem,
     action: TerminalActionDeclaration,
 ) -> TerminalActionResult:
-    resolved = _recovery_policy_and_attempt_for_action(
+    resolved = recovery_action_context_for_terminal_action(
         selected_plan=selected_plan,
         state=state,
-        plan_ref=run.run_ref.plan_ref,
+        run=run,
+        activation=activation,
+        work_item=work_item,
         action=action,
-        lineage_id=work_item.lineage_id,
-        run_id=run.run_ref.run_id,
     )
-    if resolved is None:
+    if isinstance(resolved, RecoveryActionContextRefusal):
         return TerminalActionRefusal(
-            reason="unsupported_runtime_terminal_action",
+            reason=resolved.reason,
             action=action,
         )
-    policy, attempt = resolved
-    if attempt.phase not in set(policy.return_allowed_phases):
-        return TerminalActionRefusal(
-            reason="unsupported_runtime_terminal_action",
-            action=action,
-        )
+    policy, attempt = resolved.policy, resolved.attempt
     source_work_item = state.work_items.get(attempt.source_work_item_id)
     if source_work_item is None or source_work_item.ref.plan_ref != attempt.plan_ref:
         return TerminalActionRefusal(
@@ -1670,38 +1669,20 @@ def _resolve_quarantine_lineage_action(
     work_item: WorkItem,
     action: TerminalActionDeclaration,
 ) -> TerminalActionResult:
-    resolved = _recovery_policy_and_attempt_for_action(
+    resolved = recovery_action_context_for_terminal_action(
         selected_plan=selected_plan,
         state=state,
-        plan_ref=run.run_ref.plan_ref,
+        run=run,
+        activation=activation,
+        work_item=work_item,
         action=action,
-        lineage_id=work_item.lineage_id,
-        run_id=run.run_ref.run_id,
     )
-    if resolved is None:
+    if isinstance(resolved, RecoveryActionContextRefusal):
         return TerminalActionRefusal(
-            reason="unsupported_runtime_terminal_action",
+            reason=resolved.reason,
             action=action,
         )
-    policy, attempt = resolved
-    if attempt.phase not in {
-        "active_recovery",
-        "quarantine_eligible",
-    }:
-        return TerminalActionRefusal(
-            reason="unsupported_runtime_terminal_action",
-            action=action,
-        )
-    if (
-        attempt.latest_recovery_activation_id != activation.activation_id
-        or attempt.latest_recovery_run_id != run.run_ref.run_id
-        or attempt.plan_ref != run.run_ref.plan_ref
-        or attempt.lineage_id != work_item.lineage_id
-    ):
-        return TerminalActionRefusal(
-            reason="unsupported_runtime_terminal_action",
-            action=action,
-        )
+    policy, attempt = resolved.policy, resolved.attempt
     if (
         active_lineage_quarantine_for(
             state,
@@ -1738,11 +1719,11 @@ def _resolve_quarantine_lineage_action(
         quarantine_id=_lineage_quarantine_record_id(
             plan_ref=run.run_ref.plan_ref,
             policy_id=policy.id,
-            lineage_id=work_item.lineage_id,
+            lineage_id=attempt.lineage_id,
             attempt_record_id=attempt.record_id,
         ),
         policy_id=policy.id,
-        lineage_id=work_item.lineage_id,
+        lineage_id=attempt.lineage_id,
         selected_plan_ref=attempt.plan_ref,
         selected_plan_fingerprint=attempt.plan_ref.authority_fingerprint,
         recovery_attempt_record_id=attempt.record_id,
@@ -2041,38 +2022,6 @@ def _return_policy_for_action(
         ),
         None,
     )
-
-
-def _recovery_policy_and_attempt_for_action(
-    *,
-    selected_plan: SelectedCompiledPlan,
-    state: RuntimeState,
-    plan_ref: PlanRef,
-    action: TerminalActionDeclaration,
-    lineage_id: str | None,
-    run_id: str,
-) -> tuple[RecoveryPolicyDeclaration, RecoveryAttemptRecord] | None:
-    if lineage_id is None:
-        return None
-    matches: list[tuple[RecoveryPolicyDeclaration, RecoveryAttemptRecord]] = []
-    for policy in selected_plan.recovery_policies:
-        action_ids = (
-            policy.return_action_ids
-            if action.action_kind == "return_to_recorded_source"
-            else policy.quarantine_action_ids
-        )
-        if action.id not in action_ids:
-            continue
-        attempt = _recovery_attempt_for(
-            state=state,
-            plan_ref=plan_ref,
-            policy_id=policy.id,
-            lineage_id=lineage_id,
-        )
-        if attempt is None or attempt.latest_recovery_run_id != run_id:
-            continue
-        matches.append((policy, attempt))
-    return matches[0] if len(matches) == 1 else None
 
 
 def _counter_record_or_refusal(

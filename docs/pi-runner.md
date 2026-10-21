@@ -213,6 +213,38 @@ token accounting. The scripted usage mapping remains the only reviewed Pi token
 mapping; Pi-reported counters are not billing truth. No Qwen profile is part of
 this candidate's qualification.
 
+## Prompt body encoding
+
+The Pi prompt is one JSON object serialized as UTF-8 (`ensure_ascii=False`) with
+sorted keys, compact separators, and `allow_nan=False`. Its `work_item_payload`
+member uses the same UTF-8, sorted-key, and compact-separator settings as
+`canonical_authority_mapping_bytes`, so non-ASCII text is embedded as UTF-8
+rather than as ASCII escapes. `canonical_authority_mapping_bytes` does not pass
+`allow_nan=False`; the outer prompt encoder does. Before the prompt is built,
+the canonical body of the dispatched payload is checked against the packaged
+1048576-byte Pi capacity pin. `max_input_bundle_bytes` bounds the complete UTF-8
+prompt, including instructions and the other selected members, and is checked as
+the prompt's encoded length. Its configured range is 1024 through 1048576 bytes.
+
+## Paged closure requests
+
+When a closure request is above the inline request limit, the work-item payload
+replaces only its `closure_evidence_snapshot` member with the compact
+`closure_evidence_overflow` projection. The projection is bounded by the inline
+limit. It names read-only index and segment pages that the session materializes
+under its declared root before start, and the runner reads them with its ordinary
+file read tool. Each page read is bounded. The page must be a regular file of the
+authenticated length. Links, FIFOs, directories, oversized files, and foreign
+bytes are refused rather than read. `docs/workflow-packages.md` describes the
+refusal reasons.
+
+Before the Pi session is created or the process is spawned, a run whose closure
+request is delivered through pages must have a Pi working directory that matches
+the workspace. A mismatched or unresolvable directory refuses the run as
+`adapter_failure` with `closure_evidence_pi_rpc_cwd_mismatch` or
+`closure_evidence_pi_rpc_cwd_unresolvable`. The check does not depend on context
+bindings, so the official Pi workflow is covered.
+
 ## Results, budgets, and lifecycle
 
 Only the exact final assistant JSON envelope is considered for result parsing:

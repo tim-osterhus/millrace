@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from hashlib import sha256
 
+from millrace.contracts.closure_evaluation_history import (
+    closure_evaluator_origin_matches,
+)
 from millrace.contracts.compiled_plan import (
     RecoveryPolicyDeclaration,
     RunnerBindingWithRuntimeFailuresAndPayloadCapacityDeclaration,
@@ -16,9 +20,23 @@ from millrace.contracts.compiled_plan import (
 from millrace.contracts.ids import RunnerBindingId, StageKindId
 from millrace.contracts.runner import (
     RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES,
+    runner_result_evidence_digest,
+    runner_result_evidence_from_payload,
     runner_session_completion_diagnostic_bytes,
     runner_session_completion_diagnostic_from_payload,
 )
+from millrace.contracts.runner_deadlines import (
+    runtime_deadline_failure as _runtime_deadline_failure,
+)
+from millrace.contracts.runner_deadlines import (
+    runtime_failure_cleanup_digests,
+)
+from millrace.contracts.runner_failure_kinds import (
+    ADAPTER_RUNTIME_FAILURE_KINDS,
+    RECOVERABLE_RESULT_REFUSALS,
+    RUNNER_RUNTIME_FAILURE_KINDS,
+)
+from millrace.contracts.runner_result_refusals import runner_result_refusal_chain
 from millrace.contracts.runtime_failure_history import (
     accepted_recovery_origin_matches,
     recorded_source_return_origin,
@@ -72,7 +90,7 @@ def runtime_failure_mapping_refusal(plan: SelectedCompiledPlan) -> str | None:
         for mapping in mappings:
             if type(mapping) is not RunnerRuntimeFailureMapping:
                 return f"runtime_failure_mapping_shape:{binding.id}"
-            if mapping.failure_kind != "timeout":
+            if mapping.failure_kind not in RUNNER_RUNTIME_FAILURE_KINDS:
                 return f"runtime_failure_mapping_kind:{binding.id}"
             keys.append(
                 (
@@ -156,10 +174,52 @@ def runtime_failure_action_for(
     )
 
 
+def runtime_failure_kind(
+    state: RuntimeState, completion: RunnerSessionCompletionRecord
+) -> str | None:
+    """Classify terminal evidence without converting it into stage success."""
+    if _runtime_deadline_failure(state, completion):
+        return "timeout"
+    if (
+        completion.terminal_state == "failed"
+        and completion.exit_kind == completion.adapter_outcome_kind == "error"
+        and completion.adapter_error_kind in ADAPTER_RUNTIME_FAILURE_KINDS
+        and completion.runner_result_evidence_digest is None
+    ):
+        return completion.adapter_error_kind
+    if (
+        completion.terminal_state == "completed"
+        and completion.exit_kind == completion.adapter_outcome_kind == "success"
+        and completion.adapter_error_kind is None
+        and completion.runner_result_evidence_digest is not None
+    ):
+        valid, reason = runner_result_refusal_chain(
+            state,
+            run_id=completion.run_id,
+            session_id=completion.session_id,
+            application_input_id=completion.application_input_id,
+            evidence=None,
+        )
+        if valid and reason in RECOVERABLE_RESULT_REFUSALS:
+            return "result_rejected"
+    return None
+
+
+def runtime_failure_application_input_id(
+    completion: RunnerSessionCompletionRecord,
+) -> str:
+    """Keep rejected runner receipts separate from mechanical recovery receipts."""
+    return (
+        f"{completion.application_input_id}:runtime-failure"
+        if completion.terminal_state == "completed"
+        else completion.application_input_id
+    )
+
+
 def runtime_failure_eligible(
     state: RuntimeState, completion: RunnerSessionCompletionRecord
 ) -> bool:
-    """A clean adapter-origin timeout is distinct from every cancellation."""
+    """Only safely settled, current and uncancelled failures can select recovery."""
     session = state.runner_sessions.get(completion.session_id)
     run = state.runs.get(completion.run_id)
     return (
@@ -168,32 +228,43 @@ def runtime_failure_eligible(
         and run.current_session_id == session.session_id
         and state.runner_session_completions.get(session.session_id) == completion
         and session.run_id == completion.run_id
-        and session.state == completion.terminal_state == "failed"
+        and session.state == completion.terminal_state
+        and runtime_failure_kind(state, completion) is not None
         and session.dispatch_generation
         == completion.dispatch_generation
         == run.last_dispatch_generation
         and session.session_fencing_token == completion.session_fencing_token
-        and session.started_at is not None
+        and session.start_intent_at is not None
+        and (
+            session.started_at is not None
+            or completion.cleanup_disposition == "not_required"
+        )
         and completion.started_at == session.started_at
         and session.ended_at == completion.completed_at
-        and completion.exit_kind == "error"
-        and completion.adapter_outcome_kind == "error"
-        and completion.adapter_error_kind == "timeout"
-        and completion.runner_result_evidence_digest is None
         and completion.cleanup_disposition == session.cleanup_disposition
         and completion.cleanup_disposition in {"complete", "not_required"}
-        and completion.primary_cancellation_request_id is None
-        and not any(
-            r.session_id == session.session_id
-            for r in state.runner_session_cancellation_requests.values()
+        and (
+            _runtime_deadline_failure(state, completion)
+            or (
+                completion.primary_cancellation_request_id is None
+                and not any(
+                    r.session_id == session.session_id
+                    for r in state.runner_session_cancellation_requests.values()
+                )
+            )
         )
     )
 
 
 def runtime_failure_diagnostic_matches(
-    state: RuntimeState, completion: RunnerSessionCompletionRecord, payload: bytes
+    state: RuntimeState,
+    completion: RunnerSessionCompletionRecord,
+    payload: bytes,
+    *,
+    evidence_payload: bytes | None = None,
+    cleanup_payloads: Mapping[str, bytes] | None = None,
 ) -> bool:
-    """Authenticate persisted timeout facts before applying mechanical recovery."""
+    """Authenticate exact completion diagnostics and any rejected evidence."""
     if (
         not runtime_failure_eligible(state, completion)
         or len(payload) > RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES
@@ -207,38 +278,96 @@ def runtime_failure_diagnostic_matches(
             return False
     except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
         return False
+    failure_kind = runtime_failure_kind(state, completion)
+    if failure_kind == "result_rejected":
+        if evidence_payload is None:
+            return False
+        try:
+            evidence = runner_result_evidence_from_payload(json.loads(evidence_payload))
+        except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+            return False
+        if (
+            runner_result_evidence_digest(evidence)
+            != completion.runner_result_evidence_digest
+        ):
+            return False
+        valid, reason = runner_result_refusal_chain(
+            state,
+            run_id=completion.run_id,
+            session_id=completion.session_id,
+            application_input_id=completion.application_input_id,
+            evidence=evidence,
+        )
+        if not valid or reason not in RECOVERABLE_RESULT_REFUSALS:
+            return False
+    elif _runtime_deadline_failure(state, completion):
+        digests = runtime_failure_cleanup_digests(state, completion)
+        if cleanup_payloads is None or set(cleanup_payloads) != set(digests):
+            return False
+        for digest in digests:
+            cleanup_payload = cleanup_payloads[digest]
+            try:
+                cleanup_diagnostic = json.loads(cleanup_payload)
+                canonical = json.dumps(
+                    cleanup_diagnostic,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+                return False
+            if (
+                not isinstance(cleanup_diagnostic, dict)
+                or len(cleanup_payload) > RUNNER_SESSION_COMPLETION_DIAGNOSTIC_MAX_BYTES
+                or canonical != cleanup_payload
+                or digest != f"sha256:{sha256(cleanup_payload).hexdigest()}"
+            ):
+                return False
+        facts = diagnostic.diagnostic
+        if not (
+            (
+                set(facts) == {"diagnostics", "error_kind"}
+                and facts.get("error_kind") == "cancelled"
+            )
+            or (
+                set(facts) == {"cleanup_disposition", "outcome"}
+                and facts.get("cleanup_disposition") == completion.cleanup_disposition
+                and facts.get("outcome") == "no_terminal_adapter_outcome"
+            )
+        ):
+            return False
+    elif (
+        set(diagnostic.diagnostic) != {"diagnostics", "error_kind"}
+        or diagnostic.diagnostic.get("error_kind") != failure_kind
+    ):
+        return False
     run = state.runs[completion.run_id]
     activation = state.activations.get(run.activation_id)
-    return (
-        activation is not None
-        and (
-            diagnostic.run_id,
-            diagnostic.session_id,
-            diagnostic.dispatch_generation,
-            diagnostic.session_fencing_token,
-            diagnostic.plan_fingerprint,
-            diagnostic.claim_id,
-            diagnostic.generation,
-            diagnostic.fencing_token,
-            diagnostic.stage_kind_id,
-            diagnostic.graph_node_id,
-            diagnostic.runner_binding_id,
-        )
-        == (
-            completion.run_id,
-            completion.session_id,
-            completion.dispatch_generation,
-            completion.session_fencing_token,
-            str(run.run_ref.plan_ref.authority_fingerprint),
-            run.run_ref.claim_id,
-            run.run_ref.generation,
-            run.run_ref.fencing_token,
-            str(run.stage_kind_id),
-            activation.graph_node_id,
-            str(run.runner_binding_id),
-        )
-        and set(diagnostic.diagnostic) == {"diagnostics", "error_kind"}
-        and diagnostic.diagnostic.get("error_kind") == "timeout"
+    return activation is not None and (
+        diagnostic.run_id,
+        diagnostic.session_id,
+        diagnostic.dispatch_generation,
+        diagnostic.session_fencing_token,
+        diagnostic.plan_fingerprint,
+        diagnostic.claim_id,
+        diagnostic.generation,
+        diagnostic.fencing_token,
+        diagnostic.stage_kind_id,
+        diagnostic.graph_node_id,
+        diagnostic.runner_binding_id,
+    ) == (
+        completion.run_id,
+        completion.session_id,
+        completion.dispatch_generation,
+        completion.session_fencing_token,
+        str(run.run_ref.plan_ref.authority_fingerprint),
+        run.run_ref.claim_id,
+        run.run_ref.generation,
+        run.run_ref.fencing_token,
+        str(run.stage_kind_id),
+        activation.graph_node_id,
+        str(run.runner_binding_id),
     )
 
 
@@ -249,14 +378,14 @@ def runtime_failure_input(
         raise ValueError("ineligible runtime failure completion")
     run = state.runs[completion.run_id]
     return ApplyRunnerRuntimeFailure(
-        completion.application_input_id,
+        runtime_failure_application_input_id(completion),
         run_ref=run.run_ref,
         session_id=completion.session_id,
         dispatch_generation=completion.dispatch_generation,
         session_fencing_token=completion.session_fencing_token,
         completion_id=completion.completion_id,
         diagnostic_digest=completion.diagnostic_digest,
-        failure_kind="timeout",
+        failure_kind=runtime_failure_kind(state, completion) or "",
         observed_at=completion.completed_at // 1_000_000_000,
     )
 
@@ -334,13 +463,66 @@ def runtime_failure_authority_refusal(
     return None
 
 
+def formal_recovery_activation_authority_refusal(
+    state: RuntimeState,
+    plan: SelectedCompiledPlan,
+    activation_id: str,
+) -> str | None:
+    """Require a complete accepted creator for every declared formal ingress."""
+    if not _has_formal_recovery_creator(state, plan, activation_id):
+        return None
+    if not recovery_activation_origin_matches(
+        state,
+        plan,
+        activation_id,
+        selected_activation_targets(plan),
+        allow_unclaimed=True,
+    ):
+        return f"formal_recovery_activation_origin:{activation_id}"
+    return None
+
+
+def _has_formal_recovery_creator(
+    state: RuntimeState,
+    plan: SelectedCompiledPlan,
+    activation_id: str,
+) -> bool:
+    activation = state.activations.get(activation_id)
+    if activation is None:
+        return False
+    formal_ids = {
+        action.id
+        for action in plan.terminal_actions
+        if action.action_kind in {"recovery_route", "return_to_recorded_source"}
+    }
+    return any(
+        route.target_activation_id == activation_id and route.action_id in formal_ids
+        for route in state.activation_routes
+    ) or any(
+        event.input_id == activation.created_by_input_id
+        and event.action_id in formal_ids
+        for event in state.governance_events
+    )
+
+
 def recovery_activation_origin_matches(
     state: RuntimeState,
     plan: SelectedCompiledPlan,
     activation_id: str,
     targets: set[tuple[object, object, object, object]],
+    *,
+    allow_unclaimed: bool = False,
+    origin_activation_id: str | None = None,
 ) -> bool:
-    """Follow accepted inherited-work recovery origins to a normal selected root."""
+    """Follow accepted inherited-work recovery origins to a selected root.
+
+    A root is a claimed ordinary selected route target or the authentic original
+    activation of a selected closure evaluation (accepted closure promotion and
+    evaluation provenance; the static evaluator tuple alone is never a root).
+    An exact origin forces incoming creator authentication even when a recovery
+    target is also a normal target. Unclaimed creation uses the current history
+    ceiling without inventing a claim or run.
+    """
     indices = {t.input_id: i for i, t in enumerate(state.transitions)}
     ceiling = len(state.transitions)
     seen: set[str] = set()
@@ -350,8 +532,17 @@ def recovery_activation_origin_matches(
         if activation is None or not _target_claim_matches(state, activation_id):
             return False
         work = state.work_items[activation.work_item_id]
-        run = state.runs[activation.claimed_by_run_id or ""]
-        claim_index = indices.get(run.created_by_input_id, -1)
+        unclaimed = activation.claimed_by_run_id is None
+        if unclaimed and not allow_unclaimed:
+            return False
+        run = state.runs.get(activation.claimed_by_run_id or "")
+        claim_index = (
+            ceiling
+            if unclaimed
+            else indices.get(run.created_by_input_id, -1)
+            if run is not None
+            else -1
+        )
         stages = [
             stage for stage in plan.stage_kinds if stage.id == activation.stage_kind_id
         ]
@@ -361,7 +552,10 @@ def recovery_activation_origin_matches(
             or activation.plan_ref != work.ref.plan_ref
             or activation.lineage_id != work.lineage_id
             or activation.queue_family_id != work.queue_family_id
-            or not 0 <= claim_index < ceiling
+            or (unclaimed and activation.generation != work.ref.generation)
+            or not (
+                0 <= claim_index <= ceiling if unclaimed else 0 <= claim_index < ceiling
+            )
         ):
             return False
         target = (
@@ -372,7 +566,13 @@ def recovery_activation_origin_matches(
         )
         if (
             activation.queue_family_id in stages[0].input_queue_family_ids
-            and target in targets
+            and (
+                target in targets
+                or closure_evaluator_origin_matches(state, plan, activation_id)
+            )
+            and (origin_activation_id is None or activation_id == origin_activation_id)
+            and not unclaimed
+            and not _has_formal_recovery_creator(state, plan, activation_id)
         ):
             return True
         routes = [
@@ -442,6 +642,28 @@ def recovery_activation_origin_matches(
         receipt = state.receipts[command.input_id]
         if route.record_id != f"{receipt.transition_id}:route":
             return False
+        if origin_activation_id is not None or allow_unclaimed:
+            creator_index = indices.get(command.input_id, -1)
+            attempts = [
+                attempt
+                for attempt in state.recovery_attempts.values()
+                if attempt.plan_ref == activation.plan_ref
+                and attempt.policy_id == policies[0].id
+                and attempt.lineage_id == work.lineage_id
+                and indices.get(attempt.created_by_input_id, -1)
+                <= creator_index
+                <= indices.get(attempt.updated_by_input_id, -1)
+                and recovery_attempt_history_matches(state, attempt, policies[0])
+                and (
+                    recovery_attempt_count_at_input(
+                        state, attempt, policies[0], command.input_id
+                    )
+                    or 0
+                )
+                > 0
+            ]
+            if len(attempts) != 1:
+                return False
         activation_id = source.activation_id
         ceiling = origin_index
     return False
@@ -459,7 +681,10 @@ def _recovery_origin_command(
         completion = state.runner_session_completions.get(
             source.current_session_id or ""
         )
-        if completion is None or completion.application_input_id != input_id:
+        if (
+            completion is None
+            or runtime_failure_application_input_id(completion) != input_id
+        ):
             return None
         try:
             return runtime_failure_input(state, completion)
@@ -809,6 +1034,7 @@ def _runtime_failure_effects_match(
 
 
 __all__ = (
+    "formal_recovery_activation_authority_refusal",
     "recovery_activation_origin_matches",
     "runtime_failure_action_for",
     "runtime_failure_applied",
@@ -816,5 +1042,8 @@ __all__ = (
     "runtime_failure_diagnostic_matches",
     "runtime_failure_eligible",
     "runtime_failure_input",
+    "runtime_failure_kind",
+    "runtime_failure_application_input_id",
+    "runtime_failure_cleanup_digests",
     "runtime_failure_mapping_refusal",
 )

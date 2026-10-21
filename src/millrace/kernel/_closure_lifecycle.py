@@ -7,38 +7,54 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Literal
 
+from millrace.contracts.closure_evaluation_history import (
+    claimed_evaluator_run,
+    closure_evaluation_parts,
+)
+from millrace.contracts.closure_evaluation_history import (
+    closure_creator_refusal as closure_creator_refusal,
+)
+from millrace.contracts.closure_evaluation_history import (
+    closure_enqueue_creator_refusal as closure_enqueue_creator_refusal,
+)
+from millrace.contracts.closure_evaluation_history import (
+    closure_evaluation_for_run as closure_evaluation_for_run,
+)
+from millrace.contracts.closure_evaluation_history import (
+    closure_evidence_anchor as closure_evidence_anchor,
+)
+from millrace.contracts.closure_evaluation_history import (
+    closure_root_source_matches as closure_root_source_matches,
+)
 from millrace.contracts.compiled_plan import (
     CompletionBehaviorDeclaration,
-    verify_authority_fingerprint,
 )
 from millrace.contracts.ids import ActionId, ArtifactSchemaId
 from millrace.contracts.runtime_failures import runtime_failure_applied
 from millrace.contracts.state import (
     Activation,
     ArtifactRecord,
-    ClosureEvaluationRecord,
     ClosureTargetRecord,
     PlanRef,
     RemediationWorkRecord,
-    RunRecord,
     RuntimeState,
     WorkItem,
 )
 from millrace.contracts.transition import (
-    EnqueueWork,
     OpenClosureTarget,
     TransitionContext,
-    TransitionInput,
     artifact_payload_digest,
     canonical_authority_mapping_bytes,
-    input_family,
-    input_payload_digest,
 )
 from millrace.kernel.observation_policy import (
     ObservationPolicyDiagnostic,
     authenticate_artifact_provenance,
     authenticate_runner_observation,
 )
+
+# Kernel-internal names kept for existing callers; one contracts implementation.
+_claimed_run = claimed_evaluator_run
+_evaluation_parts = closure_evaluation_parts
 
 ClosureReadinessStatus = Literal["settled", "pending", "corrupt"]
 _TARGET_DOMAIN = b"millrace-selected-lifecycle-closure-target-v1\0"
@@ -141,199 +157,6 @@ def _target_key_value(key: ClosureLogicalTargetKey) -> dict[str, object]:
         "root_source_kind": key.root_source_kind,
         "root_source_id": key.root_source_id,
         "root_work_item_id": key.root_work_item_id,
-    }
-
-
-def closure_root_source_matches(
-    work_item: WorkItem,
-    *,
-    root_source_kind: str,
-    root_source_id: str,
-) -> bool:
-    source = work_item.payload.get("root_source")
-    return isinstance(source, Mapping) and (
-        source.get("kind"),
-        source.get("source_id"),
-    ) == (root_source_kind, root_source_id)
-
-
-def closure_creator_refusal(
-    state: RuntimeState, expected_input: TransitionInput
-) -> str | None:
-    input_id = expected_input.input_id
-    receipt = state.receipts.get(input_id)
-    if receipt is None:
-        return "invalid_closure_creator"
-    try:
-        digest = input_payload_digest(expected_input)
-    except (RecursionError, TypeError, ValueError):
-        return "invalid_closure_creator"
-    transition = next(
-        (item for item in state.transitions if item.record_id == receipt.transition_id),
-        None,
-    )
-    if transition is None or not (
-        receipt.receipt_ref.input_id == input_id
-        and receipt.receipt_ref.input_payload_digest == digest
-        and receipt.accepted
-        and receipt.refusal_reason is None
-        and transition.accepted
-        and (transition.input_id, transition.input_kind, transition.input_family)
-        == (input_id, type(expected_input).input_kind, input_family(expected_input))
-    ):
-        return "invalid_closure_creator"
-    return None
-
-
-def closure_enqueue_creator_refusal(
-    state: RuntimeState,
-    command: EnqueueWork | WorkItem,
-    *,
-    require_default_plan: bool = False,
-) -> str | None:
-    if isinstance(command, WorkItem):
-        command = EnqueueWork(
-            command.created_by_input_id, command.queue_family_id, command.payload
-        )
-    if closure_creator_refusal(state, command) is not None:
-        return "invalid_closure_creator"
-    work_items = tuple(
-        item
-        for item in state.work_items.values()
-        if item.created_by_input_id == command.input_id
-    )
-    activations = tuple(
-        item
-        for item in state.activations.values()
-        if item.created_by_input_id == command.input_id
-    )
-    if len(work_items) != 1 or len(activations) != 1:
-        return (
-            "missing_or_ambiguous_work_item"
-            if len(work_items) != 1
-            else "missing_or_ambiguous_activation"
-        )
-    work_item, activation = work_items[0], activations[0]
-    if not (
-        activation.work_item_id == work_item.ref.work_item_id
-        and work_item.queue_family_id
-        == activation.queue_family_id
-        == command.queue_family_id
-        and work_item.ref.plan_ref == activation.plan_ref
-    ):
-        return "enqueue_creator_relation_mismatch"
-    if require_default_plan and state.default_plan_ref != work_item.ref.plan_ref:
-        return "default_plan_mismatch"
-    admitted = state.admitted_plans.get(work_item.ref.plan_ref.authority_fingerprint)
-    if (
-        admitted is None
-        or admitted.plan_ref != work_item.ref.plan_ref
-        or not verify_authority_fingerprint(
-            admitted.selected_plan, work_item.ref.plan_ref.authority_fingerprint
-        )
-    ):
-        return "selected_plan_authority_mismatch"
-    route = next(
-        (
-            route
-            for route in admitted.selected_plan.external_enqueue_routes
-            if route.queue_family_id == command.queue_family_id
-        ),
-        None,
-    )
-    cached_route = admitted.external_enqueue_routes.get(command.queue_family_id)
-    if route is None or cached_route is None:
-        return "missing_external_enqueue_route"
-    if (
-        cached_route.queue_family_id,
-        cached_route.graph_node_id,
-        cached_route.stage_kind_id,
-        cached_route.runner_binding_id,
-        cached_route.payload_schema_id,
-    ) != (
-        route.queue_family_id,
-        route.graph_node_id,
-        route.stage_kind_id,
-        route.runner_binding_id,
-        route.payload_schema_id,
-    ):
-        return "selected_route_authority_mismatch"
-    if activation.graph_node_id != route.graph_node_id:
-        return "selected_route_graph_node_mismatch"
-    if activation.stage_kind_id != route.stage_kind_id:
-        return "selected_route_stage_kind_mismatch"
-    if activation.runner_binding_id != route.runner_binding_id:
-        return "selected_route_runner_binding_mismatch"
-    return None
-
-
-def closure_evidence_anchor(
-    snapshot: object,
-    *,
-    target: ClosureTargetRecord,
-    root_item: WorkItem | None = None,
-    prior_artifact: ArtifactRecord | None = None,
-) -> Mapping[str, object] | None:
-    if (
-        not isinstance(snapshot, Mapping)
-        or snapshot.get("record_kind") != "closure_evidence_snapshot"
-        or snapshot.get("schema_version") != 1
-        or not isinstance(snapshot.get("evidence_artifacts"), (tuple, list))
-    ):
-        return None
-    identity = tuple(
-        snapshot.get(field)
-        for field in ("closure_target_id", "selected_plan_fingerprint", "lineage_id")
-    )
-    if identity != (
-        target.closure_target_id,
-        target.selected_plan_ref.authority_fingerprint,
-        target.lineage_id,
-    ) or any(not isinstance(value, str) or not value.strip() for value in identity):
-        return None
-    root, prior = snapshot.get("root_contract"), snapshot.get("prior_verdict")
-    if not isinstance(root, Mapping) or not (
-        prior is None or isinstance(prior, Mapping)
-    ):
-        return None
-    contracts = (root,) if prior is None else (root, prior)
-    for contract in contracts:
-        payload = contract.get("payload")
-        if not isinstance(payload, Mapping) or contract.get(
-            "payload_digest"
-        ) != artifact_payload_digest(payload):
-            return None
-    source = contracts[-1]
-    if snapshot.get("freshness_anchor_digest") != source.get("payload_digest"):
-        return None
-    if root_item is not None and (
-        root.get("work_item_id"),
-        root.get("payload"),
-        root.get("payload_digest"),
-    ) != (
-        root_item.ref.work_item_id,
-        root_item.payload,
-        artifact_payload_digest(root_item.payload),
-    ):
-        return None
-    if prior is None:
-        return {"kind": "root_contract", "payload_digest": root["payload_digest"]}
-    prior_id = prior.get("artifact_id")
-    if not isinstance(prior_id, str) or not prior_id.strip():
-        return None
-    if prior_artifact is not None and (
-        (prior.get("payload"), prior.get("payload_digest"))
-        != (prior_artifact.payload, prior_artifact.payload_digest)
-        or prior_artifact.payload_digest
-        != artifact_payload_digest(prior_artifact.payload)
-        or prior_artifact.payload.get("closure_target_id")
-        != snapshot["closure_target_id"]
-    ):
-        return None
-    return {
-        "kind": "prior_verdict",
-        "artifact_id": prior_id,
-        "payload_digest": prior["payload_digest"],
     }
 
 
@@ -650,29 +473,6 @@ def _assess_work_item(state: RuntimeState, work: WorkItem) -> ClosureReadinessSt
     )
 
 
-def _claimed_run(
-    state: RuntimeState, work: WorkItem, activation: Activation
-) -> tuple[RunRecord | None, str | None]:
-    runs = tuple(
-        item
-        for item in state.runs.values()
-        if item.activation_id == activation.activation_id
-    )
-    if activation.claimed_by_run_id is None:
-        return None, "closure_evaluator_claim_invalid" if runs else None
-    if len(runs) != 1:
-        return None, "closure_evaluator_claim_invalid"
-    run = runs[0]
-    if (
-        activation.claimed_by_run_id != run.run_ref.run_id
-        or run.work_item_id != work.ref.work_item_id
-        or run.run_ref.work_item_id != work.ref.work_item_id
-        or run.run_ref.plan_ref != work.ref.plan_ref
-    ):
-        return None, "closure_evaluator_claim_invalid"
-    return run, None
-
-
 def _activation_status(
     state: RuntimeState, work: WorkItem, activation: Activation, closed: bool
 ) -> ClosureReadinessStatus:
@@ -712,62 +512,6 @@ def _activation_status(
     return "settled" if settled else "corrupt" if closed else "pending"
 
 
-def _evaluation_parts(
-    state: RuntimeState,
-    evaluation: ClosureEvaluationRecord,
-    target: ClosureTargetRecord,
-    behavior: CompletionBehaviorDeclaration,
-) -> tuple[WorkItem | None, Activation | None, str | None]:
-    work = state.work_items.get(evaluation.target_work_item_id)
-    activation = state.activations.get(evaluation.target_activation_id)
-    if work is None or activation is None:
-        return work, activation, "closure_evaluation_relation_missing"
-    plan, lineage = target.selected_plan_ref, target.lineage_id
-    if (
-        evaluation.record_id != f"closure-evaluator:{evaluation.target_activation_id}"
-        or (
-            evaluation.closure_target_id,
-            evaluation.selected_plan_ref,
-            evaluation.lineage_id,
-            evaluation.completion_behavior_id,
-            evaluation.request_kind,
-        )
-        != (
-            target.closure_target_id,
-            plan,
-            lineage,
-            behavior.id,
-            behavior.request_kind,
-        )
-        or len(
-            {
-                evaluation.created_by_input_id,
-                work.created_by_input_id,
-                activation.created_by_input_id,
-            }
-        )
-        != 1
-        or activation.work_item_id != evaluation.target_work_item_id
-        or (work.ref.plan_ref, activation.plan_ref) != (plan, plan)
-        or (work.lineage_id, activation.lineage_id) != (lineage, lineage)
-        or (work.queue_family_id, activation.queue_family_id)
-        != (behavior.request_queue_family_id,) * 2
-        or (
-            activation.graph_node_id,
-            activation.stage_kind_id,
-            activation.runner_binding_id,
-        )
-        != (
-            behavior.target_graph_node_id,
-            behavior.target_stage_kind_id,
-            behavior.runner_binding_id,
-        )
-    ):
-        return work, activation, "closure_evaluation_relation_missing"
-    _run, refusal = _claimed_run(state, work, activation)
-    return work, activation, refusal
-
-
 def _verdict_artifact(
     state: RuntimeState,
     *,
@@ -787,10 +531,17 @@ def _verdict_artifact(
     provenance = authenticate_artifact_provenance(state, artifact)
     if isinstance(provenance, ObservationPolicyDiagnostic):
         return artifact, "provenance"
-    return artifact, None if (
-        provenance.observation.run.activation_id == activation_id
-        and artifact.source_action_id in action_ids
-    ) else "provenance"
+    source = provenance.observation.run
+    evaluation, refusal = closure_evaluation_for_run(state, source)
+    matched = source.activation_id == activation_id or (
+        refusal is None
+        and evaluation is not None
+        and evaluation.target_activation_id == activation_id
+    )
+    return (
+        artifact,
+        None if matched and artifact.source_action_id in action_ids else "provenance",
+    )
 
 
 def closure_remediation_refusal(
@@ -838,18 +589,14 @@ def closure_remediation_refusal(
         or record.source_action_id != source_artifact.source_action_id
     ):
         return "closure_remediation_creator_invalid"
-    source_work = provenance.observation.work_item
-    source_activation = provenance.observation.activation
-    evaluations = tuple(
-        item
-        for item in state.closure_evaluations.values()
-        if item.closure_target_id == target.closure_target_id
-        and item.target_work_item_id == source_work.ref.work_item_id
-        and item.target_activation_id == source_activation.activation_id
+    evaluation, evaluation_refusal = closure_evaluation_for_run(
+        state, provenance.observation.run
     )
     if (
-        len(evaluations) != 1
-        or _evaluation_parts(state, evaluations[0], target, behavior)[2] is not None
+        evaluation is None
+        or evaluation_refusal is not None
+        or evaluation.closure_target_id != target.closure_target_id
+        or _evaluation_parts(state, evaluation, target, behavior)[2] is not None
     ):
         return "closure_remediation_source_invalid"
     work = state.work_items.get(record.target_work_item_id)
@@ -910,16 +657,17 @@ def closure_target_progress(
         if len(terminals) != 1:
             return _bad("closure_terminal_relation_invalid")
         terminal, run = terminals[0], state.runs.get(terminals[0].source_run_id)
-        evaluations = tuple(
-            item
-            for item in state.closure_evaluations.values()
-            if run is not None
-            and (item.target_work_item_id, item.target_activation_id)
-            == (run.work_item_id, run.activation_id)
-        )
-        if run is None or len(evaluations) != 1:
+        if run is None:
             return _bad("closure_terminal_relation_invalid")
-        evaluation = evaluations[0]
+        # The verdict run may be a returned evaluator (fresh activation of the same
+        # evaluator work); follow its authenticated recorded-source return chain.
+        evaluation, evaluation_refusal = closure_evaluation_for_run(state, run)
+        if (
+            evaluation_refusal is not None
+            or evaluation is None
+            or evaluation.closure_target_id != target_id
+        ):
+            return _bad("closure_terminal_relation_invalid")
         work, _activation, refusal = _evaluation_parts(
             state, evaluation, target, behavior
         )
@@ -1143,16 +891,14 @@ def closure_block_overlay_error(
         ):
             return invalid
         run, activation = authenticated.run, authenticated.activation
-        evaluations = tuple(
-            item
-            for item in state.closure_evaluations.values()
-            if item.closure_target_id == current.closure_target_id
-            and item.target_work_item_id == run.work_item_id
-            and item.target_activation_id == activation.activation_id
-        )
-        if len(evaluations) != 1:
+        evaluation, evaluation_refusal = closure_evaluation_for_run(state, run)
+        if (
+            evaluation is None
+            or evaluation_refusal is not None
+            or evaluation.closure_target_id != current.closure_target_id
+        ):
             return invalid
-        if _evaluation_parts(state, evaluations[0], current, selected)[2]:
+        if _evaluation_parts(state, evaluation, current, selected)[2]:
             return invalid
         artifact, artifact_error = _verdict_artifact(
             state,

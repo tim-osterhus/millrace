@@ -179,6 +179,12 @@ def _is_allowed_path_specific_import(
     path: Path,
     module_name: str,
 ) -> bool:
+    if package_name == "substrate" and path == SUBSTRATE_KERNEL_POLICY_CONSUMER:
+        if module_name in {
+            "millrace.kernel.dependency_policy",
+            "millrace.kernel.dependency_policy.has_unready_dependency",
+        }:
+            return True
     if package_name == "substrate" and path == Path(
         "millrace/substrate/_sqlite_run_controls.py"
     ):

@@ -39,6 +39,7 @@ from millrace.contracts.runtime_failures import (
     runtime_failure_authority_refusal,
     runtime_failure_eligible,
     runtime_failure_input,
+    runtime_failure_kind,
 )
 from millrace.contracts.state import (
     DaemonBudgetEpochRecord,
@@ -847,6 +848,9 @@ def _status_projection(
         "closure_blocks": [
             json_ready(item) for item in getattr(status, "closure_blocks")
         ],
+        "closure_capacity_blocks": [
+            json_ready(item) for item in getattr(status, "closure_capacity_blocks")
+        ],
         "recent_events": [
             json_ready(item) for item in getattr(status, "recent_events")
         ],
@@ -1425,12 +1429,15 @@ def _runtime_failure_application_status(
     admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
     if admitted is None:
         return "refused"
-    if runtime_failure_action_for(
-        admitted.selected_plan,
-        run.stage_kind_id,
-        run.runner_binding_id,
-        "timeout",
-    ) is None:
+    if (
+        runtime_failure_action_for(
+            admitted.selected_plan,
+            run.stage_kind_id,
+            run.runner_binding_id,
+            runtime_failure_kind(state, completion) or "",
+        )
+        is None
+    ):
         return None
     if runtime_failure_applied(state, run_id):
         return "applied"

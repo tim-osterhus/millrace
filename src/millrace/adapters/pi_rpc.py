@@ -176,6 +176,10 @@ def prompt_for_request(request: AdapterInvocationRequest) -> str:
             "terminal_options": _plain(dispatch.terminal_options),
             "artifact_schemas": schemas,
         },
+        # UTF-8, not ASCII escapes: the embedded work-item payload is then
+        # byte-identical to its canonical body, so the selected body limit and
+        # the runner input bound measure the same bytes.
+        ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,

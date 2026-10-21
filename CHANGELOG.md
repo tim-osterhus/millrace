@@ -2,6 +2,95 @@
 
 ## [0.22.4] - Unreleased
 
+- Add opt-in closure request capacity and overflow. A completion behavior may
+  declare `request_overflow` with policy `materialized_evidence_pages`. Above
+  `request_payload_byte_limit`, the runner receives a projection that points to
+  session-owned, read-only evidence pages, while the durable closure snapshot
+  stays complete. Behaviors without it keep schema 2 and their canonical bytes.
+  Pi prompts embed the work-item payload as UTF-8. Offline source behavior only;
+  real-model, Linux, and campaign qualification remain separate.
+
+- Harden the closure request overflow route. Evidence pages are read only as
+  regular files of the authenticated length, without following links or waiting
+  on special files, so hostile page shapes are refused rather than read. A paged
+  closure request requires a matching working directory for the Codex or Pi
+  adapter, checked before any session or spawn. A closure evaluation above a
+  declared capacity is refused as a durable `closure_capacity_block` with
+  measurements against the selected limits. The lifecycle suppresses that
+  evaluation, the daemon continues, and `status` lists the block. `status`
+  derives each block from the refused receipt that suppresses the evaluation, so
+  a missing or altered refusal detail cannot hide it. Stored measurements are
+  withheld as unverified; selected limits come from the admitted plan, and the
+  projection marks current freshness unknown rather than treating every earlier
+  refusal as a current hold. Missing emitted artifacts and copied output aliases
+  refuse durable load and closure capture through authenticated runner
+  observations and their canonical accepted-transition output identity.
+  Automatic retry is not lawful, and new legal evidence is measured again.
+  Offline source behavior only; real-model, Linux, and campaign qualification
+  remain separate.
+
+- Preserve bounded, redacted context-cleanup refusal diagnostics through the
+  supported session-event diagnostic kind. Refused cleanup keeps the checkout
+  and does not create a successful cleanup receipt.
+
+- Accept a genuine runtime failure of a closure-promoted evaluator run whose
+  evaluator tuple is not an ordinary selected route target, when the claimed
+  activation is the authentic original evaluation of an accepted creator and
+  record. Forged, duplicate or drifted evaluator provenance remains refused on
+  apply and durable load. A returned pass after closure now resolves through the
+  authenticated return chain, so `closure_target_progress` no longer reports
+  `closure_terminal_relation_invalid` for it. Public release and actual
+  Linux/model qualification remain separate.
+
+- Authenticate closure-evaluator runtime-failure origins from immutable recorded
+  history: the evaluator creator with its paired governance event and trace, the
+  target's own creator and root work item, and the sealed snapshot must agree
+  and remain unique. Duplicated, missing, foreign or drifted provenance is
+  refused on apply and durable load; a closed target's historical origin stays
+  authentic after reload. Shared pure helpers have one implementation in the
+  contracts module, re-exported by the kernel.
+
+- Require exact accepted audit and sealed evidence for closure-evaluator
+  origins: creator audit admits exactly one accepted governance event and trace
+  per creator input, refused replays stay lawful, and the sealed prior verdict
+  and every evidence artifact must match recomputed history and pass one shared
+  canonical artifact-provenance check. Dynamic-selector route targets are typed
+  like activation fields, so an activation selected only by a dynamic selector
+  is visible to kernel and dispatch alike. Public release and actual Linux/model
+  qualification remain separate.
+
+- Accept a GAP verdict from a recovered closure evaluator as the prior verdict for
+  the next closure evaluation when the verdict run returns to the original
+  evaluation through the authenticated recorded-source chain. Kernel snapshot
+  capture and the sealed prior-verdict check share `closure_verdict_run_refusal`;
+  artifact provenance, plan, lineage, stage, action, digest and ordering checks
+  are unchanged. Public release and actual Linux/model qualification remain
+  separate.
+
+- Add opt-in fanout schema 3 with exact same-batch prerequisites and selected
+  final-success actions. Validate the whole dependency DAG before accepting the
+  source result, and release each edge only through the original card's
+  authenticated completion or routed descendant. Legacy fanout schema 2 keeps
+  its authority bytes and behavior; the store schema remains unchanged.
+
+- Render attempt-owned return and quarantine options only for their exact
+  current selected recovery context, using the same ownership check during
+  result application. Ordinary blocked/complete routes remain available.
+  Compiler, export and admission reject ordinary ingress with only
+  attempt-owned exits. An authentic ordinary invocation's attempt-only marker
+  stays rejected and may use an explicit bounded result-recovery mapping;
+  ambiguous, stale, foreign or invalid-phase authority stays refused.
+
+- Apply explicit selected recovery mappings to clean invocation, parse and
+  output-capacity failures and authenticated semantic result refusals. Preserve
+  original completions, rejected candidates and refusal receipts while applying
+  a separate bounded recovery command. Recovery receives authenticated source
+  diagnostics. Clean invocation deadlines require exact cancellation/cleanup
+  provenance; campaign budgets, cancellation and safety/state-integrity
+  refusals retain their boundaries. Returned closure evaluators preserve their
+  original validation contract through repeated recovery and durable reload;
+  missing or foreign evaluator/source provenance remains refused.
+
 - Treat completed stock Pi read/edit/write errors as truthful text feedback
   under explicit group accounting. Later valid completion can qualify after
   missing-file, edit-mismatch, permission or native validation errors, while

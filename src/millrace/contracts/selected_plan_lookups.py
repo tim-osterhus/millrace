@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from millrace.contracts.compiled_plan import (
+    CounterDeclaration,
     RunnerBindingDeclaration,
     SelectedCompiledPlan,
     StageKindDeclaration,
@@ -151,9 +152,35 @@ def terminal_action_for(
     return None
 
 
+def counter_threshold_is_runtime_owned(
+    selected_plan: SelectedCompiledPlan,
+    counter: CounterDeclaration,
+) -> bool:
+    threshold_action = next(
+        (
+            action
+            for action in selected_plan.terminal_actions
+            if action.id == counter.threshold_action_id
+        ),
+        None,
+    )
+    if threshold_action is None:
+        return False
+    selectable_outcomes = runner_selectable_outcome_ids(
+        selected_plan,
+        stage_kind_id=str(counter.stage_kind_id),
+    )
+    return runtime_owned_threshold_for_outcomes(
+        threshold_action_kind=threshold_action.action_kind,
+        threshold_outcome_id=str(threshold_action.outcome_id),
+        runner_selectable_outcome_ids=selectable_outcomes,
+    )
+
+
 __all__ = (
     "artifact_field_conditions_guaranteed_by_increment",
     "counter_artifact_contract_mismatch",
+    "counter_threshold_is_runtime_owned",
     "runner_binding_for",
     "runner_selectable_outcome_ids",
     "runtime_owned_threshold_for_outcomes",

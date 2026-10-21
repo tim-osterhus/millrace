@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable, Mapping
 
 from millrace.adapters.cli import (
+    closure_evidence,
     context_retention,
     session_attribution,
     session_records,
@@ -30,6 +31,8 @@ from millrace.adapters.cli.session_runtime_failures import (
 )
 from millrace.adapters.cli.session_runtime_failures import (
     apply_persisted_runtime_failure,
+    apply_rejected_result_completion,
+    replay_completed_result_receipt,
 )
 from millrace.adapters.runner_contract import (
     AdapterErrorResult,
@@ -80,6 +83,7 @@ __all__ = (
     "build_dispatch_envelope_for_run",
 )
 _RUNTIME_SESSION_EVENT_POLICY = RedactionPolicy(policy_id="runtime-session-events")
+
 
 def _persist_orphan_risk(
     runtime: OpenRuntimeContext,
@@ -183,6 +187,7 @@ def _persist_completion(
         run_ref=run_ref,
         session=session,
         evidence=evidence,
+        request=request,
     )
     if mutation_refusal is not None:
         refusal_result, refusal_reason = mutation_refusal
@@ -242,6 +247,9 @@ def _persist_completion(
         adapter_removed_file_count=cleanup.removed_file_count,
         adapter_removed_byte_count=cleanup.removed_byte_count,
         event_redaction_policy=_RUNTIME_SESSION_EVENT_POLICY,
+    )
+    closure_evidence.cleanup_session_closure_evidence(
+        runtime, session, request.dispatch_envelope, _RUNTIME_SESSION_EVENT_POLICY
     )
     return result
 
@@ -334,12 +342,13 @@ def _context_writeback_refusal(
     run_ref: RunRef,
     session: RunnerSessionRecord,
     evidence: RunnerResultEvidence | None,
+    request: AdapterInvocationRequest | None = None,
 ) -> tuple[SessionExecutionResult, str] | None:
-    refusal = validate_context_writeback(
-        runtime,
-        session=session,
-        evidence=evidence,
-    )
+    refusal = validate_context_writeback(runtime, session=session, evidence=evidence)
+    if refusal is None and request is not None and evidence is not None:
+        refusal = closure_evidence.closure_evidence_drift(  # applicable result only
+            runtime, session=session, dispatch=request.dispatch_envelope
+        )
     if refusal is None:
         return None
     _audit_session_refusal(
@@ -620,13 +629,14 @@ def _apply_persisted_completion(
         or session.state != "completed"
     ):
         return SessionExecutionResult("completion_refused")
-    receipt = state.receipts.get(completion.application_input_id)
-    if receipt is not None:
-        return SessionExecutionResult(
-            "observation_accepted",
-            accepted=receipt.accepted,
-            transition_disposition="replayed",
-        )
+    replay = replay_completed_result_receipt(
+        runtime,
+        state,
+        completion,
+        daemon_stop_requested=daemon_stop_requested,
+    )
+    if replay is not None:
+        return replay
     digest = completion.runner_result_evidence_digest
     if digest is None:
         return SessionExecutionResult("ready_state_corrupt")
@@ -666,20 +676,15 @@ def _apply_persisted_completion(
         ),
     )
     if not decision.accepted:
-        refusal_reason = (
-            "transition_refused"
-            if decision.refusal is None
-            else decision.refusal.reason
-        )
         if not refusal_is_pre_persist(decision):
             next_state = apply(state, decision)
             runtime.store.persist_runtime_state(next_state, runtime.cas_store)
-        return SessionExecutionResult(
-            "runner_session_waiting"
-            if refusal_reason == "cooldown_wait_pending"
-            else "observation_refused",
-            observation_refusal_reason=refusal_reason,
-            transition_disposition=decision.disposition,
+        return apply_rejected_result_completion(
+            runtime,
+            _load(runtime),
+            completion,
+            decision,
+            daemon_stop_requested=daemon_stop_requested,
         )
     next_state = apply(state, decision)
     runtime.store.persist_runtime_state(next_state, runtime.cas_store)

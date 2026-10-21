@@ -480,6 +480,52 @@ def test_artifact_records_authenticate_shared_return_action_with_matching_attemp
 
 
 @pytest.mark.parametrize(
+    "corruption",
+    ("missing_route", "foreign_emitter", "foreign_target", "duplicate_route"),
+)
+def test_artifact_records_refuse_corrupt_historical_return_links(
+    corruption: str,
+) -> None:
+    from millrace.adapters.cli import context_checkout as checkout_module
+    from tests.substrate.test_persistence_integrity_refusals import (
+        _generic_returned_parent_claimed_state,
+    )
+
+    state, _plan, _fingerprint = _generic_returned_parent_claimed_state()
+    artifact = next(iter(state.artifacts.values()))
+    route = next(
+        route
+        for route in state.activation_routes
+        if route.created_by_input_id == artifact.created_by_input_id
+    )
+    if corruption == "missing_route":
+        routes = tuple(item for item in state.activation_routes if item != route)
+    elif corruption == "foreign_emitter":
+        routes = tuple(
+            replace(item, source_run_id="run-generic-parent")
+            if item == route
+            else item
+            for item in state.activation_routes
+        )
+    elif corruption == "foreign_target":
+        routes = tuple(
+            replace(item, target_activation_id="activation-generic-parent")
+            if item == route
+            else item
+            for item in state.activation_routes
+        )
+    else:
+        routes = (*state.activation_routes, replace(route, record_id="duplicate-route"))
+    state = replace(state, activation_routes=routes)
+
+    with pytest.raises(
+        checkout_module.ContextCheckoutPreparationError,
+        match="relevant artifact provenance could not be authenticated",
+    ):
+        checkout_module._artifact_records(_attempt_relation(state))
+
+
+@pytest.mark.parametrize(
     ("corruption", "expected_reason"),
     (
         ("resolved_active", "ambiguous"),

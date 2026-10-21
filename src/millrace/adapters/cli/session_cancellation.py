@@ -97,6 +97,32 @@ def _emergency_cleanup_live_handle(
     return complete.SessionExecutionResult("session_reconciliation_required")
 
 
+def _request_deadline_cancellation(
+    runtime: OpenRuntimeContext,
+    run_ref: RunRef,
+    session: RunnerSessionRecord,
+    budget_deadline: bool,
+) -> None:
+    if budget_deadline:
+        _request_cancellation(
+            runtime,
+            run_id=run_ref.run_id,
+            request_id=f"daemon:runner-session-cancel:{session.session_id}",
+            reason="daemon_shutdown",
+            source_kind="daemon",
+            actor_id="daemon",
+        )
+        return
+    _request_cancellation(
+        runtime,
+        run_id=run_ref.run_id,
+        request_id=f"runtime:runner-session-timeout:{session.session_id}",
+        reason="runner_timeout",
+        source_kind="runtime",
+        actor_id="runtime",
+    )
+
+
 def _request_cancellation(
     runtime: OpenRuntimeContext,
     *,
@@ -250,6 +276,7 @@ def _cancel_running_session(
     request: AdapterInvocationRequest,
     handle: RunnerSessionHandle,
     primary: RunnerSessionCancellationRecord,
+    daemon_stop_requested: Callable[[], bool] | None = None,
 ) -> complete.SessionExecutionResult:
     session = complete._load(runtime).runner_sessions[session.session_id]
     sequence = 0
@@ -357,6 +384,7 @@ def _cancel_running_session(
         outcome=outcome,
         cleanup=cleanup,
         primary=primary,
+        daemon_stop_requested=daemon_stop_requested,
     )
 
 
@@ -369,6 +397,7 @@ def _persist_cancellation_result(
     outcome: AdapterInvocationOutcome | None,
     cleanup: RunnerCleanupResult,
     primary: RunnerSessionCancellationRecord,
+    daemon_stop_requested: Callable[[], bool] | None = None,
 ) -> complete.SessionExecutionResult:
     if outcome is not None and not complete._adapter_outcome_matches_request(
         outcome,
@@ -414,6 +443,7 @@ def _persist_cancellation_result(
             outcome=outcome,
             cleanup=cleanup,
             primary=primary,
+            daemon_stop_requested=daemon_stop_requested,
             adapter_error_terminal_state=(
                 "interrupted"
                 if isinstance(outcome, AdapterErrorResult)
@@ -433,6 +463,7 @@ def _persist_cancellation_result(
             "outcome": "no_terminal_adapter_outcome",
         },
         event_redaction_policy=request.redaction_policy,
+        daemon_stop_requested=daemon_stop_requested,
     )
 
 
@@ -464,6 +495,7 @@ def _persist_cancelled_without_outcome(
     redaction_policy_id: str,
     diagnostic: dict[str, object],
     event_redaction_policy: RedactionPolicy | None = None,
+    daemon_stop_requested: Callable[[], bool] | None = None,
 ) -> complete.SessionExecutionResult:
     terminal_state = (
         "interrupted" if cleanup_disposition in {"not_required", "complete"} else "lost"
@@ -503,9 +535,8 @@ def _persist_cancelled_without_outcome(
         is None
     ):
         return complete.SessionExecutionResult("completion_refused")
-    return complete.SessionExecutionResult(
-        "adapter_failure",
-        adapter_error_kind="cancelled",
+    return complete._apply_persisted_completion(
+        runtime, record, daemon_stop_requested=daemon_stop_requested
     )
 
 

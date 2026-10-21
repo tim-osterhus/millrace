@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import fields, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -28,11 +28,8 @@ from millrace.adapters.runner_contract import (
     AdapterSuccessResult,
 )
 from millrace.contracts.compiled_plan import (
-    RunnerBindingWithRuntimeFailuresDeclaration,
-    RunnerRuntimeFailureMapping,
     authority_fingerprint,
 )
-from millrace.contracts.ids import ActionId, StageKindId
 from millrace.contracts.runner import (
     runner_session_completion_diagnostic_bytes,
     runner_session_completion_diagnostic_from_payload,
@@ -58,23 +55,19 @@ def _mapped_generic_state(
     monkeypatch: pytest.MonkeyPatch,
     *,
     mapped: bool = True,
+    failure_kind: str = "timeout",
 ):
-    plan, _fingerprint = generic_admission.compile_plan()
+    source = generic_admission.source()
     if mapped:
-        bindings = tuple(
-            RunnerBindingWithRuntimeFailuresDeclaration(
-                **{item.name: getattr(binding, item.name) for item in fields(binding)},
-                runtime_failure_mappings=(
-                    RunnerRuntimeFailureMapping(
-                        StageKindId(generic_admission.PARENT_STAGE_ID),
-                        "timeout",
-                        ActionId(generic_admission.RECOVERY_SOURCE_ACTION_ID),
-                    ),
-                ),
-            )
-            for binding in plan.runner_bindings
-        )
-        plan = replace(plan, runner_bindings=bindings)
+        binding = cast(list[dict[str, object]], source["runner_bindings"])[0]
+        binding["runtime_failure_mappings"] = [
+            {
+                "stage_kind_id": generic_admission.PARENT_STAGE_ID,
+                "failure_kind": failure_kind,
+                "action_id": generic_admission.RECOVERY_SOURCE_ACTION_ID,
+            }
+        ]
+    plan, _fingerprint = generic_admission.compile_plan(source)
     fingerprint = authority_fingerprint(plan)
     monkeypatch.setattr(
         generic_admission,
@@ -85,12 +78,14 @@ def _mapped_generic_state(
     return state
 
 
-def _timeout_config() -> tuple[AdapterLocalConfig, _RecordingAdapter]:
+def _timeout_config(
+    failure_kind: str = "timeout",
+) -> tuple[AdapterLocalConfig, _RecordingAdapter]:
     def start(request: AdapterInvocationRequest):
         outcome = _error_outcome(
             request,
             dispatch_echo=_dispatch_echo(request),
-            error_kind="timeout",
+            error_kind=failure_kind,
         )
         return _started_session(
             request,
@@ -118,6 +113,22 @@ def _recovery_success_config() -> tuple[AdapterLocalConfig, _RecordingAdapter]:
 
     adapter = _RecordingAdapter(start)
     return AdapterLocalConfig(adapters={"codex": adapter}), adapter
+
+
+def _source_success_config() -> AdapterLocalConfig:
+    def start(request: AdapterInvocationRequest):
+        outcome = AdapterSuccessResult.from_unredacted(
+            adapter_id=request.adapter_id,
+            dispatch_echo=_dispatch_echo(request),
+            redaction_policy=request.redaction_policy,
+            marker="FANOUT_READY",
+            artifact_payload_candidate=generic_fanout.packet_payload(),
+        )
+        return _started_session(
+            request, _ImmediateHandle(outcome, cleanup_disposition="complete")
+        )
+
+    return AdapterLocalConfig(adapters={"codex": _RecordingAdapter(start)})
 
 
 def _persist_timeout_without_applying(
@@ -286,9 +297,14 @@ def test_clean_selected_timeout_applies_recovery_without_runner_evidence(
         after_daemon.close()
 
 
+@pytest.mark.parametrize(
+    "failure_kind",
+    ("timeout", "invocation_failed", "result_parse_failed", "output_too_large"),
+)
 def test_public_daemon_routes_timeout_then_runs_selected_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
 ) -> None:
     from types import SimpleNamespace
 
@@ -297,12 +313,12 @@ def test_public_daemon_routes_timeout_then_runs_selected_recovery(
     from millrace.adapters.cli import daemon
     from millrace.adapters.cli.daemon import DaemonRunOptions
 
-    state = _mapped_generic_state(monkeypatch)
+    state = _mapped_generic_state(monkeypatch, failure_kind=failure_kind)
     runtime = _runtime(tmp_path, state)
     paths = runtime.paths
     runtime.close()
 
-    timeout_config, timeout_adapter = _timeout_config()
+    timeout_config, timeout_adapter = _timeout_config(failure_kind)
     options = DaemonRunOptions(
         paths=paths,
         idle_sleep_seconds=0,
@@ -353,7 +369,7 @@ def test_public_daemon_routes_timeout_then_runs_selected_recovery(
         assert failed_session_id is not None
         failed_completion = failed_state.runner_session_completions[failed_session_id]
         assert failed_state.runner_sessions[failed_session_id].state == "failed"
-        assert failed_completion.adapter_error_kind == "timeout"
+        assert failed_completion.adapter_error_kind == failure_kind
         assert failed_completion.runner_result_evidence_digest is None
         assert failed_state.runner_observations == {}
         assert failed_state.artifacts == {}
@@ -388,6 +404,13 @@ def test_public_daemon_routes_timeout_then_runs_selected_recovery(
     assert recovery_daemon["last_result"]["code"] == "observation_accepted"
     assert recovery_daemon["last_result"]["accepted"] is True
     assert len(recovery_adapter.requests) == 1
+    source_context = recovery_adapter.requests[0].dispatch_envelope.governance_context[
+        "runtime_failure_source"
+    ]
+    assert source_context["source_run_id"] == failed_run_id
+    assert source_context["failure_kind"] == failure_kind
+    assert source_context["diagnostic_digest"] == failed_completion.diagnostic_digest
+    assert source_context["diagnostic"]["error_kind"] == failure_kind
     after_recovery = daemon.open_runtime_context(paths, command="test")
     try:
         completed = _load(after_recovery)
@@ -397,10 +420,19 @@ def test_public_daemon_routes_timeout_then_runs_selected_recovery(
         assert observation.run_id != failed_run_id
         assert completed.runner_sessions[failed_session_id].state == "failed"
         assert (
-            completed.runner_session_completions[failed_session_id]
-            == failed_completion
+            completed.runner_session_completions[failed_session_id] == failed_completion
         )
         assert len(completed.recovery_attempts) == 1
+        returned = run_bounded_execution_unit(
+            after_recovery, local_config=_source_success_config()
+        )
+        assert returned.code == "observation_accepted"
+        closed = _load(after_recovery)
+        assert "work-generic-parent" in closed.closed_work_items
+        assert next(iter(closed.recovery_attempts.values())).phase == "resolved"
+        assert closed.runner_session_completions[failed_session_id] == failed_completion
+        assert runtime_failure_applied(closed, failed_run_id)
+
     finally:
         after_recovery.close()
 
@@ -584,7 +616,7 @@ def test_mapped_timeout_excludes_daemon_budget_cancellation(
     assert after.recovery_attempts == {}
 
 
-def test_mapped_timeout_excludes_runtime_deadline_cancellation(
+def test_mapped_timeout_routes_clean_runtime_deadline_cancellation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -603,13 +635,11 @@ def test_mapped_timeout_excludes_runtime_deadline_cancellation(
     result = run_bounded_execution_unit(
         runtime,
         activation_id="activation-generic-parent",
-        local_config=AdapterLocalConfig(
-            adapters={"codex": _SignalWaitAdapter()}
-        ),
+        local_config=AdapterLocalConfig(adapters={"codex": _SignalWaitAdapter()}),
     )
     after = _load(runtime)
 
-    assert result.code == "adapter_failure"
+    assert result.code == "runtime_failure_recovery_applied"
     assert result.adapter_error_kind == "cancelled"
     session_id = after.runs[cast(str, result.run_id)].current_session_id
     assert session_id is not None
@@ -620,11 +650,11 @@ def test_mapped_timeout_excludes_runtime_deadline_cancellation(
         "runtime",
     )
     assert after.runner_sessions[session_id].state == "interrupted"
-    assert not runtime_failure_eligible(after, completion)
-    assert completion.application_input_id not in after.receipts
-    assert after.activation_routes == ()
+    assert runtime_failure_eligible(after, completion)
+    assert completion.application_input_id in after.receipts
+    assert len(after.activation_routes) == 1
     assert after.runner_observations == {}
-    assert after.recovery_attempts == {}
+    assert len(after.recovery_attempts) == 1
     runtime.close()
 
 
@@ -747,3 +777,97 @@ def test_timeout_without_selected_mapping_keeps_adapter_failure(
     assert after.activation_routes == ()
     assert after.runner_observations == {}
     runtime.close()
+
+
+@pytest.mark.parametrize(
+    "marker,artifact,reason",
+    [
+        ("UNKNOWN_RESULT", None, "undeclared_terminal_outcome"),
+        ("FANOUT_READY", None, "invalid_artifact_payload"),
+        ("FANOUT_READY", {"wrong": True}, "invalid_artifact_payload"),
+    ],
+)
+def test_rejected_result_routes_without_rewriting_candidate_or_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    marker: str,
+    artifact: dict[str, object] | None,
+    reason: str,
+) -> None:
+    state = _mapped_generic_state(monkeypatch, failure_kind="result_rejected")
+    runtime = _runtime(tmp_path, state)
+
+    def start(request: AdapterInvocationRequest):
+        outcome = AdapterSuccessResult.from_unredacted(
+            adapter_id=request.adapter_id,
+            dispatch_echo=_dispatch_echo(request),
+            redaction_policy=request.redaction_policy,
+            marker=marker,
+            observation_payload_candidate={},
+            artifact_payload_candidate=artifact,
+        )
+        return _started_session(
+            request, _ImmediateHandle(outcome, cleanup_disposition="complete")
+        )
+
+    adapter = _RecordingAdapter(start)
+    result = run_bounded_execution_unit(
+        runtime,
+        activation_id="activation-generic-parent",
+        local_config=AdapterLocalConfig(adapters={"codex": adapter}),
+    )
+    assert result.code == "runtime_failure_recovery_applied"
+    after = _load(runtime)
+    failed_run_id = cast(str, result.run_id)
+    completion = after.runner_session_completions[
+        cast(str, after.runs[failed_run_id].current_session_id)
+    ]
+    assert completion.terminal_state == "completed"
+    assert completion.adapter_outcome_kind == "success"
+    assert completion.runner_result_evidence_digest is not None
+    evidence_bytes = runtime.cas_store.get_bytes(
+        completion.runner_result_evidence_digest
+    )
+    assert json.loads(evidence_bytes)["marker"] == marker
+    original_receipt = after.receipts[completion.application_input_id]
+    assert not original_receipt.accepted
+    assert original_receipt.refusal_reason == reason
+    assert runtime_failure_applied(after, failed_run_id)
+    assert after.runner_observations == {}
+    assert after.artifacts == {}
+    assert len(after.activation_routes) == len(after.recovery_attempts) == 1
+    reopened = _reopen_runtime(runtime)
+    replay = run_bounded_execution_unit(
+        reopened,
+        activation_id="activation-generic-parent",
+        local_config=_recovery_success_config()[0],
+    )
+    assert replay.code == "runtime_failure_recovery_applied"
+    assert replay.transition_disposition == "replayed"
+    assert (
+        _load(reopened).runner_session_completions[completion.session_id] == completion
+    )
+    assert _load(reopened).receipts[completion.application_input_id] == original_receipt
+    assert (
+        reopened.cas_store.get_bytes(completion.runner_result_evidence_digest)
+        == evidence_bytes
+    )
+    recovery = run_bounded_execution_unit(
+        reopened,
+        local_config=_recovery_success_config()[0],
+    )
+    assert recovery.code == "observation_accepted"
+    assert recovery.run_id != failed_run_id
+    assert len(_load(reopened).runner_observations) == 1
+    returned = run_bounded_execution_unit(
+        reopened, local_config=_source_success_config()
+    )
+    assert returned.code == "observation_accepted"
+    closed = _load(reopened)
+    assert "work-generic-parent" in closed.closed_work_items
+    assert next(iter(closed.recovery_attempts.values())).phase == "resolved"
+    assert closed.runner_session_completions[completion.session_id] == completion
+    assert closed.receipts[completion.application_input_id] == original_receipt
+    assert runtime_failure_applied(closed, failed_run_id)
+
+    reopened.close()

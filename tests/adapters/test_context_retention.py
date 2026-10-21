@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -221,3 +222,97 @@ def test_exact_checkout_deletion_is_idempotent_after_partial_failure(
     )
 
     assert not target.exists()
+
+
+def test_cleanup_refusal_is_persisted_as_bounded_redacted_diagnostic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapters.test_context_writeback import _bound_fixture
+    from millrace.adapters.cli import context_retention
+
+    runtime, state, session, binding = _bound_fixture(tmp_path)
+    terminal_at = session.created_at
+    terminal_session = replace(
+        session,
+        state="completed",
+        cleanup_disposition="complete",
+        start_intent_at=terminal_at,
+        started_at=terminal_at,
+        ended_at=terminal_at,
+    )
+    terminal_state = replace(
+        state,
+        runner_sessions={session.session_id: terminal_session},
+    )
+    monkeypatch.setattr(
+        type(runtime.store),
+        "load_runtime_state",
+        lambda _store, _cas_store: terminal_state,
+    )
+
+    def refuse_completion(*_args: object, **_kwargs: object) -> None:
+        raise context_retention.ContextRetentionError(
+            "private-token " + "x" * 300
+        )
+
+    monkeypatch.setattr(context_retention, "_validate_completion", refuse_completion)
+    monkeypatch.setattr(
+        context_retention,
+        "time",
+        SimpleNamespace(time_ns=lambda: 42),
+    )
+    policy = RedactionPolicy(
+        policy_id="test-context-retention-redaction",
+        secret_tokens=("private-token",),
+    )
+    kwargs = {
+        **_cleanup_kwargs(),
+        "event_redaction_policy": policy,
+    }
+    checkout = (
+        runtime.paths.workspace_path
+        / str(binding.checkout_root)
+        / session.session_id
+        / str(session.dispatch_generation)
+    )
+
+    assert context_retention.cleanup_completed_session_context(
+        runtime,
+        session=session,
+        **kwargs,
+    ) is None
+    assert context_retention.cleanup_completed_session_context(
+        runtime,
+        session=session,
+        **kwargs,
+    ) is None
+    assert checkout.is_dir()
+    assert runtime.store.load_context_cleanup_receipt_authenticated(
+        session.session_id,
+        session.dispatch_generation,
+        session.context_manifest_digest,
+        session.session_fencing_token,
+    ) is None
+
+    event_store = runtime.open_session_event_store(create=False)
+    try:
+        page = event_store.read(
+            session.run_id,
+            after_sequence=0,
+            session_id=session.session_id,
+        )
+    finally:
+        event_store.close()
+
+    assert len(page.events) == 1
+    event = page.events[0]
+    assert event.session_id == session.session_id
+    assert event.run_id == session.run_id
+    assert event.dispatch_generation == session.dispatch_generation
+    assert event.kind == "diagnostic"
+    assert event.bounded_payload["event"] == "context_cleanup_refused"
+    reason = event.bounded_payload["reason"]
+    assert isinstance(reason, str)
+    assert len(reason) <= 256
+    assert "private-token" not in reason

@@ -16,6 +16,7 @@ from millrace.contracts.compiled_plan import (
 )
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId
+from millrace.contracts.runner_failure_kinds import RUNNER_RUNTIME_FAILURE_KINDS
 from millrace.contracts.state import (
     DURABLE_INT64_MAX,
     RUNNER_SESSION_TEXT_MAX_BYTES,
@@ -571,7 +572,7 @@ class ApplyRunnerRuntimeFailure(KernelCommand):
         )
         _require_runner_session_digest("diagnostic_digest", self.diagnostic_digest)
         _require_durable_timestamp("observed_at", self.observed_at)
-        if self.failure_kind != "timeout":
+        if self.failure_kind not in RUNNER_RUNTIME_FAILURE_KINDS:
             raise ValueError("unsupported runtime failure kind")
 
     @property

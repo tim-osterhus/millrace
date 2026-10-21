@@ -421,9 +421,12 @@ def _record_cleanup_refusal(
     session_persistence._record_session_event(
         runtime,
         session=session,
-        kind="context_cleanup_refused",
+        kind="diagnostic",
         observed_at=time.time_ns(),
-        payload={"reason": reason[:256]},
+        payload={
+            "event": "context_cleanup_refused",
+            "reason": reason[:256],
+        },
         replay_key=(
             f"context-cleanup-refused:{session.session_id}:"
             f"{session.dispatch_generation}"

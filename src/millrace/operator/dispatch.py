@@ -6,25 +6,39 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
 
+from millrace.contracts.closure_request_overflow import (
+    ClosureEvidencePage,
+    ClosureRequestOverflowError,
+    closure_request_dispatch_payload,
+    closure_request_evidence_pages,
+)
 from millrace.contracts.compiled_plan import (
     AuthorityValue,
+    CompletionBehaviorDeclaration,
     ExternalEnqueueRouteDeclaration,
     JoinDeclaration,
     SelectedCompiledPlan,
     StageKindDeclaration,
+    completion_behavior_request_overflow,
     context_binding_authority_refusal,
 )
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import QueueFamilyId, RunnerBindingId, StageKindId
+from millrace.contracts.recovery_action_context import (
+    RecoveryActionContextRefusal,
+    recovery_action_context_for_terminal_action,
+)
 from millrace.contracts.runner import RunnerDispatchEnvelope
 from millrace.contracts.runtime_failure_history import (
     current_recovery_return_matches,
     recovery_attempt_history_matches,
     selected_activation_targets,
+    selected_dynamic_route_targets,
 )
 from millrace.contracts.runtime_failures import (
     recovery_activation_origin_matches,
     runtime_failure_applied,
+    runtime_failure_kind,
 )
 from millrace.contracts.selected_plan_lookups import runner_selectable_outcome_ids
 from millrace.contracts.state import (
@@ -34,7 +48,11 @@ from millrace.contracts.state import (
     RuntimeState,
     WorkItem,
 )
-from millrace.contracts.transition import ClaimWork, TransitionContext
+from millrace.contracts.transition import (
+    ClaimWork,
+    TransitionContext,
+    canonical_authority_mapping_bytes,
+)
 from millrace.kernel import decide
 from millrace.kernel.fanout_policy import (
     PolicyAssessment,
@@ -424,11 +442,19 @@ def build_dispatch_envelope_for_run(
         artifact_schema_ids=tuple(
             str(schema_id) for schema_id in stage.artifact_schema_ids
         ),
-        work_item_payload=work_item.payload,
+        work_item_payload=_dispatch_work_item_payload(
+            state=state,
+            selected_plan=selected_plan,
+            run=run,
+            work_item=work_item,
+            session_id=session.session_id,
+            dispatch_generation=session.dispatch_generation,
+        ),
         governance_context=governance_context,
         terminal_options=_terminal_options_for_dispatch(
             state=state,
             run=run,
+            activation=activation,
             work_item=work_item,
             stage=stage,
         ),
@@ -436,6 +462,129 @@ def build_dispatch_envelope_for_run(
         selected_wait_evidence=selected_wait_evidence,
         context_checkout=context_checkout,
     )
+
+
+def closure_evidence_pages_for_run(
+    *,
+    state: RuntimeState,
+    run_id: str,
+) -> tuple[ClosureEvidencePage, ...]:
+    """Evidence pages the run's current session must materialize before start.
+
+    Empty unless the run's work item is a selected closure request whose body
+    exceeds its inline limit through declared overflow. The full dispatch
+    authority is validated first, exactly as for the runner request.
+    """
+    dispatch = build_dispatch_envelope_for_run(state=state, run_id=run_id)
+    run = state.runs[run_id]
+    work_item = state.work_items[run.work_item_id]
+    admitted = state.admitted_plans[run.run_ref.plan_ref.authority_fingerprint]
+    behavior = _closure_request_behavior(
+        state=state,
+        selected_plan=admitted.selected_plan,
+        run=run,
+        work_item=work_item,
+    )
+    if behavior is None:
+        return ()
+    try:
+        return closure_request_evidence_pages(
+            work_item.payload,
+            behavior=behavior,
+            session_id=dispatch.session_id,
+            dispatch_generation=dispatch.dispatch_generation,
+        )
+    except ClosureRequestOverflowError as exc:
+        raise _dispatch_error(exc.reason, run_id=run_id) from exc
+
+
+def closure_request_uses_evidence_pages(*, state: RuntimeState, run_id: str) -> bool:
+    """Whether the run's closure request is delivered through materialized pages.
+
+    Session-independent: true exactly when the run's work item is a selected
+    closure request whose canonical body exceeds its inline limit and whose
+    behavior declares overflow. Callers use it to require that the runner reads
+    relative page paths from the same workspace the host materializes.
+    """
+    run = state.runs.get(run_id)
+    if run is None:
+        raise _dispatch_error("unknown_run", run_id=run_id)
+    work_item = state.work_items.get(run.work_item_id)
+    admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
+    if work_item is None or admitted is None:
+        raise _dispatch_error("closure_request_authority_mismatch", run_id=run_id)
+    behavior = _closure_request_behavior(
+        state=state,
+        selected_plan=admitted.selected_plan,
+        run=run,
+        work_item=work_item,
+    )
+    if behavior is None or completion_behavior_request_overflow(behavior) is None:
+        return False
+    return (
+        len(canonical_authority_mapping_bytes(work_item.payload))
+        > behavior.request_payload_byte_limit
+    )
+
+
+def _dispatch_work_item_payload(
+    *,
+    state: RuntimeState,
+    selected_plan: SelectedCompiledPlan,
+    run: RunRecord,
+    work_item: WorkItem,
+    session_id: str,
+    dispatch_generation: int,
+) -> Mapping[str, AuthorityValue]:
+    behavior = _closure_request_behavior(
+        state=state,
+        selected_plan=selected_plan,
+        run=run,
+        work_item=work_item,
+    )
+    if behavior is None:
+        return work_item.payload
+    try:
+        return closure_request_dispatch_payload(
+            work_item.payload,
+            behavior=behavior,
+            session_id=session_id,
+            dispatch_generation=dispatch_generation,
+        )
+    except ClosureRequestOverflowError as exc:
+        raise _dispatch_error(exc.reason, run_id=run.run_ref.run_id) from exc
+
+
+def _closure_request_behavior(
+    *,
+    state: RuntimeState,
+    selected_plan: SelectedCompiledPlan,
+    run: RunRecord,
+    work_item: WorkItem,
+) -> CompletionBehaviorDeclaration | None:
+    """The selected completion behavior owning a closure-request work item."""
+    evaluations = tuple(
+        evaluation
+        for evaluation in state.closure_evaluations.values()
+        if evaluation.target_work_item_id == work_item.ref.work_item_id
+    )
+    if not evaluations:
+        return None
+    behaviors = tuple(
+        behavior
+        for behavior in selected_plan.completion_behaviors
+        if behavior.id == evaluations[0].completion_behavior_id
+    )
+    if (
+        len(evaluations) != 1
+        or evaluations[0].selected_plan_ref != run.run_ref.plan_ref
+        or len(behaviors) != 1
+    ):
+        raise _dispatch_error(
+            "closure_request_authority_mismatch",
+            run_id=run.run_ref.run_id,
+        )
+    return behaviors[0]
 
 
 def _current_recovery_run_matches(
@@ -1007,6 +1156,7 @@ def _selected_route_targets(
                     action.runner_binding_id,
                 )
             )
+    targets.update(selected_dynamic_route_targets(selected_plan))
     return frozenset(targets)
 
 
@@ -1105,6 +1255,15 @@ def _governance_context_for_dispatch(
         )
         if downstream:
             context["downstream_graph_node_ids"] = downstream
+    failure_source = _runtime_failure_source_for_dispatch(
+        state,
+        selected_plan,
+        run,
+        activation,
+        work_item,
+    )
+    if failure_source is not None:
+        context["runtime_failure_source"] = failure_source
     generated_work_source = _generated_work_source_for_dispatch(
         state=state,
         selected_plan=selected_plan,
@@ -1123,6 +1282,56 @@ def _governance_context_for_dispatch(
     if counters:
         context["counters"] = counters
     return context
+
+
+def _runtime_failure_source_for_dispatch(
+    state: RuntimeState,
+    selected_plan: SelectedCompiledPlan,
+    run: RunRecord,
+    activation: Activation,
+    work_item: WorkItem,
+) -> Mapping[str, AuthorityValue] | None:
+    """Expose evidence references only for the authenticated recovery owner."""
+    if not _current_recovery_run_matches(
+        state, selected_plan, run, activation, work_item
+    ):
+        return None
+    attempts = [
+        attempt
+        for attempt in state.recovery_attempts.values()
+        if attempt.plan_ref == run.run_ref.plan_ref
+        and attempt.latest_recovery_run_id == run.run_ref.run_id
+        and attempt.latest_recovery_activation_id == activation.activation_id
+        and attempt.lineage_id == work_item.lineage_id
+    ]
+    if len(attempts) != 1:
+        raise _dispatch_error(
+            "runtime_failure_source_ownership_invalid", run_id=run.run_ref.run_id
+        )
+    attempt = attempts[0]
+    source = state.runs.get(attempt.source_run_id)
+    if source is None or not runtime_failure_applied(state, source.run_ref.run_id):
+        return None
+    completion = state.runner_session_completions[source.current_session_id or ""]
+    source_activation = state.activations[source.activation_id]
+    receipt = state.receipts.get(completion.application_input_id)
+    return {
+        "policy_id": str(attempt.policy_id),
+        "attempt_count": attempt.attempt_count,
+        "source_run_id": source.run_ref.run_id,
+        "source_session_id": completion.session_id,
+        "source_stage_kind_id": str(source.stage_kind_id),
+        "source_graph_node_id": source_activation.graph_node_id,
+        "source_runner_binding_id": str(source.runner_binding_id),
+        "completion_id": completion.completion_id,
+        "failure_kind": runtime_failure_kind(state, completion),
+        "adapter_error_kind": completion.adapter_error_kind,
+        "diagnostic_digest": completion.diagnostic_digest,
+        "runner_result_evidence_digest": completion.runner_result_evidence_digest,
+        "refusal_reason": None
+        if receipt is None or receipt.accepted
+        else receipt.refusal_reason,
+    }
 
 
 def _generated_work_source_for_dispatch(
@@ -1320,6 +1529,7 @@ def _terminal_options_for_dispatch(
     *,
     state: RuntimeState,
     run: RunRecord,
+    activation: Activation,
     work_item: WorkItem,
     stage: StageKindDeclaration,
 ) -> tuple[Mapping[str, AuthorityValue], ...]:
@@ -1351,6 +1561,21 @@ def _terminal_options_for_dispatch(
             None,
         )
         if action is None:
+            continue
+        if action.action_kind in {
+            "return_to_recorded_source",
+            "quarantine_lineage",
+        } and isinstance(
+            recovery_action_context_for_terminal_action(
+                selected_plan=admitted.selected_plan,
+                state=state,
+                run=run,
+                activation=activation,
+                work_item=work_item,
+                action=action,
+            ),
+            RecoveryActionContextRefusal,
+        ):
             continue
         option: dict[str, AuthorityValue] = {
             "outcome_id": str(outcome.id),
@@ -1486,6 +1711,8 @@ __all__ = (
     "ReadyDispatchDiagnostic",
     "ReadyDispatchProjection",
     "build_dispatch_envelope_for_run",
+    "closure_evidence_pages_for_run",
+    "closure_request_uses_evidence_pages",
     "dispatch_suspension_projection",
     "join_evidence_progress_for_status",
     "list_ready_dispatch_candidates",

@@ -13,16 +13,18 @@ from millrace.adapters.cli.context import (
 from millrace.contracts.runtime_failures import (
     runtime_failure_action_for,
     runtime_failure_applied,
+    runtime_failure_cleanup_digests,
     runtime_failure_diagnostic_matches,
     runtime_failure_eligible,
     runtime_failure_input,
+    runtime_failure_kind,
 )
 from millrace.contracts.state import (
     RunnerObservationRecord,
     RunnerSessionCompletionRecord,
     RuntimeState,
 )
-from millrace.contracts.transition import ApplyRunnerRuntimeFailure
+from millrace.contracts.transition import ApplyRunnerRuntimeFailure, TransitionDecision
 from millrace.kernel import apply, decide
 from millrace.substrate.errors import SubstrateError
 
@@ -38,6 +40,80 @@ class SessionExecutionResult:
     transition_disposition: str | None = None
 
 
+def apply_rejected_result_failure(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+    completion: RunnerSessionCompletionRecord,
+    *,
+    daemon_stop_requested: Callable[[], bool] | None,
+) -> SessionExecutionResult | None:
+    """Keep unmapped rejected candidates on their original refusal path."""
+    if not runtime_failure_eligible(state, completion):
+        return None
+    result = apply_persisted_runtime_failure(
+        runtime,
+        state,
+        completion,
+        daemon_stop_requested=daemon_stop_requested,
+    )
+    return None if result.code == "adapter_failure" else result
+
+
+def replay_completed_result_receipt(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+    completion: RunnerSessionCompletionRecord,
+    *,
+    daemon_stop_requested: Callable[[], bool] | None,
+) -> SessionExecutionResult | None:
+    receipt = state.receipts.get(completion.application_input_id)
+    if receipt is None:
+        return None
+    if not receipt.accepted:
+        recovered = apply_rejected_result_failure(
+            runtime,
+            state,
+            completion,
+            daemon_stop_requested=daemon_stop_requested,
+        )
+        if recovered is not None:
+            return recovered
+    return SessionExecutionResult(
+        "observation_accepted" if receipt.accepted else "observation_refused",
+        accepted=receipt.accepted,
+        observation_refusal_reason=receipt.refusal_reason,
+        transition_disposition="replayed",
+    )
+
+
+def apply_rejected_result_completion(
+    runtime: OpenRuntimeContext,
+    state: RuntimeState,
+    completion: RunnerSessionCompletionRecord,
+    decision: TransitionDecision,
+    *,
+    daemon_stop_requested: Callable[[], bool] | None,
+) -> SessionExecutionResult:
+    recovered = apply_rejected_result_failure(
+        runtime,
+        state,
+        completion,
+        daemon_stop_requested=daemon_stop_requested,
+    )
+    if recovered is not None:
+        return recovered
+    reason = (
+        "transition_refused" if decision.refusal is None else decision.refusal.reason
+    )
+    return SessionExecutionResult(
+        "runner_session_waiting"
+        if reason == "cooldown_wait_pending"
+        else "observation_refused",
+        observation_refusal_reason=reason,
+        transition_disposition=decision.disposition,
+    )
+
+
 def apply_persisted_runtime_failure(
     runtime: OpenRuntimeContext,
     state: RuntimeState,
@@ -45,7 +121,7 @@ def apply_persisted_runtime_failure(
     *,
     daemon_stop_requested: Callable[[], bool] | None,
 ) -> SessionExecutionResult:
-    """Apply only a mapped, clean timeout with authenticated diagnostic bytes."""
+    """Apply only a mapped settled failure with authenticated diagnostic bytes."""
     if not runtime_failure_eligible(state, completion):
         return SessionExecutionResult(
             "adapter_failure",
@@ -83,16 +159,34 @@ def _selected_failure_command(
         admitted.selected_plan,
         run.stage_kind_id,
         run.runner_binding_id,
-        "timeout",
+        runtime_failure_kind(state, completion) or "",
     )
     if action is None:
         return None, None
     try:
         command = runtime_failure_input(state, completion)
         diagnostic_payload = runtime.cas_store.get_bytes(completion.diagnostic_digest)
+        cleanup_payloads = {
+            digest: runtime.cas_store.get_bytes(digest)
+            for digest in runtime_failure_cleanup_digests(state, completion)
+        }
     except (OSError, SubstrateError, TypeError, ValueError):
         return None, SessionExecutionResult("completion_refused")
-    if not runtime_failure_diagnostic_matches(state, completion, diagnostic_payload):
+    evidence_payload = None
+    if completion.runner_result_evidence_digest is not None:
+        try:
+            evidence_payload = runtime.cas_store.get_bytes(
+                completion.runner_result_evidence_digest
+            )
+        except (OSError, SubstrateError, TypeError, ValueError):
+            return None, SessionExecutionResult("completion_refused")
+    if not runtime_failure_diagnostic_matches(
+        state,
+        completion,
+        diagnostic_payload,
+        evidence_payload=evidence_payload,
+        cleanup_payloads=cleanup_payloads,
+    ):
         return None, SessionExecutionResult("completion_refused")
     return command, None
 
@@ -180,7 +274,7 @@ def runtime_failure_replay_candidate(
     run_id: str,
     completion: RunnerSessionCompletionRecord,
 ) -> bool:
-    """Select only unsettled mapped timeout completions for daemon replay."""
+    """Select only unsettled mapped failure completions for daemon replay."""
     if not runtime_failure_eligible(state, completion):
         return False
     run = state.runs.get(run_id)
@@ -189,12 +283,15 @@ def runtime_failure_replay_candidate(
     admitted = state.admitted_plans.get(run.run_ref.plan_ref.authority_fingerprint)
     if admitted is None:
         return False
-    if runtime_failure_action_for(
-        admitted.selected_plan,
-        run.stage_kind_id,
-        run.runner_binding_id,
-        "timeout",
-    ) is None:
+    if (
+        runtime_failure_action_for(
+            admitted.selected_plan,
+            run.stage_kind_id,
+            run.runner_binding_id,
+            runtime_failure_kind(state, completion) or "",
+        )
+        is None
+    ):
         return False
     # Accepted failures leave the replay lane so the recovery run can proceed.
     return not runtime_failure_applied(state, run_id) and not any(

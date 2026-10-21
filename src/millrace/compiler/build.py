@@ -59,6 +59,7 @@ from millrace.contracts import (
     RunnerComponentPin,
     RunnerTerminalResultMapping,
     SelectedCompiledPlan,
+    SiblingDependencyFanoutDeclaration,
     StageKindDeclaration,
     StageKindId,
     TerminalActionDeclaration,
@@ -71,6 +72,8 @@ from millrace.contracts import (
 )
 from millrace.contracts.compiled_plan import (
     AuthorityValue,
+    ClosureRequestOverflowDeclaration,
+    CompletionBehaviorWithRequestOverflowDeclaration,
     ContextSourceDeclaration,
     ContextWriteRule,
     RunnerBindingWithPayloadCapacityDeclaration,
@@ -360,45 +363,7 @@ def build_selected_plan(
             for record in _records_by_id(source, "counters")
         ),
         completion_behaviors=tuple(
-            CompletionBehaviorDeclaration(
-                id=CompletionBehaviorId(str(record["id"])),
-                trigger=str(record.get("trigger", "")),
-                readiness_rule=str(record.get("readiness_rule", "")),
-                request_kind=str(record.get("request_kind", "")),
-                target_selector=str(record.get("target_selector", "")),
-                target_stage_kind_id=StageKindId(str(record["target_stage_kind_id"])),
-                target_graph_node_id=str(record["target_graph_node_id"]),
-                runner_binding_id=RunnerBindingId(str(record["runner_binding_id"])),
-                request_queue_family_id=QueueFamilyId(
-                    str(record["request_queue_family_id"])
-                ),
-                pass_action_id=ActionId(str(record["pass_action_id"])),
-                gap_action_id=ActionId(str(record["gap_action_id"])),
-                blocked_action_id=ActionId(str(record["blocked_action_id"])),
-                verdict_artifact_schema_id=ArtifactSchemaId(
-                    str(record["verdict_artifact_schema_id"])
-                ),
-                evidence_artifact_schema_ids=tuple(
-                    ArtifactSchemaId(value)
-                    for value in text_tuple(record["evidence_artifact_schema_ids"])
-                ),
-                evidence_item_limit=_required_int(record["evidence_item_limit"]),
-                request_payload_byte_limit=_required_int(
-                    record["request_payload_byte_limit"]
-                ),
-                remediation_policy_id=RemediationPolicyId(
-                    str(record["remediation_policy_id"])
-                ),
-                accepted_root_source_kinds=tuple(
-                    text_tuple(record.get("accepted_root_source_kinds", ()))
-                ),
-                root_source_resolution=str(record.get("root_source_resolution", "")),
-                evidence_window_policy=str(record.get("evidence_window_policy", "")),
-                rubric_policy=str(record.get("rubric_policy", "")),
-                blocked_work_policy=str(record.get("blocked_work_policy", "")),
-                skip_if_closed=bool(record.get("skip_if_closed", False)),
-                presentation=authority_mapping(record.get("presentation")),
-            )
+            _build_completion_behavior(record)
             for record in _records_by_id(source, "completion_behaviors")
         ),
         remediation_policies=tuple(
@@ -728,7 +693,7 @@ def _build_fanout_declaration(
     record: SourceRecord,
 ) -> FanoutDeclaration:
     target_route = _route_by_id(source, str(record["target_route_id"]))
-    return FanoutDeclaration(
+    fanout = FanoutDeclaration(
         id=FanoutId(str(record["id"])),
         source_action_id=ActionId(str(record["source_action_id"])),
         source_artifact_schema_id=ArtifactSchemaId(
@@ -741,7 +706,9 @@ def _build_fanout_declaration(
         target_queue_family_id=QueueFamilyId(str(target_route["queue_family_id"])),
         target_stage_kind_id=StageKindId(str(target_route["stage_kind_id"])),
         target_graph_node_id=str(target_route["graph_node_id"]),
-        target_runner_binding_id=RunnerBindingId(str(target_route["runner_binding_id"])),
+        target_runner_binding_id=RunnerBindingId(
+            str(target_route["runner_binding_id"])
+        ),
         target_payload_schema_id=ArtifactSchemaId(
             str(record["target_payload_schema_id"])
         ),
@@ -749,6 +716,16 @@ def _build_fanout_declaration(
         duplicate_policy=str(record["duplicate_policy"]),
         root_lineage_policy=str(record["root_lineage_policy"]),
         dependency_policy=str(record["dependency_policy"]),
+    )
+    if "item_dependency_key" not in record:
+        return fanout
+    return SiblingDependencyFanoutDeclaration.from_fanout(
+        fanout,
+        item_dependency_key=str(record["item_dependency_key"]),
+        dependency_success_action_ids=tuple(
+            ActionId(item)
+            for item in text_tuple(record["dependency_success_action_ids"])
+        ),
     )
 
 
@@ -761,6 +738,56 @@ def _route_by_id(
             if record.get("id") == route_id:
                 return record
     raise KeyError(route_id)
+
+
+def _build_completion_behavior(record: SourceRecord) -> CompletionBehaviorDeclaration:
+    behavior = CompletionBehaviorDeclaration(
+        id=CompletionBehaviorId(str(record["id"])),
+        trigger=str(record.get("trigger", "")),
+        readiness_rule=str(record.get("readiness_rule", "")),
+        request_kind=str(record.get("request_kind", "")),
+        target_selector=str(record.get("target_selector", "")),
+        target_stage_kind_id=StageKindId(str(record["target_stage_kind_id"])),
+        target_graph_node_id=str(record["target_graph_node_id"]),
+        runner_binding_id=RunnerBindingId(str(record["runner_binding_id"])),
+        request_queue_family_id=QueueFamilyId(str(record["request_queue_family_id"])),
+        pass_action_id=ActionId(str(record["pass_action_id"])),
+        gap_action_id=ActionId(str(record["gap_action_id"])),
+        blocked_action_id=ActionId(str(record["blocked_action_id"])),
+        verdict_artifact_schema_id=ArtifactSchemaId(
+            str(record["verdict_artifact_schema_id"])
+        ),
+        evidence_artifact_schema_ids=tuple(
+            ArtifactSchemaId(value)
+            for value in text_tuple(record["evidence_artifact_schema_ids"])
+        ),
+        evidence_item_limit=_required_int(record["evidence_item_limit"]),
+        request_payload_byte_limit=_required_int(record["request_payload_byte_limit"]),
+        remediation_policy_id=RemediationPolicyId(str(record["remediation_policy_id"])),
+        accepted_root_source_kinds=tuple(
+            text_tuple(record.get("accepted_root_source_kinds", ()))
+        ),
+        root_source_resolution=str(record.get("root_source_resolution", "")),
+        evidence_window_policy=str(record.get("evidence_window_policy", "")),
+        rubric_policy=str(record.get("rubric_policy", "")),
+        blocked_work_policy=str(record.get("blocked_work_policy", "")),
+        skip_if_closed=bool(record.get("skip_if_closed", False)),
+        presentation=authority_mapping(record.get("presentation")),
+    )
+    # Selected opt-in only; omitted overflow keeps schema-2 bytes unchanged.
+    if "request_overflow" not in record:
+        return behavior
+    overflow = mapping(record["request_overflow"])
+    return CompletionBehaviorWithRequestOverflowDeclaration.from_behavior(
+        behavior,
+        request_overflow=ClosureRequestOverflowDeclaration(
+            policy=str(overflow.get("policy", "")),
+            materialization_root=str(overflow.get("materialization_root", "")),
+            page_byte_limit=_required_int(overflow.get("page_byte_limit")),
+            max_snapshot_bytes=_required_int(overflow.get("max_snapshot_bytes")),
+            max_page_count=_required_int(overflow.get("max_page_count")),
+        ),
+    )
 
 
 def _required_int(value: object) -> int:

@@ -1550,6 +1550,7 @@ def _optional_positive_limit(
 def _non_idle_stop_reason(result: BoundedExecutionUnitResult) -> str | None:
     if result.code in {
         "lifecycle_transition_applied",
+        "lifecycle_closure_blocked",
         "no_ready_work",
         "runner_session_waiting",
         "runner_session_retained",

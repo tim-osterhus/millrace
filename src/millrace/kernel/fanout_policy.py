@@ -11,9 +11,16 @@ from millrace.contracts.compiled_plan import (
     AuthorityValue,
     FanoutDeclaration,
     SelectedCompiledPlan,
+    SiblingDependencyFanoutDeclaration,
+)
+from millrace.contracts.fanout_dependencies import (
+    item_dependency_graph,
+    sibling_dependency_id,
 )
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import ActionId
+from millrace.contracts.runtime_failure_history import recorded_source_return_source
+from millrace.contracts.runtime_failures import recovery_activation_origin_matches
 from millrace.contracts.state import (
     Activation,
     ArtifactRecord,
@@ -22,12 +29,16 @@ from millrace.contracts.state import (
     RunRecord,
     RuntimeState,
     TransitionRecord,
+    WorkDependencyRecord,
     WorkItem,
 )
 from millrace.contracts.transition import (
     FanoutFromArtifact,
     JoinFromArtifact,
+    RecordFanout,
+    RecordWorkDependency,
     RunnerResultObserved,
+    TransitionMutation,
     input_family,
     input_kind,
     input_payload_digest,
@@ -255,15 +266,105 @@ def fanout_items(
         if not isinstance(raw_item, Mapping):
             return None
         item_key = raw_item.get(fanout.item_id_key)
-        if (
-            not isinstance(item_key, str)
-            or not item_key
-            or item_key in seen_item_keys
-        ):
+        if not isinstance(item_key, str) or not item_key or item_key in seen_item_keys:
             return None
         seen_item_keys.add(item_key)
         items.append((item_key, raw_item))
-    return tuple(items)
+    result = tuple(items)
+    if (
+        isinstance(fanout, SiblingDependencyFanoutDeclaration)
+        and item_dependency_graph(result, fanout.item_dependency_key) is None
+    ):
+        return None
+    return result
+
+
+def expected_fanout_dependencies(
+    artifact: ArtifactRecord,
+    fanout: FanoutDeclaration,
+    record: FanoutRecord,
+) -> tuple[WorkDependencyRecord, ...] | None:
+    """Derive the complete edge set from frozen source and selected authority."""
+    dependencies: list[WorkDependencyRecord] = []
+    if fanout.dependency_policy == "depends_on_source_work_item":
+        identity = fanout_item_identity(
+            plan_fingerprint=record.selected_plan_ref.authority_fingerprint,
+            fanout_id=str(fanout.id),
+            source_artifact_id=artifact.artifact_id,
+            item_key=record.item_key,
+        )
+        dependencies.append(
+            WorkDependencyRecord(
+                dependency_id=identity.dependency_id,
+                dependent_work_item_id=record.target_work_item_id,
+                dependency_work_item_id=record.source_work_item_id,
+                selected_plan_ref=record.selected_plan_ref,
+                lineage_id=record.lineage_id,
+                fanout_record_id=record.record_id,
+                created_by_input_id=record.created_by_input_id,
+            )
+        )
+    if isinstance(fanout, SiblingDependencyFanoutDeclaration):
+        items = fanout_items(artifact, fanout)
+        graph = (
+            item_dependency_graph(items, fanout.item_dependency_key)
+            if items is not None
+            else None
+        )
+        if graph is None or record.item_key not in graph:
+            return None
+        for prerequisite_key in graph[record.item_key]:
+            prerequisite = fanout_item_identity(
+                plan_fingerprint=record.selected_plan_ref.authority_fingerprint,
+                fanout_id=str(fanout.id),
+                source_artifact_id=artifact.artifact_id,
+                item_key=prerequisite_key,
+            )
+            dependencies.append(
+                WorkDependencyRecord(
+                    dependency_id=sibling_dependency_id(
+                        record.record_id, prerequisite_key
+                    ),
+                    dependent_work_item_id=record.target_work_item_id,
+                    dependency_work_item_id=prerequisite.target_work_item_id,
+                    selected_plan_ref=record.selected_plan_ref,
+                    lineage_id=record.lineage_id,
+                    fanout_record_id=record.record_id,
+                    created_by_input_id=record.created_by_input_id,
+                )
+            )
+    return tuple(dependencies)
+
+
+def complete_fanout_dependency_mutations(
+    state: RuntimeState,
+    mutations: tuple[TransitionMutation, ...],
+    artifact: ArtifactRecord,
+    fanout: FanoutDeclaration,
+) -> tuple[TransitionMutation, ...] | None:
+    """Append all edges after all children exist, including forward references."""
+    if not isinstance(fanout, SiblingDependencyFanoutDeclaration):
+        return mutations
+    edges: list[TransitionMutation] = []
+    for mutation in mutations:
+        if not isinstance(mutation, RecordFanout) or mutation.record is None:
+            continue
+        dependencies = expected_fanout_dependencies(artifact, fanout, mutation.record)
+        if dependencies is None:
+            return None
+        for dependency in dependencies:
+            if dependency.dependency_id in state.work_dependencies:
+                return None
+            edges.append(
+                RecordWorkDependency(
+                    record_id=dependency.dependency_id, record=dependency
+                )
+            )
+    return tuple(
+        mutation
+        for mutation in mutations
+        if not isinstance(mutation, RecordWorkDependency)
+    ) + tuple(edges)
 
 
 def fanout_target_payload(
@@ -418,7 +519,12 @@ def project_selected_fanout_source_for_target(
         if (
             fanout is None
             or record.target_work_item_id != work_item.ref.work_item_id
-            or record.target_activation_id != activation.activation_id
+            or (
+                record.target_activation_id != activation.activation_id
+                and not _inherited_fanout_activation_matches(
+                    state, selected_plan, record, activation
+                )
+            )
         ):
             return PolicyAssessment(
                 "partial_or_corrupt",
@@ -442,11 +548,19 @@ def project_selected_fanout_source_for_target(
         or record.lineage_id != work_item.lineage_id
         or record.target_queue_family_id != work_item.queue_family_id
         or record.target_queue_family_id != activation.queue_family_id
-        or record.target_stage_kind_id != activation.stage_kind_id
-        or record.target_graph_node_id != activation.graph_node_id
-        or fanout.target_runner_binding_id != activation.runner_binding_id
+        or (
+            record.target_activation_id == activation.activation_id
+            and (
+                record.target_stage_kind_id != activation.stage_kind_id
+                or record.target_graph_node_id != activation.graph_node_id
+                or fanout.target_runner_binding_id != activation.runner_binding_id
+            )
+        )
         or record.created_by_input_id != work_item.created_by_input_id
-        or record.created_by_input_id != activation.created_by_input_id
+        or (
+            record.target_activation_id == activation.activation_id
+            and record.created_by_input_id != activation.created_by_input_id
+        )
     ):
         return PolicyAssessment(
             "partial_or_corrupt",
@@ -499,6 +613,79 @@ def project_selected_fanout_source_for_target(
     )
 
 
+def _inherited_fanout_activation_matches(
+    state: RuntimeState,
+    selected_plan: SelectedCompiledPlan,
+    record: FanoutRecord,
+    activation: Activation,
+) -> bool:
+    original = state.activations.get(record.target_activation_id)
+    if original is None:
+        return False
+    target = (
+        original.queue_family_id,
+        original.stage_kind_id,
+        original.graph_node_id,
+        original.runner_binding_id,
+    )
+    seen: set[str] = set()
+    while activation.activation_id != original.activation_id:
+        inherited_work = state.work_items.get(activation.work_item_id)
+        if (
+            activation.activation_id in seen
+            or activation.work_item_id != original.work_item_id
+            or inherited_work is None
+            or (
+                activation.claimed_by_run_id is None
+                and activation.generation != inherited_work.ref.generation
+            )
+        ):
+            return False
+        seen.add(activation.activation_id)
+        routes = [
+            route
+            for route in state.activation_routes
+            if route.target_activation_id == activation.activation_id
+        ]
+        if len(routes) != 1:
+            return False
+        route = routes[0]
+        action = next(
+            (
+                action
+                for action in selected_plan.terminal_actions
+                if action.id == route.action_id
+            ),
+            None,
+        )
+        source = state.runs.get(route.source_run_id)
+        if action is None or source is None:
+            return False
+        if action.action_kind == "return_to_recorded_source":
+            source = recorded_source_return_source(
+                state, selected_plan, activation.activation_id
+            )
+        elif (
+            action.action_kind != "recovery_route"
+            or not recovery_activation_origin_matches(
+                state,
+                selected_plan,
+                activation.activation_id,
+                {target},
+                allow_unclaimed=True,
+                origin_activation_id=original.activation_id,
+            )
+        ):
+            return False
+        if source is None:
+            return False
+        source_activation = state.activations.get(source.activation_id)
+        if source_activation is None:
+            return False
+        activation = source_activation
+    return True
+
+
 def _fanout_record_corrupt(
     state: RuntimeState,
     source_context: SourceContext,
@@ -543,12 +730,31 @@ def _fanout_record_corrupt(
         or target_activation.created_by_input_id != record.created_by_input_id
     ):
         return True
-    routes = tuple(
+    target_routes = tuple(
         route
         for route in state.activation_routes
-        if route.target_work_item_id == record.target_work_item_id
-        or route.target_activation_id == record.target_activation_id
+        if route.target_activation_id == record.target_activation_id
+        or route.target_work_item_id == record.target_work_item_id
     )
+    routes = tuple(
+        route
+        for route in target_routes
+        if route.target_activation_id == record.target_activation_id
+        or route.created_by_input_id == record.created_by_input_id
+    )
+    for inherited_route in target_routes:
+        if inherited_route in routes:
+            continue
+        inherited_activation = state.activations.get(
+            inherited_route.target_activation_id
+        )
+        if inherited_activation is None or not _inherited_fanout_activation_matches(
+            state,
+            source_context.selected_plan,
+            record,
+            inherited_activation,
+        ):
+            return True
     if len(routes) != 1:
         return True
     route = routes[0]
@@ -567,17 +773,9 @@ def _fanout_record_corrupt(
         for dependency in state.work_dependencies.values()
         if dependency.fanout_record_id == record.record_id
     )
-    if fanout.dependency_policy != "depends_on_source_work_item":
-        return bool(dependencies)
-    if len(dependencies) != 1:
-        return True
-    dependency = dependencies[0]
-    return (
-        dependency.dependent_work_item_id != record.target_work_item_id
-        or dependency.dependency_work_item_id != work_item.ref.work_item_id
-        or dependency.selected_plan_ref != record.selected_plan_ref
-        or dependency.lineage_id != record.lineage_id
-        or dependency.created_by_input_id != record.created_by_input_id
+    expected_dependencies = expected_fanout_dependencies(artifact, fanout, record)
+    return expected_dependencies is None or set(dependencies) != set(
+        expected_dependencies
     )
 
 
@@ -793,11 +991,16 @@ def _fanout_output_closure_mismatch(
         identity.fanout_record_id for identity in identities.values()
     }:
         return True
-    expected_dependencies = (
-        {identity.dependency_id for identity in identities.values()}
-        if fanout.dependency_policy == "depends_on_source_work_item"
-        else set()
-    )
+    expected_dependencies: set[str] = set()
+    for record in creator_records.values():
+        dependencies = expected_fanout_dependencies(
+            source_context.artifact, fanout, record
+        )
+        if dependencies is None:
+            return True
+        expected_dependencies.update(
+            dependency.dependency_id for dependency in dependencies
+        )
     if {
         dependency.dependency_id
         for dependency in state.work_dependencies.values()

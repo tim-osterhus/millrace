@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from millrace.adapters.cli import session_completion as complete
+from millrace.adapters.cli.closure_evidence import (
+    ClosureEvidenceMaterializationError,
+    materialize_session_closure_evidence,
+    record_materialization_refusal,
+)
 from millrace.adapters.cli.context import (
     CliCommandError,
     OpenRuntimeContext,
@@ -23,6 +28,7 @@ from millrace.adapters.cli.context_checkout import (
     rematerialize_attached_context_checkout,
 )
 from millrace.adapters.cli.output import ExitCode
+from millrace.adapters.cli.recovery_context import materialize_recovery_failure_context
 from millrace.adapters.cli.session_coordinator import (
     _RETAINED_OWNERS,
     execute_runner_session,
@@ -58,6 +64,7 @@ from millrace.contracts.compiled_plan import (
     RunnerTerminalResultMapping,
     SelectedCompiledPlan,
     StageContextBindingDeclaration,
+    completion_behavior_request_overflow,
     context_binding_authority_refusal,
 )
 from millrace.contracts.runner import RunnerDispatchEnvelope
@@ -80,6 +87,7 @@ from millrace.operator.dispatch import (
     ReadyDispatchCandidate,
     ReadyDispatchDiagnostic,
     build_dispatch_envelope_for_run,
+    closure_request_uses_evidence_pages,
     list_ready_dispatch_candidates,
     ready_diagnostic_from_claim_refusal,
 )
@@ -246,6 +254,16 @@ def run_bounded_execution_unit(
             on_start_reserved=on_start_reserved,
             on_accepted_start=on_accepted_start,
             daemon_stop_requested=daemon_stop_requested,
+            budget_deadline=(
+                max_timeout_seconds is not None
+                and max_timeout_seconds
+                <= _effective_invocation_timeout_seconds(
+                    selected_plan=active.selected_plan,
+                    runner_binding_id=str(active.run.runner_binding_id),
+                    selected_kind=selected_kind,
+                    effective_config=effective_config,
+                )
+            ),
             effective_timeout_seconds=_effective_invocation_timeout_seconds(
                 selected_plan=active.selected_plan,
                 runner_binding_id=str(active.run.runner_binding_id),
@@ -495,18 +513,15 @@ def reconcile_pending_runner_completions(
         if session is None or session.run_id != run.run_ref.run_id:
             return BoundedExecutionUnitResult(code="ready_state_corrupt")
         completion = state.runner_session_completions.get(session_id)
-        if (
-            completion is not None
-            and (
-                (
-                    completion.terminal_state == "completed"
-                    and completion.application_input_id not in state.receipts
-                )
-                or _runtime_failure_replay_candidate(
-                    state,
-                    run.run_ref.run_id,
-                    completion,
-                )
+        if completion is not None and (
+            (
+                completion.terminal_state == "completed"
+                and completion.application_input_id not in state.receipts
+            )
+            or _runtime_failure_replay_candidate(
+                state,
+                run.run_ref.run_id,
+                completion,
             )
         ):
             terminal_replays.append((run.run_ref.run_id, run.activation_id))
@@ -637,6 +652,7 @@ def _session_invocation_request(
         state=state,
         run_id=active.run.run_ref.run_id,
     )
+    dispatch = materialize_recovery_failure_context(runtime, state, dispatch)
     selected_asset_material = build_selected_asset_material(
         selected_plan=active.selected_plan,
         dispatch_envelope=dispatch,
@@ -666,7 +682,8 @@ def _session_invocation_request(
         cancellation_token=session_cancellation_token(session),
         selected_payload_capacity_pin=getattr(
             _selected_runner_binding(active.selected_plan, dispatch.runner_binding_id),
-            "payload_capacity_pin", None,
+            "payload_capacity_pin",
+            None,
         ),
         selected_component_pin=selected_component_pin,
         selected_terminal_result_mappings=selected_terminal_mappings,
@@ -707,7 +724,11 @@ def _prepare_created_session_callback(
         active.selected_plan,
         active.run.stage_kind_id,
     )
-    if binding is None:
+    selected_overflow = any(
+        completion_behavior_request_overflow(behavior) is not None
+        for behavior in active.selected_plan.completion_behaviors
+    )
+    if binding is None and not selected_overflow:
         return None
 
     def prepare(session: RunnerSessionRecord) -> RunnerSessionRecord:
@@ -719,7 +740,32 @@ def _prepare_created_session_callback(
             raise ContextCheckoutPreparationError(
                 "created runner session is not current authority"
             )
-        if session.context_manifest_digest is None:
+        if selected_overflow:
+            try:
+                materialize_session_closure_evidence(
+                    runtime,
+                    state=state,
+                    session=session,
+                )
+            except (
+                ClosureEvidenceMaterializationError,
+                DispatchProjectionError,
+                OSError,
+                ValueError,
+            ) as exc:
+                reason = getattr(exc, "reason", None) or str(exc)
+                record_materialization_refusal(
+                    runtime,
+                    session=session,
+                    reason=reason,
+                    event_redaction_policy=complete._RUNTIME_SESSION_EVENT_POLICY,
+                )
+                raise ContextCheckoutPreparationError(
+                    f"closure evidence materialization refused: {reason}"
+                ) from exc
+        if binding is None:
+            pass
+        elif session.context_manifest_digest is None:
             prepared = prepare_context_checkout(
                 paths=runtime.paths,
                 session=session,
@@ -1036,16 +1082,27 @@ def _bound_codex_cwd_refusal(
     selected_kind: str,
     adapter: object,
 ) -> BoundedExecutionUnitResult | None:
+    bound = (
+        _context_binding_for_stage(active.selected_plan, active.run.stage_kind_id)
+        is not None
+    )
+    # Relative closure evidence page paths must address the materialized workspace.
+    paged = any(
+        completion_behavior_request_overflow(behavior) is not None
+        for behavior in active.selected_plan.completion_behaviors
+    ) and closure_request_uses_evidence_pages(
+        state=_load(runtime), run_id=active.run.run_ref.run_id
+    )
+    if not bound and not paged:
+        return None
+    label = f"bound_{selected_kind}" if bound else f"closure_evidence_{selected_kind}"
     if selected_kind not in {CODEX_ADAPTER_KIND, PI_ADAPTER_KIND}:
-        return None
-    if (
-        _context_binding_for_stage(
-            active.selected_plan,
-            active.run.stage_kind_id,
+        if bound:
+            return None
+        return BoundedExecutionUnitResult(
+            code="adapter_failure",
+            diagnostics=({"reason": f"{label}_cwd_unverifiable"},),
         )
-        is None
-    ):
-        return None
     config = (
         _codex_adapter_config(adapter) if isinstance(adapter, CodexAdapter) else None
     )
@@ -1058,7 +1115,7 @@ def _bound_codex_cwd_refusal(
     if not isinstance(configured_cwd, Path):
         return BoundedExecutionUnitResult(
             code="adapter_failure",
-            diagnostics=({"reason": f"bound_{selected_kind}_cwd_unresolvable"},),
+            diagnostics=({"reason": f"{label}_cwd_unresolvable"},),
         )
     try:
         configured_cwd = configured_cwd.resolve(strict=False)
@@ -1066,12 +1123,12 @@ def _bound_codex_cwd_refusal(
     except (OSError, RuntimeError, TypeError, ValueError):
         return BoundedExecutionUnitResult(
             code="adapter_failure",
-            diagnostics=({"reason": f"bound_{selected_kind}_cwd_unresolvable"},),
+            diagnostics=({"reason": f"{label}_cwd_unresolvable"},),
         )
     if configured_cwd != workspace_root:
         return BoundedExecutionUnitResult(
             code="adapter_failure",
-            diagnostics=({"reason": f"bound_{selected_kind}_cwd_mismatch"},),
+            diagnostics=({"reason": f"{label}_cwd_mismatch"},),
         )
     return None
 
@@ -1210,10 +1267,14 @@ def _selected_runner_authority_for_request(
         and not binding.terminal_result_mappings
     ):
         return None, (), ()
+    eligible_outcome_ids = {
+        str(option["outcome_id"]) for option in dispatch.terminal_options
+    }
     mappings = tuple(
         mapping
         for mapping in binding.terminal_result_mappings
         if str(mapping.stage_kind_id) == dispatch.stage_kind_id
+        and str(mapping.outcome_id) in eligible_outcome_ids
     )
     schema_ids = {
         str(option["artifact_schema_id"])

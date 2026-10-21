@@ -12,7 +12,9 @@ from millrace.contracts.compiled_plan import (
     AssetDeclaration,
     AuthorityValue,
     CapabilityDeclaration,
+    ClosureRequestOverflowDeclaration,
     CompletionBehaviorDeclaration,
+    CompletionBehaviorWithRequestOverflowDeclaration,
     ConcurrencyPolicyDeclaration,
     ContextSourceDeclaration,
     ContextWriteRule,
@@ -40,6 +42,7 @@ from millrace.contracts.compiled_plan import (
     SelectedWorkflowPackageAssetPin,
     SelectedWorkflowPackageDependencyPin,
     SelectedWorkflowPackagePin,
+    SiblingDependencyFanoutDeclaration,
     StageContextBindingDeclaration,
     StageKindDeclaration,
     TerminalActionDeclaration,
@@ -1508,7 +1511,7 @@ def _decode_effect_declaration(record: Record) -> EffectDeclaration:
 def _encode_fanout(fanout: FanoutDeclaration) -> Mapping[str, JsonValue]:
     return {
         "record_kind": FanoutDeclaration.record_kind,
-        "schema_version": FanoutDeclaration.schema_version,
+        "schema_version": fanout.schema_version,
         "id": str(fanout.id),
         "source_action_id": str(fanout.source_action_id),
         "source_artifact_schema_id": str(fanout.source_artifact_schema_id),
@@ -1527,17 +1530,35 @@ def _encode_fanout(fanout: FanoutDeclaration) -> Mapping[str, JsonValue]:
         "duplicate_policy": fanout.duplicate_policy,
         "root_lineage_policy": fanout.root_lineage_policy,
         "dependency_policy": fanout.dependency_policy,
+        **(
+            {
+                "item_dependency_key": fanout.item_dependency_key,
+                "dependency_success_action_ids": tuple(
+                    str(item) for item in fanout.dependency_success_action_ids
+                ),
+            }
+            if isinstance(fanout, SiblingDependencyFanoutDeclaration)
+            else {}
+        ),
     }
 
 
 def _decode_fanout(record: Record) -> FanoutDeclaration:
+    sibling = record.get("schema_version") == 3
     _ensure_record_header(
         record,
         FanoutDeclaration.record_kind,
-        FanoutDeclaration.schema_version,
-        _FANOUT_KEYS,
+        SiblingDependencyFanoutDeclaration.schema_version
+        if sibling
+        else FanoutDeclaration.schema_version,
+        _FANOUT_KEYS
+        | (
+            frozenset({"item_dependency_key", "dependency_success_action_ids"})
+            if sibling
+            else frozenset()
+        ),
     )
-    return FanoutDeclaration(
+    fanout = FanoutDeclaration(
         id=FanoutId(_expect_string(record, "id")),
         source_action_id=ActionId(_expect_string(record, "source_action_id")),
         source_artifact_schema_id=ArtifactSchemaId(
@@ -1567,6 +1588,16 @@ def _decode_fanout(record: Record) -> FanoutDeclaration:
         duplicate_policy=_expect_string(record, "duplicate_policy"),
         root_lineage_policy=_expect_string(record, "root_lineage_policy"),
         dependency_policy=_expect_string(record, "dependency_policy"),
+    )
+    if not sibling:
+        return fanout
+    return SiblingDependencyFanoutDeclaration.from_fanout(
+        fanout,
+        item_dependency_key=_expect_string(record, "item_dependency_key"),
+        dependency_success_action_ids=tuple(
+            ActionId(item)
+            for item in _expect_string_tuple(record, "dependency_success_action_ids")
+        ),
     )
 
 
@@ -1776,7 +1807,7 @@ def _decode_counter(record: Record) -> CounterDeclaration:
 def _encode_completion_behavior(
     behavior: CompletionBehaviorDeclaration,
 ) -> Mapping[str, JsonValue]:
-    return {
+    record: dict[str, JsonValue] = {
         "record_kind": CompletionBehaviorDeclaration.record_kind,
         "schema_version": CompletionBehaviorDeclaration.schema_version,
         "id": str(behavior.id),
@@ -1806,16 +1837,38 @@ def _encode_completion_behavior(
         "skip_if_closed": behavior.skip_if_closed,
         "presentation": _encode_authority_mapping(behavior.presentation),
     }
+    overflow = getattr(behavior, "request_overflow", None)
+    if isinstance(behavior, CompletionBehaviorWithRequestOverflowDeclaration):
+        assert overflow is not None
+        record["schema_version"] = (
+            CompletionBehaviorWithRequestOverflowDeclaration.schema_version
+        )
+        record["request_overflow"] = {
+            "record_kind": ClosureRequestOverflowDeclaration.record_kind,
+            "schema_version": ClosureRequestOverflowDeclaration.schema_version,
+            "policy": overflow.policy,
+            "materialization_root": overflow.materialization_root,
+            "page_byte_limit": overflow.page_byte_limit,
+            "max_snapshot_bytes": overflow.max_snapshot_bytes,
+            "max_page_count": overflow.max_page_count,
+        }
+    return record
 
 
 def _decode_completion_behavior(record: Record) -> CompletionBehaviorDeclaration:
+    with_overflow = record.get("schema_version") == (
+        CompletionBehaviorWithRequestOverflowDeclaration.schema_version
+    )
     _ensure_record_header(
         record,
         CompletionBehaviorDeclaration.record_kind,
-        CompletionBehaviorDeclaration.schema_version,
-        _COMPLETION_BEHAVIOR_KEYS,
+        CompletionBehaviorWithRequestOverflowDeclaration.schema_version
+        if with_overflow
+        else CompletionBehaviorDeclaration.schema_version,
+        _COMPLETION_BEHAVIOR_KEYS
+        | (frozenset({"request_overflow"}) if with_overflow else frozenset()),
     )
-    return CompletionBehaviorDeclaration(
+    behavior = CompletionBehaviorDeclaration(
         id=CompletionBehaviorId(_expect_string(record, "id")),
         trigger=_expect_string(record, "trigger"),
         readiness_rule=_expect_string(record, "readiness_rule"),
@@ -1858,6 +1911,39 @@ def _decode_completion_behavior(record: Record) -> CompletionBehaviorDeclaration
         skip_if_closed=_expect_bool(record, "skip_if_closed"),
         presentation=_expect_authority_mapping(record, "presentation"),
     )
+    if not with_overflow:
+        return behavior
+    overflow_record = _expect_record(record, "request_overflow")
+    _ensure_record_header(
+        overflow_record,
+        ClosureRequestOverflowDeclaration.record_kind,
+        ClosureRequestOverflowDeclaration.schema_version,
+        frozenset(
+            {
+                "record_kind",
+                "schema_version",
+                "policy",
+                "materialization_root",
+                "page_byte_limit",
+                "max_snapshot_bytes",
+                "max_page_count",
+            }
+        ),
+    )
+    overflow = ClosureRequestOverflowDeclaration(
+        policy=_expect_string(overflow_record, "policy"),
+        materialization_root=_expect_string(overflow_record, "materialization_root"),
+        page_byte_limit=_expect_positive_int(overflow_record, "page_byte_limit"),
+        max_snapshot_bytes=_expect_positive_int(overflow_record, "max_snapshot_bytes"),
+        max_page_count=_expect_positive_int(overflow_record, "max_page_count"),
+    )
+    try:
+        return CompletionBehaviorWithRequestOverflowDeclaration.from_behavior(
+            behavior,
+            request_overflow=overflow,
+        )
+    except ValueError as exc:
+        raise InvalidCasObject(f"invalid completion behavior overflow: {exc}") from exc
 
 
 def _encode_remediation_policy(

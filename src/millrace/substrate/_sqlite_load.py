@@ -20,8 +20,10 @@ from millrace.contracts.ids import (
 from millrace.contracts.runner import runner_session_locator_from_bytes
 from millrace.contracts.runtime_failures import (
     runtime_failure_action_for,
+    runtime_failure_cleanup_digests,
     runtime_failure_diagnostic_matches,
     runtime_failure_eligible,
+    runtime_failure_kind,
 )
 from millrace.contracts.state import (
     APPROVED_ATTRIBUTION_METRIC_NAMES,
@@ -860,12 +862,26 @@ def _validate_runner_session_evidence_authority(
             ].selected_plan
             if (
                 runtime_failure_action_for(
-                    plan, run.stage_kind_id, run.runner_binding_id, "timeout"
+                    plan,
+                    run.stage_kind_id,
+                    run.runner_binding_id,
+                    runtime_failure_kind(state, completion) or "",
                 )
                 is not None
             ):
                 if not runtime_failure_diagnostic_matches(
-                    state, completion, cas_store.get_bytes(completion.diagnostic_digest)
+                    state,
+                    completion,
+                    cas_store.get_bytes(completion.diagnostic_digest),
+                    cleanup_payloads={
+                        digest: cas_store.get_bytes(digest)
+                        for digest in runtime_failure_cleanup_digests(state, completion)
+                    },
+                    evidence_payload=(
+                        cas_store.get_bytes(completion.runner_result_evidence_digest)
+                        if completion.runner_result_evidence_digest is not None
+                        else None
+                    ),
                 ):
                     raise StorageIntegrityError(
                         "runtime failure diagnostic authority invalid"

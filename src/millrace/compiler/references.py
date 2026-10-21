@@ -28,7 +28,10 @@ from millrace.compiler.source import (
     text_tuple,
 )
 from millrace.contracts import Diagnostic
+from millrace.contracts.compiled_plan import closure_request_overflow_refusal
 from millrace.contracts.diagnostics import DiagnosticContextValue
+from millrace.contracts.fanout_dependencies import sibling_dependency_authority_refusal
+from millrace.contracts.runner_failure_kinds import RUNNER_RUNTIME_FAILURE_KINDS
 from millrace.contracts.runner_payload_capacity import (
     PayloadCapacityError,
     completion_capacity,
@@ -103,7 +106,7 @@ _RUNNER_TERMINAL_RESULT_MAPPING_FIELDS = frozenset(
 _RUNNER_RUNTIME_FAILURE_MAPPING_FIELDS = frozenset(
     {"stage_kind_id", "failure_kind", "action_id"}
 )
-_SUPPORTED_RUNNER_RUNTIME_FAILURE_KINDS = frozenset({"timeout"})
+_SUPPORTED_RUNNER_RUNTIME_FAILURE_KINDS = RUNNER_RUNTIME_FAILURE_KINDS
 
 INTERVENTION_OPTION_FIELDS = frozenset(
     {
@@ -728,6 +731,40 @@ def validate_fanout_references(
     indexes: Mapping[str, IdIndex],
     diagnostics: list[Diagnostic],
 ) -> None:
+    dependency_refusal = sibling_dependency_authority_refusal(source)
+    if dependency_refusal is not None:
+        reason_parts = dependency_refusal.split(":")
+        refusal_tail = dependency_refusal.partition(":")[2]
+        matching_ids = [
+            str(record.get("id"))
+            for record in records(source, "fanout_declarations")
+            if refusal_tail == str(record.get("id"))
+            or refusal_tail.startswith(f"{record.get('id')}:")
+        ]
+        dependency_fanout_id = max(matching_ids, key=len, default="")
+        dependency_path = next(
+            (
+                f"fanout_declarations[{index}]"
+                for index, record in enumerate(records(source, "fanout_declarations"))
+                if str(record.get("id")) == dependency_fanout_id
+            ),
+            "fanout_declarations",
+        )
+        diagnostics.append(
+            _fanout_diagnostic(
+                declaration_path=f"{dependency_path}."
+                + {
+                    "dependency_success_action": "dependency_success_action_ids",
+                    "dependency_schema_version": "schema_version",
+                    "dependency_item_schema": "source_artifact_schema_id",
+                    "dependency_list_schema": "source_artifact_schema_id",
+                    "missing_dependency_contract": "item_dependency_key",
+                }.get(reason_parts[0], reason_parts[0]),
+                referrer_path=dependency_path,
+                fanout_id=dependency_fanout_id,
+                reason=dependency_refusal,
+            )
+        )
     actions = {
         str(record.get("id")): record for record in records(source, "terminal_actions")
     }
@@ -1425,6 +1462,20 @@ def _validate_completion_behavior_values(
                 reason="invalid_request_payload_byte_limit",
             )
         )
+    if "request_overflow" in record:
+        overflow_refusal = closure_request_overflow_refusal(
+            record["request_overflow"],
+            request_payload_byte_limit=request_payload_byte_limit,
+        )
+        if overflow_refusal is not None:
+            diagnostics.append(
+                _completion_behavior_diagnostic(
+                    declaration_path=f"{referrer_path}.request_overflow",
+                    referrer_path=referrer_path,
+                    behavior_id=behavior_id,
+                    reason=overflow_refusal,
+                )
+            )
 
 
 def _completion_evidence_schema_ids(record: SourceRecord) -> tuple[str, ...]:
@@ -2582,7 +2633,7 @@ def _validate_runner_runtime_failure_mappings(
                 declaration_path=f"{mapping_path}.action_id",
                 message=(
                     "Runtime failure recovery actions cannot declare an artifact "
-                    "schema because timeout recovery cannot manufacture a candidate."
+                    "schema because mechanical recovery cannot manufacture a candidate."
                 ),
                 context={"action_id": action_id},
             )

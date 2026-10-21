@@ -622,3 +622,52 @@ def _replace_plan_policy(
             for selected in plan.recovery_policies
         ),
     )
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    [
+        "timeout",
+        "invocation_failed",
+        "result_parse_failed",
+        "output_too_large",
+        "result_rejected",
+    ],
+)
+def test_recoverable_failure_vocabulary_compiler_admission_and_export(
+    failure_kind: str,
+) -> None:
+    source = _mapped_source()
+    binding = cast(list[dict[str, object]], source["runner_bindings"])[0]
+    binding["runtime_failure_mappings"] = [_mapping(failure_kind=failure_kind)]
+    plan = _plan(source)
+    assert runtime_failure_mapping_refusal(plan) is None
+    assert (
+        plan.runner_bindings[0].runtime_failure_mappings[0].failure_kind == failure_kind
+    )
+    verify_compiled_plan_export_bytes(compiled_plan_export_bytes(plan))
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    [
+        "cancelled",
+        "missing_opt_in_config",
+        "unsupported_adapter_kind",
+        "input_too_large",
+        "redaction_refused",
+        "selected_authority_refused",
+        "unknown_failure",
+    ],
+)
+def test_safety_configuration_and_cancel_failure_kinds_are_not_recovery_authority(
+    failure_kind: str,
+) -> None:
+    source = _mapped_source()
+    binding = cast(list[dict[str, object]], source["runner_bindings"])[0]
+    binding["runtime_failure_mappings"] = [_mapping(failure_kind=failure_kind)]
+    result = _compile(source)
+    assert result.plan is None
+    assert any(
+        d.code == "invalid_runner_runtime_failure_mapping" for d in result.diagnostics
+    )

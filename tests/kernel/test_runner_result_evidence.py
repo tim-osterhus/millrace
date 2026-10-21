@@ -7,10 +7,10 @@ from typing import cast
 import pytest
 
 from kernel.kernel_ping_scenarios import bootstrap_to_taskmaster_claim
+from millrace.contracts import observation_policy
 from millrace.contracts.compiled_plan import AuthorityValue, TerminalActionDeclaration
 from millrace.contracts.transition import RunnerResultObserved
 from millrace.kernel import decision as decision_module
-from millrace.kernel import observation_policy
 from millrace.kernel.terminal_actions import (
     TerminalActionRefusal,
     _route_target_fields_or_refusal,

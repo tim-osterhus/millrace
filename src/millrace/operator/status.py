@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from itertools import zip_longest
 from typing import TypeVar
 
+from millrace.contracts.closure_request_overflow import (
+    ClosureCapacityBlock,
+    closure_capacity_blocks,
+)
 from millrace.contracts.compiled_plan import (
     AuthorityValue,
     FanoutDeclaration,
@@ -591,6 +595,7 @@ class OperatorStatus:
     closure_remediations: tuple[ClosureRemediationStatus, ...]
     closure_blocks: tuple[ClosureBlockedStatus, ...]
     recent_events: tuple[RecentEventStatus, ...]
+    closure_capacity_blocks: tuple[ClosureCapacityBlock, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -727,6 +732,17 @@ def operator_status(
             selected_fingerprint,
         ),
         recent_events=_recent_event_statuses(state, max_events),
+        closure_capacity_blocks=tuple(
+            block
+            for block in closure_capacity_blocks(state)
+            # A hold whose receipt authenticates no target is reported under
+            # every selected plan rather than hidden.
+            if block.closure_target_id is None
+            or state.closure_targets[
+                block.closure_target_id
+            ].selected_plan_ref.authority_fingerprint
+            == selected_fingerprint
+        ),
     )
 
 

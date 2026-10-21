@@ -14,6 +14,18 @@ from hashlib import sha256
 from typing import Any, TypeVar, cast
 
 import millrace.kernel._closure_lifecycle as _closure
+from millrace.contracts.closure_evaluation_history import (
+    closure_artifact_envelope,
+    closure_artifact_history_complete,
+    closure_verdict_run_refusal,
+)
+from millrace.contracts.closure_request_overflow import (
+    CLOSURE_CAPACITY_REFUSALS,
+    ClosureRequestOverflowError,
+    closure_capacity_block,
+    closure_capacity_measurements,
+    closure_request_payload_refusal,
+)
 from millrace.contracts.compiled_plan import (
     ArtifactSchemaDeclaration,
     AuthorityValue,
@@ -28,13 +40,17 @@ from millrace.contracts.compiled_plan import (
     RecoveryPolicyDeclaration,
     RemediationPolicyDeclaration,
     SelectedCompiledPlan,
+    SiblingDependencyFanoutDeclaration,
     StageKindDeclaration,
     TerminalActionDeclaration,
     authority_fingerprint,
+    closure_request_overflow_refusal,
+    completion_behavior_request_overflow,
     context_binding_authority_refusal,
     runner_component_authority_refusal,
     verify_authority_fingerprint,
 )
+from millrace.contracts.fanout_dependencies import sibling_dependency_authority_refusal
 from millrace.contracts.fingerprints import AuthorityFingerprint
 from millrace.contracts.ids import (
     ActionId,
@@ -65,6 +81,7 @@ from millrace.contracts.runtime_failure_history import (
     recovery_attempt_history_matches,
 )
 from millrace.contracts.runtime_failures import (
+    formal_recovery_activation_authority_refusal,
     runtime_failure_action_for,
     runtime_failure_applied,
     runtime_failure_authority_refusal,
@@ -103,6 +120,7 @@ from millrace.contracts.state import (
     WorkItem,
     WorkItemRef,
 )
+from millrace.contracts.terminal_ingress import terminal_ingress_authority_refusal
 from millrace.contracts.transition import (
     INPUT_PAYLOAD_DIGEST_DOMAIN_PREFIX,
     AdmitPlan,
@@ -187,11 +205,13 @@ from millrace.kernel.audit import (
     idempotency_conflict_event_context,
     transition_record,
 )
+from millrace.kernel.dependency_policy import has_unready_dependency
 from millrace.kernel.fanout_policy import (
     FanoutItems,
     PolicyAssessment,
     SourceContext,
     assess_fanout,
+    complete_fanout_dependency_mutations,
     fanout_item_identity,
     fanout_items,
     fanout_target_payload,
@@ -1357,6 +1377,9 @@ def _selected_authority_refusal(selected_plan: SelectedCompiledPlan) -> str | No
     )
     if dynamic_route_refusal is not None:
         return dynamic_route_refusal
+    ingress_refusal = terminal_ingress_authority_refusal(selected_plan)
+    if ingress_refusal is not None:
+        return ingress_refusal
     if selected_plan.lineage_policy not in {"root_from_external_enqueue", "none"}:
         return f"lineage_policy:{selected_plan.lineage_policy}"
     if selected_plan.lineage_policy == "none":
@@ -1829,6 +1852,9 @@ def _fanout_authority_refusal(
     *,
     action_by_id: Mapping[ActionId, TerminalActionDeclaration],
 ) -> str | None:
+    dependency_refusal = sibling_dependency_authority_refusal(selected_plan)
+    if dependency_refusal is not None:
+        return dependency_refusal
     routes_by_id = {
         route.id: route for route in _selected_enqueue_routes(selected_plan)
     }
@@ -2045,6 +2071,15 @@ def _completion_behavior_authority_refusal(
         or behavior.request_payload_byte_limit <= 0
     ):
         return f"completion_behavior_request_payload_limit:{behavior.id}"
+    overflow = completion_behavior_request_overflow(behavior)
+    if overflow is not None and (
+        closure_request_overflow_refusal(
+            overflow,
+            request_payload_byte_limit=behavior.request_payload_byte_limit,
+        )
+        is not None
+    ):
+        return f"completion_behavior_request_overflow:{behavior.id}"
     target_stage = stage_kind_for(selected_plan, str(behavior.target_stage_kind_id))
     target_runner = runner_binding_for(selected_plan, str(behavior.runner_binding_id))
     graph_node_stage_owner = _known_graph_node_stage_owner(selected_plan)
@@ -2700,7 +2735,8 @@ def _activation_authority_refusal(
     if activation.queue_family_id != work_item.queue_family_id:
         return f"activation_queue_family:{activation.activation_id}"
     return_action_ids = {
-        action.id for action in selected_plan.terminal_actions
+        action.id
+        for action in selected_plan.terminal_actions
         if action.action_kind == "return_to_recorded_source"
     }
     is_return = any(
@@ -2712,10 +2748,19 @@ def _activation_authority_refusal(
         and event.action_id in return_action_ids
         for event in state.governance_events
     )
-    if is_return and recorded_source_return_origin(
-        state, selected_plan, activation.activation_id
-    ) is None:
+    if (
+        is_return
+        and recorded_source_return_origin(
+            state, selected_plan, activation.activation_id
+        )
+        is None
+    ):
         return f"activation_route_target:{activation.activation_id}"
+    formal_origin_refusal = formal_recovery_activation_authority_refusal(
+        state, selected_plan, activation.activation_id
+    )
+    if formal_origin_refusal is not None:
+        return formal_origin_refusal
     graph_node_ids = {
         node_id for graph in selected_plan.graphs for node_id in graph.node_ids
     }
@@ -2774,9 +2819,12 @@ def _is_selected_recovery_activation(
                 state, selected_plan, recovery_attempt, policy
             )
             and recorded_source_return_origin(
-                state, selected_plan, activation.activation_id,
+                state,
+                selected_plan,
+                activation.activation_id,
                 source_run_id=recovery_attempt.source_run_id,
-            ) is not None
+            )
+            is not None
         )
     return (
         _recovery_action_matches_policy_source(
@@ -3010,11 +3058,24 @@ def _decide_fanout_from_artifact(
             return item_mutations
         mutations.extend(item_mutations)
 
+    complete_mutations = complete_fanout_dependency_mutations(
+        state, tuple(mutations), artifact, fanout
+    )
+    if complete_mutations is None:
+        return _fanout_context_refusal(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="fanout_partial_state",
+            source_run=source_run,
+            source_work_item=source_work_item,
+            action_id=fanout.source_action_id,
+        )
     return _accepted_decision(
         transition_input=transition_input,
         context=context,
         digest=digest,
-        mutations=tuple(mutations),
+        mutations=complete_mutations,
         expected_plan_fingerprint=source_run.run_ref.plan_ref.authority_fingerprint,
         expected_run_generations={
             source_run.run_ref.run_id: source_run.run_ref.generation,
@@ -3354,14 +3415,7 @@ def _fanout_payload_refusal(
 
 
 def _has_unready_dependency(state: RuntimeState, work_item: WorkItem) -> bool:
-    for dependency in state.work_dependencies.values():
-        if dependency.dependent_work_item_id != work_item.ref.work_item_id:
-            continue
-        if dependency.selected_plan_ref != work_item.ref.plan_ref:
-            continue
-        if dependency.dependency_work_item_id not in state.closed_work_items:
-            return True
-    return False
+    return has_unready_dependency(state, work_item)
 
 
 def _decide_claim(
@@ -4873,12 +4927,24 @@ def _decide_evaluate_completion_behavior(
         stage=stage,
     )
     if payload_refusal is not None or request_payload is None:
+        reason = payload_refusal or "invalid_closure_request_payload"
         return _completion_refused_decision(
             transition_input=transition_input,
             context=context,
             digest=digest,
-            reason=payload_refusal or "invalid_closure_request_payload",
+            reason=reason,
             target=target,
+            detail=(
+                _closure_capacity_block_detail(
+                    state=state,
+                    target=target,
+                    behavior=behavior,
+                    stage=stage,
+                    reason=reason,
+                )
+                if reason in CLOSURE_CAPACITY_REFUSALS
+                else None
+            ),
         )
     snapshot = request_payload.get("closure_evidence_snapshot")
     evidence_anchor = _closure.closure_evidence_anchor(snapshot, target=target)
@@ -5067,6 +5133,7 @@ def _completion_request_payload(
     behavior: CompletionBehaviorDeclaration,
     stage: StageKindDeclaration,
     exclude_work_item_id: str | None = None,
+    enforce_capacity: bool = True,
 ) -> tuple[Mapping[str, AuthorityValue] | None, str | None]:
     asset_ids = tuple(str(asset_id) for asset_id in stage.asset_ids)
     snapshot, snapshot_refusal = _build_closure_evidence_snapshot(
@@ -5074,6 +5141,7 @@ def _completion_request_payload(
         target=target,
         behavior=behavior,
         exclude_work_item_id=exclude_work_item_id,
+        enforce_item_limit=enforce_capacity,
     )
     if snapshot_refusal is not None or snapshot is None:
         return None, snapshot_refusal or "invalid_closure_evidence_snapshot"
@@ -5093,12 +5161,51 @@ def _completion_request_payload(
         "evidence_window": target.evidence_window,
         "closure_evidence_snapshot": snapshot,
     }
-    if (
-        len(canonical_authority_mapping_bytes(payload))
-        > behavior.request_payload_byte_limit
-    ):
-        return None, "closure_request_payload_limit_exceeded"
+    # Above the inline limit, only selected overflow may admit the full durable
+    # snapshot, and only when its compact dispatch projection fits the limit.
+    refusal = (
+        closure_request_payload_refusal(payload, behavior=behavior)
+        if enforce_capacity
+        else None
+    )
+    if refusal is not None:
+        return None, refusal
     return payload, None
+
+
+def _closure_capacity_block_detail(
+    *,
+    state: RuntimeState,
+    target: ClosureTargetRecord,
+    behavior: CompletionBehaviorDeclaration,
+    stage: StageKindDeclaration,
+    reason: str,
+) -> str:
+    """Durable, deterministic diagnostics for a selected capacity exhaustion.
+
+    The complete authenticated evidence stays in durable state; the uncapped
+    request is rebuilt only to measure it against the selected limits.
+    """
+    payload, _refusal = _completion_request_payload(
+        state=state,
+        target=target,
+        behavior=behavior,
+        stage=stage,
+        enforce_capacity=False,
+    )
+    try:
+        measurements = (
+            {}
+            if payload is None
+            else closure_capacity_measurements(payload, behavior=behavior)
+        )
+    except ClosureRequestOverflowError:
+        measurements = {}
+    return closure_capacity_block(
+        closure_target_id=target.closure_target_id,
+        reason=reason,
+        measurements=measurements,
+    )
 
 
 def _build_closure_evidence_snapshot(
@@ -5107,10 +5214,14 @@ def _build_closure_evidence_snapshot(
     target: ClosureTargetRecord,
     behavior: CompletionBehaviorDeclaration,
     exclude_work_item_id: str | None = None,
+    enforce_item_limit: bool = True,
 ) -> tuple[Mapping[str, AuthorityValue] | None, str | None]:
     root_contract, root_refusal = _closure_root_contract(state=state, target=target)
     if root_refusal is not None or root_contract is None:
         return None, root_refusal or "missing_closure_root_source"
+
+    if not closure_artifact_history_complete(state, target):
+        return None, "closure_evidence_artifact_provenance_mismatch"
 
     transition_positions = {
         transition.record_id: index
@@ -5154,8 +5265,10 @@ def _build_closure_evidence_snapshot(
         ):
             return None, "closure_prior_verdict_provenance_mismatch"
         if (
-            source_run.work_item_id != evaluation.target_work_item_id
-            or source_run.activation_id != evaluation.target_activation_id
+            closure_verdict_run_refusal(
+                state, target, behavior, evaluation, source_run
+            )
+            is not None
             or source_run.run_ref.plan_ref != target.selected_plan_ref
             or source_work_item.ref.plan_ref != target.selected_plan_ref
             or source_work_item.lineage_id != target.lineage_id
@@ -5215,7 +5328,7 @@ def _build_closure_evidence_snapshot(
             return None, "closure_artifact_payload_digest_mismatch"
         evidence.append(_artifact_envelope(artifact))
 
-    if len(evidence) > behavior.evidence_item_limit:
+    if enforce_item_limit and len(evidence) > behavior.evidence_item_limit:
         return None, "closure_evidence_item_limit_exceeded"
 
     root_payload = root_contract["payload"]
@@ -5310,17 +5423,7 @@ def _closure_root_contract(
 
 
 def _artifact_envelope(artifact: ArtifactRecord) -> Mapping[str, AuthorityValue]:
-    return {
-        "artifact_id": artifact.artifact_id,
-        "artifact_schema_id": str(artifact.schema_id),
-        "payload_digest": artifact.payload_digest,
-        "payload": artifact.payload,
-        "source_work_item_id": artifact.work_item_id,
-        "source_run_id": artifact.source_run_id,
-        "source_action_id": str(artifact.source_action_id),
-        "source_stage_kind_id": str(artifact.source_stage_kind_id),
-        "transition_id": artifact.transition_id,
-    }
+    return closure_artifact_envelope(artifact)
 
 
 def _closure_verdict_refusal(
@@ -5331,7 +5434,7 @@ def _closure_verdict_refusal(
     terminal_kind: str = "pass",
 ) -> str | None:
     if payload.get("closure_target_id") != snapshot.get("closure_target_id"):
-        return "closure_target_mismatch"
+        return "closure_verdict_target_mismatch"
     root_contract = snapshot.get("root_contract")
     if not isinstance(root_contract, Mapping):
         return "closure_snapshot_invalid"
@@ -5417,12 +5520,14 @@ def _completion_refused_decision(
     digest: str,
     reason: str,
     target: ClosureTargetRecord | None = None,
+    detail: str | None = None,
 ) -> TransitionDecision:
     return _refused_decision(
         transition_input=transition_input,
         context=context,
         digest=digest,
         reason=reason,
+        detail=detail,
         event_plan_fingerprint=(
             transition_input.selected_plan_ref.authority_fingerprint
         ),
@@ -6351,7 +6456,17 @@ def _closure_terminal_aftermath(
     work_item: WorkItem,
     action: TerminalActionDeclaration,
 ) -> tuple[TransitionMutation, ...] | TransitionDecision:
-    evaluation_record = _closure_evaluation_for_run(state, run)
+    evaluation_record, evaluation_refusal = _closure_evaluation_for_run(state, run)
+    if evaluation_refusal is not None:
+        return _runner_refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason=evaluation_refusal,
+            run=run,
+            work_item=work_item,
+            action=action,
+        )
     if evaluation_record is None:
         return ()
     target = state.closure_targets.get(evaluation_record.closure_target_id)
@@ -6549,6 +6664,38 @@ def _accepted_terminal_fanout_aftermath(
     source_artifact = _terminal_result_artifact(result)
     if source_artifact is None:
         return ()
+    for fanout in selected_plan.fanout_declarations:
+        if (
+            not isinstance(fanout, SiblingDependencyFanoutDeclaration)
+            or fanout.source_action_id != action.id
+        ):
+            continue
+        items = fanout_items(source_artifact, fanout)
+        schema = artifact_schema_for(
+            selected_plan, str(fanout.target_payload_schema_id)
+        )
+        if (
+            items is None
+            or schema is None
+            or any(
+                payload is None or not validate_schema(schema.schema, payload).accepted
+                for _key, raw_item in items
+                for payload in (
+                    fanout_target_payload(
+                        fanout.target_payload_mapping, raw_item, source_artifact.payload
+                    ),
+                )
+            )
+        ):
+            return _runner_refused_decision(
+                transition_input=transition_input,
+                context=context,
+                digest=digest,
+                reason="invalid_fanout_payload",
+                run=run,
+                work_item=work_item,
+                action=action,
+            )
     fanouts = tuple(
         fanout
         for fanout in selected_plan.fanout_declarations
@@ -6721,7 +6868,20 @@ def _accepted_terminal_fanout_mutations(
                 action=action,
             )
         mutations.extend(item_mutations)
-    return tuple(mutations)
+    complete_mutations = complete_fanout_dependency_mutations(
+        state, tuple(mutations), source_artifact, fanout
+    )
+    if complete_mutations is None:
+        return _runner_refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="fanout_partial_state",
+            run=run,
+            work_item=work_item,
+            action=action,
+        )
+    return complete_mutations
 
 
 def _fanout_runner_refusal(
@@ -6851,7 +7011,17 @@ def _closure_gap_mutations_or_refusal(
     )
     payload = _remediation_payload(policy, remediation_record, source_artifact)
     schema = artifact_schema_for(selected_plan, str(policy.payload_schema_id))
-    if schema is None or not validate_schema(schema.schema, payload).accepted:
+    if schema is None:
+        return _runner_refused_decision(
+            transition_input=transition_input,
+            context=context,
+            digest=digest,
+            reason="missing_remediation_payload_schema",
+            run=run,
+            work_item=work_item,
+            action=action,
+        )
+    if not validate_schema(schema.schema, payload).accepted:
         return _runner_refused_decision(
             transition_input=transition_input,
             context=context,
@@ -6907,17 +7077,8 @@ def _closure_gap_mutations_or_refusal(
 def _closure_evaluation_for_run(
     state: RuntimeState,
     run: RunRecord,
-) -> ClosureEvaluationRecord | None:
-    return next(
-        (
-            record
-            for record in state.closure_evaluations.values()
-            if record.target_activation_id == run.activation_id
-            and record.target_work_item_id == run.work_item_id
-            and record.selected_plan_ref == run.run_ref.plan_ref
-        ),
-        None,
-    )
+) -> tuple[ClosureEvaluationRecord | None, str | None]:
+    return _closure.closure_evaluation_for_run(state, run)
 
 
 def _terminal_result_artifact_id(result: TerminalActionResolution) -> str | None:

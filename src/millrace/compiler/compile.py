@@ -15,6 +15,7 @@ from millrace.compiler.authority import (
     validate_unselected_catalog,
 )
 from millrace.compiler.build import build_selected_plan
+from millrace.compiler.diagnostics import compiler_error
 from millrace.compiler.identity import validate_workflow_identity
 from millrace.compiler.operator_waits import (
     normalize_operator_waits,
@@ -60,6 +61,7 @@ from millrace.compiler.terminal_actions import (
 )
 from millrace.contracts import Diagnostic, SelectedCompiledPlan
 from millrace.contracts.diagnostics import DiagnosticContextValue
+from millrace.contracts.terminal_ingress import terminal_ingress_authority_refusal
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +149,25 @@ def compile_workflow(
         return CompileResult(plan=None, diagnostics=tuple(diagnostics))
 
     source = normalize_operator_waits(source)
+
+    ingress_refusal = terminal_ingress_authority_refusal(source)
+    if ingress_refusal is not None:
+        diagnostics.append(
+            compiler_error(
+                code="ordinary_ingress_requires_terminal_option",
+                declaration_path="terminal_actions",
+                message=(
+                    "Ordinary ingress cannot use a stage with only "
+                    "attempt-owned terminal options."
+                ),
+                context={"reason": ingress_refusal},
+                hint=(
+                    "Declare a selectable ordinary exit, or use a selected "
+                    "recovery_route that creates the required attempt."
+                ),
+            )
+        )
+        return CompileResult(plan=None, diagnostics=tuple(diagnostics))
 
     return CompileResult(
         plan=build_selected_plan(source, workflow),

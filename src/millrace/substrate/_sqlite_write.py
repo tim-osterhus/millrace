@@ -7,6 +7,13 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from typing import Any
 
+from millrace.contracts.observation_policy import (
+    AuthenticatedRunnerObservation,
+    ObservationPolicyDiagnostic,
+    authenticate_artifact_provenance,
+    authenticate_runner_observation,
+    observation_artifact_refusal,
+)
 from millrace.contracts.runner import runner_session_locator_from_bytes
 from millrace.contracts.state import (
     ContextCleanupReceipt,
@@ -132,6 +139,38 @@ def persist_runtime_state_rows(
     _before_sqlite_commit: Callable[[], None] | None = None,
     daemon_scope: dict[str, Any] | None = None,
 ) -> None:
+    transition_rows = tuple(
+        encode_transition_row(record, transition_order=order)
+        for order, record in enumerate(state.transitions)
+    )
+    _refuse_stale_or_divergent_transition_history(connection, transition_rows)
+    if len(transition_rows) > len(_durable_transition_signature(connection)):
+        # Missing or aliased outputs must fail before any new CAS object is
+        # put. Other invalid provenance retains the existing forensic prewrite
+        # contract. Same-frontier rewrites retain the full-row stale guard below.
+        for observation in state.runner_observations.values():
+            authenticated = authenticate_runner_observation(state, observation)
+            if not isinstance(authenticated, AuthenticatedRunnerObservation):
+                continue
+            artifact_refusal = observation_artifact_refusal(state, authenticated)
+            if (
+                artifact_refusal is not None
+                and artifact_refusal.reason_code == "artifact_output_missing"
+            ):
+                raise StorageIntegrityError(
+                    "runner_observations accepted artifact output invalid: "
+                    f"{artifact_refusal.reason_code}"
+                )
+        for artifact in state.artifacts.values():
+            provenance = authenticate_artifact_provenance(state, artifact)
+            if isinstance(provenance, ObservationPolicyDiagnostic) and (
+                provenance.reason_code
+                in {"artifact_identity", "artifact_output_unexpected"}
+            ):
+                raise StorageIntegrityError(
+                    "artifacts runner-observation provenance invalid: "
+                    f"{provenance.reason_code}"
+                )
     _validate_runner_session_cas_references(state, cas_store)
     selected_plan_digests = _put_selected_plan_objects(state, cas_store)
     payload_digests = _put_work_item_payload_objects(state, cas_store)
@@ -293,10 +332,6 @@ def persist_runtime_state_rows(
         encode_counter_row(record, updated_at_order=order)
         for order, record in enumerate(state.counters.values())
     )
-    transition_rows = tuple(
-        encode_transition_row(record, transition_order=order)
-        for order, record in enumerate(state.transitions)
-    )
     transition_order_by_record_id = {
         row.record_id: row.transition_order for row in transition_rows
     }
@@ -338,19 +373,18 @@ def persist_runtime_state_rows(
     )
 
     _refuse_stale_or_divergent_transition_history(connection, transition_rows)
-    validate_loaded_runtime_state(state)
     _validate_runner_session_evidence_authority(state, cas_store)
     with (
         nullcontext()
         if connection.in_transaction
         else control_transaction(connection, translate_errors=False)
     ):
-        guard_daemon_write(connection, state, daemon_scope)
         connection.execute("PRAGMA defer_foreign_keys = ON")
         _replace_runtime_rows(
             connection,
             state=state,
             cas_store=cas_store,
+            daemon_scope=daemon_scope,
             admitted_plan_rows=admitted_plan_rows,
             default_plan_row=default_plan_row,
             receipt_rows=receipt_rows,
@@ -1702,8 +1736,7 @@ def _candidate_runtime_signature(
             (
                 table_name,
                 tuple(
-                    tuple(getattr(row, column) for column in columns)
-                    for row in rows
+                    tuple(getattr(row, column) for column in columns) for row in rows
                 ),
             )
         )
@@ -1740,6 +1773,7 @@ def _replace_runtime_rows(
     *,
     state: RuntimeState,
     cas_store: ContentAddressedByteStore,
+    daemon_scope: dict[str, Any] | None,
     admitted_plan_rows: tuple[AdmittedPlanPinRow, ...],
     default_plan_row: DefaultPlanRow | None,
     receipt_rows: tuple[InputReceiptRow, ...],
@@ -1830,6 +1864,10 @@ def _replace_runtime_rows(
         trace_rows=trace_rows,
         refusal_rows=refusal_rows,
     )
+    # Concurrency/frontier checks retain precedence over candidate relations.
+    # Validate all relations before guard or row replacement mutations.
+    validate_loaded_runtime_state(state)
+    guard_daemon_write(connection, state, daemon_scope)
     guard_runtime_write(connection, state)
     for table_name in (
         "refusals",

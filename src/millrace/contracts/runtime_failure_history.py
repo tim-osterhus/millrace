@@ -10,7 +10,12 @@ from millrace.contracts.compiled_plan import (
     SelectedCompiledPlan,
     TerminalActionDeclaration,
 )
-from millrace.contracts.ids import ActionId, QueueFamilyId
+from millrace.contracts.ids import (
+    ActionId,
+    QueueFamilyId,
+    RunnerBindingId,
+    StageKindId,
+)
 from millrace.contracts.runner import (
     runner_result_evidence_digest,
     runner_result_evidence_from_payload,
@@ -204,6 +209,44 @@ def recovery_attempt_history_matches(
     )
 
 
+def selected_dynamic_route_targets(
+    plan: SelectedCompiledPlan,
+) -> set[tuple[QueueFamilyId, StageKindId, str, RunnerBindingId]]:
+    """Compiler-normalized dynamic route targets, typed like activation fields."""
+    targets: set[tuple[QueueFamilyId, StageKindId, str, RunnerBindingId]] = set()
+    for action in plan.terminal_actions:
+        selector = action.dynamic_target_selector
+        if action.action_kind == "recovery_route" or not isinstance(selector, Mapping):
+            continue
+        dynamic_targets = selector.get("targets", {})
+        if not isinstance(dynamic_targets, Mapping):
+            continue
+        for target in dynamic_targets.values():
+            if not isinstance(target, Mapping):
+                continue
+            queue, stage, node, binding = (
+                target.get("emitted_queue_family_id"),
+                target.get("target_stage_kind_id"),
+                target.get("target_graph_node_id"),
+                target.get("runner_binding_id"),
+            )
+            if (
+                isinstance(queue, str)
+                and isinstance(stage, str)
+                and isinstance(node, str)
+                and isinstance(binding, str)
+            ):
+                targets.add(
+                    (
+                        QueueFamilyId(queue),
+                        StageKindId(stage),
+                        node,
+                        RunnerBindingId(binding),
+                    )
+                )
+    return targets
+
+
 def selected_activation_targets(
     plan: SelectedCompiledPlan,
 ) -> set[tuple[object, object, object, object]]:
@@ -228,29 +271,7 @@ def selected_activation_targets(
             for queue in queues
             if queue is not None
         )
-        selector = action.dynamic_target_selector
-        if isinstance(selector, Mapping):
-            dynamic_targets = selector.get("targets", {})
-            if isinstance(dynamic_targets, Mapping):
-                targets.update(
-                    (
-                        target.get("emitted_queue_family_id"),
-                        target.get("target_stage_kind_id"),
-                        target.get("target_graph_node_id"),
-                        target.get("runner_binding_id"),
-                    )
-                    for target in dynamic_targets.values()
-                    if isinstance(target, Mapping)
-                    and all(
-                        isinstance(target.get(field), str)
-                        for field in (
-                            "emitted_queue_family_id",
-                            "target_stage_kind_id",
-                            "target_graph_node_id",
-                            "runner_binding_id",
-                        )
-                    )
-                )
+    targets.update(selected_dynamic_route_targets(plan))
     return targets
 
 
@@ -365,6 +386,33 @@ def recorded_source_return_origin(
     *,
     source_run_id: str | None = None,
 ) -> RunRecord | None:
+    """Return the authenticated recovery emitter for a recorded-source return."""
+    parts = _recorded_source_return_parts(
+        state,
+        plan,
+        activation_id,
+        source_run_id=source_run_id,
+    )
+    return None if parts is None else parts[0]
+
+
+def recorded_source_return_source(
+    state: RuntimeState,
+    plan: SelectedCompiledPlan,
+    activation_id: str,
+) -> RunRecord | None:
+    """Return the exact historical source without reading mutable attempt pointers."""
+    parts = _recorded_source_return_parts(state, plan, activation_id)
+    return None if parts is None else parts[1]
+
+
+def _recorded_source_return_parts(
+    state: RuntimeState,
+    plan: SelectedCompiledPlan,
+    activation_id: str,
+    *,
+    source_run_id: str | None = None,
+) -> tuple[RunRecord, RunRecord] | None:
     """Authenticate a return against the recorded source at its accepted input.
 
     Historical returns remain valid after later failures change the attempt's
@@ -607,7 +655,7 @@ def recorded_source_return_origin(
         for phase in policy.return_allowed_phases
     ):
         return None
-    return emitter
+    return emitter, source
 
 
 def current_recovery_return_matches(
@@ -736,6 +784,7 @@ __all__ = (
     "claimed_activation_matches",
     "accepted_recovery_origin_matches",
     "recorded_source_return_origin",
+    "recorded_source_return_source",
     "current_recovery_return_matches",
     "recovery_source_policies",
     "recovery_attempt_count_at_input",
