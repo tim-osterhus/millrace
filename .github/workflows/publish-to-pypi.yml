@@ -37,7 +37,7 @@ jobs:
       - name: Build
         run: |
           test ! -e dist
-          uv build --python 3.11
+          uv build --force-pep517 --python 3.11
       - name: Verify selected distribution manifest
         run: |
           python3 - <<'PYCODE'
