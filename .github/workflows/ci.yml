@@ -27,11 +27,6 @@ jobs:
         with:
           version: 0.11.30
 
-      - name: Set up qualified Pi Node runtime
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24.18.0'
-
       - name: Sync dependencies
         run: uv sync --frozen --group dev
 
@@ -48,7 +43,7 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 uv run --frozen pytest -q --basetemp "$HOME/mrc-tests/pytest"
 
       - name: Run Ruff
-        run: uv run --frozen ruff check src tests
+        run: uv run --frozen ruff check src tests scripts
 
       - name: Run mypy
         run: uv run --frozen mypy src

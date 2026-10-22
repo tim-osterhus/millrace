@@ -1,66 +1,9 @@
-# Roadmap
+# Millrace roadmap
 
-This roadmap is directional. Shipped behavior belongs in `CHANGELOG.md`.
-Millrace remains in pre-1.0 stabilization and keeps runtime authority compiled,
-durable, inspectable, and workflow-neutral.
+Millrace 0.23 separates durable routing in Core, workflow assets and native adapters in Plus,
+and multi-instance operation in OS. Core remains standalone and dependency-free.
 
-## Private v0.22.4 runner qualification
-
-- Verify generic compiler-selected timeout recovery through real continuation,
-  restart, bounded cooldown/quarantine and exact installed artifacts.
-- Qualify completed file-error feedback followed by valid agent completion,
-  preserving malformed-result and unsafe-process closure refusals. Source
-  regressions do not identify the unavailable historical C22 tool event.
-- Qualify the repaired artifacts on the actual Linux/model deployment before
-  a successor evaluation launch. Deterministic local fixtures are not that proof.
-
-## v0.22.3 Release Line
-
-### Runtime Integrity And Public Controls
-
-- Provide the first public governed-context/runtime-integrity contract in
-  `millrace-ai`.
-- Keep compiled catalog and binding authority, bounded hydration,
-  selected-root mutation enforcement, honest attribution, and derived-session
-  cleanup coherent across the CLI, runner sessions, and durable evidence.
-- Qualify schema-11 durable operations, supported run pause/resume, macOS
-  daemon controls and bounded public projections with exact installed packages.
-  Released OS/provider integration remains a subsequent cross-product gate.
-- Document schema-18 compatibility and keep unreleased schema-17 context-bound
-  campaign plans as historical evidence rather than compatible plans.
-
-## Active
-
-### Private v0.22.4 candidate
-
-The coordinated Core, Plus, and meta source candidate targets 0.22.4; published
-v0.22.3 remains the public release. Monitor-retained predecessor Core
-0.22.4.dev6+pi.local01 and Plus 0.22.4.dev5+pi.local01 artifacts have installed
-scripted-provider foreground evidence on Darwin and one pinned Ubuntu 24.04
-x86_64 environment, including one five-stage LAD route. This does not qualify
-the final 0.22.4 artifacts, every LAD stage, a real model, arbitrary descendants,
-or production provider token accounting. The real-model Campaign Monitor and
-final release checks remain open, so public v0.22.4 is held.
-
-### Public Documentation
-
-Keep the README, runtime guides, release notes, changelog, and this roadmap
-aligned with packaged behavior. Workflow-specific meaning stays in workflow
-packages; campaign construction stays outside the public runtime.
-
-## Planned
-
-### Pre-1.0 Stabilization
-
-Continue tightening the CLI, compiled-plan contracts, runner sessions, durable
-workspaces, and operator diagnostics without adding hidden workflow semantics.
-
-### Public Extension Surface
-
-Consider additional workflow-neutral extension points only when they preserve
-compiled authority, deterministic evidence, and a small understandable runtime.
-
-## Disclaimer
-
-This roadmap is subject to change and does not promise a specific feature or
-delivery date.
+The current release supports authored graphs, independent planes, declared seams, explicit controls,
+live edits at invocation boundaries and interrupted-writer recovery.
+AI-assisted authoring and evolution remain optional ecosystem capabilities.
+Callable graph modules and additional adapter profiles require separate design and qualification.

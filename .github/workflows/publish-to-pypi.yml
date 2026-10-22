@@ -3,80 +3,66 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - v0.22.4
+      - v0.23.0
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_DATE_EPOCH: "1580601600"
+  PYTHONDONTWRITEBYTECODE: "1"
+  EXPECTED_WHEEL_SHA256: "0000000000000000000000000000000000000000000000000000000000000000"
+  EXPECTED_SDIST_SHA256: "0000000000000000000000000000000000000000000000000000000000000000"
 
 jobs:
   validate:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.4' }}
-    runs-on: macos-14
-    env:
-      UV_LINK_MODE: copy
-    permissions:
-      contents: read
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.23.0' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
         with:
-          version: 0.9.30
-      - name: Set up qualified Pi Node runtime
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24.18.0'
-      - name: Sync dependencies
-        run: uv sync --frozen --group dev
-      - name: Cache offline build backend
-        run: >-
-          uv run --no-project
-          --with 'uv_build==0.11.30'
-          python -c 'import uv_build'
-      - name: Test
+          version: 0.11.30
+      - name: Validate active Core
         run: |
-          mkdir -m 700 "$HOME/mrc-tests"
-          export MILLRACE_TEST_SOCKET_ROOT="$HOME/mrc-tests"
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 uv run --frozen --group dev pytest -q --basetemp "$HOME/mrc-tests/pytest"
-      - name: Lint
-        run: uv run --frozen --group dev ruff check src tests scripts
-      - name: Type check
-        run: uv run --frozen --group dev mypy --strict src
+          uv lock --check
+          uv sync --frozen --group dev
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --frozen --group dev pytest -q
+          uv run --frozen --group dev ruff check src tests scripts
+          uv run --frozen --group dev mypy --strict src
       - name: Check clean source tree
         run: test -z "$(git status --porcelain=v1 --untracked-files=all)"
       - name: Build
         run: |
           test ! -e dist
-          SOURCE_DATE_EPOCH=1580601600 PYTHONDONTWRITEBYTECODE=1 uv build --python 3.11 --force-pep517
-      - name: Verify built distributions
+          uv build --python 3.11
+      - name: Verify selected distribution manifest
         run: |
-          uv run --frozen python - <<'PY'
+          python3 - <<'PYCODE'
+          import hashlib, os
           from pathlib import Path
-          import hashlib
-          manifest = """
-          828ca3b41f4f5dcc11c495001443a86b1e4438ee7256e154f0edf435305cb9fd  dist/millrace_ai-0.22.4-py3-none-any.whl
-          828007e31bdd978b9898aa5830f90ebc0da0746dd1c0ab44ac18591ea0b8eb23  dist/millrace_ai-0.22.4.tar.gz
-          """
-          expected = {Path(path): digest for digest, path in
-                      (line.split() for line in manifest.strip().splitlines())}
-          assert {p.name for p in Path("dist").iterdir()} == (
-              {p.name for p in expected} | {".gitignore"})
-          for path, digest in expected.items():
-              assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, path
-          PY
+          expected = {"millrace_ai-0.23.0-py3-none-any.whl": os.environ["EXPECTED_WHEEL_SHA256"],
+                      "millrace_ai-0.23.0.tar.gz": os.environ["EXPECTED_SDIST_SHA256"]}
+          assert {p.name for p in Path("dist").iterdir() if p.name != ".gitignore"} == set(expected)
+          for name, digest in expected.items():
+              assert digest != "0" * 64, "Release artifact manifest has not been frozen"
+              assert hashlib.sha256((Path("dist") / name).read_bytes()).hexdigest() == digest
+          PYCODE
       - name: Check source unchanged
-        run: |
-          git diff --exit-code
-          test -z "$(git status --porcelain=v1 --untracked-files=all -- ':!dist')"
+        run: git diff --exit-code
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pypi-distributions
           if-no-files-found: error
           path: |
-            dist/millrace_ai-0.22.4-py3-none-any.whl
-            dist/millrace_ai-0.22.4.tar.gz
+            dist/millrace_ai-0.23.0-py3-none-any.whl
+            dist/millrace_ai-0.23.0.tar.gz
 
   publish:
     needs: validate
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.22.4' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.23.0' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -88,23 +74,17 @@ jobs:
         with:
           name: pypi-distributions
           path: dist/
-      - name: Verify downloaded distributions
-        shell: bash
+      - name: Verify downloaded distribution set
         run: |
-          expected=(
-            "millrace_ai-0.22.4-py3-none-any.whl"
-            "millrace_ai-0.22.4.tar.gz"
-          )
-          mapfile -t actual < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
-          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
-          if [[ "${actual[*]}" != "${expected_sorted[*]}" ]]; then
-            printf 'unexpected downloaded distribution set: %s\n' "${actual[*]}" >&2
-            exit 1
-          fi
-          sha256sum --check --strict <<'SHA256'
-          828ca3b41f4f5dcc11c495001443a86b1e4438ee7256e154f0edf435305cb9fd  dist/millrace_ai-0.22.4-py3-none-any.whl
-          828007e31bdd978b9898aa5830f90ebc0da0746dd1c0ab44ac18591ea0b8eb23  dist/millrace_ai-0.22.4.tar.gz
-          SHA256
+          python3 - <<'PYCODE'
+          import hashlib, os
+          from pathlib import Path
+          assert {p.name for p in Path("dist").iterdir()} == {"millrace_ai-0.23.0-py3-none-any.whl", "millrace_ai-0.23.0.tar.gz"}
+          files = sorted(Path("dist").iterdir())
+          for path in files:
+              key = "EXPECTED_WHEEL_SHA256" if path.suffix == ".whl" else "EXPECTED_SDIST_SHA256"
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == os.environ[key]
+          PYCODE
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           packages-dir: dist/

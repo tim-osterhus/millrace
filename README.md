@@ -1,158 +1,30 @@
-<div align="center">
-  <p>
-    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/millrace-ai.svg"></a>
-    <a href="https://www.python.org/downloads/"><img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12+-blue.svg"></a>
-    <a href="https://github.com/tim-osterhus/millrace/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/tim-osterhus/millrace.svg"></a>
-  </p>
-  <img
-    src="https://raw.githubusercontent.com/tim-osterhus/millrace/main/docs/assets/images/millrace-icon-signal-transparent-glow.png"
-    alt="Millrace signal mark"
-    width="180"
-  />
-  <h1>Millrace</h1>
-</div>
+# Millrace Core
 
-Millrace is a durable runtime for compiler-validated agent workflows.
+Millrace Core routes durable workflow graphs through command steps and explicit external execution hosts.
+It persists results, transitions, requests, revisions and writer observations so work can resume after interruption.
 
-**Published Millrace v0.22.3** provides governed context and durable public controls.
-Install the exact `millrace==0.22.3` bundle on Python 3.12 or newer; see
-[Getting Started](docs/getting-started.md).
-Existing v0.22.2 workspaces use store schema 8; this release requires fresh
-schema-11 state and provides **no in-place migration**. Finish or retire old
-work with its matching runtime, preserve its workspace, and initialize a new
-one. See [compatibility](docs/v0.22-compatibility.md).
+## Install and run
 
-The unpublished **v0.22.4** source adds an opt-in [Pi runner](docs/pi-runner.md)
-and consent-bound [setup/demo](docs/demo.md). Its package versions are prepared
-for a matched release; real-model qualification and final artifact validation
-remain open. See [v0.22.4 status](docs/releases/v0.22.4.md).
+Python 3.11 or newer is required.
 
-Ever find yourself doing the same thing over and over with AI agents?
-
-You construct the plan. You tell it to execute the plan, then you have another
-agent check the first agent's work. It finds issues, so you tell it to fix
-those issues. Any time a new blocker comes up, you ask it to troubleshoot the
-issue and fix it before moving on. You rinse and repeat until there's no more
-bugs and everything matches the initial plan.
-
-All you did was manage which agent performs which role at which time. If you
-sketched the entire process on paper, you would find a manually driven workflow
-graph: stages connected by completion, failure, recovery, and escalation
-outcomes. An agent can generally be relied upon to execute any single step on
-its own, but owning the entire workflow end to end? No agent is owning that
-reliably (yet). And this is where Millrace comes in.
-
-```mermaid
-flowchart TD
-    W["Workflow package<br/>stages, routes, rules"] --> C["Compiler<br/>validate and freeze"]
-    C --> P["Selected plan<br/>immutable authority"]
-    P --> R["Durable runtime<br/>queues, runs, waits"]
-    R -->|"bounded dispatch"| A["Agent runner<br/>Codex, Millforge"]
-    A -->|"candidate evidence"| V{"Valid under<br/>selected plan?"}
-    P -.->|"governs"| V
-    V -->|"yes"| T["Commit state transition"]
-    T --> R
-    V -->|"no"| X["Refuse, retry,<br/>or wait for operator"]
-    X --> R
+```sh
+python -m pip install "millrace-ai==0.23.0"
+millrace router --help
 ```
 
-If your workflow can be described as stages, outcomes, and transitions,
-Millrace can compile it into an executable plan. Completion moves to the next
-step, failure moves to bugfixing, and a hard blocker escalates to automated
-recovery. You can have as many recovery mechanisms or branching paths as you
-like, and the compiler makes sure you're only running valid plans.
+Follow [Getting started](docs/getting-started.md) for a command-only workflow.
+Core has no runtime dependencies. [Millrace Plus](https://github.com/tim-osterhus/millrace-plus)
+supplies optional native adapters, catalogs and editable workflow templates.
+[Millrace OS](https://github.com/tim-osterhus/millrace-os) operates independent instances through the same public controls.
+The `millrace==0.23.0` bundle installs Core, Plus and OS together on Python 3.12 or newer.
 
-**Millrace made its compiled workflow graph authoritative over agent execution
-on April 23, 2026, months before "graph engineering" became a category.** A
-prior-art audit found only one earlier comparable open-source implementation:
-Dagu `v2.5.0`.
-[Review the definition, dated evidence, and prior-art audit.](https://github.com/tim-osterhus/millrace/blob/main/docs/graph-engineering-provenance.md)
+## Structure
 
-For more information, check out the
-[FAQ](https://github.com/tim-osterhus/millrace/blob/main/FAQ.md).
+- `src/millrace/router/`: graph validation, durable state, controls, settings and process mechanics.
+- `tests/router/`: command, corruption, recovery, planes, seams and installed boundary proofs.
+- `docs/maintainers/`: public control and cutover contracts.
 
-## Start With Your Agent
-
-Millrace is **agent-first**. Give this repository to a capable local agent:
-
-> Install Millrace for me in this workspace using
-> https://github.com/tim-osterhus/millrace. Read its README and
-> [published instruction manual](https://github.com/tim-osterhus/millrace-plus/blob/v0.22.3/src/millrace_plus/skills/millrace-instruction-manual/SKILL.md)
-> first. Check the CLI, workspace, workflows, and runners. Report what you
-> installed and what you need next. Do not store credentials in workflow
-> assets or start unattended work.
-
-Then delegate work:
-
-> Use Millrace to govern this work: `<goal and constraints>`. Choose an
-> official workflow, explain why, start with a bounded run, and report the
-> selected plan, state, waits, and evidence.
-
-Manual setup is documented in
-[Getting started](https://github.com/tim-osterhus/millrace/blob/main/docs/getting-started.md).
-
-## Runtime Rules
-
-- The selected plan defines legal stages, routes, assets, runners, and outcomes.
-- Queues, runs, waits, traces, and artifacts survive restarts.
-- Each stage receives only its selected assets and context.
-- Model output is evidence, not runtime truth.
-- Retries, reroutes, pauses, and operator decisions remain on record.
-- Exact run pause/resume preserves authority and budgets for supported
-  unstarted/native states; pending acceptance is distinct from verified pause.
-  See [control boundaries](docs/core-control-candidate.md).
-- Operator dispatch suspension gates only new claim acceptance. Already
-  accepted or active work keeps its durable authority.
-- Queue cancellation closes eligible workflow work through the normal audited
-  close-work transition. It never deletes queue state or signals a runner.
-- Supported commands change state; direct file edits do not.
-
-## Governed Context
-
-Millrace v0.22.3 is a general governed-context/runtime-integrity
-release. Compiled bindings distinguish
-required files from catalog-only discoverable material. Catalog content stays in
-CAS until an exact, bounded `millrace context select` request hydrates a
-read-only selection.
-
-The runtime enforces selected-root mutation policy before applying runner
-results, records source-backed attribution without turning unavailable values
-into zeros, and removes only derived session material after durable completion.
-Compiled plans advance to schema 18. Context-bound plans using the unreleased
-schema-17 shape are historical evidence, not compatible plans; import and
-select a schema-18 plan before running it.
-
-See the [v0.22.3 release notes](https://github.com/tim-osterhus/millrace/blob/main/docs/releases/v0.22.3.md).
-
-## Workflows
-
-`millrace-plus` provides:
-
-- `simple_loop`: plan, run, review, and bounded recovery;
-- `planning.lad` and `execution.lad`: separate planning and execution graphs;
-- `execution.lad_integrator` and `lad.full`: integrated LAD workflow variants;
-- `vendor_selection`: policy checks, parallel evaluation, and an operator gate.
-
-These are package data, not hard-coded kernel behavior.
-
-## Documentation
-
-[Getting started](https://github.com/tim-osterhus/millrace/blob/main/docs/getting-started.md) ·
-[How Millrace works](https://github.com/tim-osterhus/millrace/blob/main/docs/how-millrace-works.md) ·
-[Graph authority and prior art](https://github.com/tim-osterhus/millrace/blob/main/docs/graph-engineering-provenance.md) ·
-[Runner-session architecture](docs/runner-session-architecture.md) ·
-[Daemon lifecycle](docs/daemon-lifecycle.md) ·
-[Workflow packages](https://github.com/tim-osterhus/millrace/blob/main/docs/workflow-packages.md) ·
-[Millforge runner](https://github.com/tim-osterhus/millrace/blob/main/docs/millforge-runner.md) ·
-[Codex runner](https://github.com/tim-osterhus/millrace/blob/main/docs/codex-runner.md) ·
-[Pi runner candidate](docs/pi-runner.md) ·
-[Errors](https://github.com/tim-osterhus/millrace/blob/main/docs/errors.md) ·
-[Migrating from v0.21](https://github.com/tim-osterhus/millrace/blob/main/docs/migrating-from-v0.21.md) ·
-[v0.22 support](https://github.com/tim-osterhus/millrace/blob/main/docs/v0.22-compatibility.md)
-
-Millrace v0.22 is local and single-operator. Foreground execution supports Linux, macOS, and WSL. The new public daemon
-lifecycle controls currently qualify process identity on macOS only.
-
-## License
-
-[Apache License 2.0](https://github.com/tim-osterhus/millrace/blob/main/LICENSE)
+Graphs use `millrace-router/v3`; fresh stores use `millrace-router-store/v7`.
+Unsupported historical formats refuse before mutation. There is no state migration.
+See [How Millrace works](docs/how-millrace-works.md), [planes](docs/router-planes.md),
+[controls](docs/maintainers/router-controls.md) and [cutover](docs/maintainers/router-cutover.md).

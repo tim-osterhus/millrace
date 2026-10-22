@@ -4,8 +4,8 @@ build-backend = "uv_build"
 
 [project]
 name = "millrace-ai"
-version = "0.22.4"
-description = "A governed runtime for compiler-validated, durable agent workflows."
+version = "0.23.0"
+description = "A standalone durable graph router with explicit controls."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -16,7 +16,7 @@ authors = [
 dependencies = []
 
 [project.scripts]
-millrace = "millrace.adapters.cli.main:cli"
+millrace = "millrace.router.cli:cli"
 
 [project.urls]
 Homepage = "https://github.com/tim-osterhus/millrace"
@@ -25,8 +25,6 @@ Issues = "https://github.com/tim-osterhus/millrace/issues"
 
 [dependency-groups]
 dev = [
-    # Public workflow fixtures for setup/preflight tests; no runtime dependency.
-    "millrace-plus==0.22.3",
     "mypy>=1.15",
     "pytest>=8.0",
     "ruff>=0.11",
@@ -35,36 +33,8 @@ dev = [
 [tool.uv.build-backend]
 module-root = "src"
 module-name = "millrace"
-source-include = [
-    "FAQ.md",
-    "LICENSE",
-    "README.md",
-    "docs/getting-started.md",
-    "docs/migrating-from-v0.21.md",
-    "docs/v0.22-compatibility.md",
-    "docs/errors.md",
-    "docs/how-millrace-works.md",
-    "docs/runner-session-architecture.md",
-    "docs/runtime-failure-recovery.md",
-    "docs/daemon-lifecycle.md",
-    "docs/core-control-candidate.md",
-    "docs/workflow-packages.md",
-    "docs/millforge-runner.md",
-    "docs/codex-runner.md",
-    "docs/pi-runner.md",
-    "docs/examples/pi-profile.json",
-    "docs/examples/pi-adapters.json",
-    "docs/setup.md",
-    "docs/demo.md",
-    "docs/demo-recovery.md",
-]
-source-exclude = [
-    "/.gitignore",
-    "**/.DS_Store",
-    "/docs/maintainers/**",
-    "/src/millrace/**/README.md",
-    "/src/millrace/testing/**",
-]
+source-include = ["LICENSE", "README.md", "CHANGELOG.md", "FAQ.md", "ROADMAP.md", "docs/**", "tests/**", "scripts/release/verify_v023_distribution.py"]
+source-exclude = ["/.gitignore", "/.github/**", "**/.DS_Store", "**/__pycache__/**", "**/*.pyc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

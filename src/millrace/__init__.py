@@ -1,3 +1,3 @@
-"""Millrace governed workflow runtime."""
+"""Millrace standalone durable graph router."""
 
 __all__ = ()
