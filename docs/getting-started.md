@@ -41,12 +41,17 @@ Create an instance using a fresh state home:
 millrace router instance create --state-home ./router-state --workflow ./workflow/workflow.json --project ./project
 ```
 
-Copy the returned `instance_id` into `INSTANCE`. Validate, start, and inspect it:
+Copy the returned `instance_id` into `INSTANCE`. Validate and start it:
 
 ```sh
 millrace router validate --state-home ./router-state --instance INSTANCE
 millrace router start --state-home ./router-state --instance INSTANCE
-millrace router status --state-home ./router-state --instance INSTANCE
+```
+
+Copy the returned `run_id` into `RUN`, then inspect the run:
+
+```sh
+millrace router status --state-home ./router-state --instance INSTANCE --run RUN
 ```
 
 Mutations print a request envelope before their result. Retain it for exact replay if transport outcome is unknown.
