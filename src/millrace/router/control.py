@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import stat
 import sys
 import uuid
 from collections.abc import Callable
@@ -293,6 +294,8 @@ def _creation(
             instances = home / "instances"
             instances.mkdir(exist_ok=True)
             for entry in instances.iterdir():
+                if entry.name == ".DS_Store" and stat.S_ISREG(entry.lstat().st_mode):
+                    continue
                 if not entry.is_dir():
                     raise RouterError("instance_integrity")
                 registered = load_instance(
@@ -429,6 +432,7 @@ def list_instances(
             entry.name, state_home=state_home, adapter_resolver=adapter_resolver
         )
         for entry in sorted(folder.iterdir())
+        if not (entry.name == ".DS_Store" and stat.S_ISREG(entry.lstat().st_mode))
     ]
 
 

@@ -1,6 +1,7 @@
 """Instance settings, atomic registration and exact selected-home authority."""
 
 import json
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -539,3 +540,134 @@ def test_registered_workflow_identity_error_is_a_final_refusal(
     assert len(control.list_instances(state_home=home)) == 1
     assert register((other / workflow.name, project, home))["status"] == "applied"
     assert len(control.list_instances(state_home=home)) == 2
+
+
+@pytest.mark.parametrize("already_registered", [False, True])
+def test_regular_finder_metadata_does_not_block_creation(
+    single_flow, already_registered
+):
+    workflow, project, home = single_flow
+    known = []
+    if already_registered:
+        known.append(register(single_flow)["instance_id"])
+        other = workflow.parent.with_name("independent-workflow")
+        shutil.copytree(workflow.parent, other)
+        workflow = other / workflow.name
+    folder = home / "instances"
+    folder.mkdir(parents=True, exist_ok=True)
+    metadata = folder / ".DS_Store"
+    raw = b"owned Finder metadata\x00\xff"
+    metadata.write_bytes(raw)
+    created = register((workflow, project, home))
+    assert created["status"] == "applied"
+    known.append(created["instance_id"])
+    assert sorted(
+        row["instance_id"] for row in control.list_instances(state_home=home)
+    ) == sorted(known)
+    duplicate = register((workflow, project, home))
+    assert (
+        duplicate["status"] == "refused" and duplicate["code"] == "workflow_registered"
+    )
+    assert register((workflow, project, home), duplicate["request_id"]) == duplicate
+    assert metadata.read_bytes() == raw and not metadata.is_symlink()
+    assert len(control.list_instances(state_home=home)) == len(known)
+
+
+def test_regular_finder_metadata_does_not_change_listing(single_flow):
+    register(single_flow)
+    home = single_flow[2]
+    before = control.list_instances(state_home=home)
+    metadata = home / "instances/.DS_Store"
+    raw = b"owned Finder metadata after registration\n"
+    metadata.write_bytes(raw)
+    assert control.list_instances(state_home=home) == before
+    assert metadata.read_bytes() == raw and not metadata.is_symlink()
+
+
+@pytest.mark.parametrize(
+    ("name", "kind", "create_code", "list_code"),
+    [
+        ("unexpected", "file", "instance_integrity", "invalid_id"),
+        (".metadata", "file", "instance_integrity", "invalid_id"),
+        (".DS_Store.tmp", "file", "instance_integrity", "invalid_id"),
+        (".ds_store", "file", "instance_integrity", "invalid_id"),
+        ("unexpected", "directory", "invalid_id", "invalid_id"),
+        (".DS_Store", "directory", "invalid_id", "invalid_id"),
+        (".DS_Store", "symlink_file", "instance_integrity", "invalid_id"),
+        (".DS_Store", "symlink_directory", "invalid_id", "invalid_id"),
+        (".DS_Store", "dangling_symlink", "instance_integrity", "invalid_id"),
+        (".DS_Store", "fifo", "instance_integrity", "invalid_id"),
+        ("a" * 32, "corrupt_directory", "instance_integrity", "instance_integrity"),
+        ("a" * 32, "file", "instance_integrity", "instance_integrity"),
+        ("a" * 32, "symlink_directory", "instance_integrity", "instance_integrity"),
+    ],
+)
+def test_finder_metadata_exception_preserves_instance_guards(
+    single_flow, name, kind, create_code, list_code
+):
+    workflow, project, home = single_flow
+    first = register(single_flow)
+    before = control.inspect_instance(first["instance_id"], state_home=home)
+    folder = home / "instances"
+    entry = folder / name
+    if kind == "file":
+        entry.write_bytes(b"unexpected registry entry")
+    elif kind in {"directory", "corrupt_directory"}:
+        entry.mkdir()
+        if kind == "corrupt_directory":
+            (entry / "instance.json").write_text("not valid JSON")
+    elif kind == "fifo":
+        os.mkfifo(entry)
+    elif kind == "symlink_directory":
+        entry.symlink_to(folder / first["instance_id"], target_is_directory=True)
+    else:
+        target = project / "metadata-target"
+        if kind == "symlink_file":
+            target.write_bytes(b"regular target does not make a symlink regular")
+        entry.symlink_to(target)
+    entries = sorted(path.name for path in folder.iterdir())
+    other = workflow.parent.with_name("independent-workflow")
+    shutil.copytree(workflow.parent, other)
+    refused = register((other / workflow.name, project, home))
+    assert refused["status"] == "refused" and refused["code"] == create_code
+    assert (
+        register((other / workflow.name, project, home), refused["request_id"])
+        == refused
+    )
+    with pytest.raises(RouterError) as invalid:
+        control.list_instances(state_home=home)
+    assert invalid.value.code == list_code
+    assert sorted(path.name for path in folder.iterdir()) == entries
+    assert control.inspect_instance(first["instance_id"], state_home=home) == before
+
+
+def test_finder_metadata_repair_preserves_final_refusal(single_flow):
+    workflow, project, home = single_flow
+    metadata = home / "instances/.DS_Store"
+    metadata.mkdir(parents=True)
+    request = new_id()
+    refused = register(single_flow, request)
+    assert refused["status"] == "refused" and refused["code"] == "invalid_id"
+    receipt_path = home / "creation-receipts" / (request + ".json")
+    raw_receipt = receipt_path.read_bytes()
+    metadata.rmdir()
+    raw_metadata = b"corrected to a regular Finder metadata entry\n"
+    metadata.write_bytes(raw_metadata)
+    assert register(single_flow, request) == refused
+    assert receipt_path.read_bytes() == raw_receipt
+    with pytest.raises(RouterError) as reused:
+        control.create_instance(
+            workflow,
+            project,
+            state_home=home,
+            request_id=request,
+            expected_state_version=1,
+        )
+    assert reused.value.code == "request_id_reused"
+    assert receipt_path.read_bytes() == raw_receipt
+    created = register(single_flow)
+    assert created["status"] == "applied"
+    assert len(control.list_instances(state_home=home)) == 1
+    assert metadata.read_bytes() == raw_metadata
+    assert register(single_flow, request) == refused
+    assert receipt_path.read_bytes() == raw_receipt

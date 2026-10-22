@@ -109,6 +109,12 @@ returns the exact retained receipt. Reusing a request ID for changed content ref
 Expected state versions apply at application time; stop controls retain their
 existing guarded behavior. Creation IDs derive from the selected home/request ID.
 
+Creation and listing ignore only a regular file named exactly `.DS_Store` in
+the state home's `instances` directory, leaving it untouched. Symlinks, directories
+and other entries retain the existing instance ID and integrity checks. A saved
+final refusal still replays exactly after its cause is corrected; use a fresh
+request ID to attempt creation again.
+
 One holder owns each instance's lock, queue drain and engine. Diagnostic validation
 and reads do not advance work. A draining holder admits stops/diagnostics and
 refuses other mutations; later continuation follows its exit and lock release.
