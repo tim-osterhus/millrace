@@ -1,6 +1,6 @@
 <div align="center">
   <p>
-    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI v0.23.0" src="https://img.shields.io/badge/pypi-v0.23.0-orange.svg"></a>
+    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI v0.23.1" src="https://img.shields.io/badge/pypi-v0.23.1-orange.svg"></a>
     <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11+-blue.svg"></a>
     <a href="https://github.com/tim-osterhus/millrace/blob/main/LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-green.svg"></a>
   </p>
@@ -20,15 +20,15 @@ It persists results, transitions, requests, revisions and writer observations so
 Python 3.11 or newer is required.
 
 ```sh
-python -m pip install "millrace-ai==0.23.0"
+python -m pip install "millrace-ai==0.23.1"
 millrace router --help
 ```
 
-Follow [Getting started](https://github.com/tim-osterhus/millrace/blob/v0.23.0/docs/getting-started.md) for a command-only workflow.
+Follow [Getting started](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/getting-started.md) for a command-only workflow.
 Core has no runtime dependencies. [Millrace Plus](https://github.com/tim-osterhus/millrace-plus)
 supplies optional native adapters, catalogs and editable workflow templates.
 [Millrace OS](https://github.com/tim-osterhus/millrace-os) operates independent instances through the same public controls.
-The `millrace==0.23.0` bundle installs Core, Plus and OS together on Python 3.12 or newer.
+The `millrace==0.23.1` bundle installs Core, Plus and OS together on Python 3.12 or newer.
 
 ## Structure
 
@@ -38,5 +38,5 @@ The `millrace==0.23.0` bundle installs Core, Plus and OS together on Python 3.12
 
 Graphs use `millrace-router/v3`; fresh stores use `millrace-router-store/v7`.
 Unsupported historical formats refuse before mutation. There is no state migration.
-See [How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.23.0/docs/how-millrace-works.md), [planes](https://github.com/tim-osterhus/millrace/blob/v0.23.0/docs/router-planes.md),
-[controls](https://github.com/tim-osterhus/millrace/blob/v0.23.0/docs/maintainers/router-controls.md) and [cutover](https://github.com/tim-osterhus/millrace/blob/v0.23.0/docs/maintainers/router-cutover.md).
+See [How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/how-millrace-works.md), [planes](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/router-planes.md),
+[controls](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/maintainers/router-controls.md) and [cutover](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/maintainers/router-cutover.md).

@@ -3,7 +3,7 @@
 Install Core with Python 3.11 or newer. This example launches only a local command.
 
 ```sh
-python -m pip install "millrace-ai==0.23.0"
+python -m pip install "millrace-ai==0.23.1"
 mkdir workflow project
 ```
 
@@ -59,5 +59,5 @@ A controller may remain in the foreground until work pauses or finishes.
 The first stop signal drains active work. A second stop requests cancellation.
 Use [public controls](maintainers/router-controls.md) for exact request replay, edits and recovery.
 
-For native adapters and workflow copies, install `millrace-plus[router]==0.23.0` and use its public CLI.
+For native adapters and workflow copies, install `millrace-plus[router]==0.23.1` and use its public CLI.
 Provider execution requires its own configured runtime and credentials.

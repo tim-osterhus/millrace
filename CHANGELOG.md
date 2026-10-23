@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.1
+
+- Ignore exact regular `.DS_Store` metadata files when creating and listing instances.
+- Preserve refusal for symlinks and other unexpected state entries.
+- Keep graph-v3/store-v7 and request-v2/receipt-v2/execution-v2 contracts unchanged.
+
 ## 0.23.0
 
 - Replace the legacy engine with a standalone durable graph router.

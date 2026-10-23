@@ -4,7 +4,7 @@ The Core wheel and sdist contain the inert `millrace` namespace, its typing mark
 The active source tree removes the retired compiler, kernel, operator, substrate, native-adapter and workflow packages.
 The console entrypoint is `millrace.router.cli:cli`. Runtime dependencies are empty.
 
-Core, Plus and OS use release version 0.23.0. Plus requires the public `millrace-router-execution/v2` contract.
+Core, Plus and OS use release version 0.23.1. Plus requires the public `millrace-router-execution/v2` contract.
 Equal package versions alone do not establish contract compatibility.
 
 Use freshly authored graph-v3/store-v7 state with request-v2, receipt-v2 and execution-v2 controls.

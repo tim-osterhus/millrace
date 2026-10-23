@@ -1,10 +1,9 @@
 name: Publish to PyPI
 
 on:
-  workflow_dispatch:
   push:
     tags:
-      - v0.23.0
+      - v0.23.1
 
 permissions:
   contents: read
@@ -12,37 +11,32 @@ permissions:
 env:
   SOURCE_DATE_EPOCH: "1580601600"
   PYTHONDONTWRITEBYTECODE: "1"
-  EXPECTED_WHEEL_SHA256: "56d4bd001c9c5875b6f7fec55369754c43a07f5d2ce0e334a2057c63521b858c"
-  EXPECTED_SDIST_SHA256: "4a8716cfd1e02c86165372ff005e241dc14346b5c6b51389fa634f9b3aecef5c"
+  EXPECTED_WHEEL_SHA256: "917a2a0f11778b0b917b568cfcca260dc93584971c97b90eb388e0b976c7f6c9"
+  EXPECTED_SDIST_SHA256: "4c0cb171770463bacad39bc25a3572fac4dc83511c29b43b63bb8f5cd907bcde"
 
 jobs:
   validate:
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/tags/v0.23.0') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.23.1' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
-          ref: 5b7f7dcbaff3fadc745a2fe0fcd7c67850660efd
           fetch-depth: 0
-      - name: Verify immutable release source and control-only recovery
+      - name: Verify release tag and package identity
         run: |
           python3 - <<'PYCODE'
-          import os, subprocess
+          import os, subprocess, tomllib
+          from pathlib import Path
           def git(*args):
               return subprocess.check_output(["git", *args], text=True).strip()
-          source = "5b7f7dcbaff3fadc745a2fe0fcd7c67850660efd"
-          assert git("rev-parse", "HEAD") == source
-          assert git("rev-parse", "refs/tags/v0.23.0") == "95104d3bd8c33a063df2712e3820f6b1305cd181"
-          assert git("rev-parse", "refs/tags/v0.23.0^{}") == source
-          if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
-              assert os.environ["GITHUB_REF"] == "refs/heads/main"
-              changed = git("diff", "--name-only", source, os.environ["GITHUB_SHA"]).splitlines()
-              assert changed == [".github/workflows/publish-to-pypi.yml"], changed
-          else:
-              assert os.environ["GITHUB_EVENT_NAME"] == "push"
-              assert os.environ["GITHUB_REF"] == "refs/tags/v0.23.0"
-              assert os.environ["GITHUB_SHA"] == source
+          assert os.environ["GITHUB_EVENT_NAME"] == "push"
+          assert os.environ["GITHUB_REF"] == "refs/tags/v0.23.1"
+          head = git("rev-parse", "HEAD")
+          assert git("rev-parse", "refs/tags/v0.23.1^{}") == head
+          assert os.environ["GITHUB_SHA"] == head
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          assert project["name"] == "millrace-ai" and project["version"] == "0.23.1"
           PYCODE
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
         with:
@@ -52,7 +46,8 @@ jobs:
         run: |
           uv lock --check
           uv sync --frozen --group dev
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --frozen --group dev pytest -q
+          mkdir -m 700 "$HOME/mrc-tests"
+          MILLRACE_TEST_SOCKET_ROOT="$HOME/mrc-tests" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --frozen --group dev pytest -q --basetemp "$HOME/mrc-tests/pytest"
           uv run --frozen --group dev ruff check src tests scripts
           uv run --frozen --group dev mypy --strict src
       - name: Check clean source tree
@@ -66,8 +61,8 @@ jobs:
           python3 - <<'PYCODE'
           import hashlib, os
           from pathlib import Path
-          expected = {"millrace_ai-0.23.0-py3-none-any.whl": os.environ["EXPECTED_WHEEL_SHA256"],
-                      "millrace_ai-0.23.0.tar.gz": os.environ["EXPECTED_SDIST_SHA256"]}
+          expected = {"millrace_ai-0.23.1-py3-none-any.whl": os.environ["EXPECTED_WHEEL_SHA256"],
+                      "millrace_ai-0.23.1.tar.gz": os.environ["EXPECTED_SDIST_SHA256"]}
           assert {p.name for p in Path("dist").iterdir() if p.name != ".gitignore"} == set(expected)
           for name, digest in expected.items():
               assert digest != "0" * 64, "Release artifact manifest has not been frozen"
@@ -80,12 +75,12 @@ jobs:
           name: pypi-distributions
           if-no-files-found: error
           path: |
-            dist/millrace_ai-0.23.0-py3-none-any.whl
-            dist/millrace_ai-0.23.0.tar.gz
+            dist/millrace_ai-0.23.1-py3-none-any.whl
+            dist/millrace_ai-0.23.1.tar.gz
 
   publish:
     needs: validate
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/tags/v0.23.0') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.23.1' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -102,7 +97,7 @@ jobs:
           python3 - <<'PYCODE'
           import hashlib, os
           from pathlib import Path
-          assert {p.name for p in Path("dist").iterdir()} == {"millrace_ai-0.23.0-py3-none-any.whl", "millrace_ai-0.23.0.tar.gz"}
+          assert {p.name for p in Path("dist").iterdir()} == {"millrace_ai-0.23.1-py3-none-any.whl", "millrace_ai-0.23.1.tar.gz"}
           files = sorted(Path("dist").iterdir())
           for path in files:
               key = "EXPECTED_WHEEL_SHA256" if path.suffix == ".whl" else "EXPECTED_SDIST_SHA256"

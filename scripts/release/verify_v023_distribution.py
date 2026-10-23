@@ -10,7 +10,7 @@ import zipfile
 from email.parser import Parser
 from pathlib import Path
 
-VERSION = "0.23.0"
+VERSION = "0.23.1"
 RETIRED = {
     "adapters",
     "compiler",

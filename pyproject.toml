@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "millrace-ai"
-version = "0.23.0"
+version = "0.23.1"
 description = "A standalone durable graph router with explicit controls."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"

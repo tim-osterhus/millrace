@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   validation:
@@ -12,6 +13,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       UV_LINK_MODE: copy
+      SOURCE_DATE_EPOCH: "1580601600"
+      PYTHONDONTWRITEBYTECODE: "1"
 
     steps:
       - name: Check out repository
