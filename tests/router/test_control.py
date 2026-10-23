@@ -2077,6 +2077,7 @@ def test_automatic_cancel_aftermath_requires_causal_authority(
 def test_signal_enters_fifo_before_active_drain(single_flow, monkeypatch, signal_count):
     import threading
 
+    from millrace.router import engine
     from millrace.router.controller import Controller
     from millrace.router.engine import Signals
 
@@ -2084,8 +2085,14 @@ def test_signal_enters_fifo_before_active_drain(single_flow, monkeypatch, signal
     instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
     ids, observed, signals = {}, [], []
     original_enter, original_apply = Signals.__enter__, Controller.apply
+    original_acknowledge = engine._acknowledge_started
     earlier = {}
     stops_applied = threading.Event()
+    producer_ready = threading.Event()
+
+    def acknowledged(*args):
+        original_acknowledge(*args)
+        assert producer_ready.wait(timeout=3)
 
     def entered(owner):
         signals.append(owner)
@@ -2120,6 +2127,7 @@ def test_signal_enters_fifo_before_active_drain(single_flow, monkeypatch, signal
         )
         assert earlier["status"] == "queued"
         signals[0].count = signal_count
+        producer_ready.set()
         assert stops_applied.wait(timeout=3)
         cancelled = args[4]()
         assert observed == ["resume_run", "pause_run"] + (
@@ -2134,6 +2142,7 @@ def test_signal_enters_fifo_before_active_drain(single_flow, monkeypatch, signal
         )
 
     monkeypatch.setattr(Signals, "__enter__", entered)
+    monkeypatch.setattr(engine, "_acknowledge_started", acknowledged)
     monkeypatch.setattr(Controller, "apply", applied)
     monkeypatch.setattr("millrace.router.engine.invoke", invoke)
     control.start_run(
