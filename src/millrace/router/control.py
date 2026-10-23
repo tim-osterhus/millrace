@@ -294,8 +294,15 @@ def _creation(
             instances = home / "instances"
             instances.mkdir(exist_ok=True)
             for entry in instances.iterdir():
-                if entry.name == ".DS_Store" and stat.S_ISREG(entry.lstat().st_mode):
-                    continue
+                if entry.name == ".DS_Store":
+                    try:
+                        mode = entry.lstat().st_mode
+                    except FileNotFoundError:
+                        continue
+                    except OSError as exc:
+                        raise RouterError("instance_integrity") from exc
+                    if stat.S_ISREG(mode):
+                        continue
                 if not entry.is_dir():
                     raise RouterError("instance_integrity")
                 registered = load_instance(
@@ -427,13 +434,23 @@ def list_instances(
     folder = canonical_path(state_home) / "instances"
     if not folder.exists():
         return []
-    return [
-        inspect_instance(
-            entry.name, state_home=state_home, adapter_resolver=adapter_resolver
+    instances = []
+    for entry in sorted(folder.iterdir()):
+        if entry.name == ".DS_Store":
+            try:
+                mode = entry.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise RouterError("instance_integrity") from exc
+            if stat.S_ISREG(mode):
+                continue
+        instances.append(
+            inspect_instance(
+                entry.name, state_home=state_home, adapter_resolver=adapter_resolver
+            )
         )
-        for entry in sorted(folder.iterdir())
-        if not (entry.name == ".DS_Store" and stat.S_ISREG(entry.lstat().st_mode))
-    ]
+    return instances
 
 
 def inspect_instance(

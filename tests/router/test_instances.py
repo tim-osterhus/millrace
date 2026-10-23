@@ -584,6 +584,55 @@ def test_regular_finder_metadata_does_not_change_listing(single_flow):
     assert metadata.read_bytes() == raw and not metadata.is_symlink()
 
 
+@pytest.mark.parametrize("operation", ["create", "list"])
+@pytest.mark.parametrize("error_kind", ["missing", "denied"])
+def test_finder_metadata_lstat_race_has_structured_aftermath(
+    single_flow, monkeypatch, operation, error_kind
+):
+    home = single_flow[2]
+    before = []
+    if operation == "list":
+        register(single_flow)
+        before = control.list_instances(state_home=home)
+    folder = home / "instances"
+    folder.mkdir(parents=True, exist_ok=True)
+    metadata = folder / ".DS_Store"
+    raw = b"Finder metadata racing with directory enumeration\n"
+    metadata.write_bytes(raw)
+    original_lstat = Path.lstat
+    attempts = []
+
+    def raced_lstat(path, *args, **kwargs):
+        if path == metadata:
+            attempts.append(path)
+            if error_kind == "missing":
+                metadata.unlink()
+                raise FileNotFoundError("owned metadata disappeared")
+            raise PermissionError("owned metadata is unreadable")
+        return original_lstat(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "lstat", raced_lstat)
+        if operation == "create":
+            result = register(single_flow)
+            if error_kind == "missing":
+                assert result["status"] == "applied"
+            else:
+                assert result["status"] == "refused"
+                assert result["code"] == "instance_integrity"
+        elif error_kind == "missing":
+            assert control.list_instances(state_home=home) == before
+        else:
+            with pytest.raises(RouterError) as caught:
+                control.list_instances(state_home=home)
+            assert caught.value.code == "instance_integrity"
+    assert attempts == [metadata]
+    if error_kind == "missing":
+        assert not metadata.exists()
+    else:
+        assert metadata.read_bytes() == raw
+
+
 @pytest.mark.parametrize(
     ("name", "kind", "create_code", "list_code"),
     [

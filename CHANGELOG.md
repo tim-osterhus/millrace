@@ -3,6 +3,7 @@
 ## 0.23.1
 
 - Ignore exact regular `.DS_Store` metadata files when creating and listing instances.
+- Tolerate disappearing Finder metadata and report other metadata access errors as structured integrity failures.
 - Preserve refusal for symlinks and other unexpected state entries.
 - Keep graph-v3/store-v7 and request-v2/receipt-v2/execution-v2 contracts unchanged.
 
