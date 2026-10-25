@@ -71,7 +71,7 @@ def test_failed_attempts_and_timeout_rules(
         def fail(*args: object, **kwargs: object) -> None:
             raise OSError("fixture spawn refusal")
 
-        monkeypatch.setattr("millrace.router.adapters.command.subprocess.Popen", fail)
+        monkeypatch.setattr("millrace.router.process.subprocess.Popen", fail)
     result = start_run(instance, state_home=home)
     assert result["count"] == (1 if failure == "run_timeout" else 2)
     assert result["status"] == ("paused" if failure == "run_timeout" else "failed")

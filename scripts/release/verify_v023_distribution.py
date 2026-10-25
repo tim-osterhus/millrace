@@ -10,7 +10,7 @@ import zipfile
 from email.parser import Parser
 from pathlib import Path
 
-VERSION = "0.23.1"
+VERSION = "0.23.2"
 RETIRED = {
     "adapters",
     "compiler",
@@ -46,6 +46,7 @@ def verify(wheel: Path, sdist: Path, manifest: Path | None = None) -> dict[str, 
         "millrace/py.typed",
         "millrace/router/control.py",
         "millrace/router/adapters/command.py",
+        "millrace/router/process.py",
     } <= names
     for name in names:
         assert not name.startswith(("millrace_plus/", "millrace_workflow_package/"))

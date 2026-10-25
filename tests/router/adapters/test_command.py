@@ -12,6 +12,61 @@ from millrace.router.adapters.command import invoke
 CASES = Path(__file__).parents[1] / "fixtures/command_cases.py"
 
 
+def test_empty_argument_is_preserved_and_invalid_request_has_no_child(tmp_path):
+    roots = []
+    result = invoke(
+        [sys.executable, "-c", "import sys;assert sys.argv[1:] == ['--name','']",
+         "--name", ""],
+        tmp_path, {}, time.time() + 2, lambda: False, roots.append,
+    )
+    assert len(roots) == 1 and result.classification == "completed"
+    assert result.writer_state == "stopped"
+    roots.clear()
+    result = invoke(
+        [sys.executable, "invalid\x00argument"],
+        tmp_path, {}, time.time() + 2, lambda: False, roots.append,
+    )
+    assert roots == [] and result.classification == "execution_failure"
+    assert result.writer_state == "stopped"
+    assert result.diagnostic == "invalid_process_request"
+    result = invoke(
+        [str(tmp_path / "absent-program")],
+        tmp_path, {}, time.time() + 2, lambda: False, roots.append,
+    )
+    assert roots == [] and result.classification == "execution_failure"
+    assert result.writer_state == "stopped" and result.diagnostic == "start_failed"
+    result = invoke(
+        [sys.executable, "-c", "raise AssertionError('must not launch')"],
+        tmp_path, {}, time.time() + 2, lambda: True, roots.append,
+    )
+    assert roots == [] and result.classification == "cancelled"
+    assert result.writer_state == "stopped"
+
+
+def test_timeout_before_overflow_keeps_reason_if_cleanup_unconfirmed(
+    tmp_path, monkeypatch,
+):
+    roots = []
+    killpg = os.killpg
+
+    def denied(*_):
+        raise PermissionError("test-owned unconfirmed group")
+
+    try:
+        monkeypatch.setattr(os, "killpg", denied)
+        result = invoke(
+            [sys.executable, "-c",
+             "import os,time;time.sleep(.15);os.write(1,b'x'*70000);time.sleep(30)"],
+            tmp_path, {}, time.time() + 0.05, lambda: False, roots.append,
+        )
+        assert result.classification == "timeout"
+        assert result.writer_state == "may_live" and len(result.stdout) == 65536
+    finally:
+        if roots:
+            killpg(roots[0], signal.SIGKILL)
+            os.waitpid(roots[0], 0)
+
+
 def test_stdout_exit_timeout_and_writer_states(tmp_path: Path) -> None:
     result = invoke(
         [sys.executable, str(CASES), "good"],
@@ -209,6 +264,10 @@ def test_postpoll_clock_preserves_cleanup_grace(tmp_path, monkeypatch, denied):
 
     def callback():
         nonlocal slow
+        # The public process API polls before spawn; arm this timing case only
+        # after the child is acknowledged and its TERM handler is ready.
+        if not roots:
+            return False
         if not slow:
             slow = True
             time.sleep(2.1)
@@ -275,6 +334,8 @@ def test_postpoll_deadline_is_rechecked(tmp_path, output):
         assert ready.exists()
 
     def callback():
+        if not roots:
+            return False
         time.sleep(0.6)
         return False
 
@@ -287,6 +348,7 @@ def test_postpoll_deadline_is_rechecked(tmp_path, output):
             callback,
             started,
         )
+        assert len(roots) == 1 and ready.exists()
         assert result.classification == "timeout" and result.writer_state == "stopped"
     finally:
         if roots:
