@@ -235,6 +235,10 @@ class Store:
         except RouterError:
             self.db.close()
             raise
+        except BaseException:
+            if hasattr(self, "db"):
+                self.db.close()
+            raise
 
     def close(self) -> None:
         self.db.close()

@@ -8,8 +8,8 @@ import sqlite3
 import stat
 import sys
 import uuid
-from collections.abc import Callable
-from contextlib import ExitStack
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import cast
 
@@ -53,6 +53,7 @@ __all__ = [
     "submit_revision",
     "start_run",
     "inspect_run",
+    "exclusive_run_snapshot",
     "recover_run",
     "pause_run",
     "resume_run",
@@ -607,6 +608,51 @@ def inspect_run(
         return store.inspection(run_id)
     finally:
         store.close()
+
+
+@contextmanager
+def exclusive_run_snapshot(
+    instance_id: str,
+    run_id: str,
+    *,
+    state_home: Path,
+    expected_state_version: int,
+    adapter_resolver: AdapterResolver | None = None,
+) -> Iterator[dict[str, object]]:
+    """Hold instance controller/append exclusion around an exact read-only view.
+
+    The caller owns domain readiness, writer closure and publication validation.
+    This scope is non-reentrant: do not call Core mutators or dispatch work inside
+    it. It neither resumes work nor establishes OS/helper joins or durable holds.
+
+    Raises:
+        RouterError: Invalid/stale target or version, busy locks, queued controls,
+            another nonterminal run, or invalid captured state/dependencies.
+    """
+    check_id(run_id)
+    if type(expected_state_version) is not int or expected_state_version < 1:
+        raise RouterError("invalid_version")
+    config = load_instance(instance_id, state_home, adapter_resolver=adapter_resolver)
+    with ExitStack() as scope:
+        scope.enter_context(
+            file_lock(config.state_dir / ".commands.lock", blocking=False)
+        )
+        scope.enter_context(
+            file_lock(config.state_dir / ".controller.lock", blocking=False)
+        )
+        store = Store(config, readonly=True, adapter_resolver=adapter_resolver)
+        scope.callback(store.close)
+        snapshot = store.inspection(run_id)
+        if snapshot["state_version"] != expected_state_version:
+            raise RouterError("stale_state_version")
+        if store.db.execute(
+            "SELECT 1 FROM controls WHERE status='queued' LIMIT 1"
+        ).fetchone():
+            raise RouterError("queued_controls")
+        for row in store.db.execute("SELECT body FROM runs WHERE id<>?", (run_id,)):
+            if mapping(strict_json(str(row[0])))["status"] not in TERMINAL:
+                raise RouterError("run_nonterminal")
+        yield snapshot
 
 
 def _run_control(

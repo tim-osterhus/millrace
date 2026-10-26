@@ -165,6 +165,44 @@ return. Completed unknown/may_live external writers remain separate authoritativ
 facts and retain the project hold until supported reconciliation. A transport or
 client response alone cannot prove that a writer stopped.
 
+`control.exclusive_run_snapshot(instance_id, run_id, *, state_home,
+expected_state_version, adapter_resolver=None)` is a synchronous Python context
+for caller-owned domain publication. It yields the existing `inspect_run`
+projection from a full validated read-only snapshot. The expected run version
+must be a positive integer (bool is invalid). Entry requires the exact target
+and version, no queued control anywhere in the instance and no other nonterminal
+run, including another paused/quiescent run. It refuses invalid state and missing
+captured adapter dependencies through the existing reader checks.
+
+The context takes the existing commands lock, then controller lock, both
+nonblocking. A still-closing holder can be paused/quiescent and still makes entry
+refuse `controller_busy`; partial acquisition releases immediately so its final
+drain can proceed. Stale versions refuse `stale_state_version`, queued intent
+refuses `queued_controls`, and another nonterminal run refuses `run_nonterminal`.
+Entry never constructs a controller, drains/repairs state, writes a receipt or
+reconciles a writer. The reader remains open through caller publication and
+postvalidation. Exception or BaseException closes it before releasing controller
+then commands. Exit never resumes the run.
+
+This scope is non-reentrant. Call no Core mutator, process spawn, helper/native
+call or unbounded work inside it: a mutator may block on the same commands lock.
+Read-only inspections are allowed. The caller separately checks the selected
+paused/stopped boundary, exact workflow/project/session, no in-flight invocation,
+effective stopped writers and original-run seam facts. Unknown writers remain
+unknown in the snapshot. Plus exposes the same context without a resolver
+argument and with optional `catalog_home`; it supplies its resolver and checks
+ordinary catalog/copy ownership inside the held scope.
+
+Exclusion covers supported controller work and command append for this instance
+only while held. A concurrent supported caller can wait and proceed after exit.
+It proves no OS worker/watcher or helper join, arbitrary filesystem/external
+writer closure, unrelated-instance exclusion or project/global ownership
+maintenance exclusion. The caller's commissioned procedure must establish those
+conditions separately and retain any required operator exclusion after exit.
+There is no durable maintenance latch, new lock kind, control operation, record,
+format, cross-store transaction or automatic resume. Domain publication and
+restart validation remain the caller's responsibility.
+
 A consumer's graph retry or explicit self-resume pause pins the same selected
 seam input. Goto (including goto-self), finish and other pauses acknowledge once
 when routing commits. Gates never acknowledge. Redirect while pinned refuses;

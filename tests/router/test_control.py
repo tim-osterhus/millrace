@@ -24,6 +24,441 @@ def _wait_for_cancel(poll):
     return True
 
 
+def _exclusive_snapshot_api():
+    operation = getattr(control, "exclusive_run_snapshot", None)
+    assert callable(operation), "public exclusive_run_snapshot context is required"
+    assert "exclusive_run_snapshot" in control.__all__
+    return operation
+
+
+def _snapshot_paused_instance(single_flow):
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    graph["planes"]["main"]["nodes"]["draft"]["on"]["READY"] = {
+        "pause": {"reason": "review", "resume": "draft"}
+    }
+    workflow.write_text(command_graph_json(graph))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    run = start_run(instance, state_home=home)
+    return instance, control.inspect_run(instance, str(run["id"]), state_home=home)
+
+
+def _snapshot_persisted(config):
+    import sqlite3
+
+    connection = sqlite3.connect(config.store_path)
+    try:
+        data = tuple(connection.iterdump())
+    finally:
+        connection.close()
+    queue = config.state_dir / ".queue.json"
+    return data, queue.read_bytes() if queue.exists() else None
+
+
+def test_exclusive_snapshot_readonly_lifetime_and_no_dispatch(single_flow, monkeypatch):
+    from millrace.router.controller import Controller
+
+    operation = _exclusive_snapshot_api()
+    instance, before = _snapshot_paused_instance(single_flow)
+    home = single_flow[2]
+    config = control.load_instance(instance, home)
+    persisted = _snapshot_persisted(config)
+    opened = []
+    original_store = control.Store
+
+    class ReadonlySnapshot(original_store):
+        def __init__(self, *args, **kwargs):
+            assert kwargs["readonly"] is True
+            super().__init__(*args, **kwargs)
+            assert self.db.in_transaction
+            self.was_closed = False
+            opened.append(self)
+
+        def close(self):
+            self.was_closed = True
+            super().close()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("read-only exclusion must not construct or execute a controller")
+
+    monkeypatch.setattr(control, "Store", ReadonlySnapshot)
+    monkeypatch.setattr(control, "execute", forbidden)
+    monkeypatch.setattr(Controller, "__init__", forbidden)
+    with operation(
+        instance, str(before["id"]), state_home=home,
+        expected_state_version=before["state_version"],
+    ) as snapshot:
+        assert snapshot == before
+        assert snapshot["status"] == "paused" and snapshot["quiescent"] is True
+        assert snapshot["inflight_invocations"] == []
+        assert len(opened) == 1
+        assert opened[0].db.in_transaction and not opened[0].was_closed
+        # These stand for caller publication and its postvalidation, both inside.
+        marker = single_flow[1] / "published-domain-state"
+        marker.write_text("complete")
+        assert marker.read_text() == "complete"
+        assert not opened[0].was_closed
+        assert _snapshot_persisted(config) == persisted
+    assert opened[0].was_closed
+    assert _snapshot_persisted(config) == persisted
+    assert control.inspect_run(instance, str(before["id"]), state_home=home) == before
+
+
+@pytest.mark.parametrize("lock_name", [".commands.lock", ".controller.lock"])
+def test_exclusive_snapshot_busy_releases_partial_acquisition(single_flow, lock_name):
+    from millrace.router.records import RouterError
+
+    operation = _exclusive_snapshot_api()
+    instance, before = _snapshot_paused_instance(single_flow)
+    home = single_flow[2]
+    config = control.load_instance(instance, home)
+    persisted = _snapshot_persisted(config)
+    with file_lock(config.state_dir / lock_name):
+        with pytest.raises(RouterError, match="controller_busy"):
+            with operation(
+                instance, str(before["id"]), state_home=home,
+                expected_state_version=before["state_version"],
+            ):
+                pytest.fail("busy lock must refuse before publication")
+        if lock_name == ".controller.lock":
+            with file_lock(config.state_dir / ".commands.lock"):
+                pass  # Failure on the second lock released the first immediately.
+    with operation(
+        instance, str(before["id"]), state_home=home,
+        expected_state_version=before["state_version"],
+    ) as snapshot:
+        assert snapshot == before
+    assert _snapshot_persisted(config) == persisted
+
+
+def test_exclusive_snapshot_real_paused_closing_holder_refuses(
+    single_flow, monkeypatch,
+):
+    from millrace.router.controller import Controller
+    from millrace.router.records import RouterError
+
+    operation = _exclusive_snapshot_api()
+    instance, before = _snapshot_paused_instance(single_flow)
+    home = single_flow[2]
+    config = control.load_instance(instance, home)
+    original_poll = Controller.poll
+    observed = []
+
+    def closing(owner, active):
+        queue = json.loads((config.state_dir / ".queue.json").read_text())
+        if queue["state"] == "closing" and not observed:
+            current = control.inspect_run(instance, str(before["id"]), state_home=home)
+            assert current["status"] == "paused" and current["quiescent"] is True
+            persisted = _snapshot_persisted(config)
+            with pytest.raises(RouterError, match="controller_busy"):
+                with operation(
+                    instance, str(before["id"]), state_home=home,
+                    expected_state_version=current["state_version"],
+                ):
+                    pytest.fail("paused projection is not holder return")
+            with file_lock(config.state_dir / ".commands.lock"):
+                pass  # The still-closing holder can perform its final drain.
+            assert _snapshot_persisted(config) == persisted
+            observed.append(current)
+        return original_poll(owner, active)
+
+    monkeypatch.setattr(Controller, "poll", closing)
+    receipt = control.pause_run(
+        instance, str(before["id"]), state_home=home, request_id=new_id(),
+    )
+    assert receipt["status"] == "applied" and observed
+    current = control.inspect_run(instance, str(before["id"]), state_home=home)
+    with operation(
+        instance, str(before["id"]), state_home=home,
+        expected_state_version=current["state_version"],
+    ) as snapshot:
+        assert snapshot == current
+
+
+def test_exclusive_snapshot_blocks_supported_append_through_postvalidation(
+    single_flow, monkeypatch,
+):
+    from contextlib import contextmanager
+    from threading import Event, Thread, current_thread
+
+    import millrace.router.controller as controller
+
+    operation = _exclusive_snapshot_api()
+    instance, before = _snapshot_paused_instance(single_flow)
+    home = single_flow[2]
+    config = control.load_instance(instance, home)
+    attempted, done = Event(), Event()
+    results, errors = [], []
+    actual_lock = controller.file_lock
+
+    @contextmanager
+    def observe_lock(path, **kwargs):
+        if (
+            current_thread().name == "snapshot-mutator"
+            and path.name == ".commands.lock"
+        ):
+            attempted.set()
+        with actual_lock(path, **kwargs):
+            yield
+
+    def mutate():
+        try:
+            results.append(control.cancel_run(
+                instance, str(before["id"]), state_home=home, request_id=new_id(),
+            ))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+
+    monkeypatch.setattr(controller, "file_lock", observe_lock)
+    worker = Thread(target=mutate, name="snapshot-mutator", daemon=True)
+    try:
+        with operation(
+            instance, str(before["id"]), state_home=home,
+            expected_state_version=before["state_version"],
+        ) as snapshot:
+            persisted = _snapshot_persisted(config)
+            worker.start()
+            assert attempted.wait(3), "supported mutator never reached commands lock"
+            for phase in ("publication", "postvalidation"):
+                assert not done.wait(0.05), phase
+                assert _snapshot_persisted(config) == persisted, phase
+                assert snapshot == before
+                assert control.inspect_run(
+                    instance, str(before["id"]), state_home=home,
+                ) == before
+    finally:
+        if worker.ident is not None:
+            worker.join(5)
+    assert not worker.is_alive() and done.is_set() and not errors, errors
+    assert results[0]["status"] == "applied"
+    assert control.inspect_run(
+        instance, str(before["id"]), state_home=home,
+    )["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("case", [
+    "stale", "unknown_run", "queued_run", "queued_instance", "corrupt",
+    "other_paused_run",
+])
+def test_exclusive_snapshot_refuses_unfit_snapshot_without_writes(single_flow, case):
+    import sqlite3
+
+    from millrace.router.control_requests import append, envelope
+    from millrace.router.records import RouterError
+
+    operation = _exclusive_snapshot_api()
+    instance, before = _snapshot_paused_instance(single_flow)
+    home = single_flow[2]
+    config = control.load_instance(instance, home)
+    run_id, version = str(before["id"]), before["state_version"]
+    if case == "stale":
+        version += 1
+    elif case == "unknown_run":
+        run_id = "f" * 32
+    elif case.startswith("queued_"):
+        request = envelope(
+            "pause_run" if case == "queued_run" else "update_instance_config",
+            instance, run_id if case == "queued_run" else None, new_id(),
+            None if case == "queued_run" else control.inspect_instance(
+                instance, state_home=home,
+            )["state_version"],
+            {} if case == "queued_run" else {"settings": {"env_allowlist": []}},
+            plane_id=None,
+        )
+        store = Store(config)
+        try:
+            assert append(store, request)["status"] == "queued"
+        finally:
+            store.close()
+    elif case == "corrupt":
+        connection = sqlite3.connect(config.store_path)
+        connection.execute("DELETE FROM run_versions WHERE run_id=?", (run_id,))
+        connection.commit()
+        connection.close()
+    elif case == "other_paused_run":
+        assert control.cancel_run(
+            instance, run_id, state_home=home, request_id=new_id(),
+        )["status"] == "applied"
+        before = control.inspect_run(instance, run_id, state_home=home)
+        version = before["state_version"]
+        newer = start_run(instance, state_home=home)
+        assert newer["id"] != run_id and newer["status"] == "paused"
+        assert newer["quiescent"] is True
+    persisted = _snapshot_persisted(config)
+    marker = single_flow[1] / "domain-archive"
+    with pytest.raises(RouterError):
+        with operation(
+            instance, run_id, state_home=home, expected_state_version=version,
+        ):
+            marker.write_text("must never publish")
+    assert not marker.exists()
+    assert _snapshot_persisted(config) == persisted
+    with file_lock(config.state_dir / ".commands.lock"):
+        with file_lock(config.state_dir / ".controller.lock"):
+            pass
+
+
+@pytest.mark.parametrize("version", [None, True, False, 0, -1, 1.0, "1"])
+def test_exclusive_snapshot_requires_strict_positive_version(single_flow, version):
+    from millrace.router.records import RouterError
+
+    operation = _exclusive_snapshot_api()
+    instance, before = _snapshot_paused_instance(single_flow)
+    config = control.load_instance(instance, single_flow[2])
+    persisted = _snapshot_persisted(config)
+    with pytest.raises(RouterError, match="invalid_version"):
+        with operation(
+            instance, str(before["id"]), state_home=single_flow[2],
+            expected_state_version=version,
+        ):
+            pytest.fail("invalid expected version must never yield")
+    assert _snapshot_persisted(config) == persisted
+
+
+@pytest.mark.parametrize("phase", ["inspection", "publication", "postvalidation"])
+def test_exclusive_snapshot_releases_on_baseexception(single_flow, monkeypatch, phase):
+    operation = _exclusive_snapshot_api()
+    instance, before = _snapshot_paused_instance(single_flow)
+    home = single_flow[2]
+    config = control.load_instance(instance, home)
+    persisted = _snapshot_persisted(config)
+    original_store = control.Store
+    opened = []
+
+    class Interrupted(BaseException):
+        pass
+
+    class ReadonlySnapshot(original_store):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.was_closed = False
+            opened.append(self)
+
+        def inspection(self, run_id):
+            if phase == "inspection":
+                raise Interrupted()
+            return super().inspection(run_id)
+
+        def close(self):
+            # Cleanup order retains both locks until the reader has closed.
+            from millrace.router.records import RouterError
+            for name in (".commands.lock", ".controller.lock"):
+                with pytest.raises(RouterError, match="controller_busy"):
+                    with file_lock(config.state_dir / name):
+                        pytest.fail("lock released before readonly snapshot")
+            self.was_closed = True
+            super().close()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(control, "Store", ReadonlySnapshot)
+        with pytest.raises(Interrupted):
+            with operation(
+                instance, str(before["id"]), state_home=home,
+                expected_state_version=before["state_version"],
+            ):
+                if phase == "postvalidation":
+                    marker = single_flow[1] / "complete-domain-state"
+                    marker.write_text("complete")
+                    assert marker.read_text() == "complete"
+                raise Interrupted()
+    assert len(opened) == 1 and opened[0].was_closed
+    with operation(
+        instance, str(before["id"]), state_home=home,
+        expected_state_version=before["state_version"],
+    ) as snapshot:
+        assert snapshot == before
+    assert _snapshot_persisted(config) == persisted
+
+
+@pytest.mark.parametrize("kind", ["keyboard_interrupt", "custom_baseexception"])
+def test_exclusive_snapshot_constructor_interruption_closes_before_unlock(
+    single_flow, monkeypatch, kind,
+):
+    import sqlite3
+    from contextlib import contextmanager
+
+    operation = _exclusive_snapshot_api()
+    instance, before = _snapshot_paused_instance(single_flow)
+    home = single_flow[2]
+    config = control.load_instance(instance, home)
+    persisted = _snapshot_persisted(config)
+    real_lock = control.file_lock
+    retained_connections, release_order = [], []
+
+    class Interrupted(BaseException):
+        pass
+
+    interruption = (
+        KeyboardInterrupt("constructor validation interrupted")
+        if kind == "keyboard_interrupt"
+        else Interrupted("constructor validation interrupted")
+    )
+
+    def interrupt_validation(store):
+        assert store.db.in_transaction
+        retained_connections.append(store.db)
+        raise interruption
+
+    @contextmanager
+    def observe_release(path, **kwargs):
+        with real_lock(path, **kwargs):
+            try:
+                yield
+            finally:
+                # The failed constructor never returned a Store to the context.
+                # Its DB must already be closed before either held lock exits.
+                if retained_connections:
+                    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                        retained_connections[0].execute("SELECT 1")
+                    release_order.append(path.name)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(control.Store, "validate", interrupt_validation)
+        patch.setattr(control, "file_lock", observe_release)
+        with pytest.raises(type(interruption)) as caught:
+            with operation(
+                instance, str(before["id"]), state_home=home,
+                expected_state_version=before["state_version"],
+            ):
+                pytest.fail("interrupted constructor must never yield")
+    # Retain the exception and its constructor traceback while testing closure.
+    assert caught.value is interruption and caught.value.__traceback__ is not None
+    assert len(retained_connections) == 1
+    assert release_order == [".controller.lock", ".commands.lock"]
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        retained_connections[0].execute("SELECT 1")
+    with operation(
+        instance, str(before["id"]), state_home=home,
+        expected_state_version=before["state_version"],
+    ) as snapshot:
+        assert snapshot == before
+    assert _snapshot_persisted(config) == persisted
+
+
+def test_exclusive_snapshot_preserves_unknown_writer_facts(single_flow, monkeypatch):
+    operation = _exclusive_snapshot_api()
+    workflow, project, home = single_flow
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    monkeypatch.setattr(
+        "millrace.router.engine.invoke",
+        lambda *args: CommandResult(
+            b'{"outcome":"READY"}', b"", "completed", "may_live", exit_code=0,
+        ),
+    )
+    paused = start_run(instance, state_home=home)
+    before = control.inspect_run(instance, str(paused["id"]), state_home=home)
+    assert before["quiescent"] is False
+    assert before["invocations"][0]["writer_state"] == "may_live"
+    with operation(
+        instance, str(before["id"]), state_home=home,
+        expected_state_version=before["state_version"],
+    ) as snapshot:
+        assert snapshot == before  # Eligibility belongs to the domain caller.
+    assert control.inspect_run(instance, str(before["id"]), state_home=home) == before
+
+
 def test_control_idempotency_and_legal_aftermath(
     single_flow: tuple[Path, Path, Path],
 ) -> None:
