@@ -36,7 +36,15 @@ The `millrace==0.23.1` bundle installs Core, Plus and OS together on Python 3.12
 - `tests/router/`: command, corruption, recovery, planes, seams and installed boundary proofs.
 - `docs/maintainers/`: public control and cutover contracts.
 
-Graphs use `millrace-router/v3`; fresh stores use `millrace-router-store/v7`.
-Unsupported historical formats refuse before mutation. There is no state migration.
+Published 0.23.1 uses graph-v3/store-v7 with mandatory finite overall limits.
+
+The unpublished 0.23.2 development candidate also accepts graph-v4, where
+`limits.max_invocations` and `limits.max_elapsed_seconds` may each be omitted.
+The `limits` object is still required; explicit null or zero is invalid. New
+candidate stores use v8, including when started from a finite v3 graph. Retained
+v7 stores keep their finite v3 contract and schema without conversion. Use
+qualified matching candidate artifacts for v4; released 0.23.1 cannot read v4/v8.
+Invocation timeouts and operator controls remain effective with no overall bound.
+Unsupported versions refuse before mutation. There is no state migration.
 See [How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/how-millrace-works.md), [planes](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/router-planes.md),
 [controls](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/maintainers/router-controls.md) and [cutover](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/maintainers/router-cutover.md).

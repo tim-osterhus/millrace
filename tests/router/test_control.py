@@ -685,10 +685,17 @@ def test_foreground_recovery_and_queued_stop_requests(
             process.stderr.close()
 
 
+@pytest.mark.parametrize("optional", [False, True])
 def test_cancel_uncertainty_terminalizes_only_after_writer_confirmation(
-    single_flow: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+    single_flow: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    optional: bool,
 ) -> None:
     workflow, project, home = single_flow
+    if optional:
+        from tests.router.support import optional_graph_json
+
+        workflow.write_text(optional_graph_json(json.loads(workflow.read_text()), {}))
     instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
     monkeypatch.setattr(
         "millrace.router.engine.invoke",

@@ -594,7 +594,10 @@ def test_seam_input_public_reference_and_reserved_names(tmp_path: Path) -> None:
         )
 
 
-def test_consumer_pause_resume_self_reuses_selection_and_goto_acknowledges(single_flow):
+@pytest.mark.parametrize("optional", [False, True])
+def test_consumer_pause_resume_self_reuses_selection_and_goto_acknowledges(
+    single_flow, optional
+):
     import copy
     import json
 
@@ -633,6 +636,9 @@ def test_consumer_pause_resume_self_reuses_selection_and_goto_acknowledges(singl
         "p=Path('seen');p.open('a').write(str(item['sequence'])+'\\n')\n"
         "print(json.dumps({'outcome':'READY'}))\n"
     )
+    if optional:
+        graph["format"] = "millrace-router/v4"
+        graph["limits"] = {}
     workflow.write_text(json.dumps(graph))
     made = control.create_instance(
         workflow,
@@ -667,6 +673,16 @@ def test_consumer_pause_resume_self_reuses_selection_and_goto_acknowledges(singl
     assert len(before["seam_occurrences"]) == 2
     assert len(before["seam_selections"]) == 1 and before["seam_acknowledgements"] == []
     assert before["planes"]["consumer"]["selected"] == {"handoff": 1}
+    recovered = control.recover_run(
+        instance, run_id, state_home=home, request_id=new_id(),
+        expected_state_version=before["state_version"],
+    )
+    assert recovered["status"] == "applied"
+    reloaded = control.inspect_run(instance, run_id, state_home=home)
+    for key in ("seam_occurrences", "seam_selections", "seam_acknowledgements",
+                "invocations", "completions", "count"):
+        assert reloaded[key] == before[key]
+    before = reloaded
     consumer["on"]["READY"] = {"goto": "draft"}
     workflow.write_text(json.dumps(graph))
     resumed = control.resume_plane(

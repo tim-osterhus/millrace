@@ -621,3 +621,117 @@ def test_fifo_control_all_entrypoints_are_bounded(single_flow, monkeypatch, op):
     assert control.validate_revision(instance, state_home=home)["valid"]
     final = control.inspect_run(instance, run, state_home=home)
     assert control.inspect_run(instance, run, state_home=home) == final
+
+
+@pytest.mark.parametrize(
+    "limits,cap,elapsed",
+    [({}, None, None), ({"max_invocations": 3}, 3, None),
+     ({"max_elapsed_seconds": 20}, None, 20),
+     ({"max_invocations": 3, "max_elapsed_seconds": 20}, 3, 20)],
+)
+def test_v4_overall_limits_independently_optional(single_flow, limits, cap, elapsed):
+    from tests.router.support import optional_graph_json
+
+    workflow, project, _ = single_flow
+    workflow.write_text(optional_graph_json(json.loads(workflow.read_text()), limits))
+    revision = capture(workflow, project)
+    assert revision.graph.max_invocations == cap
+    assert revision.graph.max_elapsed == elapsed
+    assert revision.graph.max_parallel == 1
+    assert validate_workflow(workflow, project, settings_context=_EMPTY_CONTEXT)
+
+
+@pytest.mark.parametrize("field", ["max_invocations", "max_elapsed_seconds"])
+@pytest.mark.parametrize(
+    "invalid", [None, 0, -1, True, "3", float("inf"), float("nan")]
+)
+def test_explicit_optional_limit_values_stay_strict(single_flow, field, invalid):
+    from tests.router.support import optional_graph_json
+
+    workflow, project, _ = single_flow
+    data = json.loads(workflow.read_text())
+    # Establish supported positive v4 admission first: unsupported-format is not
+    # evidence that the successor actually validates explicit optional values.
+    workflow.write_text(optional_graph_json(data, {}))
+    assert capture(workflow, project).graph.max_invocations is None
+    workflow.write_text(optional_graph_json(data, {field: invalid}))
+    with pytest.raises(RouterError) as refused:
+        capture(workflow, project)
+    import math
+
+    expected = (
+        "nonfinite_json" if isinstance(invalid, float) and not math.isfinite(invalid)
+        else "invalid_number"
+    )
+    assert refused.value.code == expected
+
+
+def test_v3_still_requires_both_finite_limits(single_flow):
+    workflow, project, _ = single_flow
+    data = json.loads(workflow.read_text())
+    for field in ("max_invocations", "max_elapsed_seconds"):
+        changed = json.loads(json.dumps(data))
+        del changed["limits"][field]
+        workflow.write_text(command_graph_json(changed))
+        with pytest.raises(RouterError):
+            capture(workflow, project)
+
+
+
+@pytest.mark.parametrize(
+    "mutation,code",
+    [("fractional_count", "invalid_number"), ("huge_count", "invalid_number"),
+     ("missing_limits", "invalid_fields"), ("null_limits", "invalid_shape"),
+     ("unknown_limit", "invalid_fields"), ("zero_parallel", "invalid_number"),
+     ("extra_parallel", "invalid_parallel_limit"), ("future", "unsupported_graph")],
+)
+def test_v4_schema_boundaries_stay_explicit(single_flow, mutation, code):
+    from tests.router.support import optional_graph_json
+
+    workflow, project, _ = single_flow
+    graph = json.loads(optional_graph_json(json.loads(workflow.read_text()), {}))
+    if mutation == "fractional_count":
+        graph["limits"]["max_invocations"] = 1.5
+    elif mutation == "huge_count":
+        graph["limits"]["max_invocations"] = 10**400
+    elif mutation == "missing_limits":
+        del graph["limits"]
+    elif mutation == "null_limits":
+        graph["limits"] = None
+    elif mutation == "unknown_limit":
+        graph["limits"]["unlimited"] = True
+    elif mutation in {"zero_parallel", "extra_parallel"}:
+        graph["limits"]["max_parallel_invocations"] = (
+            0 if mutation == "zero_parallel" else 2
+        )
+    else:
+        graph["format"] = "millrace-router/v999"
+    workflow.write_text(json.dumps(graph))
+    with pytest.raises(RouterError) as refused:
+        capture(workflow, project)
+    assert refused.value.code == code
+
+
+
+@pytest.mark.parametrize("tag", [[], {}, None, 4, True])
+def test_untyped_graph_format_has_structured_refusal(single_flow, tag):
+    from millrace.router import control
+    from millrace.router.graph import parse_graph
+    from millrace.router.store import new_id
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    graph["format"] = tag
+    raw = json.dumps(graph).encode()
+    workflow.write_bytes(raw)
+    for operation in (lambda: parse_graph(raw), lambda: capture(workflow, project)):
+        with pytest.raises(RouterError) as refused:
+            operation()
+        assert refused.value.code == "unsupported_graph"
+    receipt = control.create_instance(
+        workflow, project, state_home=home, request_id=new_id(),
+        expected_state_version=0,
+    )
+    assert receipt["status"] == "refused" and receipt["code"] == "unsupported_graph"
+    assert not list(home.rglob("state.sqlite3"))
+    assert workflow.read_bytes() == raw

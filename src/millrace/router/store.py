@@ -45,14 +45,18 @@ from .records import (
     TERMINAL,
     CommandResult,
     RouterError,
+    _deadline,
+    _minimum_present,
     mapping,
+    number,
     parse_result,
     recorded_result,
     select_action,
     strict_json,
 )
 
-FORMAT = "millrace-router-store/v7"
+FORMAT = "millrace-router-store/v8"
+_STORE_FORMATS = {"millrace-router-store/v7", FORMAT}
 __all__ = [
     "Store",
     "Config",
@@ -73,7 +77,8 @@ CREATE TABLE revisions(id TEXT PRIMARY KEY,
 CREATE TABLE runs(id TEXT PRIMARY KEY,
     revision_id TEXT NOT NULL REFERENCES revisions(id),
     hold_id TEXT NOT NULL UNIQUE,
-    body TEXT NOT NULL);
+    body TEXT NOT NULL,
+    started_at REAL NOT NULL);
 CREATE TABLE invocations(id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id),
     revision_id TEXT NOT NULL REFERENCES revisions(id),
@@ -218,6 +223,11 @@ class Store:
             if readonly:
                 self.db.execute("BEGIN")
             self.validate()
+            self._format = str(
+                self.db.execute(
+                    "SELECT value FROM meta WHERE key='format'"
+                ).fetchone()[0]
+            )
         except (sqlite3.Error, ValueError) as exc:
             if hasattr(self, "db"):
                 self.db.close()
@@ -293,6 +303,10 @@ class Store:
         )
 
     def create_run(self, revision: Revision, mode: str = "locked") -> dict[str, object]:
+        if self._format == "millrace-router-store/v7" and (
+            revision.graph.format != "millrace-router/v3"
+        ):
+            raise RouterError("unsupported_graph")
         resolve_nodes(
             revision,
             settings_context=self.config.settings(),
@@ -304,7 +318,7 @@ class Store:
                 raise RouterError("run_nonterminal")
         if mode not in {"locked", "live"}:
             raise RouterError("invalid_edit_mode")
-        now = time.time()
+        now = number(time.time())
         run: dict[str, object] = {
             "id": new_id(),
             "instance_id": self.config.instance_id,
@@ -324,8 +338,8 @@ class Store:
             "startup_cap": revision.graph.max_invocations,
             "startup_elapsed": revision.graph.max_elapsed,
             "started_at": now,
-            "startup_deadline": now + revision.graph.max_elapsed,
-            "deadline": now + revision.graph.max_elapsed,
+            "startup_deadline": _deadline(now, revision.graph.max_elapsed),
+            "deadline": _deadline(now, revision.graph.max_elapsed),
             "host_settings": self.config.settings(),
             "cancel_requested": False,
         }
@@ -334,10 +348,11 @@ class Store:
                 "INSERT OR IGNORE INTO revisions VALUES(?,?)",
                 (revision.revision_id, revision.encoded()),
             )
-            self.db.execute(
-                "INSERT INTO runs VALUES(?,?,?,?)",
-                (run["id"], revision.revision_id, run["hold_id"], json.dumps(run)),
-            )
+            values = (run["id"], revision.revision_id, run["hold_id"], json.dumps(run))
+            if self._format == FORMAT:
+                self.db.execute("INSERT INTO runs VALUES(?,?,?,?,?)", (*values, now))
+            else:
+                self.db.execute("INSERT INTO runs VALUES(?,?,?,?)", values)
             self.db.execute("INSERT INTO run_versions VALUES(?,1)", (run["id"],))
             self.db.execute(
                 "INSERT INTO activations VALUES(?,?,1,NULL,NULL)",
@@ -672,6 +687,8 @@ class Store:
         self, run_id: str, revision: Revision, plane_id: str
     ) -> dict[str, object]:
         run = self.run(run_id)
+        if revision.revision_id != run["revision_id"]:
+            raise RouterError("incompatible_revision")
         plane = self.plane_states(run_id)[plane_id]
         node_id = str(plane["cursor"])
         if plane["active_invocation"] is not None or plane["status"] != "ready":
@@ -682,9 +699,9 @@ class Store:
         now = time.time()
         if run["status"] != "running":
             raise RouterError("run_not_running")
-        if cast(int, run["count"]) >= cast(int, run["cap"]) or now >= cast(
-            float, run["deadline"]
-        ):
+        if (
+            run["cap"] is not None and cast(int, run["count"]) >= cast(int, run["cap"])
+        ) or (run["deadline"] is not None and now >= cast(float, run["deadline"])):
             raise RouterError("limit_exhausted")
         invocation_id = new_id()
         launch_settings = resolve_settings(
@@ -718,9 +735,9 @@ class Store:
             "node": node_id,
             "attempt": cast(int, run["count"]) + 1,
             "created_at": now,
-            "deadline": min(
-                cast(float, run["deadline"]),
-                now + cast(float, effective["timeout_seconds"]),
+            "deadline": _minimum_present(
+                cast(float | None, run["deadline"]),
+                _deadline(now, cast(float, effective["timeout_seconds"])),
             ),
             "run_deadline": run["deadline"],
             "argv": list(plan.argv),
@@ -1069,7 +1086,11 @@ class Store:
         ).fetchone()
         count = int(counter[0]) if counter else 0
         selected, delta = select_action(nodes[node_id], classification, outcome, count)
-        if selected.kind == "retry" and time.time() >= cast(float, run["deadline"]):
+        if (
+            selected.kind == "retry"
+            and run["deadline"] is not None
+            and time.time() >= cast(float, run["deadline"])
+        ):
             self.set_gate(run_id, "limit_exhausted")
             return
         target = (
@@ -1216,6 +1237,13 @@ class Store:
             host_paths=cast(dict[str, str], host["host_paths"]),
             baseline=self.revision(cast(str, run["revision_id"])),
         )
+        if self._format == "millrace-router-store/v7":
+            try:
+                tag = mapping(strict_json(candidate.files.get("workflow.json") or b""))
+            except RouterError:
+                tag = {}
+            if tag.get("format") == "millrace-router/v4":
+                raise RouterError("unsupported_graph")
         if candidate.revision is not None:
             try:
                 resolve_nodes(
@@ -1310,13 +1338,19 @@ class Store:
             run.update(
                 revision_id=revision.revision_id,
                 pending_seq=None,
-                cap=min(cast(int, run["startup_cap"]), revision.graph.max_invocations),
-                max_elapsed=min(
-                    cast(float, run["startup_elapsed"]), revision.graph.max_elapsed
+                cap=_minimum_present(
+                    cast(int | None, run["startup_cap"]), revision.graph.max_invocations
                 ),
-                deadline=min(
-                    cast(float, run["startup_deadline"]),
-                    cast(float, run["started_at"]) + revision.graph.max_elapsed,
+                max_elapsed=_minimum_present(
+                    cast(float | None, run["startup_elapsed"]),
+                    revision.graph.max_elapsed,
+                ),
+                deadline=_deadline(
+                    cast(float, run["started_at"]),
+                    _minimum_present(
+                        cast(float | None, run["startup_elapsed"]),
+                        revision.graph.max_elapsed,
+                    ),
                 ),
             )
             self.update_run(run)

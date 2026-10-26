@@ -1513,3 +1513,273 @@ def test_owner_failure_during_started_cleanup_joins_worker_and_keeps_first_error
     assert not adapter_continued.is_set()
     assert threads and alive_on_return == [False]
     assert cleaned.is_set() and all(not thread.is_alive() for thread in threads)
+
+
+
+def test_retained_v7_original_create_request_replay_and_recovery(tmp_path):
+    import sqlite3
+
+    from tests.router.support import genuine_v7_fixture
+
+    fixture = genuine_v7_fixture(tmp_path / "retained")
+    home = fixture["state_home"]
+    instance, run = fixture["instance_id"], fixture["run_id"]
+    config = control.load_instance(instance, home)
+    with sqlite3.connect(config.store_path) as db:
+        before = list(db.iterdump())
+        assert dict(db.execute("SELECT key,value FROM meta"))["format"] == (
+            "millrace-router-store/v7"
+        )
+    receipt = control.execute_request(fixture["create_request"], state_home=home)
+    assert receipt == fixture["create_receipt"]
+    with sqlite3.connect(config.store_path) as db:
+        assert list(db.iterdump()) == before
+    view = control.inspect_run(instance, run, state_home=home)
+    assert view["status"] == "succeeded" and view["count"] == 1
+    assert all(view[k] is not None for k in (
+        "startup_cap", "startup_elapsed", "startup_deadline", "cap",
+        "max_elapsed", "deadline",
+    ))
+    recovered = control.recover_run(
+        instance, run, state_home=home, request_id=new_id(),
+        expected_state_version=view["state_version"],
+    )
+    assert recovered["status"] == "applied"
+    after = control.inspect_run(instance, run, state_home=home)
+    for key in ("invocations", "completions", "transitions", "startup_cap",
+                "startup_elapsed", "startup_deadline", "cap", "max_elapsed",
+                "deadline", "count", "state_version"):
+        assert after[key] == view[key]
+    with sqlite3.connect(config.store_path) as db:
+        assert dict(db.execute("SELECT key,value FROM meta"))["format"] == (
+            "millrace-router-store/v7"
+        )
+
+
+@pytest.mark.parametrize("corruption", ["future", "nullable"])
+def test_retained_v7_version_and_nullable_refuse_without_mutation(tmp_path, corruption):
+    import sqlite3
+
+    from tests.router.support import genuine_v7_fixture
+
+    from millrace.router.records import RouterError
+
+    fixture = genuine_v7_fixture(tmp_path / "retained")
+    instance, home = fixture["instance_id"], fixture["state_home"]
+    database = control.load_instance(instance, home).store_path
+    with sqlite3.connect(database) as db:
+        if corruption == "future":
+            db.execute(
+                "UPDATE meta SET value='millrace-router-store/v999' WHERE key='format'"
+            )
+        else:
+            body = json.loads(db.execute("SELECT body FROM runs").fetchone()[0])
+            body["startup_cap"] = None
+            db.execute("UPDATE runs SET body=?", (json.dumps(body),))
+    before = database.read_bytes()
+    with pytest.raises(RouterError):
+        control.inspect_run(instance, fixture["run_id"], state_home=home)
+    assert database.read_bytes() == before
+
+
+
+def test_v7_v4_candidate_refusal_only_records_targeted_receipt(tmp_path):
+    import sqlite3
+
+    from tests.router.support import genuine_v7_fixture
+
+    fixture = genuine_v7_fixture(tmp_path / "retained", "paused")
+    instance, run, home = (
+        fixture["instance_id"], fixture["run_id"], fixture["state_home"]
+    )
+    before = control.inspect_run(instance, run, state_home=home)
+    assert before["status"] == "paused" and before["count"] == 1
+    database = control.load_instance(instance, home).store_path
+
+    def tables():
+        with sqlite3.connect(database) as db:
+            names = [r[0] for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            )]
+            return {name: db.execute(f'SELECT * FROM "{name}"').fetchall()
+                    for name in names}
+
+    original = tables()
+    graph = json.loads(fixture["workflow"].read_text())
+    graph["format"], graph["limits"] = "millrace-router/v4", {}
+    fixture["workflow"].write_text(json.dumps(graph))
+    request_id = new_id()
+    refused = control.submit_revision(
+        instance, run, state_home=home, request_id=request_id,
+        expected_state_version=before["state_version"],
+    )
+    assert refused["status"] == "refused" and refused["code"] == "unsupported_graph"
+    after = tables()
+    assert set(after) == set(original)
+    for name in original:
+        if name not in {"controls", "final_receipts", "sqlite_sequence"}:
+            assert after[name] == original[name], name
+    assert len(after["controls"]) == len(original["controls"]) + 1
+    assert len(after["final_receipts"]) == len(original["final_receipts"]) + 1
+    assert after["controls"][:-1] == original["controls"]
+    assert after["final_receipts"][:-1] == original["final_receipts"]
+    sequences = dict(original["sqlite_sequence"])
+    sequences["controls"] += 1
+    assert dict(after["sqlite_sequence"]) == sequences
+    with sqlite3.connect(database) as db:
+        receipt = db.execute(
+            "SELECT operation,status,receipt FROM controls WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+    assert receipt[:2] == ("submit_revision", "refused")
+    assert json.loads(receipt[2]) == refused
+    assert control.submit_revision(
+        instance, run, state_home=home, request_id=request_id,
+        expected_state_version=before["state_version"],
+    ) == refused
+    assert tables() == after
+
+
+
+def test_genuine_v7_subsequent_finite_run_does_not_add_anchor(tmp_path):
+    import sqlite3
+
+    from tests.router.support import genuine_v7_fixture
+
+    fixture = genuine_v7_fixture(tmp_path / "retained")
+    instance, home = fixture["instance_id"], fixture["state_home"]
+    database = control.load_instance(instance, home).store_path
+    with sqlite3.connect(database) as db:
+        columns = list(db.execute("PRAGMA table_info(runs)"))
+    assert [row[1] for row in columns] == ["id", "revision_id", "hold_id", "body"]
+    old = control.inspect_run(instance, fixture["run_id"], state_home=home)
+    started = control.start_run(
+        instance, state_home=home, request_id=new_id(),
+        expected_state_version=control.inspect_instance(instance, state_home=home)[
+            "state_version"
+        ],
+    )
+    assert started["status"] == "applied"
+    new = control.inspect_run(instance, started["run_id"], state_home=home)
+    assert new["status"] == "succeeded" and new["count"] == 1
+    assert new["id"] != fixture["run_id"]
+    assert new["startup_cap"] == new["cap"] == 3
+    assert new["startup_elapsed"] == new["max_elapsed"] == 120
+    assert new["deadline"] == new["started_at"] + 120
+    assert control.inspect_run(instance, fixture["run_id"], state_home=home) == old
+    with sqlite3.connect(database) as db:
+        assert list(db.execute("PRAGMA table_info(runs)")) == columns
+        assert dict(db.execute("SELECT key,value FROM meta"))["format"] == (
+            "millrace-router-store/v7"
+        )
+
+
+
+def test_v7_automatic_v4_observation_preserves_result_and_safety_hold(
+    tmp_path, monkeypatch
+):
+    from tests.router.support import genuine_v7_fixture
+
+    from millrace.router.store import Store
+
+    fixture = genuine_v7_fixture(tmp_path / "retained")
+    instance, home = fixture["instance_id"], fixture["state_home"]
+    old = control.inspect_run(instance, fixture["run_id"], state_home=home)
+    workflow = fixture["workflow"]
+    original_bytes = workflow.read_bytes()
+    original = Store.complete
+
+    def edit_after_durable_result(store, *args):
+        original(store, *args)
+        graph = json.loads(original_bytes)
+        graph["format"], graph["limits"] = "millrace-router/v4", {}
+        workflow.write_text(json.dumps(graph))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "complete", edit_after_durable_result)
+        started = control.start_run(
+            instance, state_home=home, request_id=new_id(), edit_mode="live",
+            expected_state_version=control.inspect_instance(instance, state_home=home)[
+                "state_version"
+            ],
+        )
+    assert started["status"] == "applied"
+    run = str(started["run_id"])
+    view = control.inspect_run(instance, run, state_home=home)
+    assert view["pause_reason"] == "invalid_revision" and view["count"] == 1
+    assert len(view["completions"]) == 1 and view["transitions"] == []
+    assert view["completions"][0]["classification"] == "semantic"
+    assert view["completions"][0]["outcome"] == "READY"
+    assert view["completions"][0]["effective_writer"] == "stopped"
+    assert view["revision_id"] == view["startup_revision_id"]
+    assert view["invocations"][0]["revision_id"] == view["revision_id"]
+    assert view["candidates"] == [] and view["pending_revision"] is None
+    assert len(view["activations"]) == 1
+    old_reloaded = control.inspect_run(instance, fixture["run_id"], state_home=home)
+    # draft_revision reports today's incompatible authored bytes; durable history
+    # of the retained prior run must remain unchanged.
+    for key in old:
+        if key != "draft_revision":
+            assert old_reloaded[key] == old[key], key
+    # Restoring valid bytes and explicitly resuming routes the retained result;
+    # it cannot replace the saved completion or silently launch another child.
+    workflow.write_bytes(original_bytes)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("held result was discarded and redispatched")
+
+    monkeypatch.setattr("millrace.router.engine.invoke", forbidden)
+    resumed = control.resume_run(
+        instance, run, state_home=home, request_id=new_id(),
+        expected_state_version=view["state_version"],
+    )
+    assert resumed["status"] == "applied"
+    after = control.inspect_run(instance, run, state_home=home)
+    assert after["status"] == "succeeded" and after["count"] == 1
+    assert len(after["transitions"]) == 1
+    assert after["completions"] == view["completions"]
+    assert after["invocations"] == view["invocations"]
+
+
+
+def test_coherent_old_reader_stale_producer_history_refuses_without_mutation(tmp_path):
+    import sqlite3
+
+    from tests.router.support import genuine_v7_fixture
+
+    from millrace.router.records import RouterError
+
+    root = tmp_path / "stale"
+    fixture = genuine_v7_fixture(root, "stale_producer")
+    assert fixture["old_full_validation"] == "PASS"
+    assert fixture["peer_execution"].startswith("NONE ")
+    old = json.loads((root / "run.json").read_text())
+    invocation = old["invocations"][0]
+    r0, r1 = fixture["producer_revision_id"], fixture["active_revision_id"]
+    assert r0 != r1
+    assert old["revision_id"] == r1 and old["startup_revision_id"] == r0
+    assert invocation["revision_id"] == r0
+    assert invocation["launch_settings"]["common"]["producing_revision"] == r0
+    assert invocation["launch"]["producing_revision"] == r0
+    assert invocation["pid"] is None and invocation["writer_state"] == "stopped"
+    assert old["count"] == 1 and old["transitions"] == []
+    assert old["cap"] == old["startup_cap"] == 3
+    assert old["max_elapsed"] == old["startup_elapsed"] == 120
+    instance, home, run = (
+        fixture["instance_id"], fixture["state_home"], fixture["run_id"]
+    )
+    database = home / "instances" / instance / "state.sqlite3"
+    with sqlite3.connect(database) as db:
+        assert db.execute("SELECT revision_id FROM invocations").fetchone()[0] == r0
+    before = database.read_bytes()
+    for operation in (
+        lambda: control.inspect_run(instance, run, state_home=home),
+        lambda: control.recover_run(
+            instance, run, state_home=home, request_id=new_id(),
+            expected_state_version=old["state_version"],
+        ),
+    ):
+        with pytest.raises(RouterError) as refused:
+            operation()
+        assert refused.value.code == "invocation_integrity"
+        assert database.read_bytes() == before

@@ -247,6 +247,7 @@ def run_engine(
                             )
                             if (
                                 cast(CommandResult, value).classification == "timeout"
+                                and invocation["run_deadline"] is not None
                                 and invocation["deadline"] == invocation["run_deadline"]
                             ):
                                 store.set_gate(run_id, "limit_exhausted")

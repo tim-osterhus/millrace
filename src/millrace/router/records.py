@@ -7,7 +7,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import TypeVar, cast
 
 IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
 TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
@@ -61,6 +61,19 @@ def number(value: object, *, integer: bool = False, zero: bool = False) -> float
     if integer and not isinstance(value, int):
         raise RouterError("invalid_number")
     return value
+
+
+_Bound = TypeVar("_Bound", int, float)
+
+
+def _minimum_present(left: _Bound | None, right: _Bound | None) -> _Bound | None:
+    if left is None:
+        return right
+    return left if right is None else min(left, right)
+
+
+def _deadline(started: float, elapsed: float | None) -> float | None:
+    return None if elapsed is None else number(started + elapsed)
 
 
 def common_settings(
@@ -267,8 +280,9 @@ class Node:
 
 @dataclass(frozen=True)
 class Graph:
-    max_invocations: int
-    max_elapsed: float
+    format: str
+    max_invocations: int | None
+    max_elapsed: float | None
     bindings: dict[str, str]
     planes: dict[str, Plane]
     controls: tuple[str, ...]

@@ -97,53 +97,121 @@ def test_core_wheel_and_sdist_are_generic(tmp_path):
         # Author the fixture in the test host, then execute only the installed wheel.
         from tests.router.test_execution_boundary import generic_flow
 
-        host = tmp_path / f"host-{index}"
-        host.mkdir()
-        file, project, home = generic_flow(host)
-        graph = json.loads(file.read_text())
-        graph["bindings"]["python"]["executable"] = "runtime"
-        file.write_text(json.dumps(graph))
+        for version in ("v3", "v4"):
+            host = tmp_path / f"host-{index}-{version}"
+            host.mkdir()
+            file, project, home = generic_flow(host)
+            graph = json.loads(file.read_text())
+            graph["bindings"]["python"]["executable"] = "runtime"
+            if version == "v4":
+                graph["format"], graph["limits"] = "millrace-router/v4", {}
+            file.write_text(json.dumps(graph))
 
-        def call(*args):
-            raw = run(
-                [str(venv / "bin/millrace"), "router", "--state-home", str(home), *args]
+            def call(*args):
+                raw = run(
+                    [str(venv / "bin/millrace"), "router", "--state-home",
+                     str(home), *args]
+                )
+                return [json.loads(line) for line in raw.splitlines()]
+
+            created = call(
+                "instance",
+                "create",
+                "--workflow",
+                str(file),
+                "--project",
+                str(project),
+                "--host-paths",
+                json.dumps({"runtime": str(python)}),
+            )[-1]
+            instance = created["instance_id"]
+            validation = call("validate", "--instance", instance)[-1]
+            started = call("start", "--instance", instance)
+            final = call(
+                "status", "--instance", instance, "--run", started[-1]["run_id"]
+            )[-1]
+            assert final["status"] == "succeeded" and final["count"] == 1
+            launched = final["invocations"][0]["launch_settings"]
+            advisory = validation["resolved_nodes"]["main"]["step"]
+            assert (
+                launched["common"]["producing_revision"]
+                == final["invocations"][0]["revision_id"]
+                == final["startup_revision_id"]
+                == final["revision_id"]
             )
-            return [json.loads(line) for line in raw.splitlines()]
+            assert advisory["common"]["producing_revision"] == validation["revision_id"]
+            assert launched == {
+                **advisory,
+                "common": {
+                    **advisory["common"],
+                    "producing_revision": launched["common"]["producing_revision"],
+                },
+            }
+            assert (
+                call("replay", "--envelope",
+                     json.dumps(started[0]["request_envelope"]))[-1]
+                == started[-1]
+            )
+            database = home / "instances" / instance / "state.sqlite3"
+            import sqlite3
 
-        created = call(
-            "instance",
-            "create",
-            "--workflow",
-            str(file),
-            "--project",
-            str(project),
-            "--host-paths",
-            json.dumps({"runtime": str(python)}),
-        )[-1]
-        instance = created["instance_id"]
-        validation = call("validate", "--instance", instance)[-1]
-        started = call("start", "--instance", instance)
-        final = call("status", "--instance", instance, "--run", started[-1]["run_id"])[
-            -1
-        ]
-        assert final["status"] == "succeeded" and final["count"] == 1
-        launched = final["invocations"][0]["launch_settings"]
-        advisory = validation["resolved_nodes"]["main"]["step"]
-        assert (
-            launched["common"]["producing_revision"]
-            == final["invocations"][0]["revision_id"]
-            == final["startup_revision_id"]
-            == final["revision_id"]
-        )
-        assert advisory["common"]["producing_revision"] == validation["revision_id"]
-        assert launched == {
-            **advisory,
-            "common": {
-                **advisory["common"],
-                "producing_revision": launched["common"]["producing_revision"],
-            },
-        }
-        assert (
-            call("replay", "--envelope", json.dumps(started[0]["request_envelope"]))[-1]
-            == started[-1]
-        )
+            with sqlite3.connect(database) as db:
+                assert dict(db.execute("SELECT key,value FROM meta"))["format"] == (
+                    "millrace-router-store/v8"
+                )
+                assert db.execute("SELECT started_at FROM runs").fetchone()[0] == (
+                    final["started_at"]
+                )
+            if version == "v4":
+                for key in ("startup_cap", "startup_elapsed", "startup_deadline", "cap",
+                            "max_elapsed", "deadline"):
+                    assert key in final and final[key] is None
+                invocation = final["invocations"][0]
+                assert invocation["run_deadline"] is None
+                assert invocation["deadline"] > invocation["created_at"]
+
+
+
+def test_retained_reader_refuses_v4_v8_without_state_mutation(single_flow, tmp_path):
+    import pytest
+    from tests.router.support import create_instance, optional_graph_json, start_run
+
+    workflow, project, home = single_flow
+    old_python = os.environ.get("MILLRACE_OL_OLD_READER_PYTHON")
+    if not old_python:
+        pytest.skip("requires exact retained installed finite reader")
+    workflow.write_text(optional_graph_json(json.loads(workflow.read_text()), {}))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    view = start_run(instance, state_home=home)
+    before = {p.relative_to(home).as_posix(): p.read_bytes()
+              for p in home.rglob("*") if p.is_file()}
+    program = """
+import json,sys
+from pathlib import Path
+from millrace.router import control
+from millrace.router.graph import capture
+from millrace.router.records import RouterError
+assert Path(control.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+for expected, call in [
+    ('unsupported_graph', lambda: capture(Path(sys.argv[1]), Path(sys.argv[2]))),
+    ('unsupported_store_version', lambda: control.inspect_run(
+        sys.argv[3],sys.argv[4],state_home=Path(sys.argv[5]))),
+]:
+    try:
+        call()
+    except RouterError as exc:
+        assert exc.code == expected, exc.code
+    else:
+        raise AssertionError(expected)
+print(json.dumps({'module':control.__file__,'guards':'v4/v8'}))
+"""
+    child = subprocess.run(
+        [old_python, "-I", "-c", program, str(workflow), str(project),
+         instance, str(view["id"]), str(home)],
+        cwd=tmp_path, capture_output=True, text=True, timeout=15,
+        env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    assert child.returncode == 0, child.stdout + child.stderr
+    assert json.loads(child.stdout)["guards"] == "v4/v8"
+    assert {p.relative_to(home).as_posix(): p.read_bytes()
+            for p in home.rglob("*") if p.is_file()} == before

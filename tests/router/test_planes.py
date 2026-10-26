@@ -228,12 +228,12 @@ def initial_run(flow: tuple[Path, Path, Path]):
     return store, result["run_id"]
 
 
-def test_v7_initial_plane_projection_replay_and_corruption(
+def test_v8_initial_plane_projection_replay_and_corruption(
     flow: tuple[Path, Path, Path],
 ) -> None:
     from millrace.router.store import FORMAT, Store
 
-    assert FORMAT == "millrace-router-store/v7"
+    assert FORMAT == "millrace-router-store/v8"
     store, run_id = initial_run(flow)
     assert set(store.plane_states(run_id)) == {"main"}
     assert store.plane_states(run_id)["main"]["cursor"] == "draft"
@@ -368,12 +368,16 @@ def test_scoped_controls_global_gates_and_replay(flow):
     assert control.execute_request(request, state_home=flow[2]) == receipt
 
 
-def test_final_allowed_invocation_finishes_without_limit_pause(single_flow):
+@pytest.mark.parametrize("optional", [False, True])
+def test_final_allowed_invocation_finishes_without_limit_pause(single_flow, optional):
     from millrace.router import control
 
     workflow, project, home = single_flow
     data = json.loads(workflow.read_text())
     data["limits"]["max_invocations"] = 1
+    if optional:
+        data["format"] = "millrace-router/v4"
+        del data["limits"]["max_elapsed_seconds"]
     workflow.write_text(json.dumps(data))
     made = control.create_instance(
         workflow,
@@ -874,8 +878,9 @@ def test_aggregate_terminal_state_replays_from_plane_facts(single_flow, forged_s
         assert list(db.iterdump()) == before
 
 
+@pytest.mark.parametrize("optional", [False, True])
 def test_global_cap_routes_all_saved_plane_results_before_refusing_dispatch(
-    single_flow, monkeypatch
+    single_flow, monkeypatch, optional
 ):
     import copy
     import threading
@@ -897,6 +902,9 @@ def test_global_cap_routes_all_saved_plane_results_before_refusing_dispatch(
     alpha["after"] = copy.deepcopy(alpha["draft"])
     alpha["draft"]["on"]["READY"] = {"goto": "after"}
     graph["limits"].update(max_invocations=2, max_parallel_invocations=2)
+    if optional:
+        graph["format"] = "millrace-router/v4"
+        del graph["limits"]["max_elapsed_seconds"]
     workflow.write_text(json.dumps(graph))
     barrier = threading.Barrier(2)
 

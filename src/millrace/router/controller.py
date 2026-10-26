@@ -506,8 +506,10 @@ class Controller:
 
     @staticmethod
     def check_bounds(run: dict[str, object]) -> None:
-        if cast(int, run["count"]) >= cast(int, run["cap"]) or time.time() >= cast(
-            float, run["deadline"]
+        if (
+            run["cap"] is not None and cast(int, run["count"]) >= cast(int, run["cap"])
+        ) or (
+            run["deadline"] is not None and time.time() >= cast(float, run["deadline"])
         ):
             raise RouterError("limit_exhausted")
 

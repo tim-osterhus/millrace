@@ -144,17 +144,19 @@ def _nodes(
 
 def parse_graph(raw: bytes) -> Graph:
     decoded = mapping(strict_json(raw))
-    if decoded.get("format") != "millrace-router/v3":
+    if decoded.get("format") not in ("millrace-router/v3", "millrace-router/v4"):
         raise RouterError("unsupported_graph")
     obj = fields(
         decoded,
         {"format", "limits", "bindings", "planes"},
         {"defaults", "control_files", "seams"},
     )
+    overall = {"max_invocations", "max_elapsed_seconds"}
+    finite = decoded["format"] == "millrace-router/v3"
     limits = fields(
         obj["limits"],
-        {"max_invocations", "max_elapsed_seconds"},
-        {"max_parallel_invocations"},
+        overall if finite else set(),
+        {"max_parallel_invocations"} | (set() if finite else overall),
     )
     bindings: dict[str, str] = {}
     configs: dict[str, dict[str, object]] = {}
@@ -234,8 +236,15 @@ def parse_graph(raw: bytes) -> Graph:
     if len(set(controls)) != len(controls):
         raise RouterError("duplicate_control")
     return Graph(
-        max_invocations=int(number(limits["max_invocations"], integer=True)),
-        max_elapsed=number(limits["max_elapsed_seconds"]),
+        format=str(decoded["format"]),
+        max_invocations=(
+            int(number(limits["max_invocations"], integer=True))
+            if "max_invocations" in limits else None
+        ),
+        max_elapsed=(
+            number(limits["max_elapsed_seconds"])
+            if "max_elapsed_seconds" in limits else None
+        ),
         bindings=bindings,
         planes=planes,
         controls=controls,

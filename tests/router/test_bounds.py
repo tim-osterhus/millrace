@@ -380,7 +380,10 @@ def test_backward_clock_history_remains_loadable(single_flow, monkeypatch):
     )
 
 
-def test_expired_reconciled_failure_preserves_retry_budget(single_flow, monkeypatch):
+@pytest.mark.parametrize("optional", [False, True])
+def test_expired_reconciled_failure_preserves_retry_budget(
+    single_flow, monkeypatch, optional
+):
     from millrace.router import control
     from millrace.router.records import CommandResult
     from millrace.router.store import new_id
@@ -388,6 +391,9 @@ def test_expired_reconciled_failure_preserves_retry_budget(single_flow, monkeypa
     workflow, project, home = single_flow
     graph = json.loads(workflow.read_text())
     graph["limits"]["max_elapsed_seconds"] = 0.12
+    if optional:
+        graph["format"] = "millrace-router/v4"
+        del graph["limits"]["max_invocations"]
     graph["planes"]["main"]["nodes"]["draft"]["invoke"]["timeout_seconds"] = 10
     graph["planes"]["main"]["nodes"]["draft"]["on_error"] = {
         "retry": {"limit": 2, "exhausted": {"finish": "failed"}}
@@ -430,3 +436,135 @@ def test_expired_reconciled_failure_preserves_retry_budget(single_flow, monkeypa
     assert after["transitions"] == [] and after["count"] == 1
     assert after["completions"] == reconciled["completions"]
     assert control.inspect_run(instance, run, state_home=home) == after
+
+
+@pytest.mark.parametrize("limits", [{}, {"max_invocations": 3}])
+def test_uncapped_elapsed_keeps_finite_invocation_timeout(single_flow, limits):
+    import math
+
+    from tests.router.support import optional_graph_json
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    node = graph["planes"]["main"]["nodes"]["draft"]
+    node["invoke"].update(args=["wait"], timeout_seconds=0.1)
+    node["on_error"] = {"retry": {"limit": 1, "exhausted": {"finish": "failed"}}}
+    workflow.write_text(optional_graph_json(graph, limits))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    result = start_run(instance, state_home=home)
+    assert result["status"] == "failed" and result["run_gate"] is None
+    assert result["count"] == 2 and result["retry_counts"]["main"] == {"draft": 1}
+    assert all(c["transport"] == "timeout" for c in result["completions"])
+    for invocation in result["invocations"]:
+        assert invocation["run_deadline"] is None
+        assert math.isfinite(invocation["deadline"])
+        assert invocation["deadline"] == invocation["created_at"] + 0.1
+    assert recover_run(instance, str(result["id"]), state_home=home) == result
+
+
+
+@pytest.mark.parametrize("failure", ["input", "spawn"])
+def test_count_only_committed_retry_intent_stops_at_cap(
+    single_flow, monkeypatch, failure
+):
+    from tests.router.support import optional_graph_json
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    node = graph["planes"]["main"]["nodes"]["draft"]
+    node["on_error"] = {"retry": {"limit": 2, "exhausted": {"finish": "failed"}}}
+    if failure == "input":
+        node["invoke"]["inputs"] = ["missing.txt"]
+    else:
+        def refused(*args, **kwargs):
+            raise OSError("owned fixture spawn refusal")
+
+        monkeypatch.setattr("millrace.router.process.subprocess.Popen", refused)
+    workflow.write_text(optional_graph_json(graph, {"max_invocations": 2}))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    before = start_run(instance, state_home=home)
+    assert before["count"] == len(before["invocations"]) == 2
+    assert before["retry_counts"]["main"] == {"draft": 2}
+    assert before["pause_reason"] == "limit_exhausted"
+    assert before["deadline"] is None
+    assert all(i["pid"] is None for i in before["invocations"])
+    for _ in range(2):
+        assert recover_run(instance, str(before["id"]), state_home=home) == before
+
+
+@pytest.mark.parametrize("dimension", ["count", "elapsed"])
+def test_optional_exact_admission_equality_spends_no_attempt(
+    single_flow, monkeypatch, dimension
+):
+    from tests.router.support import optional_graph_json
+
+    workflow, project, home = single_flow
+    workflow.write_text(optional_graph_json(
+        json.loads(workflow.read_text()),
+        {"max_invocations": 1} if dimension == "count" else {"max_elapsed_seconds": 10},
+    ))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    original = Store.reserve
+
+    def at_boundary(store, run, revision, plane):
+        current = store.run(run)
+        if dimension == "elapsed":
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    "millrace.router.store.time.time", lambda: current["deadline"]
+                )
+                return original(store, run, revision, plane)
+        return original(store, run, revision, plane)
+
+    monkeypatch.setattr(Store, "reserve", at_boundary)
+    if dimension == "count":
+        # First reservation is the final permitted one; a goto needs a second.
+        graph = json.loads(workflow.read_text())
+        graph["planes"]["main"]["nodes"]["draft"]["on"]["READY"] = {"goto": "draft"}
+        workflow.write_text(json.dumps(graph))
+    result = start_run(instance, state_home=home)
+    assert result["pause_reason"] == "limit_exhausted"
+    assert result["count"] == (1 if dimension == "count" else 0)
+    assert result["retry_counts"]["main"] == {}
+    assert recover_run(instance, str(result["id"]), state_home=home) == result
+
+
+
+@pytest.mark.parametrize("elapsed", [None, 10])
+def test_optional_elapsed_counts_offline_pause_from_original_start(
+    single_flow, monkeypatch, elapsed
+):
+    from tests.router.support import optional_graph_json
+
+    from millrace.router import control
+    from millrace.router.store import new_id
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    graph["planes"]["main"]["nodes"]["draft"]["on"]["READY"] = {
+        "pause": {"reason": "review", "resume": "draft"}
+    }
+    workflow.write_text(optional_graph_json(
+        graph, {} if elapsed is None else {"max_elapsed_seconds": elapsed}
+    ))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    first = start_run(instance, state_home=home)
+    run = str(first["id"])
+    monkeypatch.setattr(
+        "millrace.router.store.time.time", lambda: first["started_at"] + 1000
+    )
+    recovered = recover_run(instance, run, state_home=home)
+    assert recovered["started_at"] == first["started_at"]
+    assert recovered["deadline"] == first["deadline"]
+    resumed = control.resume_plane(
+        instance, run, plane_id="main", state_home=home, request_id=new_id(),
+        expected_state_version=recovered["state_version"],
+    )
+    after = control.inspect_run(instance, run, state_home=home)
+    if elapsed is None:
+        assert resumed["status"] == "applied" and after["count"] == 2
+        assert after["deadline"] is None
+    else:
+        assert resumed["status"] == "refused" and resumed["code"] == "limit_exhausted"
+        assert after["count"] == 1 and after["invocations"] == first["invocations"]
+    assert after["started_at"] == first["started_at"]

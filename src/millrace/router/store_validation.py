@@ -25,6 +25,8 @@ from .ownership import check_id
 from .records import (
     TERMINAL,
     RouterError,
+    _deadline,
+    _minimum_present,
     common_settings,
     fields,
     mapping,
@@ -206,11 +208,22 @@ def validate_store(store: Store) -> None:
 
 
 def _validate(store: Store) -> None:
-    from .store import FORMAT
+    from .store import _STORE_FORMATS, FORMAT
 
     meta = dict(store.db.execute("SELECT key,value FROM meta"))
-    if meta.get("format") != FORMAT:
+    if meta.get("format") not in _STORE_FORMATS:
         raise RouterError("unsupported_store_version")
+    anchored = meta["format"] == FORMAT
+    anchor = next(
+        (row for row in store.db.execute("PRAGMA table_info(runs)")
+         if row["name"] == "started_at"),
+        None,
+    )
+    if anchored:
+        if anchor is None or anchor["type"].upper() != "REAL" or anchor["notnull"] != 1:
+            raise RouterError("store_integrity")
+    elif anchor is not None:
+        raise RouterError("store_integrity")
     if (
         set(meta) != {"format", "identity", "settings", "creation"}
         or strict_json(meta["identity"]) != store.config.identity()
@@ -254,6 +267,10 @@ def _validate(store: Store) -> None:
         for row in store.db.execute("SELECT * FROM revisions")
     }
     for captured_revision in revisions.values():
+        if meta["format"] == "millrace-router-store/v7" and (
+            captured_revision.graph.format != "millrace-router/v3"
+        ):
+            raise RouterError("unsupported_graph")
         for binding in captured_revision.graph.binding_configs.values():
             _adapter(
                 str(binding["adapter"]),
@@ -262,13 +279,15 @@ def _validate(store: Store) -> None:
             )
     nonterminal = 0
     for row in store.db.execute("SELECT * FROM runs"):
-        _run_v7(store, row, revisions)
+        _run_v7(store, row, revisions, anchored=anchored)
         nonterminal += mapping(strict_json(str(row["body"])))["status"] not in TERMINAL
     if nonterminal > 1:
         raise RouterError("run_nonterminal")
 
 
-def _run_v7(store: Store, row: sqlite3.Row, revisions: dict[str, Revision]) -> None:
+def _run_v7(
+    store: Store, row: sqlite3.Row, revisions: dict[str, Revision], *, anchored: bool
+) -> None:
     import copy
 
     from .plane_store import initial_states
@@ -324,14 +343,22 @@ def _run_v7(store: Store, row: sqlite3.Row, revisions: dict[str, Revision]) -> N
     initial = revisions[str(run["startup_revision_id"])]
     active = initial
     started = number(run["started_at"])
+    if anchored and number(row["started_at"]) != started:
+        raise RouterError("counter_integrity")
     if (run["startup_cap"], run["startup_elapsed"], run["startup_deadline"]) != (
         initial.graph.max_invocations,
         initial.graph.max_elapsed,
-        started + initial.graph.max_elapsed,
+        _deadline(started, initial.graph.max_elapsed),
     ):
         raise RouterError("counter_integrity")
-    for key in ("state_version", "cap", "startup_cap", "count"):
+    for key in ("state_version", "count"):
         number(run[key], integer=True, zero=key == "count")
+    for key in ("cap", "startup_cap"):
+        if run[key] is not None:
+            number(run[key], integer=True)
+    for key in ("startup_elapsed", "max_elapsed", "startup_deadline", "deadline"):
+        if run[key] is not None:
+            number(run[key])
     versions = [
         r[0]
         for r in store.db.execute(
@@ -634,6 +661,7 @@ def _run_v7(store: Store, row: sqlite3.Row, revisions: dict[str, Revision]) -> N
                 body = bodies[invocation_id]
                 if (
                     body["version"] != version
+                    or body["revision_id"] != active.revision_id
                     or body["plane_id"] != plane_id
                     or body["node"] != prior["cursor"]
                     or prior["active_invocation"] is not None
@@ -667,11 +695,15 @@ def _run_v7(store: Store, row: sqlite3.Row, revisions: dict[str, Revision]) -> N
                     or len([b for b in running if b["plane_id"] == plane_id]) != 1
                 ):
                     raise RouterError("invocation_integrity")
-                if body["run_deadline"] != min(
-                    started + initial.graph.max_elapsed,
-                    started + active.graph.max_elapsed,
-                ) or cast(int, body["attempt"]) > min(
+                historical_cap = _minimum_present(
                     initial.graph.max_invocations, active.graph.max_invocations
+                )
+                historical_elapsed = _minimum_present(
+                    initial.graph.max_elapsed, active.graph.max_elapsed
+                )
+                if body["run_deadline"] != _deadline(started, historical_elapsed) or (
+                    historical_cap is not None
+                    and cast(int, body["attempt"]) > historical_cap
                 ):
                     raise RouterError("counter_integrity")
                 if invocation_id in reserved_seen:
@@ -1076,9 +1108,12 @@ def _run_v7(store: Store, row: sqlite3.Row, revisions: dict[str, Revision]) -> N
     ):
         raise RouterError("run_integrity")
     if (run["cap"], run["max_elapsed"], run["deadline"]) != (
-        min(initial.graph.max_invocations, active.graph.max_invocations),
-        min(initial.graph.max_elapsed, active.graph.max_elapsed),
-        min(started + initial.graph.max_elapsed, started + active.graph.max_elapsed),
+        _minimum_present(initial.graph.max_invocations, active.graph.max_invocations),
+        _minimum_present(initial.graph.max_elapsed, active.graph.max_elapsed),
+        _deadline(
+            started,
+            _minimum_present(initial.graph.max_elapsed, active.graph.max_elapsed),
+        ),
     ):
         raise RouterError("counter_integrity")
     for attempt, (invocation_id, item) in enumerate(invocations.items(), 1):
@@ -1157,19 +1192,16 @@ def _run_v7(store: Store, row: sqlite3.Row, revisions: dict[str, Revision]) -> N
         ):
             raise RouterError("invocation_integrity")
         created = number(body["created_at"])
-        deadline = number(body["run_deadline"])
-        if (
-            body["deadline"]
-            != min(
-                deadline,
-                created
-                + cast(
-                    float,
-                    mapping(mapping(launch["common"])["effective"])["timeout_seconds"],
-                ),
-            )
-            or not created < deadline
-        ):
+        deadline = (
+            None if body["run_deadline"] is None else number(body["run_deadline"])
+        )
+        invocation_deadline = number(body["deadline"])
+        timeout = cast(
+            float, mapping(mapping(launch["common"])["effective"])["timeout_seconds"]
+        )
+        if invocation_deadline != _minimum_present(
+            deadline, _deadline(created, timeout)
+        ) or (deadline is not None and not created < deadline):
             raise RouterError("counter_integrity")
         if item["status"] not in {"reserved", "active", "completed", "uncertain"} or (
             item["status"] == "reserved" and body["pid"] is not None

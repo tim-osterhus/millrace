@@ -1,6 +1,7 @@
 # Getting started with Millrace 0.23
 
-Install Core with Python 3.11 or newer. This example launches only a local command.
+Install released Core with Python 3.11 or newer. This finite-v3 example targets
+published 0.23.1 and launches only a local command.
 
 ```sh
 python -m pip install "millrace-ai==0.23.1"
@@ -61,3 +62,16 @@ Use [public controls](maintainers/router-controls.md) for exact request replay, 
 
 For native adapters and workflow copies, install `millrace-plus[router]==0.23.1` and use its public CLI.
 Provider execution requires its own configured runtime and credentials.
+
+
+## Unpublished 0.23.2 candidate
+
+With an actually qualified candidate Core artifact, new authoring may instead use
+`"format": "millrace-router/v4"` and `"limits": {}` in the example above. Either
+positive finite overall limit can be included independently. Keep the finite
+invocation timeout in `defaults`; omitting overall bounds does not remove it.
+Explicit null or zero is invalid, and parallel capacity still defaults to one.
+New candidate instances create store-v8. Retained finite v3/v7 instances remain
+finite and are not converted by an upgrade or edited graph. Published 0.23.1
+cannot read v4/v8. Candidate version labels alone do not establish qualification
+or change the public installation commands above.

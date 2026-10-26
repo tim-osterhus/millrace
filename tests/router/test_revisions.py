@@ -12,15 +12,22 @@ from tests.router.support import (
 from millrace.router.store import Store
 
 
+@pytest.mark.parametrize("optional", [False, True])
 @pytest.mark.parametrize("edit", ["graph", "script", "helper", "context"])
 def test_boundary_modes_and_incompatible_edits(
-    single_flow: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch, edit: str
+    single_flow: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch,
+    edit: str, optional: bool,
 ) -> None:
     workflow, project, home = single_flow
     data = json.loads(workflow.read_text())
     data["control_files"] = ["helper.txt"]
     (workflow.parent / "helper.txt").write_text("old")
-    workflow.write_text(command_graph_json(data))
+    if optional:
+        from tests.router.support import optional_graph_json
+
+        workflow.write_text(optional_graph_json(data, {}))
+    else:
+        workflow.write_text(command_graph_json(data))
     instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
     original = Store.complete
 
@@ -621,3 +628,296 @@ def test_manual_retry_launches_current_revision_contract(
     assert (
         final["invocations"][0]["revision_id"] != final["invocations"][1]["revision_id"]
     )
+
+
+
+@pytest.mark.parametrize("dimension", ["max_invocations", "max_elapsed_seconds"])
+@pytest.mark.parametrize("startup", [None, 12])
+@pytest.mark.parametrize("active", [None, 6, 24])
+def test_optional_bound_matrix_across_activation_and_reload(
+    single_flow, dimension, startup, active
+):
+    import sqlite3
+
+    from tests.router.support import optional_graph_json
+
+    from millrace.router import control
+    from millrace.router.store import new_id
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    graph["planes"]["main"]["nodes"]["draft"]["on"]["READY"] = {
+        "pause": {"reason": "review", "resume": "draft"}
+    }
+
+    def limits(value):
+        return {} if value is None else {dimension: value}
+
+    workflow.write_text(optional_graph_json(graph, limits(startup)))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    first = start_run(instance, state_home=home, edit_mode="live")
+    run = str(first["id"])
+    invocation = first["invocations"][0]
+    for selected in (active, None, 24):
+        assert control.pause_run(
+            instance, run, state_home=home, request_id=new_id(),
+        )["status"] == "applied"
+        workflow.write_text(optional_graph_json(graph, limits(selected)))
+        current = control.inspect_run(instance, run, state_home=home)
+        submitted = control.submit_revision(
+            instance, run, state_home=home, request_id=new_id(),
+            expected_state_version=current["state_version"],
+        )
+        assert submitted["status"] == "applied", submitted
+        pending = control.inspect_run(instance, run, state_home=home)
+        if pending["pending_revision"] is not None:
+            accepted = control.accept_revision(
+                instance, run, state_home=home, request_id=new_id(),
+                candidate_id=pending["pending_revision"]["candidate_id"],
+                expected_state_version=pending["state_version"],
+            )
+            assert accepted["status"] == "applied", accepted
+        view = control.inspect_run(instance, run, state_home=home)
+        values = [v for v in (startup, selected) if v is not None]
+        bound = min(values) if values else None
+        count = dimension == "max_invocations"
+        assert view["startup_cap"] == (startup if count else None)
+        assert view["startup_elapsed"] == (None if count else startup)
+        assert view["cap"] == (bound if count else None)
+        assert view["max_elapsed"] == (None if count else bound)
+        assert view["started_at"] == first["started_at"]
+        with sqlite3.connect(home / "instances" / instance / "state.sqlite3") as db:
+            assert db.execute("SELECT started_at FROM runs").fetchone()[0] == (
+                first["started_at"]
+            )
+        assert view["deadline"] == (
+            None if count or bound is None else first["started_at"] + bound
+        )
+        assert view["startup_deadline"] == (
+            None if count or startup is None else first["started_at"] + startup
+        )
+        assert view["count"] == 1 and view["invocations"] == [invocation]
+        assert view["retry_counts"] == first["retry_counts"]
+        assert control.inspect_run(instance, run, state_home=home) == view
+
+
+
+def test_v8_finite_v3_startup_still_binds_later_v4_omission(single_flow, monkeypatch):
+    import sqlite3
+
+    from tests.router.support import optional_graph_json
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    graph["planes"]["main"]["nodes"]["draft"]["on"]["READY"] = {
+        "pause": {"reason": "review", "resume": "draft"}
+    }
+    workflow.write_text(command_graph_json(graph))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    original = Store.complete
+
+    def replace_after_result(store, *args):
+        original(store, *args)
+        workflow.write_text(optional_graph_json(graph, {}))
+
+    monkeypatch.setattr(Store, "complete", replace_after_result)
+    view = start_run(instance, state_home=home, edit_mode="live")
+    assert view["status"] == "paused" and view["count"] == 1
+    assert view["revision_id"] != view["startup_revision_id"]
+    assert view["startup_cap"] == view["cap"] == 6
+    assert view["startup_elapsed"] == view["max_elapsed"] == 10
+    assert view["deadline"] == view["startup_deadline"] == view["started_at"] + 10
+    assert view["invocations"][0]["revision_id"] == view["startup_revision_id"]
+    database = home / "instances" / instance / "state.sqlite3"
+    with sqlite3.connect(database) as db:
+        assert dict(db.execute("SELECT key,value FROM meta"))["format"] == (
+            "millrace-router-store/v8"
+        )
+    assert inspect_run(instance, str(view["id"]), state_home=home) == view
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [None, "run_deadline", "deadline", "created_at", "attempt", "revision"],
+)
+def test_optional_historical_reservations_survive_later_tightening(
+    single_flow, monkeypatch, corruption
+):
+    import sqlite3
+
+    from tests.router.support import optional_graph_json, recover_run
+
+    from millrace.router.records import RouterError
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    graph["planes"]["main"]["nodes"]["draft"]["on"]["READY"] = {
+        "retry": {"limit": 1, "exhausted": {
+            "pause": {"reason": "review", "resume": "draft"}
+        }}
+    }
+    workflow.write_text(optional_graph_json(graph, {}))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    original = Store.complete
+
+    def tighten_after_second_result(store, *args):
+        original(store, *args)
+        if store.db.execute("SELECT COUNT(*) FROM invocations").fetchone()[0] == 2:
+            workflow.write_text(optional_graph_json(
+                graph, {"max_invocations": 1, "max_elapsed_seconds": 20}
+            ))
+
+    monkeypatch.setattr(Store, "complete", tighten_after_second_result)
+    view = start_run(instance, state_home=home, edit_mode="live")
+    run = str(view["id"])
+    assert view["count"] == 2 and view["cap"] == 1
+    assert view["deadline"] == view["started_at"] + 20
+    assert view["startup_cap"] is None and view["startup_deadline"] is None
+    assert all(i["run_deadline"] is None for i in view["invocations"])
+    assert all(i["deadline"] == i["created_at"] + 1 for i in view["invocations"])
+    assert inspect_run(instance, run, state_home=home) == view
+    if corruption is None:
+        assert recover_run(instance, run, state_home=home) == view
+        return
+    database = home / "instances" / instance / "state.sqlite3"
+    invocation = view["invocations"][0]
+    with sqlite3.connect(database) as db:
+        body = json.loads(db.execute(
+            "SELECT body FROM invocations WHERE id=?", (invocation["id"],)
+        ).fetchone()[0])
+        if corruption == "run_deadline":
+            body["run_deadline"] = view["deadline"]
+        elif corruption in {"deadline", "created_at"}:
+            body[corruption] += 0.25
+        elif corruption == "attempt":
+            body["attempt"] = 2
+        else:
+            body["revision_id"] = view["revision_id"]
+            db.execute("UPDATE invocations SET revision_id=? WHERE id=?",
+                       (view["revision_id"], invocation["id"]))
+        db.execute("UPDATE invocations SET body=? WHERE id=?",
+                   (json.dumps(body), invocation["id"]))
+    before = database.read_bytes()
+    for operation in (inspect_run, recover_run):
+        with pytest.raises(RouterError):
+            operation(instance, run, state_home=home)
+        assert database.read_bytes() == before
+
+
+
+def test_restored_elapsed_bound_already_past_original_start_cannot_dispatch(
+    single_flow, monkeypatch
+):
+    from tests.router.support import optional_graph_json, recover_run
+
+    from millrace.router.records import CommandResult
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    graph["planes"]["main"]["nodes"]["draft"]["on"]["READY"] = {"goto": "draft"}
+    workflow.write_text(optional_graph_json(graph, {"max_elapsed_seconds": 12}))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    original = Store.complete
+    seen = []
+
+    def completed(*args):
+        assert len(seen) < 2, "restoration granted an extra invocation"
+        seen.append(True)
+        return CommandResult(
+            b'{"outcome":"READY"}', b"", "completed", "stopped", exit_code=0
+        )
+
+    def edit_after_saved_result(store, *args):
+        original(store, *args)
+        current = store.run(store.db.execute("SELECT id FROM runs").fetchone()[0])
+        bound = 6 if current["count"] == 1 else 24
+        workflow.write_text(optional_graph_json(graph, {"max_elapsed_seconds": bound}))
+        if current["count"] == 2:
+            monkeypatch.setattr(
+                "millrace.router.store.time.time", lambda: current["started_at"] + 13
+            )
+
+    monkeypatch.setattr("millrace.router.engine.invoke", completed)
+    monkeypatch.setattr(Store, "complete", edit_after_saved_result)
+    view = start_run(instance, state_home=home, edit_mode="live")
+    assert view["pause_reason"] == "limit_exhausted" and view["count"] == 2
+    assert len(seen) == len(view["invocations"]) == len(view["transitions"]) == 2
+    assert view["startup_elapsed"] == view["max_elapsed"] == 12
+    assert view["deadline"] == view["startup_deadline"] == view["started_at"] + 12
+    assert [i["run_deadline"] for i in view["invocations"]] == [
+        view["started_at"] + 12, view["started_at"] + 6,
+    ]
+    assert view["retry_counts"]["main"] == {}
+    assert recover_run(instance, str(view["id"]), state_home=home) == view
+    assert len(seen) == 2
+
+
+
+@pytest.mark.parametrize("optional", [False, True])
+def test_stale_producer_refuses_before_reservation_and_current_producer_runs(
+    single_flow, monkeypatch, optional
+):
+    from tests.router.support import optional_graph_json
+
+    from millrace.router import control
+    from millrace.router.records import RouterError
+    from millrace.router.store import new_id
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    graph["control_files"].append("helper.txt")
+    graph["planes"]["main"]["nodes"]["draft"]["on"]["READY"] = {
+        "pause": {"reason": "review", "resume": "draft"}
+    }
+    (workflow.parent / "helper.txt").write_text("R0")
+    workflow.write_text(optional_graph_json(graph, {}) if optional
+                        else command_graph_json(graph))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    first = start_run(instance, state_home=home, edit_mode="live")
+    run = str(first["id"])
+    (workflow.parent / "helper.txt").write_text("R1")
+    assert control.pause_run(instance, run, state_home=home,
+                             request_id=new_id())["status"] == "applied"
+    current = control.inspect_run(instance, run, state_home=home)
+    submitted = control.submit_revision(
+        instance, run, state_home=home, request_id=new_id(),
+        expected_state_version=current["state_version"],
+    )
+    assert submitted["status"] == "applied"
+    pending = control.inspect_run(instance, run, state_home=home)
+    accepted = control.accept_revision(
+        instance, run, state_home=home, request_id=new_id(),
+        candidate_id=pending["pending_revision"]["candidate_id"],
+        expected_state_version=pending["state_version"],
+    )
+    assert accepted["status"] == "applied"
+    active = control.inspect_run(instance, run, state_home=home)
+    assert active["revision_id"] != first["revision_id"] and active["count"] == 1
+    original = Store.reserve
+    checked = []
+
+    def check_before_current_reservation(store, run_id, revision, plane):
+        stale = store.revision(first["revision_id"])
+        assert stale.graph.max_invocations == revision.graph.max_invocations
+        assert stale.graph.max_elapsed == revision.graph.max_elapsed
+        before = list(store.db.iterdump())
+        with pytest.raises(RouterError) as refused:
+            original(store, run_id, stale, plane)
+        assert refused.value.code == "incompatible_revision"
+        assert list(store.db.iterdump()) == before
+        checked.append(True)
+        return original(store, run_id, revision, plane)
+
+    monkeypatch.setattr(Store, "reserve", check_before_current_reservation)
+    resumed = control.resume_plane(
+        instance, run, plane_id="main", state_home=home, request_id=new_id(),
+        expected_state_version=active["state_version"],
+    )
+    assert resumed["status"] == "applied"
+    after = control.inspect_run(instance, run, state_home=home)
+    assert len(checked) == 1 and after["count"] == 2
+    assert [i["revision_id"] for i in after["invocations"]] == [
+        first["revision_id"], active["revision_id"],
+    ]
+    assert len(after["completions"]) == 2
+    assert control.inspect_run(instance, run, state_home=home) == after

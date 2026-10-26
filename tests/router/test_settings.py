@@ -699,7 +699,7 @@ def test_settings_format_boundary_and_provenance_corruption(
     with sqlite3.connect(db_path) as db:
         assert (
             db.execute("SELECT value FROM meta WHERE key='format'").fetchone()[0]
-            == "millrace-router-store/v7"
+            == "millrace-router-store/v8"
         )
         body = _object(
             json.loads(db.execute("SELECT body FROM invocations").fetchone()[0])
@@ -997,3 +997,32 @@ def test_plane_defaults_use_declared_plane_identity(tmp_path: Path) -> None:
     path.write_text(json.dumps(data))
     with pytest.raises(RouterError, match="timeout_seconds"):
         capture(path, project)
+
+
+
+@pytest.mark.parametrize("timeout,ceiling,effective,warned", [
+    (None, None, 1800, True), (1800, None, 1800, False), (600, 5, 5, False),
+])
+def test_optional_run_still_captures_finite_timeout_policy(
+    single_flow, timeout, ceiling, effective, warned
+):
+    from tests.router.support import optional_graph_json
+
+    workflow, _, home = single_flow
+    graph = _graph(workflow)
+    invoke = _invoke(graph)
+    invoke.pop("timeout_seconds", None)
+    if timeout is not None:
+        invoke["timeout_seconds"] = timeout
+    workflow.write_text(optional_graph_json(graph, {}))
+    instance = _register(single_flow, policy=(
+        {} if ceiling is None else {"timeout_ceiling_seconds": ceiling}
+    ))
+    view = _start(instance, home)
+    invocation = view["invocations"][0]
+    common = invocation["launch_settings"]["common"]
+    assert invocation["run_deadline"] is None
+    assert invocation["deadline"] == invocation["created_at"] + effective
+    assert common["effective"]["timeout_seconds"] == effective
+    assert any(w["code"] == "timeout_defaulted" for w in common["warnings"]) == warned
+    assert view["status"] == "succeeded" and view["count"] == 1

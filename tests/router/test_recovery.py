@@ -48,8 +48,11 @@ def test_launch_gap_never_blindly_replays(
     assert inspect_run(instance, str(ids["run_id"]), state_home=home) == result
 
 
+@pytest.mark.parametrize("optional", [False, True])
 def test_unconfirmed_completion_blocks_error_retry(
-    single_flow: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+    single_flow: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    optional: bool,
 ) -> None:
     import json
 
@@ -60,7 +63,12 @@ def test_unconfirmed_completion_blocks_error_retry(
     data["planes"]["main"]["nodes"]["draft"]["on_error"] = {
         "retry": {"limit": 2, "exhausted": {"finish": "failed"}}
     }
-    workflow.write_text(command_graph_json(data))
+    if optional:
+        from tests.router.support import optional_graph_json
+
+        workflow.write_text(optional_graph_json(data, {}))
+    else:
+        workflow.write_text(command_graph_json(data))
     instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
     # Adapter-fact fixture: valid-looking output cannot prove a writer stopped.
     monkeypatch.setattr(
@@ -302,3 +310,86 @@ def test_active_reconciliation_is_refused_before_interruption(
         and receipt["code"] == "invocation_not_reconcilable"
     )
     assert current["writer_facts"] == [] and current["pause_reason"] == "writer_unknown"
+
+
+
+@pytest.mark.parametrize("route", ["finish", "pause"])
+def test_optional_bounds_result_first_and_fresh_recover_no_dispatch(
+    single_flow, monkeypatch, route
+):
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from tests.router.support import optional_graph_json
+
+    from millrace.router import control
+    from millrace.router.store import new_id
+
+    workflow, project, home = single_flow
+    graph = json.loads(workflow.read_text())
+    node = graph["planes"]["main"]["nodes"]["draft"]
+    node["on"]["READY"] = (
+        {"finish": "succeeded"} if route == "finish"
+        else {"pause": {"reason": "review", "resume": "draft"}}
+    )
+    (workflow.parent / "scripts/draft.py").write_text(
+        "from pathlib import Path\np=Path('dispatch-count')\n"
+        "p.write_text(str(int(p.read_text())+1 if p.exists() else 1))\n"
+        'print(\'{"outcome":"READY"}\')\n'
+    )
+    workflow.write_text(optional_graph_json(graph, {}))
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    ids = {}
+    original = Store.complete
+
+    def after_result(store, *args):
+        original(store, *args)
+        raise Crash()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "complete", after_result)
+        with pytest.raises(Crash):
+            start_run(instance, state_home=home, on_started=ids.update)
+    run = str(ids["run_id"])
+    raw = inspect_run(instance, run, state_home=home)
+    assert raw["count"] == 1 and len(raw["completions"]) == 1
+    assert raw["transitions"] == []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("fresh recovery dispatched domain code")
+
+    monkeypatch.setattr("millrace.router.engine.invoke", forbidden)
+    recovered = recover_run(instance, run, state_home=home)
+    assert recovered["status"] == ("succeeded" if route == "finish" else "paused")
+    assert recovered["count"] == 1 and len(recovered["transitions"]) == 1
+    assert recovered["completions"][0]["stdout"] == raw["completions"][0]["stdout"]
+    # A new request, not a replayed receipt, must also avoid domain dispatch.
+    receipt = control.recover_run(
+        instance, run, state_home=home, request_id=new_id(),
+        expected_state_version=recovered["state_version"],
+    )
+    assert receipt["status"] == "applied"
+    assert inspect_run(instance, run, state_home=home) == recovered
+    # A newly imported controller process must observe terminal/quiescent state
+    # without executing the deterministic domain script again.
+    program = (
+        "import json,sys; from pathlib import Path; "
+        "from millrace.router import control; "
+        "r=control.recover_run(sys.argv[1],sys.argv[2],"
+        "state_home=Path(sys.argv[3]),request_id=sys.argv[4],"
+        "expected_state_version=int(sys.argv[5])); print(json.dumps(r))"
+    )
+    child = subprocess.run(
+        [sys.executable, "-c", program, instance, run, str(home), new_id(),
+         str(recovered["state_version"])],
+        cwd=project, capture_output=True, text=True, timeout=15,
+        env={"PATH": os.defpath,
+             "PYTHONPATH": str(Path(control.__file__).resolve().parents[2]),
+             "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    assert child.returncode == 0, child.stdout + child.stderr
+    assert json.loads(child.stdout)["status"] == "applied"
+    assert (project / "dispatch-count").read_text() == "1"
+    assert inspect_run(instance, run, state_home=home) == recovered

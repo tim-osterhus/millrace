@@ -1,9 +1,11 @@
 # Plane runtime contract (unreleased runtime)
 
-The runtime uses graph v3, store v7, execution v2 and request v2. The external
+The unpublished 0.23.2 candidate accepts graph v3/v4, creates store v8, and
+retains execution v2 and request v2. Existing finite graph-v3/store-v7 state
+continues with its unchanged schema and bounds; v7 refuses v4 revisions. The external
 task record owns source/verification/acceptance status; this guide does not grant
-release or native qualification. Older graphs/stores refuse. Retain historical
-artifacts with their matching runtimes and reauthor explicitly.
+release or native qualification. Unsupported graphs/stores refuse. Retain historical
+artifacts with their matching runtimes; no store conversion is provided.
 
 A graph declares `planes: {id: {start, workspace, defaults, nodes}}`, shared
 bindings/defaults/control files and run limits. Each plane has one local cursor;
@@ -56,3 +58,27 @@ captured paths and links without probing current workspaces or artifact bytes.
 All owned workers drain and join before holder return; unresolved external
 writers retain the aggregate hold. See the controls guide for receipts and
 explicit run/plane continuation semantics.
+
+
+## Overall limits in the candidate
+
+Graph-v4 requires a `limits` object, permitting independent omission of
+`max_invocations` and `max_elapsed_seconds`. Explicit null, zero, malformed or
+nonfinite values are invalid. `max_parallel_invocations` retains its positive
+integer validation, default1 and fixed-per-run authority. Graph-v3 still requires
+both finite overall bounds.
+
+Startup captures never change. Each activation uses the minimum of present
+startup and active bounds for each dimension, anchored to original `started_at`.
+An absent startup bound can be tightened and later removed; a finite startup
+bound cannot be removed by an active revision. Public inspection keeps six
+required capture keys and nullable invocation `run_deadline`; invocation
+`deadline` always remains finite. Null means no overall bound, never zero,
+infinity or a fabricated remaining allowance.
+
+New v8 keeps a private write-once SQL start anchor equal to public `started_at`;
+normal operations never rewrite it. Missing or inconsistent facts refuse rather
+than being repaired. This detects isolated inconsistencies, not coordinated
+arbitrary database edits. V7 receives no column, backfill or relabel. Replay uses
+each reservation's then-active revision; later tightening does not rewrite old
+invocation deadlines or invalidate reservations that were legal when committed.

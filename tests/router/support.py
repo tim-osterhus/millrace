@@ -123,3 +123,37 @@ def command_graph_json(value: Any, *args: Any, **kwargs: Any) -> str:
             ):
                 controls.append(config["script"])
     return json.dumps(data, *args, **kwargs)
+
+
+def optional_graph_json(value: Any, limits: dict[str, object]) -> str:
+    """Opt into v4 without changing the existing finite-v3 fixture authoring."""
+    import json
+
+    data = json.loads(command_graph_json(value))
+    data["format"] = "millrace-router/v4"
+    data["limits"] = limits
+    return json.dumps(data)
+
+
+def genuine_v7_fixture(root: Path, scenario: str = "terminal") -> dict[str, Any]:
+    """Generate retained state with the separately preserved installed reader."""
+    import json
+    import os
+    import subprocess
+
+    import pytest
+
+    python = os.environ.get("MILLRACE_OL_OLD_READER_PYTHON")
+    generator = os.environ.get("MILLRACE_OL_V7_GENERATOR")
+    if not python or not generator:
+        pytest.skip("requires separately preserved pre-OL reader and generator")
+    result = subprocess.run(
+        [python, "-I", generator, str(root), scenario],
+        cwd=root.parent, capture_output=True, text=True, timeout=30,
+        env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    value = json.loads((root / "manifest.json").read_text())
+    for key in ("workflow", "project", "state_home"):
+        value[key] = root / value[key]
+    return value

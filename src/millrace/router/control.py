@@ -39,7 +39,7 @@ from .ownership import (
 )
 from .planes import check_run_compatibility
 from .records import TERMINAL, RouterError, fields, mapping, strict_json, text
-from .store import FORMAT, Store
+from .store import _STORE_FORMATS, Store
 from .store_validation import _settings
 
 _UNSET = object()
@@ -132,7 +132,7 @@ def load_instance(
         )
         try:
             meta = dict(connection.execute("SELECT key,value FROM meta"))
-            if meta.get("format") != FORMAT:
+            if meta.get("format") not in _STORE_FORMATS:
                 raise RouterError("unsupported_store_version")
             if strict_json(meta["identity"]) != obj:
                 raise RouterError("instance_integrity")
@@ -229,7 +229,7 @@ def _creation(
             )
             try:
                 meta = dict(connection.execute("SELECT key,value FROM meta"))
-                if meta.get("format") != FORMAT:
+                if meta.get("format") not in _STORE_FORMATS:
                     raise RouterError("unsupported_store_version")
                 identity = fields(
                     strict_json((directory / "instance.json").read_bytes()),
