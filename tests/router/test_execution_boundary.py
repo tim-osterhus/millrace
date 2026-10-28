@@ -270,6 +270,94 @@ def test_external_non_pi_adapter_requires_no_core_edit(tmp_path):
     assert after == result
 
 
+def test_validation_admits_exact_invocation_plan_for_completion(tmp_path):
+    import copy
+
+    from millrace.router.records import RouterError
+    from millrace.router.store import Store
+
+    class RecordingCounter(CounterAdapter):
+        recording = False
+
+        def __init__(self):
+            super().__init__()
+            self.plans = {}
+            self.completed = []
+
+        def plan(self, request):
+            plan = super().plan(request)
+            if self.recording and request.invocation_id != "0" * 32:
+                assert request.invocation_id not in self.plans
+                self.plans[request.invocation_id] = plan
+            return plan
+
+        def validate_completion(self, plan, completion):
+            if self.recording:
+                assert plan is self.plans[completion.invocation_id]
+                self.completed.append(completion.invocation_id)
+            super().validate_completion(plan, completion)
+
+    adapter = RecordingCounter()
+    file, project, home, resolver = external_flow(tmp_path, adapter)
+    graph = json.loads(file.read_text())
+    nodes = graph["planes"]["main"]["nodes"]
+    nodes["next"] = copy.deepcopy(nodes["step"])
+    nodes["next"]["invoke"]["config"]["number"] = 9
+    nodes["step"]["on"]["DONE"] = {"goto": "next"}
+    file.write_text(json.dumps(graph))
+    made = control.create_instance(
+        file, project, state_home=home, request_id=new_id(),
+        expected_state_version=0, adapter_resolver=resolver,
+    )
+    instance = str(made["instance_id"])
+    started = control.start_run(
+        instance, state_home=home, request_id=new_id(),
+        expected_state_version=1, adapter_resolver=resolver,
+    )
+    view = control.inspect_run(
+        instance, str(started["run_id"]), state_home=home, adapter_resolver=resolver,
+    )
+    assert view["status"] == "succeeded" and view["count"] == 2
+    bodies = view["invocations"]
+    identifiers = [body["id"] for body in bodies]
+    config = control.load_instance(instance, home, adapter_resolver=resolver)
+    store = Store(config, adapter_resolver=resolver)
+    try:
+        durable = list(store.db.iterdump())
+        database_bytes = config.store_path.read_bytes()
+        adapter.recording = True
+        store.validate()
+        selected = dict(adapter.plans)
+        assert adapter.completed == identifiers
+        for body, number in zip(bodies, (7, 9), strict=True):
+            plan = selected[body["id"]]
+            assert plan.generated_controls == {"number.txt": str(number).encode()}
+            assert plan.settings == body["launch_settings"]["adapter"]
+            assert list(plan.argv) == body["argv"]
+        adapter.plans.clear()
+        adapter.completed.clear()
+        store.validate()
+        assert all(adapter.plans[key] is not selected[key] for key in identifiers)
+        assert adapter.completed == identifiers
+        assert list(store.db.iterdump()) == durable
+        assert config.store_path.read_bytes() == database_bytes
+
+        row = store.db.execute(
+            "SELECT id,body FROM invocations ORDER BY attempt"
+        ).fetchone()
+        raw = json.loads(row[1])
+        raw["adapter_evidence"] = {"counter": 8, "id": row[0]}
+        store.db.execute(
+            "UPDATE invocations SET body=? WHERE id=?", (json.dumps(raw), row[0])
+        )
+        adapter.plans.clear()
+        adapter.completed.clear()
+        with pytest.raises(RouterError, match="counter_evidence"):
+            store.validate()
+    finally:
+        store.close()
+
+
 def test_missing_or_wrong_contract_refuses(tmp_path):
     import pytest
 

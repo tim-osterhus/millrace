@@ -784,6 +784,17 @@ class Store:
     def launch(self, body: dict[str, object]) -> LaunchPlan:
         revision = self.revision(str(body["revision_id"]))
         host = mapping(self.run(str(body["run_id"]))["host_settings"])
+        return self._launch(body, revision, host)
+
+    def _launch(
+        self,
+        body: dict[str, object],
+        revision: Revision,
+        host: dict[str, object],
+    ) -> LaunchPlan:
+        """Admit a plan from authority already read in the caller's snapshot."""
+        if revision.revision_id != body["revision_id"]:
+            raise RouterError("invocation_integrity")
         seam = mapping(body["launch"]).get("seam_input")
         frozen_input = None
         if seam is not None:

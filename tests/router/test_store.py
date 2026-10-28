@@ -327,12 +327,85 @@ def test_live_activation_and_route_roll_back_together(
         and len(finished["transitions"]) == 1
     )
     assert finished["revision_id"] != finished["startup_revision_id"]
+    invocation = finished["invocations"][0]
+    assert invocation["revision_id"] == finished["startup_revision_id"]
+    assert (
+        invocation["launch_settings"]["common"]["producing_revision"]
+        == invocation["revision_id"]
+    )
     assert (
         finished["activations"][-1]["version"]
         == finished["transitions"][0]["version"]
         == raw["state_version"] + 1
     )
     assert recover_run(instance, str(ids["run_id"]), state_home=home) == finished
+
+    config = load_instance(instance, home)
+    with sqlite3.connect(config.store_path) as connection:
+        durable = list(connection.iterdump())
+    assert inspect_run(instance, str(ids["run_id"]), state_home=home) == finished
+    with sqlite3.connect(config.store_path) as connection:
+        assert list(connection.iterdump()) == durable
+
+
+@pytest.mark.parametrize(
+    "corruption", ["revision_bytes", "launch_projection", "launch_settings", "seam"]
+)
+def test_validation_rechecks_authority_on_same_connection(single_flow, corruption):
+    workflow, project, home = single_flow
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    final = start_run(instance, state_home=home)
+    store = Store(load_instance(instance, home))
+    try:
+        store.validate()
+        assert not store.db.in_transaction
+        with sqlite3.connect(store.config.store_path) as writer:
+            if corruption == "revision_bytes":
+                writer.execute("UPDATE revisions SET body='{}'")
+            else:
+                raw = writer.execute("SELECT body FROM invocations").fetchone()[0]
+                body = json.loads(raw)
+                if corruption == "launch_projection":
+                    body["launch"]["argv"].append("changed")
+                elif corruption == "launch_settings":
+                    body["launch_settings"]["common"]["producing_revision"] = "0" * 64
+                else:
+                    body["launch"]["seam_input"] = {
+                        "path": str(project / "unexpected-seam"),
+                        "content": "e30=", "sha256": "0" * 64, "seam_id": "unexpected",
+                        "sequence": 1, "producer_invocation_id": "0" * 32,
+                    }
+                writer.execute("UPDATE invocations SET body=?", (json.dumps(body),))
+        before = list(store.db.iterdump())
+        with pytest.raises(RouterError):
+            store.validate()
+        assert not store.db.in_transaction
+        assert list(store.db.iterdump()) == before
+        assert final["status"] == "succeeded"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("authority", ["revision", "host"])
+def test_standalone_launch_rereads_authority(single_flow, authority):
+    workflow, project, home = single_flow
+    instance = str(create_instance(workflow, project, state_home=home)["instance_id"])
+    final = start_run(instance, state_home=home)
+    store = Store(load_instance(instance, home))
+    try:
+        raw = store.db.execute("SELECT body FROM invocations").fetchone()[0]
+        body = json.loads(raw)
+        assert list(store.launch(body).argv) == body["argv"]
+        if authority == "revision":
+            store.db.execute("UPDATE revisions SET body='{}'")
+        else:
+            run = store.run(str(final["id"]))
+            run["host_settings"]["operator_policy"] = {"timeout_ceiling_seconds": 0.5}
+            store.db.execute("UPDATE runs SET body=?", (json.dumps(run),))
+        with pytest.raises(RouterError):
+            store.launch(body)
+    finally:
+        store.close()
 
 
 def test_validation_reads_one_committed_snapshot(

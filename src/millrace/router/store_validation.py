@@ -15,7 +15,7 @@ from .control_requests import (
     validate_envelope,
     validate_requests,
 )
-from .execution import CompletionFacts, _adapter, _result
+from .execution import CompletionFacts, LaunchPlan, _adapter, _result
 from .graph import (
     Revision,
     decode_revision,
@@ -1150,7 +1150,7 @@ def _run_v7(
         )
         if canonical(body["launch_settings"]) != canonical(launch):
             raise RouterError("invocation_integrity")
-        plan = store.launch(body)
+        plan = store._launch(body, producer, host)
         consumer_seams = [
             name
             for name, seam in producer.graph.seams.items()
@@ -1219,7 +1219,8 @@ def _run_v7(
                 causal_versions.add(cast(int, body[key]))
         if invocation_id in completions:
             _completion(
-                store, completions[invocation_id], body, producer, run_id, node_id
+                store, completions[invocation_id], body, producer, run_id, node_id,
+                plan=plan,
             )
     if (
         reserved_seen != set(invocations)
@@ -1371,6 +1372,8 @@ def _completion(
     producer: Revision,
     run_id: str,
     node_id: str,
+    *,
+    plan: LaunchPlan,
 ) -> None:
     if (
         (
@@ -1411,7 +1414,6 @@ def _completion(
         str(body.get("origin")),
     )
     _result(facts)
-    plan = store.launch(body)
     if facts.origin == "adapter":
         _adapter(
             plan.adapter_id, plan.adapter_contract, store.adapter_resolver
