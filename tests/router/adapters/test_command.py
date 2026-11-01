@@ -1,3 +1,4 @@
+import json
 import os
 import signal
 import subprocess
@@ -350,6 +351,47 @@ def test_postpoll_deadline_is_rechecked(tmp_path, output):
         )
         assert len(roots) == 1 and ready.exists()
         assert result.classification == "timeout" and result.writer_state == "stopped"
+    finally:
+        if roots:
+            try:
+                os.killpg(roots[0], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(roots[0], 0)
+            except ChildProcessError:
+                pass
+
+
+@pytest.mark.parametrize("failure", ["exit", "signal"])
+def test_failed_root_command_closes_child_without_losing_exit(tmp_path, failure):
+    peer = Path(__file__).parents[1] / "fixtures/owned_process_peer.py"
+    roots = []
+
+    def started(pid):
+        roots.append(pid)
+        until = time.monotonic() + 3
+        while not (tmp_path / "root-ready").exists() and time.monotonic() < until:
+            time.sleep(0.002)
+        assert (tmp_path / "root-ready").exists()
+        ready = json.loads((tmp_path / "root-ready").read_text())
+        assert ready["pid"] == ready["pgid"] == ready["child"]["pgid"] == pid
+        (tmp_path / "root-release").touch()
+
+    began = time.monotonic()
+    deadline = time.time() + 15
+    try:
+        result = invoke(
+            [sys.executable, str(peer), "failed-root", failure, "private"],
+            tmp_path, {}, deadline, lambda: False, started,
+        )
+        assert result.classification == "execution_failure"
+        assert result.exit_code == (-signal.SIGKILL if failure == "signal" else 7)
+        assert result.writer_state == "stopped" and result.diagnostic == ""
+        assert b'{"outcome":"READY"}' in result.stdout
+        assert time.monotonic() - began < 8 and time.time() < deadline
+        with pytest.raises(ProcessLookupError):
+            os.killpg(roots[0], 0)
     finally:
         if roots:
             try:

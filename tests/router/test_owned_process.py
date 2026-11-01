@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import signal
 import sys
@@ -474,3 +475,124 @@ def test_secondary_stop_observer_error_cannot_replace_original_callback(
     assert caught.value.__cause__ is original
     assert caught.value.result.stop_cause == "callback_failed"
     assert caught.value.result.cleanup_confirmed and stops == ["callback_failed"]
+
+
+@pytest.mark.parametrize("failure", ["exit", "signal"])
+@pytest.mark.parametrize("pipes", ["inherited", "private"])
+def test_failed_root_cleans_ready_owned_child(tmp_path, monkeypatch, failure, pipes):
+    roots, signals, drained, stops = [], [], [], []
+    killpg = os.killpg
+
+    def started(pid):
+        roots.append(pid)
+        until = time.monotonic() + 3
+        while not (tmp_path / "root-ready").exists() and time.monotonic() < until:
+            time.sleep(0.002)
+        assert (tmp_path / "root-ready").exists()
+        ready = json.loads((tmp_path / "root-ready").read_text())
+        assert ready["pid"] == ready["pgid"] == pid
+        assert ready["child_pid"] == ready["child"]["pid"]
+        assert ready["child"]["pgid"] == pid
+        assert (ready["failure"], ready["pipes"]) == (failure, pipes)
+        (tmp_path / "root-release").touch()
+
+    def signal_group(pgid, sig):
+        if sig:
+            signals.append((sig, time.monotonic()))
+        return killpg(pgid, sig)
+
+    deadline = time.time() + 15
+    began = time.monotonic()
+    try:
+        monkeypatch.setattr(os, "killpg", signal_group)
+        result = run(request(
+            tmp_path, argv=(sys.executable, str(PEER), "failed-root", failure, pipes),
+            deadline=deadline,
+        ), on_started=started, on_drained=drained.append, on_stop=stops.append)
+        expected = -signal.SIGKILL if failure == "signal" else 7
+        assert result.exit_code == expected and result.root_reaped
+        assert result.stop_cause is None and stops == []
+        assert result.cleanup_forced and result.cleanup_confirmed
+        assert result.group_state == "closed" and result.stdin_closed
+        assert result.stdout_eof and result.stderr_eof
+        assert b'{"outcome":"READY"}' in result.stdout
+        assert drained == ([expected] if pipes == "private" else [])
+        term = next(at for sig, at in signals if sig == signal.SIGTERM)
+        killed = next(at for sig, at in signals if sig == signal.SIGKILL)
+        assert 1.8 <= killed - term < 3
+        assert time.monotonic() - began < 8 and time.time() < deadline
+        with pytest.raises(ProcessLookupError):
+            killpg(roots[0], 0)
+        ticks = (tmp_path / "child.ticks").read_bytes()
+        assert ticks
+        time.sleep(0.1)  # Observe stopped writes after proven group closure.
+        assert (tmp_path / "child.ticks").read_bytes() == ticks
+    finally:
+        if roots:
+            try:
+                killpg(roots[0], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(roots[0], 0)
+            except ChildProcessError:
+                pass
+
+
+@pytest.mark.parametrize("late_cancel", [False, True])
+def test_failed_root_denied_cleanup_keeps_one_clock_and_unknown(
+    tmp_path, monkeypatch, late_cancel,
+):
+    roots, signals, stops = [], [], []
+    killpg = os.killpg
+
+    def started(pid):
+        roots.append(pid)
+        until = time.monotonic() + 3
+        while not (tmp_path / "root-ready").exists() and time.monotonic() < until:
+            time.sleep(0.002)
+        assert (tmp_path / "root-ready").exists()
+        ready = json.loads((tmp_path / "root-ready").read_text())
+        assert ready["pid"] == ready["pgid"] == ready["child"]["pgid"] == pid
+        (tmp_path / "root-release").touch()
+
+    def denied(pgid, sig):
+        if sig:
+            signals.append((sig, time.monotonic()))
+        raise PermissionError("test-owned unknown failed-root group")
+
+    def poll():
+        return late_cancel and bool(signals) and (
+            time.monotonic() - signals[0][1] >= 3
+        )
+
+    began = time.monotonic()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "killpg", denied)
+            result = run(request(
+                tmp_path,
+                argv=(sys.executable, str(PEER), "failed-root", "exit", "private"),
+                deadline=time.time() + 15,
+            ), on_started=started, poll=poll, on_stop=stops.append)
+        term = next(at for sig, at in signals if sig == signal.SIGTERM)
+        killed = next(at for sig, at in signals if sig == signal.SIGKILL)
+        assert term - began < 3 and 1.8 <= killed - term < 3
+        assert 4.9 <= time.monotonic() - term < 6.5
+        assert result.exit_code == 7 and result.root_reaped
+        assert result.stop_cause == ("cancelled" if late_cancel else None)
+        assert stops == (["cancelled"] if late_cancel else [])
+        assert result.group_state == "unknown" and not result.cleanup_confirmed
+        assert result.cleanup_forced and result.stdout_eof and result.stderr_eof
+        child = json.loads((tmp_path / "child-ready").read_text())["pid"]
+        os.kill(child, 0)  # Unknown must not claim this actual writer stopped.
+    finally:
+        if roots:
+            try:
+                killpg(roots[0], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(roots[0], 0)
+            except ChildProcessError:
+                pass

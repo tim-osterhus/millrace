@@ -365,7 +365,9 @@ class _Run:
         self.code = self.child.poll()
         if self.code is None:
             return
-        if self.request.cleanup_on_root_exit and self.cleanup is None:
+        if (
+            self.request.cleanup_on_root_exit or self.code != 0
+        ) and self.cleanup is None:
             self.cleanup = time.monotonic()
         # Consume queued tails fairly through EOF/EAGAIN before root-policy TERM.
         while self.ready(0):

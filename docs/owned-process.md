@@ -38,9 +38,11 @@ Once the reaped root's group is observed closed, that numeric group is never
 probed or signaled again. If pipe setup fails, EOF may remain unobserved; cleanup
 can return after the owned root and group close with confirmation still false.
 
-The optional request flag `cleanup_on_root_exit=False` is useful when a caller
-owns a foreground command whose descendants must close promptly after its root
-exits. Opting in starts the same five-second clock at first observed root exit.
+A reaped nonzero root, including a signal-negative exit, starts the same
+five-second cleanup clock. The default `cleanup_on_root_exit=False` retains
+natural child/output drain after a zero exit. Setting it `True` starts cleanup
+after every root exit, including zero. Failed-root and explicit all-root cleanup
+preserve the actual root exit code and add no stop cause by themselves.
 Queued output drains through EOF/EAGAIN in bounded fair quanta with control/time
 checks before the first root-policy signal. `on_drained(exit_code)` runs once
 after the root is reaped, stdin is closed and both output EOFs are established,
@@ -49,9 +51,10 @@ cleanup. The caller can snapshot a separate bounded result channel at that
 boundary without teaching Core its protocol.
 
 `stop_cause=None` means no causal stop was observed. It does not attest native
-success or clean writer closure: opted-in root cleanup may force closure without
-assigning a cause. At a shared checkpoint cancellation precedes newly observed
-stdout overflow, stderr overflow and deadline expiry; the first committed cause
+success or clean writer closure: failed-root or opted-in cleanup may force
+closure without assigning a cause. At a shared checkpoint cancellation precedes
+newly observed stdout overflow, stderr overflow and deadline expiry; the first
+committed cause
 remains. Callers preserve their own native failure precedence and map process
 facts into their existing writer classifications. For example, a captured
 completed native result may remain held with `may_live` until exact guarded
