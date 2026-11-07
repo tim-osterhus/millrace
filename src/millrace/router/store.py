@@ -7,7 +7,7 @@ import hashlib
 import json
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
@@ -190,6 +190,7 @@ class Store:
         readonly: bool = False,
         creation: dict[str, object] | None = None,
         adapter_resolver: AdapterResolver | None = None,
+        read_budget: Callable[[sqlite3.Connection], object] | None = None,
     ) -> None:
         self.adapter_resolver = adapter_resolver
         self.config = config
@@ -222,6 +223,9 @@ class Store:
                     )
             if readonly:
                 self.db.execute("BEGIN")
+                if read_budget is not None:
+                    # Bounded readers account the snapshot before validation decodes.
+                    read_budget(self.db)
             self.validate()
             self._format = str(
                 self.db.execute(

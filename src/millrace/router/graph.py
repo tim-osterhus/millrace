@@ -435,6 +435,10 @@ def decode_revision(encoded: str, expected_id: str) -> Revision:
         raise RouterError("revision_integrity") from exc
 
 
+class _ReadLimitExceeded(Exception):
+    """A bounded reader's input budget; never a candidate diagnostic."""
+
+
 def _control_bytes(path: Path, limit: int | None = None) -> bytes:
     """Nonblocking open plus descriptor type check prevents FIFO capture hangs."""
     try:
@@ -561,8 +565,13 @@ def capture_candidate(
     search_path: tuple[str, ...],
     host_paths: dict[str, str],
     baseline: Revision | None = None,
+    read_limit: int | None = None,
 ) -> Candidate:
-    """Capture valid controls or stable invalid bytes; diagnostics never activate."""
+    """Capture valid controls or stable invalid bytes; diagnostics never activate.
+
+    `read_limit` bounds the total control bytes of each folder read for bounded
+    inspection; exceeding it refuses `inspection_too_large` instead of a diagnostic.
+    """
     if workflow_file.name != "workflow.json":
         raise RouterError("invalid_roots")
 
@@ -570,8 +579,23 @@ def capture_candidate(
         files: dict[str, bytes | None] = {}
         executables: dict[str, str] = {}
         diagnostic: str | None = None
+        remaining = [read_limit]
+
+        def control(path: Path) -> bytes:
+            left = remaining[0]
+            if left is None:
+                return _control_bytes(path)
+            try:
+                raw = _control_bytes(path, left)
+            except RouterError as exc:
+                if exc.code == "control_too_large":
+                    raise _ReadLimitExceeded from exc
+                raise
+            remaining[0] = left - len(raw)
+            return raw
+
         try:
-            files["workflow.json"] = _control_bytes(resolved(workflow_file))
+            files["workflow.json"] = control(resolved(workflow_file))
             graph = parse_graph(files["workflow.json"] or b"")
             paths = control_paths(graph)
         except (OSError, RouterError) as exc:
@@ -579,7 +603,7 @@ def capture_candidate(
             paths = set(baseline.files) - {"workflow.json"} if baseline else set()
         for name in paths:
             try:
-                files[name] = _control_bytes(within(workflow_file.parent, name))
+                files[name] = control(within(workflow_file.parent, name))
             except (OSError, RouterError) as exc:
                 files[name] = None
                 diagnostic = diagnostic or (
@@ -602,7 +626,10 @@ def capture_candidate(
         return files, executables, diagnostic
 
     for _ in range(3):
-        first, second = read(), read()
+        try:
+            first, second = read(), read()
+        except _ReadLimitExceeded as exc:
+            raise RouterError("inspection_too_large") from exc
         if first != second:
             continue
         files, executables, diagnostic = first

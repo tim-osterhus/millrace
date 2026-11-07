@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from .control_requests import (
     canonical,
@@ -27,6 +27,14 @@ from .graph import (
     decode_revision,
     parse_graph,
     resolve_nodes,
+)
+from .inspection import (
+    INSPECTION_CONTRACT,  # noqa: F401 - public marker attribute, not an operation
+    inspect_instance_page,
+    inspect_revision_graph,
+    inspect_run_page,
+    list_instances_page,
+    validate_revision_summary,
 )
 from .ownership import (
     Config,
@@ -68,6 +76,11 @@ __all__ = [
     "release_project_hold",
     "execute_request",
     "load_instance",
+    "list_instances_page",
+    "inspect_instance_page",
+    "inspect_run_page",
+    "inspect_revision_graph",
+    "validate_revision_summary",
 ]
 
 
@@ -99,6 +112,145 @@ def load_instance(
     *,
     adapter_resolver: AdapterResolver | None = None,
 ) -> Config:
+    return _load_instance(instance_id, state_home, adapter_resolver=adapter_resolver)
+
+
+class _ReadBudget(Protocol):
+    """Bounded inspection accounting, consulted before anything is decoded."""
+
+    def file(self, size: int) -> None: ...
+
+    def __call__(self, connection: sqlite3.Connection) -> object: ...
+
+
+def _bounded_identity(path: Path, read_budget: _ReadBudget) -> bytes:
+    """Read the identity record through one regular descriptor, within budget.
+
+    A nonblocking open plus descriptor check refuses a FIFO or other nonregular
+    target without waiting. The size is charged before reading, and the read
+    stops one byte past it, so growth after sizing refuses instead of loading.
+    """
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RouterError("instance_integrity")
+        read_budget.file(info.st_size)
+        raw = bytearray()
+        while len(raw) <= info.st_size:
+            chunk = os.read(descriptor, info.st_size + 1 - len(raw))
+            if not chunk:
+                break
+            raw.extend(chunk)
+    finally:
+        os.close(descriptor)
+    if len(raw) > info.st_size:
+        raise RouterError("inspection_too_large")
+    return bytes(raw)
+
+
+def _instance_identity(
+    instance_id: str, raw: bytes
+) -> tuple[dict[str, object], Path, Path]:
+    obj = fields(
+        strict_json(raw),
+        {"format", "instance_id", "project_root", "workflow_file"},
+    )
+    project, workflow = (
+        Path(text(obj["project_root"])),
+        Path(text(obj["workflow_file"])),
+    )
+    if (
+        obj["format"] != "millrace-router-instance/v2"
+        or obj["instance_id"] != instance_id
+        or not project.is_absolute()
+        or ".." in project.parts
+        or str(project) != obj["project_root"]
+        or not workflow.is_absolute()
+        or ".." in workflow.parts
+        or str(workflow) != obj["workflow_file"]
+    ):
+        raise RouterError("instance_integrity")
+    return obj, project, workflow
+
+
+def _store_identity(
+    connection: sqlite3.Connection,
+    obj: dict[str, object],
+    instance_id: str,
+    state_home: Path,
+) -> dict[str, object]:
+    meta = dict(connection.execute("SELECT key,value FROM meta"))
+    if meta.get("format") not in _STORE_FORMATS:
+        raise RouterError("unsupported_store_version")
+    if strict_json(meta["identity"]) != obj:
+        raise RouterError("instance_integrity")
+    try:
+        settings = _settings(strict_json(meta["settings"]))
+    except RouterError as exc:
+        raise RouterError("store_integrity") from exc
+    creation = mapping(strict_json(meta["creation"]))
+    request = mapping(creation["request"])
+    check_id(cast(str, request["request_id"]))
+    expected_id = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        str(canonical_path(state_home)) + "/" + str(request["request_id"]),
+    ).hex
+    if expected_id != instance_id:
+        raise RouterError("instance_integrity")
+    return settings
+
+
+def _store_dependencies(
+    connection: sqlite3.Connection,
+    settings: dict[str, object],
+    selected: Config,
+    adapter_resolver: AdapterResolver | None,
+) -> None:
+    for row in connection.execute("SELECT id,body FROM revisions"):
+        revision = decode_revision(str(row[1]), str(row[0]))
+        for binding in revision.graph.binding_configs.values():
+            _adapter(
+                str(binding["adapter"]),
+                str(binding["contract"]),
+                adapter_resolver,
+            )
+    for name, raw in mapping(
+        mapping(settings["runtime_defaults"]).get("adapter_settings", {})
+    ).items():
+        entry = mapping(raw)
+        _adapter(
+            name, str(entry["contract"]), adapter_resolver
+        ).validate_configuration(
+            AdapterConfiguration(
+                adapter_id=name,
+                adapter_contract=str(entry["contract"]),
+                bindings={},
+                nodes={},
+                runtime=mapping(entry["config"]),
+                workflow={},
+                planes={},
+                files={},
+                host_paths=selected.host_paths,
+                environment_names=selected.env_allowlist,
+            )
+        )
+
+
+def _load_instance(
+    instance_id: str,
+    state_home: Path,
+    *,
+    adapter_resolver: AdapterResolver | None = None,
+    read_budget: _ReadBudget | None = None,
+) -> Config:
+    """Load identity and dependencies; a budget selects one accounted snapshot.
+
+    Without `read_budget` this is the unchanged public loader: two separate
+    read-only connections, no explicit transaction. With it, `instance.json` is
+    sized before it is read and one explicit read transaction is accounted before
+    the first metadata read and reused for every metadata and revision decode.
+    """
     check_id(instance_id)
     directory = canonical_path(state_home) / "instances" / instance_id
     if canonical_path(directory) != directory:
@@ -109,85 +261,38 @@ def load_instance(
     ):
         raise RouterError("unsupported_store_version")
     try:
-        obj = fields(
-            strict_json((directory / "instance.json").read_bytes()),
-            {"format", "instance_id", "project_root", "workflow_file"},
-        )
-        project, workflow = (
-            Path(text(obj["project_root"])),
-            Path(text(obj["workflow_file"])),
-        )
-        if (
-            obj["format"] != "millrace-router-instance/v2"
-            or obj["instance_id"] != instance_id
-            or not project.is_absolute()
-            or ".." in project.parts
-            or str(project) != obj["project_root"]
-            or not workflow.is_absolute()
-            or ".." in workflow.parts
-            or str(workflow) != obj["workflow_file"]
-        ):
-            raise RouterError("instance_integrity")
-        connection = sqlite3.connect(
-            (directory / "state.sqlite3").as_uri() + "?mode=ro", uri=True
-        )
-        try:
-            meta = dict(connection.execute("SELECT key,value FROM meta"))
-            if meta.get("format") not in _STORE_FORMATS:
-                raise RouterError("unsupported_store_version")
-            if strict_json(meta["identity"]) != obj:
-                raise RouterError("instance_integrity")
+        store_uri = (directory / "state.sqlite3").as_uri() + "?mode=ro"
+        if read_budget is None:
+            obj, project, workflow = _instance_identity(
+                instance_id, (directory / "instance.json").read_bytes()
+            )
+            connection = sqlite3.connect(store_uri, uri=True)
             try:
-                settings = _settings(strict_json(meta["settings"]))
-            except RouterError as exc:
-                raise RouterError("store_integrity") from exc
-            creation = mapping(strict_json(meta["creation"]))
-            request = mapping(creation["request"])
-            check_id(cast(str, request["request_id"]))
-            expected_id = uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                str(canonical_path(state_home)) + "/" + str(request["request_id"]),
-            ).hex
-            if expected_id != instance_id:
-                raise RouterError("instance_integrity")
-        finally:
-            connection.close()
-        config = Config(instance_id, project, workflow, directory, (), (), {})
-        selected = configured(config, settings)
-        # Loading identity checks declared execution dependencies, not mutable
-        # control history; execution-capable operations validate the full Store.
-        connection = sqlite3.connect(
-            (directory / "state.sqlite3").as_uri() + "?mode=ro", uri=True
+                settings = _store_identity(connection, obj, instance_id, state_home)
+            finally:
+                connection.close()
+            config = Config(instance_id, project, workflow, directory, (), (), {})
+            selected = configured(config, settings)
+            # Loading identity checks declared execution dependencies, not mutable
+            # control history; execution-capable operations validate the full Store.
+            connection = sqlite3.connect(store_uri, uri=True)
+            try:
+                _store_dependencies(connection, settings, selected, adapter_resolver)
+            finally:
+                connection.close()
+            return selected
+        obj, project, workflow = _instance_identity(
+            instance_id, _bounded_identity(directory / "instance.json", read_budget)
         )
+        connection = sqlite3.connect(store_uri, uri=True, isolation_level=None)
         try:
-            for row in connection.execute("SELECT id,body FROM revisions"):
-                revision = decode_revision(str(row[1]), str(row[0]))
-                for binding in revision.graph.binding_configs.values():
-                    _adapter(
-                        str(binding["adapter"]),
-                        str(binding["contract"]),
-                        adapter_resolver,
-                    )
-            for name, raw in mapping(
-                mapping(settings["runtime_defaults"]).get("adapter_settings", {})
-            ).items():
-                entry = mapping(raw)
-                _adapter(
-                    name, str(entry["contract"]), adapter_resolver
-                ).validate_configuration(
-                    AdapterConfiguration(
-                        adapter_id=name,
-                        adapter_contract=str(entry["contract"]),
-                        bindings={},
-                        nodes={},
-                        runtime=mapping(entry["config"]),
-                        workflow={},
-                        planes={},
-                        files={},
-                        host_paths=selected.host_paths,
-                        environment_names=selected.env_allowlist,
-                    )
-                )
+            connection.execute("BEGIN")
+            read_budget(connection)
+            settings = _store_identity(connection, obj, instance_id, state_home)
+            config = Config(instance_id, project, workflow, directory, (), (), {})
+            selected = configured(config, settings)
+            _store_dependencies(connection, settings, selected, adapter_resolver)
+            connection.execute("ROLLBACK")
         finally:
             connection.close()
         return selected
@@ -195,6 +300,7 @@ def load_instance(
         if exc.code.endswith("_integrity") or exc.code in {
             "unsupported_store_version",
             "unsupported_adapter_contract",
+            "inspection_too_large",
         }:
             raise
         raise RouterError("instance_integrity") from exc
@@ -500,8 +606,46 @@ def validate_revision(
     run_id: str | None = None,
     adapter_resolver: AdapterResolver | None = None,
 ) -> dict[str, object]:
-    config = load_instance(instance_id, state_home, adapter_resolver=adapter_resolver)
-    store = Store(config, readonly=True, adapter_resolver=adapter_resolver)
+    return _validate_revision(
+        instance_id,
+        state_home=state_home,
+        workflow_file=workflow_file,
+        run_id=run_id,
+        adapter_resolver=adapter_resolver,
+    )
+
+
+def _validate_revision(
+    instance_id: str,
+    *,
+    state_home: Path,
+    workflow_file: Path | None = None,
+    run_id: str | None = None,
+    adapter_resolver: AdapterResolver | None = None,
+    load_budget: _ReadBudget | None = None,
+    store_budget: Callable[[sqlite3.Connection], object] | None = None,
+    read_limit: int | None = None,
+    changed_paths: bool = False,
+    safe_details: bool = False,
+) -> dict[str, object]:
+    """Public validation; bounded inspection adds budgets and changed paths.
+
+    `safe_details` replaces free-text exception details, which can carry raw
+    authored values, with `{code, paths}` objects naming only the stable code and
+    missing relative control files. Public validation keeps its existing text.
+    """
+    config = _load_instance(
+        instance_id,
+        state_home,
+        adapter_resolver=adapter_resolver,
+        read_budget=load_budget,
+    )
+    store = Store(
+        config,
+        readonly=True,
+        adapter_resolver=adapter_resolver,
+        read_budget=store_budget,
+    )
     try:
         run = store.run(run_id) if run_id is not None else None
         if run_id is not None:
@@ -531,19 +675,24 @@ def validate_revision(
                 search_path=config.path,
                 host_paths=config.host_paths,
                 baseline=baseline,
+                read_limit=read_limit,
             )
-            details: list[str] = []
+            details: list[object] = []
             resolved: dict[str, dict[str, dict[str, object]]] = {}
             diagnostic = draft.diagnostic
             if diagnostic is not None:
                 try:
                     parse_graph(draft.files.get("workflow.json") or b"")
                 except RouterError as exc:
-                    details.append(str(exc))
+                    details.append(
+                        {"code": exc.code, "paths": []} if safe_details else str(exc)
+                    )
                 missing = [name for name, raw in draft.files.items() if raw is None]
                 if missing:
                     details.append(
-                        "Missing control files: " + ", ".join(sorted(missing))
+                        {"code": "missing_control", "paths": sorted(missing)}
+                        if safe_details
+                        else "Missing control files: " + ", ".join(sorted(missing))
                     )
             elif draft.revision is not None:
                 try:
@@ -560,8 +709,10 @@ def validate_revision(
                     )
                 except RouterError as exc:
                     diagnostic = exc.code
-                    details.append(str(exc))
-            return {
+                    details.append(
+                        {"code": exc.code, "paths": []} if safe_details else str(exc)
+                    )
+            result: dict[str, object] = {
                 "valid": diagnostic is None,
                 "revision_id": draft.revision.revision_id if draft.revision else None,
                 "draft_revision": draft.data(),
@@ -578,7 +729,14 @@ def validate_revision(
                     )
                 ],
             }
+            if changed_paths:
+                result["changed_paths"] = (
+                    draft.changed(baseline) if baseline is not None else None
+                )
+            return result
         except RouterError as exc:
+            if exc.code == "inspection_too_large":
+                raise  # A bounded reader limit, never a validation diagnostic.
             return {
                 "valid": False,
                 "revision_id": None,
