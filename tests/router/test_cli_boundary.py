@@ -592,3 +592,55 @@ def test_cli_core_errors_keep_exit_code(tmp_path, monkeypatch, capsys, code):
     output = capsys.readouterr()
     assert json.loads(output.out)["request_envelope"]["plane_id"] == "worker"
     assert json.loads(output.err) == {"code": code, "message": code}
+
+
+def test_console_demo_dispatch_is_explicit_and_lazy(monkeypatch):
+    from types import ModuleType
+
+    from millrace.router import cli
+
+    demo = ModuleType("millrace_plus.demo.cli")
+    seen = []
+    demo.main = lambda args: seen.append(args) or 130
+    monkeypatch.setitem(sys.modules, "millrace_plus.demo.cli", demo)
+    monkeypatch.setattr(sys, "argv", ["millrace", "demo", "--no-open"])
+    with pytest.raises(SystemExit) as stopped:
+        cli.cli()
+    assert stopped.value.code == 130 and seen == [["--no-open"]]
+
+
+def test_console_router_does_not_import_optional_demo(monkeypatch):
+    import builtins
+
+    from millrace.router import cli
+
+    original = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        assert not name.startswith(("millrace_plus", "millrace_os"))
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    monkeypatch.setattr(sys, "argv", ["millrace", "router", "status"])
+    monkeypatch.setattr(cli, "main", lambda args: 0)
+    with pytest.raises(SystemExit) as stopped:
+        cli.cli()
+    assert stopped.value.code == 0
+
+
+def test_console_missing_demo_is_actionable(monkeypatch, capsys):
+    from millrace.router import cli
+
+    original = cli.importlib.import_module
+
+    def absent(name, *args, **kwargs):
+        if name == "millrace_plus.demo.cli":
+            raise ImportError("missing")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(cli.importlib, "import_module", absent)
+    monkeypatch.setattr(sys, "argv", ["millrace", "demo"])
+    with pytest.raises(SystemExit) as stopped:
+        cli.cli()
+    assert stopped.value.code == 2
+    assert "full bundle" in capsys.readouterr().err

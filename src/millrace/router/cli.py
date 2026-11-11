@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import sys
@@ -292,8 +293,23 @@ def cli() -> None:
     import sys
 
     args = sys.argv[1:]
+    if args and args[0] == "demo":
+        try:
+            demo_main = getattr(
+                importlib.import_module("millrace_plus.demo.cli"), "main", None
+            )
+            if not callable(demo_main):
+                raise ImportError("demo entrypoint is unavailable")
+        except ImportError:
+            print(
+                "millrace demo requires compatible Core, Plus and OS components; "
+                "install the full bundle.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from None
+        raise SystemExit(demo_main(args[1:]))
     if not args or args[0] != "router":
-        print("usage: millrace router ...", file=sys.stderr)
+        print("usage: millrace {router|demo} ...", file=sys.stderr)
         raise SystemExit(2)
     raise SystemExit(main(args[1:]))
 
