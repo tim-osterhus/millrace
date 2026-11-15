@@ -306,16 +306,26 @@ def test_validation_admits_exact_invocation_plan_for_completion(tmp_path):
     nodes["step"]["on"]["DONE"] = {"goto": "next"}
     file.write_text(json.dumps(graph))
     made = control.create_instance(
-        file, project, state_home=home, request_id=new_id(),
-        expected_state_version=0, adapter_resolver=resolver,
+        file,
+        project,
+        state_home=home,
+        request_id=new_id(),
+        expected_state_version=0,
+        adapter_resolver=resolver,
     )
     instance = str(made["instance_id"])
     started = control.start_run(
-        instance, state_home=home, request_id=new_id(),
-        expected_state_version=1, adapter_resolver=resolver,
+        instance,
+        state_home=home,
+        request_id=new_id(),
+        expected_state_version=1,
+        adapter_resolver=resolver,
     )
     view = control.inspect_run(
-        instance, str(started["run_id"]), state_home=home, adapter_resolver=resolver,
+        instance,
+        str(started["run_id"]),
+        state_home=home,
+        adapter_resolver=resolver,
     )
     assert view["status"] == "succeeded" and view["count"] == 2
     bodies = view["invocations"]
@@ -1245,6 +1255,176 @@ def test_builtin_command_unknown_config_is_adapter_settings_error(tmp_path, loca
     assert not (project / ".millrace-router-owner").exists()
 
 
+def test_batch_resolution_validates_each_adapter_once_and_matches_single_nodes(
+    tmp_path,
+):
+    import copy
+
+    from millrace.router.execution import RouterError
+    from millrace.router.graph import (
+        build_launch,
+        capture,
+        resolve_nodes,
+        resolve_settings,
+    )
+
+    log: list[tuple[str, str]] = []
+
+    class Logged(CounterAdapter):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+
+        def validate_configuration(self, config):
+            log.append(("validate", self.name))
+            super().validate_configuration(config)
+
+        def plan(self, request):
+            log.append(("plan", self.name))
+            return super().plan(request)
+
+    adapters = {
+        ("counter", "counter/v1"): Logged("counter"),
+        ("tally", "tally/v1"): Logged("tally"),
+    }
+
+    def resolver(name, contract):
+        if (name, contract) not in adapters:
+            raise RouterError("unsupported_adapter_contract")
+        return adapters[name, contract]
+
+    # Builtin command plus two external adapters across two planes.
+    file, project, _ = generic_flow(tmp_path)
+    data = json.loads(file.read_text())
+    data["limits"]["max_parallel_invocations"] = 1
+    for name in ("counter", "tally"):
+        data["bindings"][name] = {
+            "adapter": name,
+            "contract": f"{name}/v1",
+            "executable": sys.executable,
+            "config": {},
+        }
+    main = data["planes"]["main"]
+    main["defaults"] = {"timeout_seconds": 7}
+    base = copy.deepcopy(main["nodes"]["step"])
+    main["nodes"]["step"]["on"]["DONE"] = {"goto": "next"}
+    main["nodes"]["next"] = copy.deepcopy(base)
+    main["nodes"]["next"]["invoke"] = {"binding": "counter", "config": {"number": 7}}
+    side = copy.deepcopy(base)
+    side["invoke"] = {"binding": "tally", "config": {"number": 9}}
+    data["planes"]["side"] = {
+        "start": "step",
+        "workspace": ".",
+        "nodes": {"step": side},
+    }
+    file.write_text(json.dumps(data))
+    revision = capture(file, project)
+    context = {
+        "state_version": 1,
+        "runtime_defaults": {"timeout_seconds": 20},
+        "operator_policy": {},
+        "host_paths": {},
+        "env_allowlist": [],
+    }
+    validated = [("validate", "counter"), ("validate", "tally")]
+    nodes = (("main", "next"), ("main", "step"), ("side", "step"))
+
+    def batch(selected=revision, settings=context):
+        log.clear()
+        return resolve_nodes(
+            selected,
+            settings_context=settings,
+            adapter_resolver=resolver,
+            project_root=project,
+        )
+
+    def single(selected, plane_id, node_id, settings=context):
+        log.clear()
+        return resolve_settings(
+            selected,
+            plane_id,
+            node_id,
+            settings_context=settings,
+            adapter_resolver=resolver,
+            project_root=project,
+        )
+
+    resolved = batch()
+    assert log == [*validated, ("plan", "counter"), ("plan", "tally")]
+    assert {plane: sorted(items) for plane, items in resolved.items()} == {
+        "main": ["next", "step"],
+        "side": ["step"],
+    }
+    assert resolved["main"]["next"]["common"]["effective"]["timeout_seconds"] == 7
+    assert resolved["side"]["step"]["common"]["effective"]["timeout_seconds"] == 20
+    assert resolved["main"]["next"]["common"]["effective"]["binding"] == "counter"
+    for plane_id, node_id in nodes:
+        assert single(revision, plane_id, node_id) == resolved[plane_id][node_id]
+        assert log[:2] == validated
+    log.clear()
+    build_launch(
+        revision,
+        "side",
+        "step",
+        context,
+        tmp_path / "controls",
+        adapter_resolver=resolver,
+        project_root=project,
+    )
+    assert log == [*validated, ("plan", "tally")]
+    assert batch() == resolved
+    assert log == [*validated, ("plan", "counter"), ("plan", "tally")]
+
+    changed = {**context, "runtime_defaults": {"timeout_seconds": 30}}
+    assert batch(settings=changed)["side"]["step"]["common"]["effective"] == {
+        "binding": "tally",
+        "timeout_seconds": 30,
+    }
+    assert log[:2] == validated
+
+    def unused_binding(graph):
+        graph["bindings"]["unused"] = {
+            **graph["bindings"]["python"],
+            "config": {"unrecognized": "x"},
+        }
+
+    def later_node(graph):
+        graph["planes"]["side"]["nodes"]["step"]["invoke"]["config"]["extra"] = 1
+
+    def plane_namespace(graph):
+        graph["planes"]["side"]["defaults"] = {
+            "adapter_settings": {
+                "command": {
+                    "contract": "millrace-command/v1",
+                    "config": {"unrecognized": "x"},
+                }
+            }
+        }
+
+    namespace = {"counter": {"contract": "counter/v1", "config": {"unrecognized": "x"}}}
+    runtime = {**context, "runtime_defaults": {"adapter_settings": namespace}}
+    cases = [(revision, runtime, "counter_settings")]
+    for mutate, code in (
+        (unused_binding, "invalid_adapter_settings"),
+        (later_node, "counter_config"),
+        (plane_namespace, "invalid_adapter_settings"),
+    ):
+        bad = copy.deepcopy(data)
+        mutate(bad)
+        file.write_text(json.dumps(bad))
+        cases.append((capture(file, project), context, code))
+    for selected, settings, code in cases:
+        with pytest.raises(RouterError) as error:
+            batch(selected, settings)
+        assert error.value.code == code
+        assert not [entry for entry in log if entry[0] == "plan"]
+        for plane_id, node_id in nodes:
+            with pytest.raises(RouterError) as error:
+                single(selected, plane_id, node_id, settings)
+            assert error.value.code == code
+            assert not [entry for entry in log if entry[0] == "plan"]
+
+
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("missing", ["absent", "wrong_contract"])
 def test_release_hold_requires_contract_before_receipt_replay(
@@ -1603,7 +1783,6 @@ def test_owner_failure_during_started_cleanup_joins_worker_and_keeps_first_error
     assert cleaned.is_set() and all(not thread.is_alive() for thread in threads)
 
 
-
 def test_retained_v7_original_create_request_replay_and_recovery(tmp_path):
     import sqlite3
 
@@ -1624,19 +1803,39 @@ def test_retained_v7_original_create_request_replay_and_recovery(tmp_path):
         assert list(db.iterdump()) == before
     view = control.inspect_run(instance, run, state_home=home)
     assert view["status"] == "succeeded" and view["count"] == 1
-    assert all(view[k] is not None for k in (
-        "startup_cap", "startup_elapsed", "startup_deadline", "cap",
-        "max_elapsed", "deadline",
-    ))
+    assert all(
+        view[k] is not None
+        for k in (
+            "startup_cap",
+            "startup_elapsed",
+            "startup_deadline",
+            "cap",
+            "max_elapsed",
+            "deadline",
+        )
+    )
     recovered = control.recover_run(
-        instance, run, state_home=home, request_id=new_id(),
+        instance,
+        run,
+        state_home=home,
+        request_id=new_id(),
         expected_state_version=view["state_version"],
     )
     assert recovered["status"] == "applied"
     after = control.inspect_run(instance, run, state_home=home)
-    for key in ("invocations", "completions", "transitions", "startup_cap",
-                "startup_elapsed", "startup_deadline", "cap", "max_elapsed",
-                "deadline", "count", "state_version"):
+    for key in (
+        "invocations",
+        "completions",
+        "transitions",
+        "startup_cap",
+        "startup_elapsed",
+        "startup_deadline",
+        "cap",
+        "max_elapsed",
+        "deadline",
+        "count",
+        "state_version",
+    ):
         assert after[key] == view[key]
     with sqlite3.connect(config.store_path) as db:
         assert dict(db.execute("SELECT key,value FROM meta"))["format"] == (
@@ -1670,7 +1869,6 @@ def test_retained_v7_version_and_nullable_refuse_without_mutation(tmp_path, corr
     assert database.read_bytes() == before
 
 
-
 def test_v7_v4_candidate_refusal_only_records_targeted_receipt(tmp_path):
     import sqlite3
 
@@ -1678,7 +1876,9 @@ def test_v7_v4_candidate_refusal_only_records_targeted_receipt(tmp_path):
 
     fixture = genuine_v7_fixture(tmp_path / "retained", "paused")
     instance, run, home = (
-        fixture["instance_id"], fixture["run_id"], fixture["state_home"]
+        fixture["instance_id"],
+        fixture["run_id"],
+        fixture["state_home"],
     )
     before = control.inspect_run(instance, run, state_home=home)
     assert before["status"] == "paused" and before["count"] == 1
@@ -1686,11 +1886,15 @@ def test_v7_v4_candidate_refusal_only_records_targeted_receipt(tmp_path):
 
     def tables():
         with sqlite3.connect(database) as db:
-            names = [r[0] for r in db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            )]
-            return {name: db.execute(f'SELECT * FROM "{name}"').fetchall()
-                    for name in names}
+            names = [
+                r[0]
+                for r in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                )
+            ]
+            return {
+                name: db.execute(f'SELECT * FROM "{name}"').fetchall() for name in names
+            }
 
     original = tables()
     graph = json.loads(fixture["workflow"].read_text())
@@ -1698,7 +1902,10 @@ def test_v7_v4_candidate_refusal_only_records_targeted_receipt(tmp_path):
     fixture["workflow"].write_text(json.dumps(graph))
     request_id = new_id()
     refused = control.submit_revision(
-        instance, run, state_home=home, request_id=request_id,
+        instance,
+        run,
+        state_home=home,
+        request_id=request_id,
         expected_state_version=before["state_version"],
     )
     assert refused["status"] == "refused" and refused["code"] == "unsupported_graph"
@@ -1721,12 +1928,17 @@ def test_v7_v4_candidate_refusal_only_records_targeted_receipt(tmp_path):
         ).fetchone()
     assert receipt[:2] == ("submit_revision", "refused")
     assert json.loads(receipt[2]) == refused
-    assert control.submit_revision(
-        instance, run, state_home=home, request_id=request_id,
-        expected_state_version=before["state_version"],
-    ) == refused
+    assert (
+        control.submit_revision(
+            instance,
+            run,
+            state_home=home,
+            request_id=request_id,
+            expected_state_version=before["state_version"],
+        )
+        == refused
+    )
     assert tables() == after
-
 
 
 def test_genuine_v7_subsequent_finite_run_does_not_add_anchor(tmp_path):
@@ -1742,7 +1954,9 @@ def test_genuine_v7_subsequent_finite_run_does_not_add_anchor(tmp_path):
     assert [row[1] for row in columns] == ["id", "revision_id", "hold_id", "body"]
     old = control.inspect_run(instance, fixture["run_id"], state_home=home)
     started = control.start_run(
-        instance, state_home=home, request_id=new_id(),
+        instance,
+        state_home=home,
+        request_id=new_id(),
         expected_state_version=control.inspect_instance(instance, state_home=home)[
             "state_version"
         ],
@@ -1760,7 +1974,6 @@ def test_genuine_v7_subsequent_finite_run_does_not_add_anchor(tmp_path):
         assert dict(db.execute("SELECT key,value FROM meta"))["format"] == (
             "millrace-router-store/v7"
         )
-
 
 
 def test_v7_automatic_v4_observation_preserves_result_and_safety_hold(
@@ -1786,7 +1999,10 @@ def test_v7_automatic_v4_observation_preserves_result_and_safety_hold(
     with monkeypatch.context() as patch:
         patch.setattr(Store, "complete", edit_after_durable_result)
         started = control.start_run(
-            instance, state_home=home, request_id=new_id(), edit_mode="live",
+            instance,
+            state_home=home,
+            request_id=new_id(),
+            edit_mode="live",
             expected_state_version=control.inspect_instance(instance, state_home=home)[
                 "state_version"
             ],
@@ -1818,7 +2034,10 @@ def test_v7_automatic_v4_observation_preserves_result_and_safety_hold(
 
     monkeypatch.setattr("millrace.router.engine.invoke", forbidden)
     resumed = control.resume_run(
-        instance, run, state_home=home, request_id=new_id(),
+        instance,
+        run,
+        state_home=home,
+        request_id=new_id(),
         expected_state_version=view["state_version"],
     )
     assert resumed["status"] == "applied"
@@ -1827,7 +2046,6 @@ def test_v7_automatic_v4_observation_preserves_result_and_safety_hold(
     assert len(after["transitions"]) == 1
     assert after["completions"] == view["completions"]
     assert after["invocations"] == view["invocations"]
-
 
 
 def test_coherent_old_reader_stale_producer_history_refuses_without_mutation(tmp_path):
@@ -1854,7 +2072,9 @@ def test_coherent_old_reader_stale_producer_history_refuses_without_mutation(tmp
     assert old["cap"] == old["startup_cap"] == 3
     assert old["max_elapsed"] == old["startup_elapsed"] == 120
     instance, home, run = (
-        fixture["instance_id"], fixture["state_home"], fixture["run_id"]
+        fixture["instance_id"],
+        fixture["state_home"],
+        fixture["run_id"],
     )
     database = home / "instances" / instance / "state.sqlite3"
     with sqlite3.connect(database) as db:
@@ -1863,7 +2083,10 @@ def test_coherent_old_reader_stale_producer_history_refuses_without_mutation(tmp
     for operation in (
         lambda: control.inspect_run(instance, run, state_home=home),
         lambda: control.recover_run(
-            instance, run, state_home=home, request_id=new_id(),
+            instance,
+            run,
+            state_home=home,
+            request_id=new_id(),
             expected_state_version=old["state_version"],
         ),
     ):

@@ -239,11 +239,13 @@ def parse_graph(raw: bytes) -> Graph:
         format=str(decoded["format"]),
         max_invocations=(
             int(number(limits["max_invocations"], integer=True))
-            if "max_invocations" in limits else None
+            if "max_invocations" in limits
+            else None
         ),
         max_elapsed=(
             number(limits["max_elapsed_seconds"])
-            if "max_elapsed_seconds" in limits else None
+            if "max_elapsed_seconds" in limits
+            else None
         ),
         bindings=bindings,
         planes=planes,
@@ -768,9 +770,35 @@ def build_launch(
     invocation_id: str = VALIDATION_ID,
     seam_input: SeamInput | None = None,
 ) -> tuple[LaunchPlan, dict[str, object]]:
+    validate_adapters(revision, context, adapter_resolver)
+    return _build_launch_validated(
+        revision,
+        plane_id,
+        node_id,
+        context,
+        controls,
+        adapter_resolver=adapter_resolver,
+        project_root=project_root,
+        invocation_id=invocation_id,
+        seam_input=seam_input,
+    )
+
+
+def _build_launch_validated(
+    revision: Revision,
+    plane_id: str,
+    node_id: str,
+    context: dict[str, object],
+    controls: Path,
+    *,
+    adapter_resolver: AdapterResolver | None = None,
+    project_root: Path = Path("/"),
+    invocation_id: str = VALIDATION_ID,
+    seam_input: SeamInput | None = None,
+) -> tuple[LaunchPlan, dict[str, object]]:
+    """Plan one node; the caller has just validated this revision and context."""
     import copy
 
-    validate_adapters(revision, context, adapter_resolver)
     common = _common_settings(
         revision.graph, plane_id, node_id, settings_context=context
     )
@@ -842,7 +870,28 @@ def resolve_settings(
         raise RouterError("context_required")
     if not isinstance(revision, Revision):
         raise RouterError("revision_required")
-    plan, projection = build_launch(
+    validate_adapters(revision, settings_context, adapter_resolver)
+    return _resolve_settings_validated(
+        revision,
+        plane_id,
+        node_id,
+        settings_context=settings_context,
+        adapter_resolver=adapter_resolver,
+        project_root=project_root,
+    )
+
+
+def _resolve_settings_validated(
+    revision: Revision,
+    plane_id: str,
+    node_id: str,
+    *,
+    settings_context: dict[str, object],
+    adapter_resolver: AdapterResolver | None = None,
+    project_root: Path = Path("/"),
+) -> dict[str, object]:
+    """Project one node; the caller has just validated this exact context."""
+    plan, projection = _build_launch_validated(
         revision,
         plane_id,
         node_id,
@@ -865,9 +914,27 @@ def resolve_nodes(
     adapter_resolver: AdapterResolver | None = None,
     project_root: Path = Path("/"),
 ) -> dict[str, dict[str, dict[str, object]]]:
+    """Resolve every node, validating adapters once for this exact call.
+
+    Whole-graph adapter validation depends only on the revision, settings
+    context and resolver shared by this batch, so it runs once before any node
+    is planned instead of once per node. Nothing is retained across calls; the
+    public per-node entry points still validate on their own.
+    """
+    selected = [
+        (plane_id, sorted(plane.nodes))
+        for plane_id, plane in sorted(revision.graph.planes.items())
+    ]
+    if not any(nodes for _, nodes in selected):
+        return {plane_id: {} for plane_id, _ in selected}
+    if settings_context is None:
+        raise RouterError("context_required")
+    if not isinstance(revision, Revision):
+        raise RouterError("revision_required")
+    validate_adapters(revision, settings_context, adapter_resolver)
     return {
         plane_id: {
-            node: resolve_settings(
+            node: _resolve_settings_validated(
                 revision,
                 plane_id,
                 node,
@@ -875,7 +942,7 @@ def resolve_nodes(
                 adapter_resolver=adapter_resolver,
                 project_root=project_root,
             )
-            for node in sorted(plane.nodes)
+            for node in nodes
         }
-        for plane_id, plane in sorted(revision.graph.planes.items())
+        for plane_id, nodes in selected
     }
