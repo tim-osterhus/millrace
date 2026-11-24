@@ -3,7 +3,7 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - v0.23.1
+      - v0.23.2
 
 permissions:
   contents: read
@@ -11,12 +11,12 @@ permissions:
 env:
   SOURCE_DATE_EPOCH: "1580601600"
   PYTHONDONTWRITEBYTECODE: "1"
-  EXPECTED_WHEEL_SHA256: "b5c2ac37259031136384e1d573dae8ea0e7597e5b1c792bd26ae42c019ab7778"
-  EXPECTED_SDIST_SHA256: "9cd836b5c689444def1c2351360a817f4455ad5756baf69b73b5d08ca0132489"
+  EXPECTED_WHEEL_SHA256: "bc6ccd5a3de66c32d4e9122fa467cae6f01f0fabbb541d8a83893ab40542b41a"
+  EXPECTED_SDIST_SHA256: "b1b8123f05ea092aca38d884dc27b853acd41ca6a1ac970842b85645c140315a"
 
 jobs:
   validate:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.23.1' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.23.2' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -31,12 +31,12 @@ jobs:
           def git(*args):
               return subprocess.check_output(["git", *args], text=True).strip()
           assert os.environ["GITHUB_EVENT_NAME"] == "push"
-          assert os.environ["GITHUB_REF"] == "refs/tags/v0.23.1"
+          assert os.environ["GITHUB_REF"] == "refs/tags/v0.23.2"
           head = git("rev-parse", "HEAD")
-          assert git("rev-parse", "refs/tags/v0.23.1^{}") == head
-          assert os.environ["GITHUB_SHA"] == head
+          assert git("rev-parse", "refs/tags/v0.23.2^{}") == head
+          assert git("rev-parse", os.environ["GITHUB_SHA"] + "^{commit}") == head
           project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
-          assert project["name"] == "millrace-ai" and project["version"] == "0.23.1"
+          assert project["name"] == "millrace-ai" and project["version"] == "0.23.2"
           PYCODE
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
         with:
@@ -45,7 +45,8 @@ jobs:
       - name: Validate active Core
         run: |
           uv lock --check
-          uv sync --frozen --group dev
+          uv sync --frozen --group dev --python 3.11
+          uv run --no-project --python 3.11 --with 'uv_build==0.11.30' python -c 'import uv_build'
           mkdir -m 700 "$HOME/mrc-tests"
           MILLRACE_TEST_SOCKET_ROOT="$HOME/mrc-tests" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --frozen --group dev pytest -q --basetemp "$HOME/mrc-tests/pytest"
           uv run --frozen --group dev ruff check src tests scripts
@@ -61,13 +62,17 @@ jobs:
           python3 - <<'PYCODE'
           import hashlib, os
           from pathlib import Path
-          expected = {"millrace_ai-0.23.1-py3-none-any.whl": os.environ["EXPECTED_WHEEL_SHA256"],
-                      "millrace_ai-0.23.1.tar.gz": os.environ["EXPECTED_SDIST_SHA256"]}
+          expected = {"millrace_ai-0.23.2-py3-none-any.whl": os.environ["EXPECTED_WHEEL_SHA256"],
+                      "millrace_ai-0.23.2.tar.gz": os.environ["EXPECTED_SDIST_SHA256"]}
           assert {p.name for p in Path("dist").iterdir() if p.name != ".gitignore"} == set(expected)
           for name, digest in expected.items():
               assert digest != "0" * 64, "Release artifact manifest has not been frozen"
               assert hashlib.sha256((Path("dist") / name).read_bytes()).hexdigest() == digest
           PYCODE
+      - name: Verify Core distribution contents
+        run: |
+          python3 scripts/release/verify_v023_distribution.py \
+            dist/millrace_ai-0.23.2-py3-none-any.whl dist/millrace_ai-0.23.2.tar.gz
       - name: Check source unchanged
         run: git diff --exit-code
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -75,15 +80,16 @@ jobs:
           name: pypi-distributions
           if-no-files-found: error
           path: |
-            dist/millrace_ai-0.23.1-py3-none-any.whl
-            dist/millrace_ai-0.23.1.tar.gz
+            dist/millrace_ai-0.23.2-py3-none-any.whl
+            dist/millrace_ai-0.23.2.tar.gz
 
   publish:
     needs: validate
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.23.1' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/tags/v0.23.2' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
+      url: https://pypi.org/project/millrace-ai/0.23.2/
     permissions:
       contents: read
       id-token: write
@@ -97,7 +103,7 @@ jobs:
           python3 - <<'PYCODE'
           import hashlib, os
           from pathlib import Path
-          assert {p.name for p in Path("dist").iterdir()} == {"millrace_ai-0.23.1-py3-none-any.whl", "millrace_ai-0.23.1.tar.gz"}
+          assert {p.name for p in Path("dist").iterdir()} == {"millrace_ai-0.23.2-py3-none-any.whl", "millrace_ai-0.23.2.tar.gz"}
           files = sorted(Path("dist").iterdir())
           for path in files:
               key = "EXPECTED_WHEEL_SHA256" if path.suffix == ".whl" else "EXPECTED_SDIST_SHA256"
@@ -106,3 +112,4 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
         with:
           packages-dir: dist/
+          attestations: true

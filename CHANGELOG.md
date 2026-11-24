@@ -1,16 +1,19 @@
 # Changelog
 
-## 0.23.2 (unpublished development candidate)
+## 0.23.2
 
-- Add the public synchronous `millrace.router.process` API with the
-  `owned-process-v1` capability, immutable launch/result records, bounded byte
-  capture and owned process-group cleanup. Core remains dependency-free.
-- Migrate the builtin command adapter to that API. Optional lifecycle callbacks
-  preserve first-stop ordering and drained-result snapshots without native
-  protocol policy in Core; synchronous callbacks must do bounded work.
-- Preserve graph-v3/store-v7 and request-v2/receipt-v2/execution-v2 formats.
-  Offline Linux acceptance does not establish native/provider or macOS
-  qualification, or publication. The published 0.23.1 release is unchanged.
+- Accept graph-v4 with independently optional overall invocation and elapsed
+  limits. New instances use store-v8. Retained graph-v3/store-v7 instances keep
+  their finite bounds and schema.
+- Add bounded public run inspection and exact invocation lookup. Add an
+  exclusive public snapshot for offline maintenance.
+- Add the synchronous `millrace.router.process` API and move command execution
+  onto it. Clean up owned process groups after unsuccessful root exit.
+- Reuse validated invocation plans and validate adapters once per graph
+  projection.
+- Route `millrace demo` to the compatible Millrace Plus demo when installed.
+- Retain request-v2, receipt-v2 and execution-v2 contracts. Core remains
+  dependency-free.
 
 ## 0.23.1
 

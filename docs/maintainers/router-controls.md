@@ -7,11 +7,16 @@ work to pause or completion. There is no required daemon.
 
 ## Formats and execution dependencies
 
-Authored graphs use `millrace-router/v3`, instances
-`millrace-router-instance/v2`, stores `millrace-router-store/v7`, requests
-`millrace-router-request/v2`, execution `millrace-router-execution/v2`, and launch settings
-`millrace-router-launch-settings/v3`. Old stores refuse before mutation. Use fresh
-homes and retain matching old artifacts/state separately.
+Core 0.23.2 accepts authored graphs in `millrace-router/v3` or
+`millrace-router/v4`. New instances use `millrace-router-store/v8` with either
+graph format. Retained finite graph-v3 instances in `millrace-router-store/v7`
+keep their schema and limits. Store-v7 instances refuse graph-v4 revisions.
+Core refuses unsupported store formats before mutation. Retain the matching
+runtime and state if you need to preserve an unsupported store.
+
+Instances use `millrace-router-instance/v2`, requests
+`millrace-router-request/v2`, execution `millrace-router-execution/v2`, and launch
+settings `millrace-router-launch-settings/v3`.
 
 A binding declares exactly `adapter`, `contract`, `executable`, and `config`.
 Invocation fields are binding, timeout_seconds, cwd, inputs, and config. List all

@@ -1,6 +1,6 @@
 <div align="center">
   <p>
-    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI v0.23.1" src="https://img.shields.io/badge/pypi-v0.23.1-orange.svg"></a>
+    <a href="https://pypi.org/project/millrace-ai/"><img alt="PyPI v0.23.2" src="https://img.shields.io/badge/pypi-v0.23.2-orange.svg"></a>
     <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11+-blue.svg"></a>
     <a href="https://github.com/tim-osterhus/millrace/blob/main/LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-green.svg"></a>
   </p>
@@ -20,15 +20,15 @@ It persists results, transitions, requests, revisions and writer observations so
 Python 3.11 or newer is required.
 
 ```sh
-python -m pip install "millrace-ai==0.23.1"
+python -m pip install "millrace-ai==0.23.2"
 millrace router --help
 ```
 
-Follow [Getting started](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/getting-started.md) for a command-only workflow.
+Follow [Getting started](https://github.com/tim-osterhus/millrace/blob/v0.23.2/docs/getting-started.md) for a command-only workflow.
 Core has no runtime dependencies. [Millrace Plus](https://github.com/tim-osterhus/millrace-plus)
 supplies optional native adapters, catalogs and editable workflow templates.
 [Millrace OS](https://github.com/tim-osterhus/millrace-os) operates independent instances through the same public controls.
-The `millrace==0.23.1` bundle installs Core, Plus and OS together on Python 3.12 or newer.
+The `millrace` bundle combines compatible versions of Core, Plus and OS on Python 3.12 or newer.
 
 ## Structure
 
@@ -36,15 +36,13 @@ The `millrace==0.23.1` bundle installs Core, Plus and OS together on Python 3.12
 - `tests/router/`: command, corruption, recovery, planes, seams and installed boundary proofs.
 - `docs/maintainers/`: public control and cutover contracts.
 
-Published 0.23.1 uses graph-v3/store-v7 with mandatory finite overall limits.
+Core 0.23.2 accepts graph-v3 and graph-v4 and creates store-v8.
+Graph-v4 lets you omit either overall limit, `limits.max_invocations` or
+`limits.max_elapsed_seconds`. Keep the `limits` object. Supplied limits must
+be positive and finite. Invocation timeouts and operator controls still apply.
+Retained graph-v3/store-v7 state keeps its schema and finite limits. Core
+0.23.1 cannot read graph-v4 or store-v8. Core refuses unsupported formats
+before mutation and provides no store conversion.
 
-The unpublished 0.23.2 development candidate also accepts graph-v4, where
-`limits.max_invocations` and `limits.max_elapsed_seconds` may each be omitted.
-The `limits` object is still required; explicit null or zero is invalid. New
-candidate stores use v8, including when started from a finite v3 graph. Retained
-v7 stores keep their finite v3 contract and schema without conversion. Use
-qualified matching candidate artifacts for v4; released 0.23.1 cannot read v4/v8.
-Invocation timeouts and operator controls remain effective with no overall bound.
-Unsupported versions refuse before mutation. There is no state migration.
-See [How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/how-millrace-works.md), [planes](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/router-planes.md),
-[controls](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/maintainers/router-controls.md) and [cutover](https://github.com/tim-osterhus/millrace/blob/v0.23.1/docs/maintainers/router-cutover.md).
+See [How Millrace works](https://github.com/tim-osterhus/millrace/blob/v0.23.2/docs/how-millrace-works.md), [planes](https://github.com/tim-osterhus/millrace/blob/v0.23.2/docs/router-planes.md),
+[controls](https://github.com/tim-osterhus/millrace/blob/v0.23.2/docs/maintainers/router-controls.md) and [cutover](https://github.com/tim-osterhus/millrace/blob/v0.23.2/docs/maintainers/router-cutover.md).

@@ -1,10 +1,10 @@
 # Getting started with Millrace 0.23
 
-Install released Core with Python 3.11 or newer. This finite-v3 example targets
-published 0.23.1 and launches only a local command.
+Install Core 0.23.2 with Python 3.11 or newer. This example runs a local
+command with a finite graph-v3.
 
 ```sh
-python -m pip install "millrace-ai==0.23.1"
+python -m pip install "millrace-ai==0.23.2"
 mkdir workflow project
 ```
 
@@ -60,18 +60,17 @@ A controller may remain in the foreground until work pauses or finishes.
 The first stop signal drains active work. A second stop requests cancellation.
 Use [public controls](maintainers/router-controls.md) for exact request replay, edits and recovery.
 
-For native adapters and workflow copies, install `millrace-plus[router]==0.23.1` and use its public CLI.
+For native adapters and workflow copies, install `millrace-plus[router]==0.23.2` and use its public CLI.
 Provider execution requires its own configured runtime and credentials.
 
 
-## Unpublished 0.23.2 candidate
+## Optional overall limits
 
-With an actually qualified candidate Core artifact, new authoring may instead use
-`"format": "millrace-router/v4"` and `"limits": {}` in the example above. Either
-positive finite overall limit can be included independently. Keep the finite
-invocation timeout in `defaults`; omitting overall bounds does not remove it.
-Explicit null or zero is invalid, and parallel capacity still defaults to one.
-New candidate instances create store-v8. Retained finite v3/v7 instances remain
-finite and are not converted by an upgrade or edited graph. Published 0.23.1
-cannot read v4/v8. Candidate version labels alone do not establish qualification
-or change the public installation commands above.
+With Core 0.23.2, you can use `"format": "millrace-router/v4"` and
+`"limits": {}` in the example. You can set either overall limit independently.
+Each supplied limit must be positive and finite. Keep the finite invocation
+timeout in `defaults`. Parallel capacity defaults to one.
+
+Core 0.23.2 creates store-v8 for new instances. Retained finite graph-v3/store-v7
+instances keep their schema and bounds. Core 0.23.1 cannot read graph-v4 or
+store-v8.

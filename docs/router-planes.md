@@ -1,11 +1,10 @@
-# Plane runtime contract (unreleased runtime)
+# Plane runtime contract
 
-The unpublished 0.23.2 candidate accepts graph v3/v4, creates store v8, and
+Core 0.23.2 accepts graph v3/v4, creates store v8, and
 retains execution v2 and request v2. Existing finite graph-v3/store-v7 state
-continues with its unchanged schema and bounds; v7 refuses v4 revisions. The external
-task record owns source/verification/acceptance status; this guide does not grant
-release or native qualification. Unsupported graphs/stores refuse. Retain historical
-artifacts with their matching runtimes; no store conversion is provided.
+continues with its original schema and bounds. Store v7 refuses graph-v4
+revisions. Core refuses unsupported graph and store formats. Retain historical
+artifacts with their matching runtimes. Core provides no store conversion.
 
 A graph declares `planes: {id: {start, workspace, defaults, nodes}}`, shared
 bindings/defaults/control files and run limits. Each plane has one local cursor;
@@ -60,7 +59,7 @@ writers retain the aggregate hold. See the controls guide for receipts and
 explicit run/plane continuation semantics.
 
 
-## Overall limits in the candidate
+## Overall limits in graph-v4
 
 Graph-v4 requires a `limits` object, permitting independent omission of
 `max_invocations` and `max_elapsed_seconds`. Explicit null, zero, malformed or

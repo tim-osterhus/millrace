@@ -9,9 +9,12 @@ OS operates multiple independent instances through public controls.
 
 Core runs standalone. The optional local OS service supports headless controls and an optional browser client.
 
-## Can 0.23 read older workspaces?
+## Can Core 0.23.2 read older workspaces?
 
-Unsupported graph/store versions refuse before mutation. Create fresh graph-v3/store-v7 state. There is no migration.
+Core 0.23.2 continues finite graph-v3/store-v7 instances with their existing
+schema and limits. New instances use store-v8 with graph-v3 or graph-v4. Core
+refuses unsupported graph and store formats before mutation and provides no
+store migration.
 
 ## How do I edit a workflow?
 

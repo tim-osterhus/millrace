@@ -4,7 +4,7 @@ The Core wheel and sdist contain the inert `millrace` namespace, its typing mark
 The active source tree removes the retired compiler, kernel, operator, substrate, native-adapter and workflow packages.
 The console entrypoint is `millrace.router.cli:cli`. Runtime dependencies are empty.
 
-Published Core, Plus and OS use release version 0.23.1. Plus requires the public `millrace-router-execution/v2` contract.
+Plus requires the public `millrace-router-execution/v2` contract.
 Equal package versions alone do not establish contract compatibility.
 
 Released 0.23.1 uses graph-v3/store-v7 state with request-v2, receipt-v2 and execution-v2 controls.
@@ -25,7 +25,7 @@ Historical provider qualification does not qualify changed adapters or new artif
 Use fake-process tests for packaging/control proofs. Native provider calls need a separate finite allowance.
 
 
-## Unpublished optional-limits candidate
+## Core 0.23.2 graph and store compatibility
 
 Core 0.23.2 adds authored graph-v4 and creates store-v8. It continues operating
 genuine finite graph-v3/store-v7 without changing the schema, format metadata or
@@ -41,11 +41,7 @@ empty store and exact finite equality before replay; do not repair or backfill.
 This is consistency evidence against isolated edits, not an authenticity system.
 Do not upgrade disposable anchorless intermediate candidate fixtures.
 
-Preserve exact pre-OL finite-reader source/wheel/sdist hashes and environments
-before replacing same-version candidate artifacts. Old binaries must refuse v4
-and v8 before state mutation; successor tests must retain genuine v7 creation
-receipt replay, normal subsequent finite runs and schema identity. Installed
-proof must use the exact candidate artifacts and rebuild from the sdist. OS and
-Paperclip reader tests exercise null passthrough; their independent finite
-observation and assignment deadlines are unchanged. No native/provider or release
-qualification follows from the offline optional-limits proofs.
+Core 0.23.1 refuses graph-v4 and store-v8 before state mutation. When checking
+compatibility, retain the old runtime and artifacts. Verify creation receipt
+replay, a subsequent finite run and schema identity against authentic v7 state.
+Use the exact wheel and rebuild from the sdist for installed checks.

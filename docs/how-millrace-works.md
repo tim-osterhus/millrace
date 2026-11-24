@@ -20,7 +20,7 @@ The producing revision parses the result; the active routing revision selects it
 See [controls](maintainers/router-controls.md), [planes](router-planes.md), and [cutover](maintainers/router-cutover.md).
 
 
-The unpublished 0.23.2 candidate accepts graph-v4 with independently optional
+Core 0.23.2 accepts graph-v4 with independently optional
 overall invocation and elapsed bounds. Omit a field to leave that dimension
 unbounded; the limits object remains required and explicit null is invalid.
 Each invocation still has a positive finite timeout, resolved under operator

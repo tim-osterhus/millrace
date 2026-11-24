@@ -1,6 +1,6 @@
 # Owned byte processes
 
-The development 0.23.2 API `millrace.router.process` exposes
+The Core 0.23.2 API `millrace.router.process` exposes
 `OWNED_PROCESS_CONTRACT = "owned-process-v1"`, immutable `ProcessRequest` and
 `ProcessResult`, `OwnedProcessError`, and synchronous `run_owned_process`.
 Core remains dependency-free. This module contains no native adapter protocol,
